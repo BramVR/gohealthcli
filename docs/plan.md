@@ -1,7 +1,7 @@
 ---
-summary: "Product scope, MVP commands, non-goals, and open planning questions."
+summary: "Product scope, First Release commands, non-goals, and open planning questions."
 read_when:
-  - "Scoping MVP behavior."
+  - "Scoping First Release behavior."
   - "Deciding whether a feature belongs before first implementation."
   - "Running a grill-style planning session."
 ---
@@ -21,7 +21,11 @@ Build a `gobankcli`-style tool for health data:
 - Normalized views for common personal analytics.
 - Read-only until there is a strong reason to write health data.
 
-## MVP
+## First Release
+
+The First Release should be intentionally narrow but foundation-grade: secure
+token handling, stable command contracts, durable archive semantics, and clear
+provider boundaries matter more than broad Data Type coverage.
 
 - `init`: create config paths.
 - `doctor`: verify config, OAuth client, token status, local archive.
@@ -34,7 +38,10 @@ Build a `gobankcli`-style tool for health data:
 - `export`: export selected normalized data to CSV or JSONL.
 - `raw`: make one direct provider call for debugging early API changes.
 
-## First Data Types
+## First Raw Data Types
+
+`sync` should be able to archive raw JSON for these Data Types before every one
+has a polished normalized export.
 
 - `steps`
 - `heart-rate`
@@ -50,20 +57,31 @@ Build a `gobankcli`-style tool for health data:
 - `total-calories`
 - `weight`
 
+## First Normalized Views
+
+- daily steps
+- heart-rate samples
+- resting heart rate by day
+- sleep sessions
+- exercise sessions
+- weight samples
+
 ## Non-Goals
 
-- No writes to Google Health API in the first version.
-- No Health Connect Android companion app in the first version.
+- No writes to Google Health API in the First Release.
+- No Health Connect Export or Android companion app in the First Release.
 - No legacy Google Fit API implementation.
-- No legacy Fitbit Web API implementation unless Google Health API blocks personal use.
+- No legacy Fitbit Web API implementation or fallback code paths unless Google
+  Health API blocks personal use.
+- No scheduled or background sync in the First Release.
 - No medical advice or diagnosis features.
 - No cloud-hosted service.
 
 ## Open Questions
 
+These require live Google Cloud or Google Health API testing for the connected
+Google Identity:
+
 - Which exact Google Cloud OAuth app should be used for personal access?
-- Which scopes are needed for the first Data Types?
 - Does the API expose the user's existing Fitbit-connected watch data immediately?
 - Which Data Types support high-resolution historical access for Bram's account?
-- Should OAuth token material live in a local file, macOS keychain, or both?
-- Should the archive support more than one Google Identity from day one?

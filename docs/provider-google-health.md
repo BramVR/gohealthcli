@@ -28,12 +28,14 @@ Likely Go module: `google.golang.org/api/health/v4`.
 `list`
 
 - Detailed Data Points for one Data Type.
-- Good first fetch path for raw archive.
+- Default fetch path for raw Data Point sync.
 
 `reconcile`
 
 - Reconciled stream across sources.
 - Supports data source family filtering such as wearable-only data.
+- Use when source-family filtering is requested, or if provider behavior proves
+  it has better correction semantics than `list`.
 - Important for "watch data" questions.
 
 `rollUp`
@@ -62,3 +64,6 @@ For this project, that means:
 - Keep provider parsing isolated.
 - Keep raw JSON in the archive.
 - Add fixtures for every Data Type before normalizing it.
+- Complete provider pagination within a Sync Run. Do not persist durable resume
+  cursors unless the API requires them for correctness; reruns should rely on
+  idempotent archiving.

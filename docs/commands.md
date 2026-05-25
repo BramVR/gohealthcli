@@ -20,27 +20,53 @@ Human hints and warnings go to stderr. Machine-readable data goes to stdout.
 
 ## Planned Commands
 
-`init`: create config and local directories.
+`init`: create config and local directories. Configure OAuth client input from
+an explicit file or Secret Provider reference, plus default Data Types for scope
+planning and normal sync.
 
-`doctor`: check config, archive, OAuth client, token presence, token expiry, and
-provider reachability.
+`doctor`: check config, archive, OAuth client, Credential Store, token presence,
+and token expiry shape. `doctor --online` may refresh tokens and check Google
+Health reachability.
 
-`connect`: run OAuth browser flow and create a Connection.
+`connect`: run OAuth browser flow and create a Connection. It consumes resolved
+OAuth client config, does not search Secret Providers, and immediately archives
+Google Identity metadata. Request scopes for configured Data Types.
 
-`identity`: call Google Health API identity endpoint and archive Google Identity.
+`identity`: call Google Health API identity endpoint, print current identity
+metadata, and refresh the archived Google Identity.
 
-`profile`: show profile/settings information exposed by the provider.
+`profile`: show profile/settings information exposed by the provider and
+archive raw profile/settings JSON separately from Data Points and Rollups.
 
-`sync`: fetch Data Points or Rollups for selected Data Types and date ranges.
+`sync`: fetch Data Points or Rollups for selected or configured Data Types and
+date ranges. By default, sync raw Data Points from all Data Sources exposed by
+the Provider. Fetch Rollups only when `--rollup` is provided. Sync is idempotent
+and reports seen, new, and updated counts. If required scopes are missing, fail
+with a clear re-connect instruction instead of starting browser consent. Require
+`--from`; `--to` defaults to now when omitted. Date-only inputs are civil dates
+in the user's current local timezone unless a timezone is supplied.
 
-`status`: show archive counts, latest Sync Runs, known Data Types, and newest
-archived timestamps.
+`status`: show archive counts, known Data Types, newest archived timestamps,
+latest successful Sync Run, and latest failed Sync Run with a short error
+summary. Do not infer completeness gaps unless gap tracking exists.
 
-`query`: run read-only SQL against the local Health Archive.
+`query`: run read-only SQL against the local Health Archive. Open the archive
+read-only, reject non-SELECT statements and mutating pragmas, and return
+machine-readable stdout.
 
-`export`: export normalized records as CSV or JSONL.
+`export`: export named normalized records as CSV or JSONL. Arbitrary SQL stays
+in `query`. Require either `--output PATH` or explicit `--stdout`.
 
-`raw`: fetch one provider endpoint and print raw JSON for API exploration.
+`raw`: fetch one provider endpoint or Data Type convenience path and print raw
+JSON for API exploration. Endpoint mode may use provider names directly. `raw`
+does not archive responses by default.
+
+## Init Sketch
+
+```bash
+gohealthcli init --oauth-client-file client_secret.json
+gohealthcli init --secret-provider 1password --oauth-client-item "Google Health OAuth"
+```
 
 ## Sync Sketch
 
@@ -48,6 +74,23 @@ archived timestamps.
 gohealthcli sync --types steps,heart-rate,sleep,exercise --from 2026-01-01
 gohealthcli sync --types daily-resting-heart-rate,daily-oxygen-saturation --from 2026-01-01
 gohealthcli sync --types steps --rollup daily --from 2026-01-01 --to 2026-05-24
+gohealthcli sync --types steps --source-family wearable --from 2026-01-01
+```
+
+## Export Sketch
+
+```bash
+gohealthcli export daily-steps --format csv --output steps.csv
+gohealthcli export sleep-sessions --format jsonl --output sleep.jsonl
+gohealthcli export daily-steps --format jsonl --stdout
+```
+
+## Raw Sketch
+
+```bash
+gohealthcli raw endpoint getIdentity
+gohealthcli raw endpoint dataTypes.steps.list --from 2026-01-01
+gohealthcli raw data-type steps --from 2026-01-01
 ```
 
 ## Output Sketch
@@ -59,6 +102,7 @@ connection_id: googlehealth:111111256096816351
 data_types: 4
 data_points_seen: 12043
 data_points_new: 11880
+data_points_updated: 12
 rollups_seen: 144
 ```
 
@@ -70,6 +114,7 @@ JSON mode:
   "data_types": 4,
   "data_points_seen": 12043,
   "data_points_new": 11880,
+  "data_points_updated": 12,
   "rollups_seen": 144
 }
 ```
