@@ -27,5 +27,18 @@ model, scope, risks, and early architecture explicit before writing the CLI.
 
 ## Status
 
-Planning scaffold only. No CLI implementation yet.
+Early implementation. The CLI is runnable with command dispatch, `--version`,
+and a local-only `doctor` diagnostic that reports whether a gohealthcli setup
+exists. Output is available in human, `--json`, and `--plain` modes, with
+machine-readable data on stdout and human hints on stderr.
+
+```bash
+gohealthcli --version
+gohealthcli doctor            # human status on stdout, hints on stderr
+gohealthcli doctor --json     # stable JSON on stdout
+gohealthcli doctor --plain    # stable key/value on stdout
+```
+
+`doctor` exits non-zero when the local setup is missing, so scripts can gate on
+a healthy setup. Run the local test gate with `make check`.
 
