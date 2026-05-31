@@ -134,12 +134,10 @@ func runDoctor(args []string, configPath, archivePath string, mode outputMode, s
 	mode = outputMode{json: *doctorJSONOutput, plain: *doctorPlainOutput}
 	if fileExists(*doctorConfigPath) && fileExists(*doctorArchivePath) {
 		if err := validateConfig(*doctorConfigPath, *doctorArchivePath); err != nil {
-			fmt.Fprintf(stderr, "config check failed: %v\n", err)
-			return 1
+			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, fmt.Sprintf("config check failed: %v", err), mode, stdout, stderr)
 		}
 		if err := validateArchive(*doctorArchivePath); err != nil {
-			fmt.Fprintf(stderr, "Health Archive check failed: %v\n", err)
-			return 1
+			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, fmt.Sprintf("Health Archive check failed: %v", err), mode, stdout, stderr)
 		}
 		result := doctorResult{
 			Status:      "ok",
@@ -154,8 +152,7 @@ func runDoctor(args []string, configPath, archivePath string, mode outputMode, s
 		return 0
 	}
 	if fileExists(*doctorConfigPath) || fileExists(*doctorArchivePath) {
-		fmt.Fprintln(stderr, "partial local setup found; run `gohealthcli init` after moving existing config or Health Archive")
-		return 1
+		return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, "partial local setup found; run `gohealthcli init` after moving existing config or Health Archive", mode, stdout, stderr)
 	}
 
 	result := doctorResult{
@@ -172,6 +169,20 @@ func runDoctor(args []string, configPath, archivePath string, mode outputMode, s
 
 	fmt.Fprintln(stderr, "run `gohealthcli init` to create local config and Health Archive")
 	return setupMissingExitCode
+}
+
+func runDoctorInvalid(configPath, archivePath, message string, mode outputMode, stdout, stderr io.Writer) int {
+	result := doctorResult{
+		Status:      "setup_invalid",
+		ConfigPath:  configPath,
+		ArchivePath: archivePath,
+		Message:     message,
+	}
+	if err := writeDoctorResult(result, mode, stdout); err != nil {
+		fmt.Fprintf(stderr, "write output: %v\n", err)
+		return 1
+	}
+	return 1
 }
 
 func runInit(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
@@ -335,7 +346,7 @@ func configContent(archivePath string, source oauthClientSource) string {
 	return builder.String()
 }
 
-func createArchive(archivePath string) error {
+func createArchive(archivePath string) (err error) {
 	if err := ensureOwnerOnlyDir(filepath.Dir(archivePath)); err != nil {
 		return err
 	}
@@ -343,6 +354,11 @@ func createArchive(archivePath string) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if err != nil {
+			_ = os.Remove(archivePath)
+		}
+	}()
 	if err := file.Close(); err != nil {
 		return err
 	}
@@ -362,7 +378,7 @@ func createArchive(archivePath string) error {
 }
 
 func validateConfig(configPath, archivePath string) error {
-	if err := ensureOwnerOnlyDir(filepath.Dir(configPath)); err != nil {
+	if err := validateOwnerOnlyDir(filepath.Dir(configPath)); err != nil {
 		return err
 	}
 	info, err := os.Stat(configPath)
@@ -410,7 +426,7 @@ func validateConfig(configPath, archivePath string) error {
 }
 
 func validateArchive(archivePath string) error {
-	if err := ensureOwnerOnlyDir(filepath.Dir(archivePath)); err != nil {
+	if err := validateOwnerOnlyDir(filepath.Dir(archivePath)); err != nil {
 		return err
 	}
 	info, err := os.Stat(archivePath)
@@ -451,14 +467,7 @@ func validateArchive(archivePath string) error {
 
 func ensureOwnerOnlyDir(dir string) error {
 	if info, err := os.Stat(dir); err == nil {
-		if !info.IsDir() {
-			return fmt.Errorf("%s is not a directory", dir)
-		}
-		if usesPOSIXPermissions() && info.Mode().Perm() != 0o700 {
-			mode := info.Mode().Perm()
-			return fmt.Errorf("%s is not owner-only: mode %04o, want 0700", dir, mode)
-		}
-		return nil
+		return validateOwnerOnlyDirInfo(dir, info)
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -471,21 +480,54 @@ func ensureOwnerOnlyDir(dir string) error {
 	return os.Chmod(dir, 0o700)
 }
 
+func validateOwnerOnlyDir(dir string) error {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	return validateOwnerOnlyDirInfo(dir, info)
+}
+
+func validateOwnerOnlyDirInfo(dir string, info os.FileInfo) error {
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a directory", dir)
+	}
+	if usesPOSIXPermissions() && info.Mode().Perm() != 0o700 {
+		mode := info.Mode().Perm()
+		return fmt.Errorf("%s is not owner-only: mode %04o, want 0700", dir, mode)
+	}
+	return nil
+}
+
 func usesPOSIXPermissions() bool {
 	return runtime.GOOS != "windows"
 }
 
 func openArchive(archivePath string) (*sql.DB, error) {
-	query := url.Values{}
-	query.Add("_pragma", "foreign_keys=on")
-	dsn := (&url.URL{Scheme: "file", Path: filepath.ToSlash(archivePath), RawQuery: query.Encode()}).String()
-
+	dsn, err := archiveDSN(archivePath)
+	if err != nil {
+		return nil, err
+	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
 	return db, nil
+}
+
+func archiveDSN(archivePath string) (string, error) {
+	absPath, err := filepath.Abs(archivePath)
+	if err != nil {
+		return "", err
+	}
+	uriPath := filepath.ToSlash(absPath)
+	if runtime.GOOS == "windows" && !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	query := url.Values{}
+	query.Add("_pragma", "foreign_keys=on")
+	return (&url.URL{Scheme: "file", Path: uriPath, RawQuery: query.Encode()}).String(), nil
 }
 
 func applyMigrations(db *sql.DB) error {
@@ -495,22 +537,27 @@ func applyMigrations(db *sql.DB) error {
 	}
 	defer tx.Rollback()
 
-	for _, statement := range initialMigrationStatements(time.Now().UTC().Format(time.RFC3339)) {
+	for _, statement := range initialMigrationStatements() {
 		if _, err := tx.Exec(statement); err != nil {
 			return err
 		}
 	}
+	if _, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (1, 'initial_archive_schema', ?)`, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 1`); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
-func initialMigrationStatements(appliedAt string) []string {
+func initialMigrationStatements() []string {
 	return []string{
 		`CREATE TABLE schema_migrations (
 			version INTEGER PRIMARY KEY,
 			name TEXT NOT NULL,
 			applied_at TEXT NOT NULL
 		)`,
-		fmt.Sprintf(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (1, 'initial_archive_schema', %s)`, sqlString(appliedAt)),
 		`CREATE TABLE connections (
 			id TEXT PRIMARY KEY,
 			provider_name TEXT NOT NULL,
@@ -586,12 +633,7 @@ func initialMigrationStatements(appliedAt string) []string {
 			error_summary TEXT,
 			FOREIGN KEY (connection_id) REFERENCES connections(id)
 		)`,
-		`PRAGMA user_version = 1`,
 	}
-}
-
-func sqlString(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 func writeDoctorResult(result doctorResult, mode outputMode, stdout io.Writer) error {
@@ -617,6 +659,10 @@ func writeDoctorResult(result doctorResult, mode outputMode, stdout io.Writer) e
 	switch result.Status {
 	case "ok":
 		if _, err := fmt.Fprintln(stdout, "Setup ok"); err != nil {
+			return err
+		}
+	case "setup_invalid":
+		if _, err := fmt.Fprintln(stdout, "Setup invalid"); err != nil {
 			return err
 		}
 	default:

@@ -460,6 +460,53 @@ func TestDoctorReportsInitializedSetup(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestDoctorJSONReportsInvalidSetup(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	if err := os.WriteFile(configPath, []byte("placeholder"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 1 {
+		t.Fatalf("doctor exit code = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	if got["status"] != "setup_invalid" {
+		t.Fatalf("status = %v, want setup_invalid", got["status"])
+	}
+	assertJSONString(t, got, "config_path", configPath)
+	assertJSONString(t, got, "archive_path", archivePath)
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "config check failed") {
+		t.Fatalf("message = %T(%v), want config check failure", got["message"], got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestInitStoresSecretProviderReference(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
@@ -721,6 +768,32 @@ func TestInitJSONReportsWriteFailure(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "write output") {
 		t.Fatalf("stderr missing write error: %q", stderr.String())
+	}
+}
+
+func TestValidateConfigDoesNotCreateMissingParent(t *testing.T) {
+	tempDir := t.TempDir()
+	parentPath := filepath.Join(tempDir, "missing")
+
+	err := validateConfig(filepath.Join(parentPath, "config.toml"), filepath.Join(tempDir, "archive.sqlite"))
+	if err == nil {
+		t.Fatal("validateConfig error = nil, want missing parent failure")
+	}
+	if _, statErr := os.Stat(parentPath); !os.IsNotExist(statErr) {
+		t.Fatalf("parent stat err = %v, want not exist", statErr)
+	}
+}
+
+func TestArchiveDSNUsesAbsoluteFileURI(t *testing.T) {
+	dsn, err := archiveDSN("relative.sqlite")
+	if err != nil {
+		t.Fatalf("archiveDSN: %v", err)
+	}
+	if !strings.HasPrefix(dsn, "file:///") {
+		t.Fatalf("dsn = %q, want absolute file URI", dsn)
+	}
+	if !strings.Contains(dsn, "_pragma=foreign_keys%3Don") {
+		t.Fatalf("dsn = %q, want foreign key pragma", dsn)
 	}
 }
 
