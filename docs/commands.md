@@ -28,6 +28,9 @@ planning and normal sync.
 and token expiry shape. `doctor --online` may refresh tokens and check Google
 Health reachability.
 
+Before `init`, `doctor` reports `setup_missing` and exits 2. Machine-readable
+`--json` and `--plain` output goes to stdout; the setup hint goes to stderr.
+
 `connect`: run OAuth browser flow and create a Connection. It consumes resolved
 OAuth client config, does not search Secret Providers, and immediately archives
 Google Identity metadata. Request scopes for configured Data Types.
