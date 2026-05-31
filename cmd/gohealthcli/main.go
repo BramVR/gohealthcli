@@ -39,10 +39,15 @@ var defaultDataTypes = []string{
 }
 
 type doctorResult struct {
-	Status      string `json:"status"`
-	ConfigPath  string `json:"config_path"`
-	ArchivePath string `json:"archive_path"`
-	Message     string `json:"message"`
+	Status            string `json:"status"`
+	ConfigPath        string `json:"config_path"`
+	ArchivePath       string `json:"archive_path"`
+	OAuthClientSource string `json:"oauth_client_source"`
+	CredentialStore   string `json:"credential_store"`
+	SchemaVersion     *int   `json:"schema_version"`
+	ConnectionCount   *int   `json:"connection_count"`
+	TokenStatus       string `json:"token_status"`
+	Message           string `json:"message"`
 }
 
 type initResult struct {
@@ -60,6 +65,31 @@ type oauthClientSource struct {
 	path     string
 	provider string
 	item     string
+}
+
+type credentialStoreConfig struct {
+	kind    string
+	service string
+	path    string
+}
+
+type parsedConfig struct {
+	archivePath         string
+	defaultDataTypes    []string
+	oauthClient         oauthClientSource
+	credentialStore     credentialStoreConfig
+	credentialStoreSeen bool
+}
+
+type configCheck struct {
+	oauthClientSource string
+	credentialStore   string
+}
+
+type archiveCheck struct {
+	schemaVersion   int
+	connectionCount int
+	tokenStatus     string
 }
 
 func main() {
@@ -133,17 +163,24 @@ func runDoctor(args []string, configPath, archivePath string, mode outputMode, s
 
 	mode = outputMode{json: *doctorJSONOutput, plain: *doctorPlainOutput}
 	if fileExists(*doctorConfigPath) && fileExists(*doctorArchivePath) {
-		if err := validateConfig(*doctorConfigPath, *doctorArchivePath); err != nil {
+		config, err := inspectConfig(*doctorConfigPath, *doctorArchivePath)
+		if err != nil {
 			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, fmt.Sprintf("config check failed: %v", err), mode, stdout, stderr)
 		}
-		if err := validateArchive(*doctorArchivePath); err != nil {
+		archive, err := inspectArchive(*doctorArchivePath, true)
+		if err != nil {
 			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, fmt.Sprintf("Health Archive check failed: %v", err), mode, stdout, stderr)
 		}
 		result := doctorResult{
-			Status:      "ok",
-			ConfigPath:  *doctorConfigPath,
-			ArchivePath: *doctorArchivePath,
-			Message:     "local gohealthcli setup is initialized",
+			Status:            "ok",
+			ConfigPath:        *doctorConfigPath,
+			ArchivePath:       *doctorArchivePath,
+			OAuthClientSource: config.oauthClientSource,
+			CredentialStore:   config.credentialStore,
+			SchemaVersion:     &archive.schemaVersion,
+			ConnectionCount:   &archive.connectionCount,
+			TokenStatus:       archive.tokenStatus,
+			Message:           "local gohealthcli setup is initialized",
 		}
 		if err := writeDoctorResult(result, mode, stdout); err != nil {
 			fmt.Fprintf(stderr, "write output: %v\n", err)
@@ -159,6 +196,7 @@ func runDoctor(args []string, configPath, archivePath string, mode outputMode, s
 		Status:      "setup_missing",
 		ConfigPath:  *doctorConfigPath,
 		ArchivePath: *doctorArchivePath,
+		TokenStatus: "unknown",
 		Message:     "local gohealthcli setup not found",
 	}
 
@@ -176,6 +214,7 @@ func runDoctorInvalid(configPath, archivePath, message string, mode outputMode, 
 		Status:      "setup_invalid",
 		ConfigPath:  configPath,
 		ArchivePath: archivePath,
+		TokenStatus: "unknown",
 		Message:     message,
 	}
 	if err := writeDoctorResult(result, mode, stdout); err != nil {
@@ -243,6 +282,10 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 		fmt.Fprintf(stderr, "init: %v\n", err)
 		return 1
 	}
+	if err := validateOAuthClientConfig(source); err != nil {
+		fmt.Fprintf(stderr, "init: %v\n", err)
+		return 1
+	}
 
 	if err := createConfigFile(*initConfigPath, *initArchivePath, source); err != nil {
 		fmt.Fprintf(stderr, "create config: %v\n", err)
@@ -275,7 +318,11 @@ func parseOAuthClientSource(oauthClientFile, secretProvider, oauthClientItem str
 		if secretProvider != "" || oauthClientItem != "" {
 			return oauthClientSource{}, errors.New("use either --oauth-client-file or --secret-provider with --oauth-client-item")
 		}
-		return oauthClientSource{kind: "file", path: oauthClientFile}, nil
+		absPath, err := filepath.Abs(oauthClientFile)
+		if err != nil {
+			return oauthClientSource{}, errors.New("resolve OAuth client file path")
+		}
+		return oauthClientSource{kind: "file", path: absPath}, nil
 	}
 	if secretProvider != "" || oauthClientItem != "" {
 		if secretProvider == "" || oauthClientItem == "" {
@@ -343,6 +390,13 @@ func configContent(archivePath string, source oauthClientSource) string {
 		builder.WriteString(strconv.Quote(source.item))
 		builder.WriteString("\n")
 	}
+	store := defaultCredentialStoreConfig()
+	builder.WriteString("\n[credential_store]\n")
+	builder.WriteString("type = ")
+	builder.WriteString(strconv.Quote(store.kind))
+	builder.WriteString("\nservice = ")
+	builder.WriteString(strconv.Quote(store.service))
+	builder.WriteString("\n")
 	return builder.String()
 }
 
@@ -378,89 +432,539 @@ func createArchive(archivePath string) (err error) {
 }
 
 func validateConfig(configPath, archivePath string) error {
+	_, err := inspectConfig(configPath, archivePath)
+	return err
+}
+
+func inspectConfig(configPath, archivePath string) (configCheck, error) {
 	if err := validateOwnerOnlyDir(filepath.Dir(configPath)); err != nil {
-		return err
+		return configCheck{}, err
 	}
 	info, err := os.Stat(configPath)
 	if err != nil {
-		return err
+		return configCheck{}, err
 	}
 	if info.IsDir() {
-		return fmt.Errorf("%s is a directory", configPath)
+		return configCheck{}, fmt.Errorf("%s is a directory", configPath)
 	}
 	if usesPOSIXPermissions() && info.Mode().Perm() != 0o600 {
 		mode := info.Mode().Perm()
-		return fmt.Errorf("%s is not owner-only: mode %04o, want 0600", configPath, mode)
+		return configCheck{}, fmt.Errorf("%s is not owner-only: mode %04o, want 0600", configPath, mode)
 	}
 
 	configBytes, err := os.ReadFile(configPath)
 	if err != nil {
-		return err
+		return configCheck{}, err
 	}
-	config := string(configBytes)
-	for _, want := range []string{
-		`archive_path = ` + strconv.Quote(archivePath),
-		`default_data_types = [`,
-		`"steps"`,
-		`"weight"`,
-		`[oauth_client]`,
-		`source = `,
-	} {
-		if !strings.Contains(config, want) {
-			return fmt.Errorf("missing %s", want)
+	config, err := parseConfig(string(configBytes))
+	if err != nil {
+		return configCheck{}, err
+	}
+	if config.archivePath == "" {
+		return configCheck{}, errors.New("missing archive_path")
+	}
+	if config.archivePath != archivePath {
+		return configCheck{}, fmt.Errorf("archive_path points to %s, want %s", config.archivePath, archivePath)
+	}
+	if err := validateDefaultDataTypes(config.defaultDataTypes); err != nil {
+		return configCheck{}, err
+	}
+	if err := validateOAuthClientConfig(config.oauthClient); err != nil {
+		return configCheck{}, err
+	}
+	if !config.credentialStoreSeen && config.credentialStore.kind == "" {
+		config.credentialStore = defaultCredentialStoreConfig()
+	}
+	if err := validateCredentialStoreConfig(config.credentialStore); err != nil {
+		return configCheck{}, err
+	}
+	return configCheck{
+		oauthClientSource: config.oauthClient.kind,
+		credentialStore:   config.credentialStore.kind,
+	}, nil
+}
+
+func parseConfig(content string) (parsedConfig, error) {
+	var config parsedConfig
+	section := ""
+	lines := strings.Split(content, "\n")
+	for index := 0; index < len(lines); index++ {
+		line := strings.TrimSpace(stripInlineComment(lines[index]))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"))
+			if section == "credential_store" {
+				config.credentialStoreSeen = true
+			}
+			continue
+		}
+
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return parsedConfig{}, fmt.Errorf("malformed config line %d", index+1)
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+
+		if section == "" && key == "default_data_types" {
+			dataTypes, nextIndex, err := parseStringArray(lines, index, value)
+			if err != nil {
+				return parsedConfig{}, err
+			}
+			config.defaultDataTypes = dataTypes
+			index = nextIndex
+			continue
+		}
+
+		parsedValue, err := parseQuotedValue(value, key)
+		if err != nil {
+			return parsedConfig{}, err
+		}
+		switch section {
+		case "":
+			if key == "archive_path" {
+				config.archivePath = parsedValue
+			}
+		case "oauth_client":
+			switch key {
+			case "source":
+				config.oauthClient.kind = parsedValue
+			case "path":
+				config.oauthClient.path = parsedValue
+			case "provider":
+				config.oauthClient.provider = parsedValue
+			case "item":
+				config.oauthClient.item = parsedValue
+			}
+		case "credential_store":
+			switch key {
+			case "type":
+				config.credentialStore.kind = parsedValue
+			case "service":
+				config.credentialStore.service = parsedValue
+			case "path":
+				config.credentialStore.path = parsedValue
+			}
 		}
 	}
-	switch {
-	case strings.Contains(config, `source = "file"`):
-		if !strings.Contains(config, `path = `) {
+	return config, nil
+}
+
+func parseStringArray(lines []string, startIndex int, firstValue string) ([]string, int, error) {
+	if strings.HasPrefix(firstValue, "[") && firstValue != "[" {
+		if strings.HasSuffix(firstValue, "]") {
+			values, err := parseInlineStringArray(firstValue)
+			if err != nil {
+				return nil, startIndex, err
+			}
+			return values, startIndex, nil
+		}
+		firstLine := strings.TrimSpace(strings.TrimPrefix(firstValue, "["))
+		values, err := parseStringArrayItems(firstLine)
+		if err != nil {
+			return nil, startIndex, err
+		}
+		return parseStringArrayContinuation(lines, startIndex, values)
+	}
+	if firstValue != "[" {
+		return nil, startIndex, errors.New("default_data_types must be a string array")
+	}
+	return parseStringArrayContinuation(lines, startIndex, nil)
+}
+
+func parseStringArrayContinuation(lines []string, startIndex int, values []string) ([]string, int, error) {
+	for index := startIndex + 1; index < len(lines); index++ {
+		line := strings.TrimSpace(stripInlineComment(lines[index]))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if line == "]" {
+			return values, index, nil
+		}
+		closeArray := strings.HasSuffix(line, "]")
+		if closeArray {
+			line = strings.TrimSpace(strings.TrimSuffix(line, "]"))
+		}
+		lineValues, err := parseStringArrayItems(line)
+		if err != nil {
+			return nil, startIndex, err
+		}
+		values = append(values, lineValues...)
+		if closeArray {
+			return values, index, nil
+		}
+	}
+	return nil, startIndex, errors.New("default_data_types array is not closed")
+}
+
+func parseInlineStringArray(value string) ([]string, error) {
+	if !strings.HasSuffix(value, "]") {
+		return nil, errors.New("default_data_types array is not closed")
+	}
+	inner := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(value, "["), "]"))
+	if inner == "" {
+		return []string{}, nil
+	}
+	return parseStringArrayItems(inner)
+}
+
+func parseStringArrayItems(value string) ([]string, error) {
+	var values []string
+	start := 0
+	inString := false
+	escaped := false
+	for index, char := range value {
+		switch {
+		case escaped:
+			escaped = false
+		case char == '\\' && inString:
+			escaped = true
+		case char == '"':
+			inString = !inString
+		case char == ',' && !inString:
+			parsedValue, err := parseInlineStringArrayValue(value[start:index])
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, parsedValue)
+			start = index + 1
+		}
+	}
+	tail := strings.TrimSpace(value[start:])
+	if tail == "" {
+		return values, nil
+	}
+	parsedValue, err := parseInlineStringArrayValue(tail)
+	if err != nil {
+		return nil, err
+	}
+	values = append(values, parsedValue)
+	return values, nil
+}
+
+func parseInlineStringArrayValue(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", errors.New("default_data_types array contains an empty value")
+	}
+	parsed, err := parseQuotedValue(value, "default_data_types")
+	if err != nil {
+		return "", err
+	}
+	return parsed, nil
+}
+
+func stripInlineComment(line string) string {
+	inString := false
+	escaped := false
+	for index, char := range line {
+		switch {
+		case escaped:
+			escaped = false
+		case char == '\\' && inString:
+			escaped = true
+		case char == '"':
+			inString = !inString
+		case char == '#' && !inString:
+			return line[:index]
+		}
+	}
+	return line
+}
+
+func parseQuotedValue(value, key string) (string, error) {
+	parsed, err := strconv.Unquote(value)
+	if err != nil {
+		return "", fmt.Errorf("%s must be a quoted string", key)
+	}
+	return parsed, nil
+}
+
+func validateOAuthClientConfig(source oauthClientSource) error {
+	switch source.kind {
+	case "file":
+		if source.path == "" {
 			return errors.New("missing OAuth client file path")
 		}
-	case strings.Contains(config, `source = "secret_provider"`):
-		if !strings.Contains(config, `provider = `) || !strings.Contains(config, `item = `) {
+		if err := validateOAuthClientFile(source.path); err != nil {
+			return err
+		}
+	case "secret_provider":
+		if source.provider == "" || source.item == "" {
 			return errors.New("missing Secret Provider reference")
 		}
-	default:
+	case "":
 		return errors.New("missing OAuth client source")
+	default:
+		return errors.New("unsupported OAuth client source")
+	}
+	return nil
+}
+
+func validateOAuthClientFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return errors.New("OAuth client file is missing")
+		}
+		return errors.New("OAuth client file cannot be checked")
+	}
+	if info.IsDir() {
+		return errors.New("OAuth client file path is a directory")
+	}
+	if usesPOSIXPermissions() && info.Mode().Perm() != 0o600 {
+		return fmt.Errorf("OAuth client file is not owner-only: mode %04o, want 0600", info.Mode().Perm())
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return errors.New("OAuth client file cannot be read")
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(content, &raw); err != nil || len(raw) == 0 {
+		return errors.New("OAuth client file must contain a JSON object")
+	}
+	return nil
+}
+
+func defaultCredentialStoreConfig() credentialStoreConfig {
+	return credentialStoreConfig{kind: "os_native", service: "gohealthcli"}
+}
+
+func validateCredentialStoreConfig(store credentialStoreConfig) error {
+	switch store.kind {
+	case "os_native":
+		if store.service == "" {
+			return errors.New("missing Credential Store service name")
+		}
+	case "file":
+		if store.path == "" {
+			return errors.New("missing Credential Store file path")
+		}
+		parent := filepath.Dir(store.path)
+		if _, err := os.Stat(parent); err == nil {
+			if err := validateOwnerOnlyDir(parent); err != nil {
+				return fmt.Errorf("Credential Store file parent: %w", err)
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if info, err := os.Stat(store.path); err == nil {
+			if info.IsDir() {
+				return fmt.Errorf("%s is a directory", store.path)
+			}
+			if usesPOSIXPermissions() && info.Mode().Perm() != 0o600 {
+				return fmt.Errorf("%s is not owner-only: mode %04o, want 0600", store.path, info.Mode().Perm())
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	case "":
+		return errors.New("missing Credential Store configuration")
+	default:
+		return errors.New("unsupported Credential Store type")
+	}
+	return nil
+}
+
+func validateDefaultDataTypes(dataTypes []string) error {
+	if dataTypes == nil {
+		return errors.New("missing default_data_types")
+	}
+	if len(dataTypes) == 0 {
+		return errors.New("default Data Types must include at least one Data Type")
+	}
+	allowed := make(map[string]struct{}, len(defaultDataTypes))
+	for _, dataType := range defaultDataTypes {
+		allowed[dataType] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(dataTypes))
+	for _, dataType := range dataTypes {
+		if _, ok := allowed[dataType]; !ok {
+			return fmt.Errorf("unsupported default Data Type %s", dataType)
+		}
+		if _, ok := seen[dataType]; ok {
+			return fmt.Errorf("duplicate default Data Type %s", dataType)
+		}
+		seen[dataType] = struct{}{}
 	}
 	return nil
 }
 
 func validateArchive(archivePath string) error {
+	_, err := inspectArchive(archivePath, false)
+	return err
+}
+
+func inspectArchive(archivePath string, validateTokens bool) (archiveCheck, error) {
 	if err := validateOwnerOnlyDir(filepath.Dir(archivePath)); err != nil {
-		return err
+		return archiveCheck{}, err
 	}
 	info, err := os.Stat(archivePath)
 	if err != nil {
-		return err
+		return archiveCheck{}, err
 	}
 	if info.IsDir() {
-		return fmt.Errorf("%s is a directory", archivePath)
+		return archiveCheck{}, fmt.Errorf("%s is a directory", archivePath)
 	}
 	if usesPOSIXPermissions() && info.Mode().Perm() != 0o600 {
 		mode := info.Mode().Perm()
-		return fmt.Errorf("%s is not owner-only: mode %04o, want 0600", archivePath, mode)
+		return archiveCheck{}, fmt.Errorf("%s is not owner-only: mode %04o, want 0600", archivePath, mode)
 	}
 
-	db, err := openArchive(archivePath)
+	db, err := openArchiveReadOnly(archivePath)
 	if err != nil {
-		return err
+		return archiveCheck{}, err
 	}
 	defer db.Close()
 
 	var userVersion int
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
-		return err
+		return archiveCheck{}, err
 	}
 	if userVersion != currentSchemaVersion {
-		return fmt.Errorf("schema version %d, want %d", userVersion, currentSchemaVersion)
+		return archiveCheck{}, fmt.Errorf("schema version %d, want %d", userVersion, currentSchemaVersion)
 	}
 
 	var migrationCount int
 	if err := db.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version = 1 AND name = 'initial_archive_schema'`).Scan(&migrationCount); err != nil {
-		return err
+		return archiveCheck{}, err
 	}
 	if migrationCount != 1 {
-		return errors.New("missing schema migration 1")
+		return archiveCheck{}, errors.New("missing schema migration 1")
+	}
+	if !validateTokens {
+		return archiveCheck{schemaVersion: userVersion}, nil
+	}
+	count, tokenStatus, err := inspectConnectionTokenMetadata(db)
+	if err != nil {
+		return archiveCheck{}, err
+	}
+	return archiveCheck{
+		schemaVersion:   userVersion,
+		connectionCount: count,
+		tokenStatus:     tokenStatus,
+	}, nil
+}
+
+func inspectConnectionTokenMetadata(db *sql.DB) (int, string, error) {
+	rows, err := db.Query(`SELECT id, token_metadata_json FROM connections ORDER BY id`)
+	if err != nil {
+		return 0, "", err
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var connectionID string
+		var metadata string
+		if err := rows.Scan(&connectionID, &metadata); err != nil {
+			return 0, "", err
+		}
+		count++
+		if err := validateTokenMetadata(metadata); err != nil {
+			return 0, "", fmt.Errorf("Connection %s: %w", connectionID, err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, "", err
+	}
+	if count == 0 {
+		return 0, "not_connected", nil
+	}
+	return count, "metadata_present", nil
+}
+
+func validateTokenMetadata(metadata string) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(metadata), &raw); err != nil {
+		return errors.New("token metadata is not valid JSON")
+	}
+	if len(raw) == 0 {
+		return errors.New("missing token metadata")
+	}
+	if metadataContainsSecretKeys(raw) {
+		return errors.New("token metadata contains forbidden secret material")
+	}
+	if _, err := requireJSONString(raw, "credential_store_key"); err != nil {
+		return err
+	}
+	expiresAt, err := requireJSONString(raw, "expires_at")
+	if err != nil {
+		return err
+	}
+	if _, err := time.Parse(time.RFC3339, expiresAt); err != nil {
+		return errors.New("token metadata expiry is not RFC3339")
+	}
+	if err := requireJSONStringArray(raw, "scopes"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func metadataContainsSecretKeys(value any) bool {
+	switch typed := value.(type) {
+	case map[string]json.RawMessage:
+		for key, nested := range typed {
+			if secretMetadataKey(key) {
+				return true
+			}
+			var decoded any
+			if err := json.Unmarshal(nested, &decoded); err == nil && metadataContainsSecretKeys(decoded) {
+				return true
+			}
+		}
+	case map[string]any:
+		for key, nested := range typed {
+			if secretMetadataKey(key) || metadataContainsSecretKeys(nested) {
+				return true
+			}
+		}
+	case []any:
+		for _, nested := range typed {
+			if metadataContainsSecretKeys(nested) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func secretMetadataKey(key string) bool {
+	lower := strings.ToLower(key)
+	normalized := strings.NewReplacer("_", "", "-", "").Replace(lower)
+	return strings.Contains(normalized, "accesstoken") ||
+		strings.Contains(normalized, "refreshtoken") ||
+		strings.Contains(normalized, "clientsecret") ||
+		strings.Contains(normalized, "idtoken")
+}
+
+func requireJSONString(raw map[string]json.RawMessage, key string) (string, error) {
+	value, ok := raw[key]
+	if !ok {
+		return "", fmt.Errorf("missing token metadata %s", key)
+	}
+	var parsed string
+	if err := json.Unmarshal(value, &parsed); err != nil || parsed == "" {
+		return "", fmt.Errorf("token metadata %s must be a non-empty string", key)
+	}
+	return parsed, nil
+}
+
+func requireJSONStringArray(raw map[string]json.RawMessage, key string) error {
+	value, ok := raw[key]
+	if !ok {
+		return fmt.Errorf("missing token metadata %s", key)
+	}
+	var parsed []string
+	if err := json.Unmarshal(value, &parsed); err != nil || len(parsed) == 0 {
+		return fmt.Errorf("token metadata %s must be a non-empty string array", key)
+	}
+	for _, item := range parsed {
+		if strings.TrimSpace(item) == "" {
+			return fmt.Errorf("token metadata %s must not contain empty strings", key)
+		}
 	}
 	return nil
 }
@@ -504,10 +1008,22 @@ func usesPOSIXPermissions() bool {
 }
 
 func openArchive(archivePath string) (*sql.DB, error) {
-	dsn, err := archiveDSN(archivePath)
+	dsn, err := archiveDSN(archivePath, false)
 	if err != nil {
 		return nil, err
 	}
+	return openArchiveDSN(dsn)
+}
+
+func openArchiveReadOnly(archivePath string) (*sql.DB, error) {
+	dsn, err := archiveDSN(archivePath, true)
+	if err != nil {
+		return nil, err
+	}
+	return openArchiveDSN(dsn)
+}
+
+func openArchiveDSN(dsn string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -516,7 +1032,7 @@ func openArchive(archivePath string) (*sql.DB, error) {
 	return db, nil
 }
 
-func archiveDSN(archivePath string) (string, error) {
+func archiveDSN(archivePath string, readOnly bool) (string, error) {
 	absPath, err := filepath.Abs(archivePath)
 	if err != nil {
 		return "", err
@@ -527,6 +1043,9 @@ func archiveDSN(archivePath string) (string, error) {
 	}
 	query := url.Values{}
 	query.Add("_pragma", "foreign_keys=on")
+	if readOnly {
+		query.Add("mode", "ro")
+	}
 	return (&url.URL{Scheme: "file", Path: uriPath, RawQuery: query.Encode()}).String(), nil
 }
 
@@ -652,6 +1171,31 @@ func writeDoctorResult(result doctorResult, mode outputMode, stdout io.Writer) e
 		if _, err := fmt.Fprintf(stdout, "archive_path: %s\n", result.ArchivePath); err != nil {
 			return err
 		}
+		if result.OAuthClientSource != "" {
+			if _, err := fmt.Fprintf(stdout, "oauth_client_source: %s\n", result.OAuthClientSource); err != nil {
+				return err
+			}
+		}
+		if result.CredentialStore != "" {
+			if _, err := fmt.Fprintf(stdout, "credential_store: %s\n", result.CredentialStore); err != nil {
+				return err
+			}
+		}
+		if result.SchemaVersion != nil {
+			if _, err := fmt.Fprintf(stdout, "schema_version: %d\n", *result.SchemaVersion); err != nil {
+				return err
+			}
+		}
+		if result.ConnectionCount != nil {
+			if _, err := fmt.Fprintf(stdout, "connection_count: %d\n", *result.ConnectionCount); err != nil {
+				return err
+			}
+		}
+		if result.TokenStatus != "" {
+			if _, err := fmt.Fprintf(stdout, "token_status: %s\n", result.TokenStatus); err != nil {
+				return err
+			}
+		}
 		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
 		return err
 	}
@@ -675,6 +1219,31 @@ func writeDoctorResult(result doctorResult, mode outputMode, stdout io.Writer) e
 	}
 	if _, err := fmt.Fprintf(stdout, "Health Archive: %s\n", result.ArchivePath); err != nil {
 		return err
+	}
+	if result.OAuthClientSource != "" {
+		if _, err := fmt.Fprintf(stdout, "OAuth client source: %s\n", result.OAuthClientSource); err != nil {
+			return err
+		}
+	}
+	if result.CredentialStore != "" {
+		if _, err := fmt.Fprintf(stdout, "Credential Store: %s\n", result.CredentialStore); err != nil {
+			return err
+		}
+	}
+	if result.SchemaVersion != nil {
+		if _, err := fmt.Fprintf(stdout, "Schema version: %d\n", *result.SchemaVersion); err != nil {
+			return err
+		}
+	}
+	if result.ConnectionCount != nil {
+		if _, err := fmt.Fprintf(stdout, "Connections: %d\n", *result.ConnectionCount); err != nil {
+			return err
+		}
+	}
+	if result.TokenStatus != "" {
+		if _, err := fmt.Fprintf(stdout, "Token status: %s\n", result.TokenStatus); err != nil {
+			return err
+		}
 	}
 	_, err := fmt.Fprintf(stdout, "Message: %s\n", result.Message)
 	return err

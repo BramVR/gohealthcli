@@ -167,6 +167,9 @@ func TestDoctorPlainReportsMissingSetup(t *testing.T) {
 			t.Fatalf("stdout missing %q:\n%s", want, outText)
 		}
 	}
+	if strings.Contains(outText, "connection_count:") {
+		t.Fatalf("stdout reported uninspected connection count:\n%s", outText)
+	}
 
 	errText := stderr.String()
 	if !strings.Contains(errText, "run `gohealthcli init`") {
@@ -333,6 +336,9 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 		`archive_path = "` + archivePath + `"`,
 		`source = "file"`,
 		`path = "` + oauthClientPath + `"`,
+		`[credential_store]`,
+		`type = "os_native"`,
+		`service = "gohealthcli"`,
 		`"steps"`,
 		`"weight"`,
 	} {
@@ -457,6 +463,50 @@ func TestDoctorReportsInitializedSetup(t *testing.T) {
 	}
 	assertJSONString(t, got, "config_path", configPath)
 	assertJSONString(t, got, "archive_path", archivePath)
+	assertJSONString(t, got, "oauth_client_source", "file")
+	assertJSONString(t, got, "credential_store", "os_native")
+	assertJSONString(t, got, "token_status", "not_connected")
+	if got["schema_version"] != float64(1) {
+		t.Fatalf("schema_version = %v, want 1", got["schema_version"])
+	}
+	if got["connection_count"] != float64(0) {
+		t.Fatalf("connection_count = %v, want 0", got["connection_count"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorPlainReportsOfflineHealthCheck(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--plain",
+	)
+	if code != 0 {
+		t.Fatalf("doctor exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	want := fmt.Sprintf("status: ok\nconfig_path: %s\narchive_path: %s\noauth_client_source: file\ncredential_store: os_native\nschema_version: 1\nconnection_count: 0\ntoken_status: not_connected\nmessage: local gohealthcli setup is initialized\n", configPath, archivePath)
+	if stdout.String() != want {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
@@ -505,6 +555,733 @@ func TestDoctorJSONReportsInvalidSetup(t *testing.T) {
 		t.Fatalf("message = %T(%v), want config check failure", got["message"], got["message"])
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorReportsMalformedOAuthClientReference(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	config := strings.Replace(string(configBytes), `path = "`+filepath.Join(tempDir, "client_secret.json")+`"`+"\n", "", 1)
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 1 {
+		t.Fatalf("doctor exit code = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "OAuth client file path") {
+		t.Fatalf("message = %T(%v), want OAuth client file path failure", got["message"], got["message"])
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorReportsMissingOAuthClientFile(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	oauthClientPath := filepath.Join(tempDir, "client_secret.json")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", oauthClientPath,
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	if err := os.Remove(oauthClientPath); err != nil {
+		t.Fatalf("remove OAuth client file: %v", err)
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 1 {
+		t.Fatalf("doctor exit code = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "OAuth client file") {
+		t.Fatalf("message = %T(%v), want OAuth client file failure", got["message"], got["message"])
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorAcceptsRelativeOAuthClientFileAfterInitFromDifferentDirectory(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	initDir := filepath.Join(tempDir, "init-cwd")
+	doctorDir := filepath.Join(tempDir, "doctor-cwd")
+	if err := os.Mkdir(initDir, 0o700); err != nil {
+		t.Fatalf("create init dir: %v", err)
+	}
+	if err := os.Mkdir(doctorDir, 0o700); err != nil {
+		t.Fatalf("create doctor dir: %v", err)
+	}
+
+	code, _, stderr := runCommandInDir(t,
+		initDir,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", "client_secret.json",
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	oauthClientPath, err := filepath.EvalSymlinks(filepath.Join(initDir, "client_secret.json"))
+	if err != nil {
+		t.Fatalf("resolve OAuth client path: %v", err)
+	}
+	if want := `path = "` + oauthClientPath + `"`; !strings.Contains(string(configBytes), want) {
+		t.Fatalf("config missing absolute OAuth client path %q:\n%s", want, string(configBytes))
+	}
+
+	code, stdout, stderr := runCommandInDir(t,
+		doctorDir,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 0 {
+		t.Fatalf("doctor exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	if got["status"] != "ok" {
+		t.Fatalf("status = %v, want ok", got["status"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorDefaultsLegacyConfigWithoutCredentialStore(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	config := strings.Replace(string(configBytes), "\n[credential_store]\ntype = \"os_native\"\nservice = \"gohealthcli\"\n", "", 1)
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 0 {
+		t.Fatalf("doctor exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "credential_store", "os_native")
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorAcceptsInlineConfigComments(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	config := string(configBytes)
+	config = strings.Replace(config, `archive_path = "`+archivePath+`"`, `archive_path = "`+archivePath+`" # local Health Archive`, 1)
+	config = strings.Replace(config, `"steps",`, `"steps", # default Data Type`, 1)
+	config = strings.Replace(config, `type = "os_native"`, `type = "os_native" # default Credential Store`, 1)
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 0 {
+		t.Fatalf("doctor exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	if got["status"] != "ok" {
+		t.Fatalf("status = %v, want ok", got["status"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorAcceptsInlineDefaultDataTypesArray(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]"
+	inlineDataTypes := "default_data_types = [\"" + strings.Join(defaultDataTypes, "\", \"") + "\"]"
+	config := strings.Replace(string(configBytes), multilineDataTypes, inlineDataTypes, 1)
+	if config == string(configBytes) {
+		t.Fatalf("config replacement failed:\n%s", string(configBytes))
+	}
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 0 {
+		t.Fatalf("doctor exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	if got["status"] != "ok" {
+		t.Fatalf("status = %v, want ok", got["status"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorAcceptsMultivalueDefaultDataTypeRows(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]"
+	config := strings.Replace(string(configBytes), multilineDataTypes, "default_data_types = [\n  \"steps\", \"weight\",\n]", 1)
+	if config == string(configBytes) {
+		t.Fatalf("config replacement failed:\n%s", string(configBytes))
+	}
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 0 {
+		t.Fatalf("doctor exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorAcceptsOpeningLineMultilineDefaultDataTypesArray(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]"
+	config := strings.Replace(string(configBytes), multilineDataTypes, "default_data_types = [\"steps\",\n  \"weight\",\n]", 1)
+	if config == string(configBytes) {
+		t.Fatalf("config replacement failed:\n%s", string(configBytes))
+	}
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 0 {
+		t.Fatalf("doctor exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorAcceptsConfiguredDefaultDataTypeSubset(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]"
+	config := strings.Replace(string(configBytes), multilineDataTypes, `default_data_types = ["steps"]`, 1)
+	if config == string(configBytes) {
+		t.Fatalf("config replacement failed:\n%s", string(configBytes))
+	}
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 0 {
+		t.Fatalf("doctor exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorReportsUnsupportedDefaultDataType(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]"
+	config := strings.Replace(string(configBytes), multilineDataTypes, `default_data_types = ["bogus"]`, 1)
+	if config == string(configBytes) {
+		t.Fatalf("config replacement failed:\n%s", string(configBytes))
+	}
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 1 {
+		t.Fatalf("doctor exit code = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "unsupported default Data Type") {
+		t.Fatalf("message = %T(%v), want unsupported Data Type failure", got["message"], got["message"])
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorReportsMissingDefaultDataTypes(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]\n\n"
+	config := strings.Replace(string(configBytes), multilineDataTypes, "", 1)
+	if config == string(configBytes) {
+		t.Fatalf("config replacement failed:\n%s", string(configBytes))
+	}
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 1 {
+		t.Fatalf("doctor exit code = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "missing default_data_types") {
+		t.Fatalf("message = %T(%v), want missing default_data_types failure", got["message"], got["message"])
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorReportsMalformedCredentialStoreConfig(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	config := strings.Replace(string(configBytes), `type = "os_native"`, `type = "1password"`, 1)
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 1 {
+		t.Fatalf("doctor exit code = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "Credential Store") {
+		t.Fatalf("message = %T(%v), want Credential Store failure", got["message"], got["message"])
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorValidatesConnectionTokenMetadata(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO connections (
+		id,
+		provider_name,
+		google_health_user_id,
+		token_metadata_json,
+		created_at,
+		updated_at
+	) VALUES (?, ?, ?, ?, ?, ?)`,
+		"googlehealth:123",
+		"googlehealth",
+		"123",
+		"{}",
+		"2026-05-31T00:00:00Z",
+		"2026-05-31T00:00:00Z",
+	)
+	if err != nil {
+		t.Fatalf("insert connection: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close archive: %v", err)
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 1 {
+		t.Fatalf("doctor exit code = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "missing token metadata") {
+		t.Fatalf("message = %T(%v), want missing token metadata failure", got["message"], got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+
+	db, err = openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("reopen archive: %v", err)
+	}
+	_, err = db.Exec(`UPDATE connections SET token_metadata_json = ? WHERE id = ?`,
+		`{"credential_store_key":"googlehealth:123","expires_at":"2026-06-01T00:00:00Z","scopes":[""]}`,
+		"googlehealth:123",
+	)
+	if err != nil {
+		t.Fatalf("update token metadata: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close archive: %v", err)
+	}
+
+	code, stdout, stderr = runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 1 {
+		t.Fatalf("doctor exit code = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	got = map[string]any{}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok = got["message"].(string)
+	if !ok || !strings.Contains(message, "empty strings") {
+		t.Fatalf("message = %T(%v), want empty scope failure", got["message"], got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+
+	db, err = openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("reopen archive: %v", err)
+	}
+	_, err = db.Exec(`UPDATE connections SET token_metadata_json = ? WHERE id = ?`,
+		`{"credential_store_key":"googlehealth:123","expires_at":"2026-06-01T00:00:00Z","scopes":["health.activity.read"]}`,
+		"googlehealth:123",
+	)
+	if err != nil {
+		t.Fatalf("update token metadata: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close archive: %v", err)
+	}
+
+	code, stdout, stderr = runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 0 {
+		t.Fatalf("doctor exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	got = map[string]any{}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	if got["connection_count"] != float64(1) {
+		t.Fatalf("connection_count = %v, want 1", got["connection_count"])
+	}
+	assertJSONString(t, got, "token_status", "metadata_present")
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorDoesNotLeakTokenMetadataSecretMaterial(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO connections (
+		id,
+		provider_name,
+		google_health_user_id,
+		token_metadata_json,
+		created_at,
+		updated_at
+	) VALUES (?, ?, ?, ?, ?, ?)`,
+		"googlehealth:123",
+		"googlehealth",
+		"123",
+		`{"credential_store_key":"googlehealth:123","expires_at":"2026-06-01T00:00:00Z","scopes":["health.activity.read"],"nested":{"idToken":"very-secret-value"}}`,
+		"2026-05-31T00:00:00Z",
+		"2026-05-31T00:00:00Z",
+	)
+	if err != nil {
+		t.Fatalf("insert connection: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close archive: %v", err)
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 1 {
+		t.Fatalf("doctor exit code = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	combined := stdout.String() + stderr.String()
+	if strings.Contains(combined, "very-secret-value") {
+		t.Fatalf("output leaked token value: %s", combined)
+	}
+	assertNoSecretWords(t, combined)
 }
 
 func TestInitStoresSecretProviderReference(t *testing.T) {
@@ -583,6 +1360,44 @@ func TestInitRequiresExactOAuthClientSource(t *testing.T) {
 	}
 }
 
+func TestInitRejectsInvalidOAuthClientFileBeforeCreatingSetup(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+
+	code := runInit(
+		[]string{
+			"--config", configPath,
+			"--db", archivePath,
+			"--oauth-client-file", filepath.Join(tempDir, "missing-client.json"),
+		},
+		defaultConfigPath(),
+		defaultArchivePath(),
+		outputMode{},
+		stdout,
+		stderr,
+	)
+
+	if code == 0 {
+		t.Fatalf("exit code = 0, want failure")
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "OAuth client file") {
+		t.Fatalf("stderr missing OAuth client file error: %q", stderr.String())
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("config stat err = %v, want not exist", err)
+	}
+	if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
+		t.Fatalf("archive stat err = %v, want not exist", err)
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestInitIsIdempotentForExistingSetup(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
@@ -596,6 +1411,63 @@ func TestInitIsIdempotentForExistingSetup(t *testing.T) {
 	)
 	if code != 0 {
 		t.Fatalf("initial init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--plain",
+	)
+	if code != 0 {
+		t.Fatalf("second init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "status: already_initialized\n") {
+		t.Fatalf("stdout missing already initialized status:\n%s", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestInitIdempotencyDoesNotRequireHealthyTokenMetadata(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("initial init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO connections (
+		id,
+		provider_name,
+		google_health_user_id,
+		token_metadata_json,
+		created_at,
+		updated_at
+	) VALUES (?, ?, ?, ?, ?, ?)`,
+		"googlehealth:123",
+		"googlehealth",
+		"123",
+		"{}",
+		"2026-05-31T00:00:00Z",
+		"2026-05-31T00:00:00Z",
+	)
+	if err != nil {
+		t.Fatalf("insert connection: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close archive: %v", err)
 	}
 
 	code, stdout, stderr := runCommand(t,
@@ -747,6 +1619,10 @@ func TestInitRejectsExistingUnsafeDirectory(t *testing.T) {
 
 func TestInitJSONReportsWriteFailure(t *testing.T) {
 	tempDir := t.TempDir()
+	oauthClientPath := filepath.Join(tempDir, "client_secret.json")
+	if err := os.WriteFile(oauthClientPath, []byte(`{"installed":{"client_id":"test-client"}}`), 0o600); err != nil {
+		t.Fatalf("write OAuth client file: %v", err)
+	}
 	stderr := new(bytes.Buffer)
 
 	code := runInit(
@@ -754,7 +1630,7 @@ func TestInitJSONReportsWriteFailure(t *testing.T) {
 			"--config", filepath.Join(tempDir, "config", "config.toml"),
 			"--db", filepath.Join(tempDir, "data", "gohealthcli.sqlite"),
 			"--json",
-			"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+			"--oauth-client-file", oauthClientPath,
 		},
 		defaultConfigPath(),
 		defaultArchivePath(),
@@ -785,7 +1661,7 @@ func TestValidateConfigDoesNotCreateMissingParent(t *testing.T) {
 }
 
 func TestArchiveDSNUsesAbsoluteFileURI(t *testing.T) {
-	dsn, err := archiveDSN("relative.sqlite")
+	dsn, err := archiveDSN("relative.sqlite", false)
 	if err != nil {
 		t.Fatalf("archiveDSN: %v", err)
 	}
@@ -795,6 +1671,13 @@ func TestArchiveDSNUsesAbsoluteFileURI(t *testing.T) {
 	if !strings.Contains(dsn, "_pragma=foreign_keys%3Don") {
 		t.Fatalf("dsn = %q, want foreign key pragma", dsn)
 	}
+	readOnlyDSN, err := archiveDSN("relative.sqlite", true)
+	if err != nil {
+		t.Fatalf("archiveDSN readonly: %v", err)
+	}
+	if !strings.Contains(readOnlyDSN, "mode=ro") {
+		t.Fatalf("dsn = %q, want readonly mode", readOnlyDSN)
+	}
 }
 
 func runCommand(t *testing.T, args ...string) (int, *bytes.Buffer, *bytes.Buffer) {
@@ -803,12 +1686,27 @@ func runCommand(t *testing.T, args ...string) (int, *bytes.Buffer, *bytes.Buffer
 	return runCommandWithEnv(t, nil, args...)
 }
 
+func runCommandInDir(t *testing.T, dir string, args ...string) (int, *bytes.Buffer, *bytes.Buffer) {
+	t.Helper()
+
+	return runCommandInDirWithEnv(t, dir, nil, args...)
+}
+
 func runCommandWithEnv(t *testing.T, env []string, args ...string) (int, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
+
+	return runCommandInDirWithEnv(t, "", env, args...)
+}
+
+func runCommandInDirWithEnv(t *testing.T, dir string, env []string, args ...string) (int, *bytes.Buffer, *bytes.Buffer) {
+	t.Helper()
+
+	ensureTestOAuthClientFiles(t, dir, args)
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
 	cmd := exec.Command(testBinaryPath, args...)
+	cmd.Dir = dir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Env = append(os.Environ(), env...)
@@ -822,6 +1720,32 @@ func runCommandWithEnv(t *testing.T, env []string, args ...string) (int, *bytes.
 	}
 	t.Fatalf("run command: %v\nstderr: %s", err, stderr.String())
 	return 1, stdout, stderr
+}
+
+func ensureTestOAuthClientFiles(t *testing.T, dir string, args []string) {
+	t.Helper()
+
+	for index, arg := range args {
+		if arg != "--oauth-client-file" || index+1 >= len(args) {
+			continue
+		}
+		path := args[index+1]
+		if path == "" {
+			continue
+		}
+		if dir != "" && !filepath.IsAbs(path) {
+			path = filepath.Join(dir, path)
+		}
+		if _, err := os.Stat(path); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("stat OAuth client file: %v", err)
+		}
+		content := []byte(`{"installed":{"client_id":"test-client","client_secret":"test-secret"}}`)
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			t.Fatalf("write OAuth client file: %v", err)
+		}
+	}
 }
 
 func assertJSONString(t *testing.T, got map[string]any, key, want string) {
@@ -838,7 +1762,7 @@ func assertJSONString(t *testing.T, got map[string]any, key, want string) {
 
 func assertNoSecretWords(t *testing.T, text string) {
 	t.Helper()
-	for _, word := range []string{"access_token", "refresh_token", "client_secret"} {
+	for _, word := range []string{"access_token", "refresh_token", "client_secret", "id_token", "accessToken", "refreshToken", "clientSecret", "idToken"} {
 		if strings.Contains(text, word) {
 			t.Fatalf("output leaked %s: %s", word, text)
 		}

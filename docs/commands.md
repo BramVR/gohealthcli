@@ -28,11 +28,16 @@ schema migration. Re-running `init` against an existing complete setup reports
 
 `doctor`: check config, archive, OAuth client, Credential Store, token presence,
 and token expiry shape. `doctor --online` may refresh tokens and check Google
-Health reachability.
+Health reachability. Default `doctor` is offline-only: it validates local file
+permissions, config references, the read-only Health Archive schema, and stored
+Connection token metadata without opening a browser or calling a Provider.
 
 Before `init`, `doctor` reports `setup_missing` and exits 2. Invalid or partial
 setup reports `setup_invalid` and exits 1. Machine-readable `--json` and
-`--plain` output goes to stdout; the setup hint goes to stderr.
+`--plain` output goes to stdout; the setup hint goes to stderr. Valid setup
+reports OAuth client source kind, Credential Store kind, schema version,
+Connection count, and token metadata status without printing token values or
+OAuth client secrets.
 
 `connect`: run OAuth browser flow and create a Connection. It consumes resolved
 OAuth client config, does not search Secret Providers, and immediately archives
