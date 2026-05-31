@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -202,7 +203,66 @@ func TestVersionDoesNotCheckSetup(t *testing.T) {
 	}
 }
 
+func TestHelpExitsSuccessfully(t *testing.T) {
+	for _, args := range [][]string{
+		{"--help"},
+		{"doctor", "--help"},
+	} {
+		code, stdout, stderr := runCommand(t, args...)
+
+		if code != 0 {
+			t.Fatalf("%v exit code = %d, want 0\nstderr: %s", args, code, stderr.String())
+		}
+		if stdout.String() != "" {
+			t.Fatalf("%v stdout = %q, want empty", args, stdout.String())
+		}
+		if !strings.Contains(stderr.String(), "Usage of") {
+			t.Fatalf("%v stderr missing usage: %q", args, stderr.String())
+		}
+	}
+}
+
+func TestDoctorDefaultPathsAreUsable(t *testing.T) {
+	home := t.TempDir()
+	xdgConfig := filepath.Join(home, "xdg-config")
+	xdgData := filepath.Join(home, "xdg-data")
+
+	code, stdout, stderr := runCommandWithEnv(t,
+		[]string{
+			"HOME=" + home,
+			"XDG_CONFIG_HOME=" + xdgConfig,
+			"XDG_DATA_HOME=" + xdgData,
+		},
+		"--json",
+		"doctor",
+	)
+
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2\nstderr: %s", code, stderr.String())
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	if got["config_path"] != filepath.Join(xdgConfig, "gohealthcli", "config.toml") {
+		t.Fatalf("config_path = %v, want XDG config path", got["config_path"])
+	}
+	if got["archive_path"] != filepath.Join(xdgData, "gohealthcli", "gohealthcli.sqlite") {
+		t.Fatalf("archive_path = %v, want XDG data path", got["archive_path"])
+	}
+	if strings.Contains(stdout.String(), "~") {
+		t.Fatalf("stdout contains unexpanded home path: %s", stdout.String())
+	}
+}
+
 func runCommand(t *testing.T, args ...string) (int, *bytes.Buffer, *bytes.Buffer) {
+	t.Helper()
+
+	return runCommandWithEnv(t, nil, args...)
+}
+
+func runCommandWithEnv(t *testing.T, env []string, args ...string) (int, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 
 	stdout := new(bytes.Buffer)
@@ -216,6 +276,7 @@ func runCommand(t *testing.T, args ...string) (int, *bytes.Buffer, *bytes.Buffer
 	cmd := exec.Command(binaryPath, args...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	cmd.Env = append(os.Environ(), env...)
 
 	err := cmd.Run()
 	if err == nil {

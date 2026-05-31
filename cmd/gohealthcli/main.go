@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 )
 
 const setupMissingExitCode = 2
@@ -34,6 +36,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	versionOutput := flags.Bool("version", false, "print version and exit")
 
 	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 1
 	}
 
@@ -72,6 +77,9 @@ func runDoctor(args []string, configPath, archivePath string, mode outputMode, s
 	flags.Bool("no-input", false, "never prompt, never wait for browser input")
 
 	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 1
 	}
 	if flags.NArg() != 0 {
@@ -110,9 +118,17 @@ func runDoctor(args []string, configPath, archivePath string, mode outputMode, s
 }
 
 func defaultConfigPath() string {
-	return "~/.config/gohealthcli/config.toml"
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "gohealthcli", "config.toml")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "gohealthcli", "config.toml")
 }
 
 func defaultArchivePath() string {
-	return "~/.local/share/gohealthcli/gohealthcli.sqlite"
+	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+		return filepath.Join(xdg, "gohealthcli", "gohealthcli.sqlite")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "share", "gohealthcli", "gohealthcli.sqlite")
 }
