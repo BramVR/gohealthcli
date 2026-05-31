@@ -680,6 +680,9 @@ func validateOAuthClientConfig(source oauthClientSource) error {
 		if source.path == "" {
 			return errors.New("missing OAuth client file path")
 		}
+		if err := validateOAuthClientFile(source.path); err != nil {
+			return err
+		}
 	case "secret_provider":
 		if source.provider == "" || source.item == "" {
 			return errors.New("missing Secret Provider reference")
@@ -688,6 +691,31 @@ func validateOAuthClientConfig(source oauthClientSource) error {
 		return errors.New("missing OAuth client source")
 	default:
 		return errors.New("unsupported OAuth client source")
+	}
+	return nil
+}
+
+func validateOAuthClientFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return errors.New("OAuth client file is missing")
+		}
+		return errors.New("OAuth client file cannot be checked")
+	}
+	if info.IsDir() {
+		return errors.New("OAuth client file path is a directory")
+	}
+	if usesPOSIXPermissions() && info.Mode().Perm() != 0o600 {
+		return fmt.Errorf("OAuth client file is not owner-only: mode %04o, want 0600", info.Mode().Perm())
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return errors.New("OAuth client file cannot be read")
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(content, &raw); err != nil || len(raw) == 0 {
+		return errors.New("OAuth client file must contain a JSON object")
 	}
 	return nil
 }
@@ -924,6 +952,11 @@ func requireJSONStringArray(raw map[string]json.RawMessage, key string) error {
 	var parsed []string
 	if err := json.Unmarshal(value, &parsed); err != nil || len(parsed) == 0 {
 		return fmt.Errorf("token metadata %s must be a non-empty string array", key)
+	}
+	for _, item := range parsed {
+		if strings.TrimSpace(item) == "" {
+			return fmt.Errorf("token metadata %s must not contain empty strings", key)
+		}
 	}
 	return nil
 }

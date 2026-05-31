@@ -603,6 +603,48 @@ func TestDoctorReportsMalformedOAuthClientReference(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestDoctorReportsMissingOAuthClientFile(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	oauthClientPath := filepath.Join(tempDir, "client_secret.json")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", oauthClientPath,
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	if err := os.Remove(oauthClientPath); err != nil {
+		t.Fatalf("remove OAuth client file: %v", err)
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 1 {
+		t.Fatalf("doctor exit code = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "OAuth client file") {
+		t.Fatalf("message = %T(%v), want OAuth client file failure", got["message"], got["message"])
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestDoctorDefaultsLegacyConfigWithoutCredentialStore(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
@@ -1066,6 +1108,40 @@ func TestDoctorValidatesConnectionTokenMetadata(t *testing.T) {
 		t.Fatalf("reopen archive: %v", err)
 	}
 	_, err = db.Exec(`UPDATE connections SET token_metadata_json = ? WHERE id = ?`,
+		`{"credential_store_key":"googlehealth:123","expires_at":"2026-06-01T00:00:00Z","scopes":[""]}`,
+		"googlehealth:123",
+	)
+	if err != nil {
+		t.Fatalf("update token metadata: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close archive: %v", err)
+	}
+
+	code, stdout, stderr = runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 1 {
+		t.Fatalf("doctor exit code = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	got = map[string]any{}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok = got["message"].(string)
+	if !ok || !strings.Contains(message, "empty strings") {
+		t.Fatalf("message = %T(%v), want empty scope failure", got["message"], got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+
+	db, err = openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("reopen archive: %v", err)
+	}
+	_, err = db.Exec(`UPDATE connections SET token_metadata_json = ? WHERE id = ?`,
 		`{"credential_store_key":"googlehealth:123","expires_at":"2026-06-01T00:00:00Z","scopes":["health.activity.read"]}`,
 		"googlehealth:123",
 	)
@@ -1516,6 +1592,8 @@ func runCommand(t *testing.T, args ...string) (int, *bytes.Buffer, *bytes.Buffer
 func runCommandWithEnv(t *testing.T, env []string, args ...string) (int, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 
+	ensureTestOAuthClientFiles(t, args)
+
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
 	cmd := exec.Command(testBinaryPath, args...)
@@ -1532,6 +1610,29 @@ func runCommandWithEnv(t *testing.T, env []string, args ...string) (int, *bytes.
 	}
 	t.Fatalf("run command: %v\nstderr: %s", err, stderr.String())
 	return 1, stdout, stderr
+}
+
+func ensureTestOAuthClientFiles(t *testing.T, args []string) {
+	t.Helper()
+
+	for index, arg := range args {
+		if arg != "--oauth-client-file" || index+1 >= len(args) {
+			continue
+		}
+		path := args[index+1]
+		if path == "" {
+			continue
+		}
+		if _, err := os.Stat(path); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("stat OAuth client file: %v", err)
+		}
+		content := []byte(`{"installed":{"client_id":"test-client","client_secret":"test-secret"}}`)
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			t.Fatalf("write OAuth client file: %v", err)
+		}
+	}
 }
 
 func assertJSONString(t *testing.T, got map[string]any, key, want string) {
