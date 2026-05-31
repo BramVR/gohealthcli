@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1603,6 +1604,56 @@ func TestConnectRejectsWebOAuthClient(t *testing.T) {
 		t.Fatalf("message = %T(%v), want web client rejection", got["message"], got["message"])
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestListenForOAuthRedirectPreservesEmptyLoopbackPath(t *testing.T) {
+	listener, redirectURI, err := listenForOAuthRedirect([]string{"http://localhost"})
+	if err != nil {
+		t.Fatalf("listen for OAuth redirect: %v", err)
+	}
+	defer listener.Close()
+
+	parsed, err := url.Parse(redirectURI)
+	if err != nil {
+		t.Fatalf("parse redirect URI: %v", err)
+	}
+	if parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Path != "" {
+		t.Fatalf("redirect URI = %s, want dynamic loopback with empty path", redirectURI)
+	}
+}
+
+func TestOSNativeCredentialStoreDoesNotSendTokenAsArgument(t *testing.T) {
+	originalOS := currentOS
+	originalSecurityCommand := runSecurityAddGenericPassword
+	currentOS = "darwin"
+	t.Cleanup(func() {
+		currentOS = originalOS
+		runSecurityAddGenericPassword = originalSecurityCommand
+	})
+
+	var gotService string
+	var gotKey string
+	var gotContent []byte
+	runSecurityAddGenericPassword = func(service, key string, content []byte) error {
+		gotService = service
+		gotKey = key
+		gotContent = append([]byte(nil), content...)
+		return nil
+	}
+
+	store, err := newCredentialStore(credentialStoreConfig{kind: "os_native", service: "gohealthcli"})
+	if err != nil {
+		t.Fatalf("new credential store: %v", err)
+	}
+	if err := store.Store("googlehealth:111", map[string]any{"access_token": "access-secret-value"}); err != nil {
+		t.Fatalf("store token: %v", err)
+	}
+	if gotService != "gohealthcli" || gotKey != "googlehealth:111" {
+		t.Fatalf("security command target = (%q, %q), want service/key", gotService, gotKey)
+	}
+	if !bytes.Contains(gotContent, []byte("access-secret-value")) {
+		t.Fatalf("security command content missing token material: %s", string(gotContent))
+	}
 }
 
 func TestInitStoresSecretProviderReference(t *testing.T) {

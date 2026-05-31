@@ -145,6 +145,7 @@ var runOAuthFlow = runBrowserOAuthFlow
 var fetchIdentity = fetchGoogleIdentity
 var currentTime = func() time.Time { return time.Now().UTC() }
 var currentOS = runtime.GOOS
+var runSecurityAddGenericPassword = runSecurityAddGenericPasswordCommand
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -1085,9 +1086,7 @@ func listenForOAuthRedirect(redirectURIs []string) (net.Listener, string, error)
 		if host != "127.0.0.1" && host != "localhost" {
 			continue
 		}
-		if parsed.Path != "" {
-			redirectPath = parsed.Path
-		}
+		redirectPath = parsed.EscapedPath()
 		break
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -1355,10 +1354,16 @@ func (store osNativeCredentialStore) Store(key string, tokenMaterial map[string]
 	}
 	switch currentOS {
 	case "darwin":
-		return exec.Command("security", "add-generic-password", "-U", "-s", store.service, "-a", key, "-w", string(content)).Run()
+		return runSecurityAddGenericPassword(store.service, key, content)
 	default:
 		return errors.New("OS-native Credential Store is not available on this platform; configure credential_store type \"file\"")
 	}
+}
+
+func runSecurityAddGenericPasswordCommand(service, key string, content []byte) error {
+	cmd := exec.Command("security", "add-generic-password", "-U", "-s", service, "-a", key, "-w")
+	cmd.Stdin = strings.NewReader(string(content) + "\n")
+	return cmd.Run()
 }
 
 func ensureSameArchiveIdentity(db *sql.DB, healthUserID string) error {
