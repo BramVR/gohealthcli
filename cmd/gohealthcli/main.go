@@ -282,6 +282,10 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 		fmt.Fprintf(stderr, "init: %v\n", err)
 		return 1
 	}
+	if err := validateOAuthClientConfig(source); err != nil {
+		fmt.Fprintf(stderr, "init: %v\n", err)
+		return 1
+	}
 
 	if err := createConfigFile(*initConfigPath, *initArchivePath, source); err != nil {
 		fmt.Fprintf(stderr, "create config: %v\n", err)

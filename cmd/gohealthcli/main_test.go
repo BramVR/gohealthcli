@@ -1360,6 +1360,44 @@ func TestInitRequiresExactOAuthClientSource(t *testing.T) {
 	}
 }
 
+func TestInitRejectsInvalidOAuthClientFileBeforeCreatingSetup(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+
+	code := runInit(
+		[]string{
+			"--config", configPath,
+			"--db", archivePath,
+			"--oauth-client-file", filepath.Join(tempDir, "missing-client.json"),
+		},
+		defaultConfigPath(),
+		defaultArchivePath(),
+		outputMode{},
+		stdout,
+		stderr,
+	)
+
+	if code == 0 {
+		t.Fatalf("exit code = 0, want failure")
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "OAuth client file") {
+		t.Fatalf("stderr missing OAuth client file error: %q", stderr.String())
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("config stat err = %v, want not exist", err)
+	}
+	if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
+		t.Fatalf("archive stat err = %v, want not exist", err)
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestInitIsIdempotentForExistingSetup(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
@@ -1581,6 +1619,10 @@ func TestInitRejectsExistingUnsafeDirectory(t *testing.T) {
 
 func TestInitJSONReportsWriteFailure(t *testing.T) {
 	tempDir := t.TempDir()
+	oauthClientPath := filepath.Join(tempDir, "client_secret.json")
+	if err := os.WriteFile(oauthClientPath, []byte(`{"installed":{"client_id":"test-client"}}`), 0o600); err != nil {
+		t.Fatalf("write OAuth client file: %v", err)
+	}
 	stderr := new(bytes.Buffer)
 
 	code := runInit(
@@ -1588,7 +1630,7 @@ func TestInitJSONReportsWriteFailure(t *testing.T) {
 			"--config", filepath.Join(tempDir, "config", "config.toml"),
 			"--db", filepath.Join(tempDir, "data", "gohealthcli.sqlite"),
 			"--json",
-			"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+			"--oauth-client-file", oauthClientPath,
 		},
 		defaultConfigPath(),
 		defaultArchivePath(),
