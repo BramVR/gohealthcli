@@ -20,16 +20,19 @@ Human hints and warnings go to stderr. Machine-readable data goes to stdout.
 
 ## Planned Commands
 
-`init`: create config and local directories. Configure OAuth client input from
-an explicit file or Secret Provider reference, plus default Data Types for scope
-planning and normal sync.
+`init`: create owner-only config and local data directories, write the default
+Data Types, record either an explicit OAuth client file reference or exact
+Secret Provider reference, and create an empty Health Archive with the first
+schema migration. Re-running `init` against an existing complete setup reports
+`already_initialized` without rewriting local files.
 
 `doctor`: check config, archive, OAuth client, Credential Store, token presence,
 and token expiry shape. `doctor --online` may refresh tokens and check Google
 Health reachability.
 
-Before `init`, `doctor` reports `setup_missing` and exits 2. Machine-readable
-`--json` and `--plain` output goes to stdout; the setup hint goes to stderr.
+Before `init`, `doctor` reports `setup_missing` and exits 2. Invalid or partial
+setup reports `setup_invalid` and exits 1. Machine-readable `--json` and
+`--plain` output goes to stdout; the setup hint goes to stderr.
 
 `connect`: run OAuth browser flow and create a Connection. It consumes resolved
 OAuth client config, does not search Secret Providers, and immediately archives

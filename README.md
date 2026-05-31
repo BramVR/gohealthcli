@@ -27,5 +27,6 @@ model, scope, risks, and early architecture explicit before writing the CLI.
 
 ## Status
 
-First CLI tracer in progress. `gohealthcli doctor` reports missing local setup,
-and `gohealthcli --version` is available.
+First CLI tracer in progress. `gohealthcli init` creates local config and an
+empty Health Archive, `gohealthcli doctor` reports missing local setup, and
+`gohealthcli --version` is available.
