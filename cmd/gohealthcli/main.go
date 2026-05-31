@@ -44,8 +44,8 @@ type doctorResult struct {
 	ArchivePath       string `json:"archive_path"`
 	OAuthClientSource string `json:"oauth_client_source"`
 	CredentialStore   string `json:"credential_store"`
-	SchemaVersion     int    `json:"schema_version"`
-	ConnectionCount   int    `json:"connection_count"`
+	SchemaVersion     *int   `json:"schema_version"`
+	ConnectionCount   *int   `json:"connection_count"`
 	TokenStatus       string `json:"token_status"`
 	Message           string `json:"message"`
 }
@@ -177,8 +177,8 @@ func runDoctor(args []string, configPath, archivePath string, mode outputMode, s
 			ArchivePath:       *doctorArchivePath,
 			OAuthClientSource: config.oauthClientSource,
 			CredentialStore:   config.credentialStore,
-			SchemaVersion:     archive.schemaVersion,
-			ConnectionCount:   archive.connectionCount,
+			SchemaVersion:     &archive.schemaVersion,
+			ConnectionCount:   &archive.connectionCount,
 			TokenStatus:       archive.tokenStatus,
 			Message:           "local gohealthcli setup is initialized",
 		}
@@ -1140,13 +1140,15 @@ func writeDoctorResult(result doctorResult, mode outputMode, stdout io.Writer) e
 				return err
 			}
 		}
-		if result.SchemaVersion != 0 {
-			if _, err := fmt.Fprintf(stdout, "schema_version: %d\n", result.SchemaVersion); err != nil {
+		if result.SchemaVersion != nil {
+			if _, err := fmt.Fprintf(stdout, "schema_version: %d\n", *result.SchemaVersion); err != nil {
 				return err
 			}
 		}
-		if _, err := fmt.Fprintf(stdout, "connection_count: %d\n", result.ConnectionCount); err != nil {
-			return err
+		if result.ConnectionCount != nil {
+			if _, err := fmt.Fprintf(stdout, "connection_count: %d\n", *result.ConnectionCount); err != nil {
+				return err
+			}
 		}
 		if result.TokenStatus != "" {
 			if _, err := fmt.Fprintf(stdout, "token_status: %s\n", result.TokenStatus); err != nil {
@@ -1187,13 +1189,15 @@ func writeDoctorResult(result doctorResult, mode outputMode, stdout io.Writer) e
 			return err
 		}
 	}
-	if result.SchemaVersion != 0 {
-		if _, err := fmt.Fprintf(stdout, "Schema version: %d\n", result.SchemaVersion); err != nil {
+	if result.SchemaVersion != nil {
+		if _, err := fmt.Fprintf(stdout, "Schema version: %d\n", *result.SchemaVersion); err != nil {
 			return err
 		}
 	}
-	if _, err := fmt.Fprintf(stdout, "Connections: %d\n", result.ConnectionCount); err != nil {
-		return err
+	if result.ConnectionCount != nil {
+		if _, err := fmt.Fprintf(stdout, "Connections: %d\n", *result.ConnectionCount); err != nil {
+			return err
+		}
 	}
 	if result.TokenStatus != "" {
 		if _, err := fmt.Fprintf(stdout, "Token status: %s\n", result.TokenStatus); err != nil {

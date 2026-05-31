@@ -167,6 +167,9 @@ func TestDoctorPlainReportsMissingSetup(t *testing.T) {
 			t.Fatalf("stdout missing %q:\n%s", want, outText)
 		}
 	}
+	if strings.Contains(outText, "connection_count:") {
+		t.Fatalf("stdout reported uninspected connection count:\n%s", outText)
+	}
 
 	errText := stderr.String()
 	if !strings.Contains(errText, "run `gohealthcli init`") {
