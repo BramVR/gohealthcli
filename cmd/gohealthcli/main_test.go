@@ -645,6 +645,61 @@ func TestDoctorReportsMissingOAuthClientFile(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestDoctorAcceptsRelativeOAuthClientFileAfterInitFromDifferentDirectory(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	initDir := filepath.Join(tempDir, "init-cwd")
+	doctorDir := filepath.Join(tempDir, "doctor-cwd")
+	if err := os.Mkdir(initDir, 0o700); err != nil {
+		t.Fatalf("create init dir: %v", err)
+	}
+	if err := os.Mkdir(doctorDir, 0o700); err != nil {
+		t.Fatalf("create doctor dir: %v", err)
+	}
+
+	code, _, stderr := runCommandInDir(t,
+		initDir,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", "client_secret.json",
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	oauthClientPath, err := filepath.EvalSymlinks(filepath.Join(initDir, "client_secret.json"))
+	if err != nil {
+		t.Fatalf("resolve OAuth client path: %v", err)
+	}
+	if want := `path = "` + oauthClientPath + `"`; !strings.Contains(string(configBytes), want) {
+		t.Fatalf("config missing absolute OAuth client path %q:\n%s", want, string(configBytes))
+	}
+
+	code, stdout, stderr := runCommandInDir(t,
+		doctorDir,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 0 {
+		t.Fatalf("doctor exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	if got["status"] != "ok" {
+		t.Fatalf("status = %v, want ok", got["status"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestDoctorDefaultsLegacyConfigWithoutCredentialStore(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
@@ -1589,14 +1644,27 @@ func runCommand(t *testing.T, args ...string) (int, *bytes.Buffer, *bytes.Buffer
 	return runCommandWithEnv(t, nil, args...)
 }
 
+func runCommandInDir(t *testing.T, dir string, args ...string) (int, *bytes.Buffer, *bytes.Buffer) {
+	t.Helper()
+
+	return runCommandInDirWithEnv(t, dir, nil, args...)
+}
+
 func runCommandWithEnv(t *testing.T, env []string, args ...string) (int, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 
-	ensureTestOAuthClientFiles(t, args)
+	return runCommandInDirWithEnv(t, "", env, args...)
+}
+
+func runCommandInDirWithEnv(t *testing.T, dir string, env []string, args ...string) (int, *bytes.Buffer, *bytes.Buffer) {
+	t.Helper()
+
+	ensureTestOAuthClientFiles(t, dir, args)
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
 	cmd := exec.Command(testBinaryPath, args...)
+	cmd.Dir = dir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Env = append(os.Environ(), env...)
@@ -1612,7 +1680,7 @@ func runCommandWithEnv(t *testing.T, env []string, args ...string) (int, *bytes.
 	return 1, stdout, stderr
 }
 
-func ensureTestOAuthClientFiles(t *testing.T, args []string) {
+func ensureTestOAuthClientFiles(t *testing.T, dir string, args []string) {
 	t.Helper()
 
 	for index, arg := range args {
@@ -1622,6 +1690,9 @@ func ensureTestOAuthClientFiles(t *testing.T, args []string) {
 		path := args[index+1]
 		if path == "" {
 			continue
+		}
+		if dir != "" && !filepath.IsAbs(path) {
+			path = filepath.Join(dir, path)
 		}
 		if _, err := os.Stat(path); err == nil {
 			continue

@@ -314,7 +314,11 @@ func parseOAuthClientSource(oauthClientFile, secretProvider, oauthClientItem str
 		if secretProvider != "" || oauthClientItem != "" {
 			return oauthClientSource{}, errors.New("use either --oauth-client-file or --secret-provider with --oauth-client-item")
 		}
-		return oauthClientSource{kind: "file", path: oauthClientFile}, nil
+		absPath, err := filepath.Abs(oauthClientFile)
+		if err != nil {
+			return oauthClientSource{}, errors.New("resolve OAuth client file path")
+		}
+		return oauthClientSource{kind: "file", path: absPath}, nil
 	}
 	if secretProvider != "" || oauthClientItem != "" {
 		if secretProvider == "" || oauthClientItem == "" {
