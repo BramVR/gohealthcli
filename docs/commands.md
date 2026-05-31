@@ -20,9 +20,11 @@ Human hints and warnings go to stderr. Machine-readable data goes to stdout.
 
 ## Planned Commands
 
-`init`: create config and local directories. Configure OAuth client input from
-an explicit file or Secret Provider reference, plus default Data Types for scope
-planning and normal sync.
+`init`: create owner-only config and local data directories, write the default
+Data Types, record either an explicit OAuth client file reference or exact
+Secret Provider reference, and create an empty Health Archive with the first
+schema migration. Re-running `init` against an existing complete setup reports
+`already_initialized` without rewriting local files.
 
 `doctor`: check config, archive, OAuth client, Credential Store, token presence,
 and token expiry shape. `doctor --online` may refresh tokens and check Google
