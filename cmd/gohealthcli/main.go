@@ -1,14 +1,20 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -60,6 +66,17 @@ type initResult struct {
 	Message           string   `json:"message,omitempty"`
 }
 
+type connectResult struct {
+	Status             string `json:"status"`
+	ConnectionID       string `json:"connection_id,omitempty"`
+	ProviderName       string `json:"provider_name,omitempty"`
+	GoogleHealthUserID string `json:"google_health_user_id,omitempty"`
+	LegacyFitbitUserID string `json:"legacy_fitbit_user_id,omitempty"`
+	CredentialStore    string `json:"credential_store,omitempty"`
+	TokenStatus        string `json:"token_status,omitempty"`
+	Message            string `json:"message"`
+}
+
 type oauthClientSource struct {
 	kind     string
 	path     string
@@ -86,11 +103,46 @@ type configCheck struct {
 	credentialStore   string
 }
 
+type fullConfigCheck struct {
+	archivePath      string
+	defaultDataTypes []string
+	oauthClient      oauthClientSource
+	credentialStore  credentialStoreConfig
+}
+
 type archiveCheck struct {
 	schemaVersion   int
 	connectionCount int
 	tokenStatus     string
 }
+
+type oauthClientConfig struct {
+	clientID     string
+	clientSecret string
+	authURI      string
+	tokenURI     string
+	redirectURIs []string
+}
+
+type oauthTokenResponse struct {
+	accessToken            string
+	refreshToken           string
+	tokenType              string
+	scopes                 []string
+	expiresAt              time.Time
+	refreshTokenExpiresAt  *time.Time
+	rawTokenMaterialObject map[string]any
+}
+
+type googleIdentity struct {
+	healthUserID       string
+	legacyFitbitUserID string
+	rawJSON            string
+}
+
+var runOAuthFlow = runBrowserOAuthFlow
+var fetchIdentity = fetchGoogleIdentity
+var currentTime = func() time.Time { return time.Now().UTC() }
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -129,6 +181,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runDoctor(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	case "init":
 		return runInit(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
+	case "connect":
+		return runConnect(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command: %s\n", flags.Arg(0))
 		return 1
@@ -313,6 +367,100 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 	return 0
 }
 
+func runConnect(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("connect", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+
+	connectConfigPath := flags.String("config", configPath, "config file path")
+	connectArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
+	connectJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
+	connectPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
+	noInput := flags.Bool("no-input", false, "never prompt, never wait for browser input")
+
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 1
+	}
+	if flags.NArg() != 0 {
+		fmt.Fprintf(stderr, "unexpected connect argument: %s\n", flags.Arg(0))
+		return 1
+	}
+
+	mode = outputMode{json: *connectJSONOutput, plain: *connectPlainOutput}
+	result, err := connectSetup(*connectConfigPath, *connectArchivePath, *noInput)
+	if err != nil {
+		result.Status = "connect_failed"
+		result.Message = err.Error()
+		if writeErr := writeConnectResult(result, mode, stdout); writeErr != nil {
+			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
+			return 1
+		}
+		return 1
+	}
+	if err := writeConnectResult(result, mode, stdout); err != nil {
+		fmt.Fprintf(stderr, "write output: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func connectSetup(configPath, archivePath string, noInput bool) (connectResult, error) {
+	config, err := inspectFullConfig(configPath, archivePath)
+	if err != nil {
+		return connectResult{}, fmt.Errorf("config check failed: %w", err)
+	}
+	if _, err := inspectArchive(archivePath, false); err != nil {
+		return connectResult{}, fmt.Errorf("Health Archive check failed: %w", err)
+	}
+	if config.oauthClient.kind != "file" {
+		return connectResult{CredentialStore: config.credentialStore.kind}, errors.New("connect requires an OAuth client file source; Secret Provider references are setup-only")
+	}
+	client, err := loadOAuthClientConfig(config.oauthClient.path)
+	if err != nil {
+		return connectResult{CredentialStore: config.credentialStore.kind}, err
+	}
+	token, err := runOAuthFlow(client, oauthScopesForDataTypes(config.defaultDataTypes), noInput)
+	if err != nil {
+		return connectResult{CredentialStore: config.credentialStore.kind}, err
+	}
+	identity, err := fetchIdentity(token.accessToken)
+	if err != nil {
+		return connectResult{CredentialStore: config.credentialStore.kind}, err
+	}
+	connectionID := "googlehealth:" + identity.healthUserID
+	store, err := newCredentialStore(config.credentialStore)
+	if err != nil {
+		return connectResult{CredentialStore: config.credentialStore.kind}, err
+	}
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		return connectResult{CredentialStore: config.credentialStore.kind}, err
+	}
+	defer db.Close()
+	if err := ensureSameArchiveIdentity(db, identity.healthUserID); err != nil {
+		return connectResult{CredentialStore: config.credentialStore.kind}, err
+	}
+	if err := store.Store(connectionID, token.rawTokenMaterialObject); err != nil {
+		return connectResult{CredentialStore: config.credentialStore.kind}, err
+	}
+	if err := upsertConnection(db, connectionID, identity, token, currentTime()); err != nil {
+		return connectResult{CredentialStore: config.credentialStore.kind}, err
+	}
+	return connectResult{
+		Status:             "connected",
+		ConnectionID:       connectionID,
+		ProviderName:       "googlehealth",
+		GoogleHealthUserID: identity.healthUserID,
+		LegacyFitbitUserID: identity.legacyFitbitUserID,
+		CredentialStore:    config.credentialStore.kind,
+		TokenStatus:        "metadata_present",
+		Message:            "Google Identity connected",
+	}, nil
+}
+
 func parseOAuthClientSource(oauthClientFile, secretProvider, oauthClientItem string) (oauthClientSource, error) {
 	if oauthClientFile != "" {
 		if secretProvider != "" || oauthClientItem != "" {
@@ -437,50 +585,63 @@ func validateConfig(configPath, archivePath string) error {
 }
 
 func inspectConfig(configPath, archivePath string) (configCheck, error) {
-	if err := validateOwnerOnlyDir(filepath.Dir(configPath)); err != nil {
-		return configCheck{}, err
-	}
-	info, err := os.Stat(configPath)
+	config, err := inspectFullConfig(configPath, archivePath)
 	if err != nil {
-		return configCheck{}, err
-	}
-	if info.IsDir() {
-		return configCheck{}, fmt.Errorf("%s is a directory", configPath)
-	}
-	if usesPOSIXPermissions() && info.Mode().Perm() != 0o600 {
-		mode := info.Mode().Perm()
-		return configCheck{}, fmt.Errorf("%s is not owner-only: mode %04o, want 0600", configPath, mode)
-	}
-
-	configBytes, err := os.ReadFile(configPath)
-	if err != nil {
-		return configCheck{}, err
-	}
-	config, err := parseConfig(string(configBytes))
-	if err != nil {
-		return configCheck{}, err
-	}
-	if config.archivePath == "" {
-		return configCheck{}, errors.New("missing archive_path")
-	}
-	if config.archivePath != archivePath {
-		return configCheck{}, fmt.Errorf("archive_path points to %s, want %s", config.archivePath, archivePath)
-	}
-	if err := validateDefaultDataTypes(config.defaultDataTypes); err != nil {
-		return configCheck{}, err
-	}
-	if err := validateOAuthClientConfig(config.oauthClient); err != nil {
-		return configCheck{}, err
-	}
-	if !config.credentialStoreSeen && config.credentialStore.kind == "" {
-		config.credentialStore = defaultCredentialStoreConfig()
-	}
-	if err := validateCredentialStoreConfig(config.credentialStore); err != nil {
 		return configCheck{}, err
 	}
 	return configCheck{
 		oauthClientSource: config.oauthClient.kind,
 		credentialStore:   config.credentialStore.kind,
+	}, nil
+}
+
+func inspectFullConfig(configPath, archivePath string) (fullConfigCheck, error) {
+	if err := validateOwnerOnlyDir(filepath.Dir(configPath)); err != nil {
+		return fullConfigCheck{}, err
+	}
+	info, err := os.Stat(configPath)
+	if err != nil {
+		return fullConfigCheck{}, err
+	}
+	if info.IsDir() {
+		return fullConfigCheck{}, fmt.Errorf("%s is a directory", configPath)
+	}
+	if usesPOSIXPermissions() && info.Mode().Perm() != 0o600 {
+		mode := info.Mode().Perm()
+		return fullConfigCheck{}, fmt.Errorf("%s is not owner-only: mode %04o, want 0600", configPath, mode)
+	}
+
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		return fullConfigCheck{}, err
+	}
+	config, err := parseConfig(string(configBytes))
+	if err != nil {
+		return fullConfigCheck{}, err
+	}
+	if config.archivePath == "" {
+		return fullConfigCheck{}, errors.New("missing archive_path")
+	}
+	if config.archivePath != archivePath {
+		return fullConfigCheck{}, fmt.Errorf("archive_path points to %s, want %s", config.archivePath, archivePath)
+	}
+	if err := validateDefaultDataTypes(config.defaultDataTypes); err != nil {
+		return fullConfigCheck{}, err
+	}
+	if err := validateOAuthClientConfig(config.oauthClient); err != nil {
+		return fullConfigCheck{}, err
+	}
+	if !config.credentialStoreSeen && config.credentialStore.kind == "" {
+		config.credentialStore = defaultCredentialStoreConfig()
+	}
+	if err := validateCredentialStoreConfig(config.credentialStore); err != nil {
+		return fullConfigCheck{}, err
+	}
+	return fullConfigCheck{
+		archivePath:      config.archivePath,
+		defaultDataTypes: config.defaultDataTypes,
+		oauthClient:      config.oauthClient,
+		credentialStore:  config.credentialStore,
 	}, nil
 }
 
@@ -721,9 +882,8 @@ func validateOAuthClientFile(path string) error {
 	if err != nil {
 		return errors.New("OAuth client file cannot be read")
 	}
-	var raw map[string]any
-	if err := json.Unmarshal(content, &raw); err != nil || len(raw) == 0 {
-		return errors.New("OAuth client file must contain a JSON object")
+	if _, err := parseOAuthClientConfigContent(content); err != nil {
+		return err
 	}
 	return nil
 }
@@ -790,6 +950,461 @@ func validateDefaultDataTypes(dataTypes []string) error {
 		seen[dataType] = struct{}{}
 	}
 	return nil
+}
+
+func loadOAuthClientConfig(path string) (oauthClientConfig, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return oauthClientConfig{}, errors.New("OAuth client file cannot be read")
+	}
+	return parseOAuthClientConfigContent(content)
+}
+
+func parseOAuthClientConfigContent(content []byte) (oauthClientConfig, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(content, &raw); err != nil {
+		return oauthClientConfig{}, errors.New("OAuth client file must contain a JSON object")
+	}
+	if len(raw) == 0 {
+		return oauthClientConfig{}, errors.New("OAuth client file must contain a JSON object")
+	}
+	var client struct {
+		ClientID     string   `json:"client_id"`
+		ClientSecret string   `json:"client_secret"`
+		AuthURI      string   `json:"auth_uri"`
+		TokenURI     string   `json:"token_uri"`
+		RedirectURIs []string `json:"redirect_uris"`
+	}
+	for _, key := range []string{"installed", "web"} {
+		if nested, ok := raw[key]; ok {
+			if err := json.Unmarshal(nested, &client); err != nil {
+				return oauthClientConfig{}, errors.New("OAuth client file has malformed client details")
+			}
+			break
+		}
+	}
+	if client.ClientID == "" || client.ClientSecret == "" {
+		return oauthClientConfig{}, errors.New("OAuth client file is missing client_id or client_secret")
+	}
+	if client.AuthURI == "" {
+		client.AuthURI = "https://accounts.google.com/o/oauth2/v2/auth"
+	}
+	if client.TokenURI == "" {
+		client.TokenURI = "https://oauth2.googleapis.com/token"
+	}
+	return oauthClientConfig{
+		clientID:     client.ClientID,
+		clientSecret: client.ClientSecret,
+		authURI:      client.AuthURI,
+		tokenURI:     client.TokenURI,
+		redirectURIs: client.RedirectURIs,
+	}, nil
+}
+
+func oauthScopesForDataTypes(dataTypes []string) []string {
+	scopes := map[string]struct{}{
+		"https://www.googleapis.com/auth/googlehealth.profile.readonly": {},
+	}
+	for _, dataType := range dataTypes {
+		switch dataType {
+		case "steps", "exercise", "distance", "total-calories":
+			scopes["https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"] = struct{}{}
+		case "sleep":
+			scopes["https://www.googleapis.com/auth/googlehealth.sleep.readonly"] = struct{}{}
+		default:
+			scopes["https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"] = struct{}{}
+		}
+	}
+	ordered := []string{
+		"https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
+		"https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
+		"https://www.googleapis.com/auth/googlehealth.profile.readonly",
+		"https://www.googleapis.com/auth/googlehealth.sleep.readonly",
+	}
+	var selected []string
+	for _, scope := range ordered {
+		if _, ok := scopes[scope]; ok {
+			selected = append(selected, scope)
+		}
+	}
+	return selected
+}
+
+func runBrowserOAuthFlow(client oauthClientConfig, scopes []string, noInput bool) (oauthTokenResponse, error) {
+	if noInput {
+		return oauthTokenResponse{}, errors.New("connect requires browser OAuth; rerun without --no-input")
+	}
+	listener, redirectURI, err := listenForOAuthRedirect(client.redirectURIs)
+	if err != nil {
+		return oauthTokenResponse{}, err
+	}
+	defer listener.Close()
+
+	state, err := randomURLToken(32)
+	if err != nil {
+		return oauthTokenResponse{}, err
+	}
+	verifier, err := randomURLToken(64)
+	if err != nil {
+		return oauthTokenResponse{}, err
+	}
+	challenge := pkceChallenge(verifier)
+	authURL, err := buildOAuthAuthURL(client, redirectURI, scopes, state, challenge)
+	if err != nil {
+		return oauthTokenResponse{}, err
+	}
+	if err := openBrowser(authURL); err != nil {
+		return oauthTokenResponse{}, fmt.Errorf("open browser: %w", err)
+	}
+	code, err := waitForOAuthCode(listener, state)
+	if err != nil {
+		return oauthTokenResponse{}, err
+	}
+	return exchangeOAuthCode(client, redirectURI, code, verifier)
+}
+
+func listenForOAuthRedirect(redirectURIs []string) (net.Listener, string, error) {
+	redirectPath := "/oauth2callback"
+	for _, candidate := range redirectURIs {
+		parsed, err := url.Parse(candidate)
+		if err != nil || parsed.Scheme != "http" {
+			continue
+		}
+		host := parsed.Hostname()
+		if host != "127.0.0.1" && host != "localhost" {
+			continue
+		}
+		if parsed.Path != "" {
+			redirectPath = parsed.Path
+		}
+		break
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, "", err
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	return listener, fmt.Sprintf("http://127.0.0.1:%d%s", port, redirectPath), nil
+}
+
+func buildOAuthAuthURL(client oauthClientConfig, redirectURI string, scopes []string, state, challenge string) (string, error) {
+	authURL, err := url.Parse(client.authURI)
+	if err != nil {
+		return "", errors.New("OAuth auth_uri is invalid")
+	}
+	query := authURL.Query()
+	query.Set("client_id", client.clientID)
+	query.Set("redirect_uri", redirectURI)
+	query.Set("response_type", "code")
+	query.Set("scope", strings.Join(scopes, " "))
+	query.Set("access_type", "offline")
+	query.Set("prompt", "consent")
+	query.Set("state", state)
+	query.Set("code_challenge", challenge)
+	query.Set("code_challenge_method", "S256")
+	authURL.RawQuery = query.Encode()
+	return authURL.String(), nil
+}
+
+func waitForOAuthCode(listener net.Listener, wantState string) (string, error) {
+	result := make(chan struct {
+		code string
+		err  error
+	}, 1)
+	server := &http.Server{}
+	server.Handler = http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		query := request.URL.Query()
+		if query.Get("state") != wantState {
+			http.Error(w, "invalid OAuth state", http.StatusBadRequest)
+			result <- struct {
+				code string
+				err  error
+			}{err: errors.New("OAuth state mismatch")}
+			return
+		}
+		if errText := query.Get("error"); errText != "" {
+			http.Error(w, "OAuth failed", http.StatusBadRequest)
+			result <- struct {
+				code string
+				err  error
+			}{err: fmt.Errorf("OAuth failed: %s", errText)}
+			return
+		}
+		code := query.Get("code")
+		if code == "" {
+			http.Error(w, "missing OAuth code", http.StatusBadRequest)
+			result <- struct {
+				code string
+				err  error
+			}{err: errors.New("OAuth redirect missing code")}
+			return
+		}
+		fmt.Fprintln(w, "gohealthcli connected. You can close this tab.")
+		result <- struct {
+			code string
+			err  error
+		}{code: code}
+	})
+	go func() {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			result <- struct {
+				code string
+				err  error
+			}{err: err}
+		}
+	}()
+	outcome := <-result
+	_ = server.Close()
+	return outcome.code, outcome.err
+}
+
+func exchangeOAuthCode(client oauthClientConfig, redirectURI, code, verifier string) (oauthTokenResponse, error) {
+	values := url.Values{}
+	values.Set("client_id", client.clientID)
+	values.Set("client_secret", client.clientSecret)
+	values.Set("code", code)
+	values.Set("code_verifier", verifier)
+	values.Set("grant_type", "authorization_code")
+	values.Set("redirect_uri", redirectURI)
+	response, err := http.PostForm(client.tokenURI, values)
+	if err != nil {
+		return oauthTokenResponse{}, err
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return oauthTokenResponse{}, err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return oauthTokenResponse{}, fmt.Errorf("OAuth token exchange failed with HTTP %d", response.StatusCode)
+	}
+	return parseOAuthTokenResponse(body, currentTime())
+}
+
+func parseOAuthTokenResponse(body []byte, now time.Time) (oauthTokenResponse, error) {
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return oauthTokenResponse{}, errors.New("OAuth token response is not valid JSON")
+	}
+	accessToken, _ := raw["access_token"].(string)
+	if accessToken == "" {
+		return oauthTokenResponse{}, errors.New("OAuth token response missing access token")
+	}
+	refreshToken, _ := raw["refresh_token"].(string)
+	tokenType, _ := raw["token_type"].(string)
+	if tokenType == "" {
+		tokenType = "Bearer"
+	}
+	expiresIn, _ := raw["expires_in"].(float64)
+	if expiresIn <= 0 {
+		return oauthTokenResponse{}, errors.New("OAuth token response missing expiry")
+	}
+	scopeText, _ := raw["scope"].(string)
+	scopes := strings.Fields(scopeText)
+	if len(scopes) == 0 {
+		return oauthTokenResponse{}, errors.New("OAuth token response missing scopes")
+	}
+	var refreshExpiresAt *time.Time
+	if refreshExpiresIn, ok := raw["refresh_token_expires_in"].(float64); ok && refreshExpiresIn > 0 {
+		value := now.Add(time.Duration(refreshExpiresIn) * time.Second).UTC()
+		refreshExpiresAt = &value
+	}
+	return oauthTokenResponse{
+		accessToken:            accessToken,
+		refreshToken:           refreshToken,
+		tokenType:              tokenType,
+		scopes:                 scopes,
+		expiresAt:              now.Add(time.Duration(expiresIn) * time.Second).UTC(),
+		refreshTokenExpiresAt:  refreshExpiresAt,
+		rawTokenMaterialObject: raw,
+	}, nil
+}
+
+func fetchGoogleIdentity(accessToken string) (googleIdentity, error) {
+	request, err := http.NewRequest(http.MethodGet, "https://health.googleapis.com/v4/users/me/identity", nil)
+	if err != nil {
+		return googleIdentity{}, err
+	}
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	request.Header.Set("Accept", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return googleIdentity{}, err
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return googleIdentity{}, err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return googleIdentity{}, fmt.Errorf("Google Health identity request failed with HTTP %d", response.StatusCode)
+	}
+	return parseGoogleIdentity(body)
+}
+
+func parseGoogleIdentity(body []byte) (googleIdentity, error) {
+	var raw struct {
+		HealthUserID string `json:"healthUserId"`
+		LegacyUserID string `json:"legacyUserId"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return googleIdentity{}, errors.New("Google Health identity response is not valid JSON")
+	}
+	if raw.HealthUserID == "" {
+		return googleIdentity{}, errors.New("Google Health identity response missing healthUserId")
+	}
+	return googleIdentity{
+		healthUserID:       raw.HealthUserID,
+		legacyFitbitUserID: raw.LegacyUserID,
+		rawJSON:            string(body),
+	}, nil
+}
+
+func randomURLToken(byteCount int) (string, error) {
+	buffer := make([]byte, byteCount)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buffer), nil
+}
+
+func pkceChallenge(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func openBrowser(target string) error {
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("open", target).Start()
+	case "windows":
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", target).Start()
+	default:
+		return exec.Command("xdg-open", target).Start()
+	}
+}
+
+type credentialStore interface {
+	Store(key string, tokenMaterial map[string]any) error
+}
+
+func newCredentialStore(config credentialStoreConfig) (credentialStore, error) {
+	switch config.kind {
+	case "file":
+		return fileCredentialStore{path: config.path}, nil
+	case "os_native":
+		return osNativeCredentialStore{service: config.service}, nil
+	default:
+		return nil, errors.New("unsupported Credential Store type")
+	}
+}
+
+type fileCredentialStore struct {
+	path string
+}
+
+func (store fileCredentialStore) Store(key string, tokenMaterial map[string]any) error {
+	if err := ensureOwnerOnlyDir(filepath.Dir(store.path)); err != nil {
+		return err
+	}
+	existing := map[string]any{}
+	if content, err := os.ReadFile(store.path); err == nil && len(content) > 0 {
+		if err := json.Unmarshal(content, &existing); err != nil {
+			return errors.New("Credential Store file is not valid JSON")
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	existing[key] = tokenMaterial
+	content, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		return err
+	}
+	content = append(content, '\n')
+	if err := os.WriteFile(store.path, content, 0o600); err != nil {
+		return err
+	}
+	if !usesPOSIXPermissions() {
+		return nil
+	}
+	return os.Chmod(store.path, 0o600)
+}
+
+type osNativeCredentialStore struct {
+	service string
+}
+
+func (store osNativeCredentialStore) Store(key string, tokenMaterial map[string]any) error {
+	content, err := json.Marshal(tokenMaterial)
+	if err != nil {
+		return err
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("security", "add-generic-password", "-U", "-s", store.service, "-a", key, "-w", string(content)).Run()
+	default:
+		return errors.New("OS-native Credential Store is not available on this platform; configure credential_store type \"file\"")
+	}
+}
+
+func ensureSameArchiveIdentity(db *sql.DB, healthUserID string) error {
+	rows, err := db.Query(`SELECT DISTINCT google_health_user_id FROM connections`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var existing string
+		if err := rows.Scan(&existing); err != nil {
+			return err
+		}
+		if existing != healthUserID {
+			return errors.New("Health Archive already belongs to a different Google Identity; use a new archive path")
+		}
+	}
+	return rows.Err()
+}
+
+func upsertConnection(db *sql.DB, connectionID string, identity googleIdentity, token oauthTokenResponse, now time.Time) error {
+	metadata := map[string]any{
+		"credential_store_key": connectionID,
+		"expires_at":           token.expiresAt.UTC().Format(time.RFC3339),
+		"scopes":               token.scopes,
+		"token_type":           token.tokenType,
+	}
+	if token.refreshTokenExpiresAt != nil {
+		metadata["refresh_token_expires_at"] = token.refreshTokenExpiresAt.UTC().Format(time.RFC3339)
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+	nowText := now.UTC().Format(time.RFC3339)
+	_, err = db.Exec(`INSERT INTO connections (
+		id,
+		provider_name,
+		google_health_user_id,
+		legacy_fitbit_user_id,
+		token_metadata_json,
+		google_identity_json,
+		created_at,
+		updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		legacy_fitbit_user_id = excluded.legacy_fitbit_user_id,
+		token_metadata_json = excluded.token_metadata_json,
+		google_identity_json = excluded.google_identity_json,
+		updated_at = excluded.updated_at`,
+		connectionID,
+		"googlehealth",
+		identity.healthUserID,
+		identity.legacyFitbitUserID,
+		string(metadataJSON),
+		identity.rawJSON,
+		nowText,
+		nowText,
+	)
+	return err
 }
 
 func validateArchive(archivePath string) error {
@@ -1083,6 +1698,7 @@ func initialMigrationStatements() []string {
 			google_health_user_id TEXT NOT NULL,
 			legacy_fitbit_user_id TEXT,
 			token_metadata_json TEXT NOT NULL DEFAULT '{}',
+			google_identity_json TEXT NOT NULL DEFAULT '{}',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
@@ -1237,6 +1853,80 @@ func writeDoctorResult(result doctorResult, mode outputMode, stdout io.Writer) e
 	}
 	if result.ConnectionCount != nil {
 		if _, err := fmt.Fprintf(stdout, "Connections: %d\n", *result.ConnectionCount); err != nil {
+			return err
+		}
+	}
+	if result.TokenStatus != "" {
+		if _, err := fmt.Fprintf(stdout, "Token status: %s\n", result.TokenStatus); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintf(stdout, "Message: %s\n", result.Message)
+	return err
+}
+
+func writeConnectResult(result connectResult, mode outputMode, stdout io.Writer) error {
+	if mode.json {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+	if mode.plain {
+		if _, err := fmt.Fprintf(stdout, "status: %s\n", result.Status); err != nil {
+			return err
+		}
+		if result.ConnectionID != "" {
+			if _, err := fmt.Fprintf(stdout, "connection_id: %s\n", result.ConnectionID); err != nil {
+				return err
+			}
+		}
+		if result.ProviderName != "" {
+			if _, err := fmt.Fprintf(stdout, "provider_name: %s\n", result.ProviderName); err != nil {
+				return err
+			}
+		}
+		if result.GoogleHealthUserID != "" {
+			if _, err := fmt.Fprintf(stdout, "google_health_user_id: %s\n", result.GoogleHealthUserID); err != nil {
+				return err
+			}
+		}
+		if result.LegacyFitbitUserID != "" {
+			if _, err := fmt.Fprintf(stdout, "legacy_fitbit_user_id: %s\n", result.LegacyFitbitUserID); err != nil {
+				return err
+			}
+		}
+		if result.CredentialStore != "" {
+			if _, err := fmt.Fprintf(stdout, "credential_store: %s\n", result.CredentialStore); err != nil {
+				return err
+			}
+		}
+		if result.TokenStatus != "" {
+			if _, err := fmt.Fprintf(stdout, "token_status: %s\n", result.TokenStatus); err != nil {
+				return err
+			}
+		}
+		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
+		return err
+	}
+	if result.Status == "connected" {
+		if _, err := fmt.Fprintln(stdout, "Connected Google Identity"); err != nil {
+			return err
+		}
+	} else if _, err := fmt.Fprintln(stdout, "Connect failed"); err != nil {
+		return err
+	}
+	if result.ConnectionID != "" {
+		if _, err := fmt.Fprintf(stdout, "Connection: %s\n", result.ConnectionID); err != nil {
+			return err
+		}
+	}
+	if result.GoogleHealthUserID != "" {
+		if _, err := fmt.Fprintf(stdout, "Google Health user ID: %s\n", result.GoogleHealthUserID); err != nil {
+			return err
+		}
+	}
+	if result.CredentialStore != "" {
+		if _, err := fmt.Fprintf(stdout, "Credential Store: %s\n", result.CredentialStore); err != nil {
 			return err
 		}
 	}
