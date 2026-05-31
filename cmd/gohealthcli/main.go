@@ -25,7 +25,7 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 1
+const currentSchemaVersion = 2
 const version = "dev"
 
 var defaultDataTypes = []string{
@@ -117,6 +117,7 @@ type archiveCheck struct {
 }
 
 type oauthClientConfig struct {
+	kind         string
 	clientID     string
 	clientSecret string
 	authURI      string
@@ -143,6 +144,7 @@ type googleIdentity struct {
 var runOAuthFlow = runBrowserOAuthFlow
 var fetchIdentity = fetchGoogleIdentity
 var currentTime = func() time.Time { return time.Now().UTC() }
+var currentOS = runtime.GOOS
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -156,7 +158,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	archivePath := flags.String("db", defaultArchivePath(), "SQLite Health Archive path")
 	jsonOutput := flags.Bool("json", false, "write stable JSON to stdout")
 	plainOutput := flags.Bool("plain", false, "write plain key/value output to stdout")
-	flags.Bool("no-input", false, "never prompt, never wait for browser input")
+	noInput := flags.Bool("no-input", false, "never prompt, never wait for browser input")
 	versionOutput := flags.Bool("version", false, "print version and exit")
 
 	if err := flags.Parse(args); err != nil {
@@ -182,7 +184,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "init":
 		return runInit(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	case "connect":
-		return runConnect(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
+		return runConnect(flags.Args()[1:], *configPath, *archivePath, *noInput, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command: %s\n", flags.Arg(0))
 		return 1
@@ -367,7 +369,7 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 	return 0
 }
 
-func runConnect(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
+func runConnect(args []string, configPath, archivePath string, globalNoInput bool, mode outputMode, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("connect", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -375,7 +377,7 @@ func runConnect(args []string, configPath, archivePath string, mode outputMode, 
 	connectArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
 	connectJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
 	connectPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
-	noInput := flags.Bool("no-input", false, "never prompt, never wait for browser input")
+	noInput := flags.Bool("no-input", globalNoInput, "never prompt, never wait for browser input")
 
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -411,11 +413,18 @@ func connectSetup(configPath, archivePath string, noInput bool) (connectResult, 
 	if err != nil {
 		return connectResult{}, fmt.Errorf("config check failed: %w", err)
 	}
+	if config.oauthClient.kind != "file" {
+		return connectResult{CredentialStore: config.credentialStore.kind}, errors.New("connect requires an OAuth client file source; Secret Provider references are setup-only")
+	}
+	if err := migrateArchiveIfNeeded(archivePath); err != nil {
+		return connectResult{CredentialStore: config.credentialStore.kind}, fmt.Errorf("Health Archive migration failed: %w", err)
+	}
 	if _, err := inspectArchive(archivePath, false); err != nil {
 		return connectResult{}, fmt.Errorf("Health Archive check failed: %w", err)
 	}
-	if config.oauthClient.kind != "file" {
-		return connectResult{CredentialStore: config.credentialStore.kind}, errors.New("connect requires an OAuth client file source; Secret Provider references are setup-only")
+	store, err := newCredentialStore(config.credentialStore)
+	if err != nil {
+		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
 	client, err := loadOAuthClientConfig(config.oauthClient.path)
 	if err != nil {
@@ -430,10 +439,6 @@ func connectSetup(configPath, archivePath string, noInput bool) (connectResult, 
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
 	connectionID := "googlehealth:" + identity.healthUserID
-	store, err := newCredentialStore(config.credentialStore)
-	if err != nil {
-		return connectResult{CredentialStore: config.credentialStore.kind}, err
-	}
 
 	db, err := openArchive(archivePath)
 	if err != nil {
@@ -975,13 +980,18 @@ func parseOAuthClientConfigContent(content []byte) (oauthClientConfig, error) {
 		TokenURI     string   `json:"token_uri"`
 		RedirectURIs []string `json:"redirect_uris"`
 	}
+	clientKind := ""
 	for _, key := range []string{"installed", "web"} {
 		if nested, ok := raw[key]; ok {
 			if err := json.Unmarshal(nested, &client); err != nil {
 				return oauthClientConfig{}, errors.New("OAuth client file has malformed client details")
 			}
+			clientKind = key
 			break
 		}
+	}
+	if clientKind == "web" {
+		return oauthClientConfig{}, errors.New("OAuth client file must be an installed desktop client, not a web client")
 	}
 	if client.ClientID == "" || client.ClientSecret == "" {
 		return oauthClientConfig{}, errors.New("OAuth client file is missing client_id or client_secret")
@@ -993,6 +1003,7 @@ func parseOAuthClientConfigContent(content []byte) (oauthClientConfig, error) {
 		client.TokenURI = "https://oauth2.googleapis.com/token"
 	}
 	return oauthClientConfig{
+		kind:         clientKind,
 		clientID:     client.ClientID,
 		clientSecret: client.ClientSecret,
 		authURI:      client.AuthURI,
@@ -1293,6 +1304,9 @@ func newCredentialStore(config credentialStoreConfig) (credentialStore, error) {
 	case "file":
 		return fileCredentialStore{path: config.path}, nil
 	case "os_native":
+		if currentOS != "darwin" {
+			return nil, errors.New("OS-native Credential Store is not available on this platform; configure credential_store type \"file\"")
+		}
 		return osNativeCredentialStore{service: config.service}, nil
 	default:
 		return nil, errors.New("unsupported Credential Store type")
@@ -1339,7 +1353,7 @@ func (store osNativeCredentialStore) Store(key string, tokenMaterial map[string]
 	if err != nil {
 		return err
 	}
-	switch runtime.GOOS {
+	switch currentOS {
 	case "darwin":
 		return exec.Command("security", "add-generic-password", "-U", "-s", store.service, "-a", key, "-w", string(content)).Run()
 	default:
@@ -1442,12 +1456,14 @@ func inspectArchive(archivePath string, validateTokens bool) (archiveCheck, erro
 		return archiveCheck{}, fmt.Errorf("schema version %d, want %d", userVersion, currentSchemaVersion)
 	}
 
-	var migrationCount int
-	if err := db.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version = 1 AND name = 'initial_archive_schema'`).Scan(&migrationCount); err != nil {
-		return archiveCheck{}, err
-	}
-	if migrationCount != 1 {
-		return archiveCheck{}, errors.New("missing schema migration 1")
+	for version, name := range expectedSchemaMigrations() {
+		var migrationCount int
+		if err := db.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version = ? AND name = ?`, version, name).Scan(&migrationCount); err != nil {
+			return archiveCheck{}, err
+		}
+		if migrationCount != 1 {
+			return archiveCheck{}, fmt.Errorf("missing schema migration %d", version)
+		}
 	}
 	if !validateTokens {
 		return archiveCheck{schemaVersion: userVersion}, nil
@@ -1676,13 +1692,82 @@ func applyMigrations(db *sql.DB) error {
 			return err
 		}
 	}
-	if _, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (1, 'initial_archive_schema', ?)`, time.Now().UTC().Format(time.RFC3339)); err != nil {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (1, 'initial_archive_schema', ?)`, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 1`); err != nil {
+	if err := applyGoogleIdentityArchiveMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 2`); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func migrateArchiveIfNeeded(archivePath string) error {
+	if err := validateOwnerOnlyDir(filepath.Dir(archivePath)); err != nil {
+		return err
+	}
+	info, err := os.Stat(archivePath)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return fmt.Errorf("%s is a directory", archivePath)
+	}
+	if usesPOSIXPermissions() && info.Mode().Perm() != 0o600 {
+		return fmt.Errorf("%s is not owner-only: mode %04o, want 0600", archivePath, info.Mode().Perm())
+	}
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return applyPendingMigrations(db)
+}
+
+func applyPendingMigrations(db *sql.DB) error {
+	var userVersion int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+		return err
+	}
+	switch userVersion {
+	case currentSchemaVersion:
+		return nil
+	case 1:
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		now := time.Now().UTC().Format(time.RFC3339)
+		if err := applyGoogleIdentityArchiveMigration(tx, now); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`PRAGMA user_version = 2`); err != nil {
+			return err
+		}
+		return tx.Commit()
+	default:
+		return fmt.Errorf("schema version %d, want %d", userVersion, currentSchemaVersion)
+	}
+}
+
+func applyGoogleIdentityArchiveMigration(tx *sql.Tx, appliedAt string) error {
+	if _, err := tx.Exec(`ALTER TABLE connections ADD COLUMN google_identity_json TEXT NOT NULL DEFAULT '{}'`); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (2, 'add_google_identity_json', ?)`, appliedAt)
+	return err
+}
+
+func expectedSchemaMigrations() map[int]string {
+	return map[int]string{
+		1: "initial_archive_schema",
+		2: "add_google_identity_json",
+	}
 }
 
 func initialMigrationStatements() []string {
@@ -1698,7 +1783,6 @@ func initialMigrationStatements() []string {
 			google_health_user_id TEXT NOT NULL,
 			legacy_fitbit_user_id TEXT,
 			token_metadata_json TEXT NOT NULL DEFAULT '{}',
-			google_identity_json TEXT NOT NULL DEFAULT '{}',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
