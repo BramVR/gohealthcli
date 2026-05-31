@@ -546,16 +546,27 @@ func parseConfig(content string) (parsedConfig, error) {
 
 func parseStringArray(lines []string, startIndex int, firstValue string) ([]string, int, error) {
 	if strings.HasPrefix(firstValue, "[") && firstValue != "[" {
-		values, err := parseInlineStringArray(firstValue)
+		if strings.HasSuffix(firstValue, "]") {
+			values, err := parseInlineStringArray(firstValue)
+			if err != nil {
+				return nil, startIndex, err
+			}
+			return values, startIndex, nil
+		}
+		firstLine := strings.TrimSpace(strings.TrimPrefix(firstValue, "["))
+		values, err := parseStringArrayItems(firstLine)
 		if err != nil {
 			return nil, startIndex, err
 		}
-		return values, startIndex, nil
+		return parseStringArrayContinuation(lines, startIndex, values)
 	}
 	if firstValue != "[" {
 		return nil, startIndex, errors.New("default_data_types must be a string array")
 	}
-	var values []string
+	return parseStringArrayContinuation(lines, startIndex, nil)
+}
+
+func parseStringArrayContinuation(lines []string, startIndex int, values []string) ([]string, int, error) {
 	for index := startIndex + 1; index < len(lines); index++ {
 		line := strings.TrimSpace(stripInlineComment(lines[index]))
 		if line == "" || strings.HasPrefix(line, "#") {
