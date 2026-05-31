@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,12 +11,34 @@ import (
 	"testing"
 )
 
+var testBinaryPath string
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "gohealthcli-test-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "create temp dir: %v\n", err)
+		os.Exit(1)
+	}
+	defer os.RemoveAll(dir)
+
+	testBinaryPath = filepath.Join(dir, "gohealthcli")
+	build := exec.Command("go", "build", "-o", testBinaryPath, ".")
+	if output, err := build.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "build command: %v\n%s", err, string(output))
+		os.Exit(1)
+	}
+
+	os.Exit(m.Run())
+}
+
 func TestDoctorJSONReportsMissingSetup(t *testing.T) {
 	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.toml")
+	archivePath := filepath.Join(tempDir, "gohealthcli.sqlite")
 
 	code, stdout, stderr := runCommand(t,
-		"--config", filepath.Join(tempDir, "config.toml"),
-		"--db", filepath.Join(tempDir, "gohealthcli.sqlite"),
+		"--config", configPath,
+		"--db", archivePath,
 		"--json",
 		"doctor",
 	)
@@ -32,12 +55,8 @@ func TestDoctorJSONReportsMissingSetup(t *testing.T) {
 	if got["status"] != "setup_missing" {
 		t.Fatalf("status = %v, want setup_missing", got["status"])
 	}
-	if got["config_path"] == "" {
-		t.Fatalf("config_path missing from JSON output: %#v", got)
-	}
-	if got["archive_path"] == "" {
-		t.Fatalf("archive_path missing from JSON output: %#v", got)
-	}
+	assertJSONString(t, got, "config_path", configPath)
+	assertJSONString(t, got, "archive_path", archivePath)
 
 	errText := stderr.String()
 	if !strings.Contains(errText, "run `gohealthcli init`") {
@@ -267,13 +286,7 @@ func runCommandWithEnv(t *testing.T, env []string, args ...string) (int, *bytes.
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	binaryPath := filepath.Join(t.TempDir(), "gohealthcli")
-	build := exec.Command("go", "build", "-o", binaryPath, ".")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build command: %v\n%s", err, string(output))
-	}
-
-	cmd := exec.Command(binaryPath, args...)
+	cmd := exec.Command(testBinaryPath, args...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Env = append(os.Environ(), env...)
@@ -287,6 +300,18 @@ func runCommandWithEnv(t *testing.T, env []string, args ...string) (int, *bytes.
 	}
 	t.Fatalf("run command: %v\nstderr: %s", err, stderr.String())
 	return 1, stdout, stderr
+}
+
+func assertJSONString(t *testing.T, got map[string]any, key, want string) {
+	t.Helper()
+
+	value, ok := got[key].(string)
+	if !ok {
+		t.Fatalf("%s = %T(%v), want string %q", key, got[key], got[key], want)
+	}
+	if value != want {
+		t.Fatalf("%s = %q, want %q", key, value, want)
+	}
 }
 
 func assertNoSecretWords(t *testing.T, text string) {
