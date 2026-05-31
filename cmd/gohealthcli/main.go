@@ -733,6 +733,9 @@ func validateCredentialStoreConfig(store credentialStoreConfig) error {
 }
 
 func validateDefaultDataTypes(dataTypes []string) error {
+	if dataTypes == nil {
+		return errors.New("missing default_data_types")
+	}
 	if len(dataTypes) == 0 {
 		return errors.New("default Data Types must include at least one Data Type")
 	}

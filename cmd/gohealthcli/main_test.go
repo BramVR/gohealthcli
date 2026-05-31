@@ -500,18 +500,9 @@ func TestDoctorPlainReportsOfflineHealthCheck(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 
-	outText := stdout.String()
-	for _, want := range []string{
-		"status: ok\n",
-		"oauth_client_source: file\n",
-		"credential_store: os_native\n",
-		"schema_version: 1\n",
-		"connection_count: 0\n",
-		"token_status: not_connected\n",
-	} {
-		if !strings.Contains(outText, want) {
-			t.Fatalf("stdout missing %q:\n%s", want, outText)
-		}
+	want := fmt.Sprintf("status: ok\nconfig_path: %s\narchive_path: %s\noauth_client_source: file\ncredential_store: os_native\nschema_version: 1\nconnection_count: 0\ntoken_status: not_connected\nmessage: local gohealthcli setup is initialized\n", configPath, archivePath)
+	if stdout.String() != want {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
@@ -904,6 +895,56 @@ func TestDoctorReportsUnsupportedDefaultDataType(t *testing.T) {
 	message, ok := got["message"].(string)
 	if !ok || !strings.Contains(message, "unsupported default Data Type") {
 		t.Fatalf("message = %T(%v), want unsupported Data Type failure", got["message"], got["message"])
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorReportsMissingDefaultDataTypes(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]\n\n"
+	config := strings.Replace(string(configBytes), multilineDataTypes, "", 1)
+	if config == string(configBytes) {
+		t.Fatalf("config replacement failed:\n%s", string(configBytes))
+	}
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 1 {
+		t.Fatalf("doctor exit code = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "missing default_data_types") {
+		t.Fatalf("message = %T(%v), want missing default_data_types failure", got["message"], got["message"])
 	}
 	if stderr.String() != "" {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
