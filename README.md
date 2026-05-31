@@ -27,5 +27,5 @@ model, scope, risks, and early architecture explicit before writing the CLI.
 
 ## Status
 
-Planning scaffold only. No CLI implementation yet.
-
+First CLI tracer in progress. `gohealthcli doctor` reports missing local setup,
+and `gohealthcli --version` is available.
