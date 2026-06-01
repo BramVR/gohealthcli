@@ -1,0 +1,15 @@
+{
+  "dataPoints": [
+    {
+      "name": "users/me/dataTypes/steps/dataPoints/step-2026-01-01",
+      "steps": {
+        "interval": {
+          "startTime": "2026-01-01T08:00:00Z",
+          "endTime": "2026-01-01T08:15:00Z"
+        },
+        "count": 512
+      }
+    }
+  ],
+  "nextPageToken": "next-fixture-page"
+}

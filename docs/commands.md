@@ -73,8 +73,11 @@ machine-readable stdout.
 in `query`. Require either `--output PATH` or explicit `--stdout`.
 
 `raw`: fetch one provider endpoint or Data Type convenience path and print raw
-JSON for API exploration. Endpoint mode may use provider names directly. `raw`
-does not archive responses by default.
+provider JSON for API exploration. Endpoint mode may use provider names
+directly. `raw endpoint getIdentity` calls the identity endpoint. `raw endpoint
+dataTypes.steps.list --from 2026-01-01` and `raw data-type steps --from
+2026-01-01` call the Data Type list path. `raw` does not archive responses by
+default.
 
 ## Init Sketch
 

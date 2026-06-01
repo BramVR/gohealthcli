@@ -1768,6 +1768,167 @@ func TestIdentityRejectsDifferentGoogleIdentity(t *testing.T) {
 	}
 }
 
+func TestRawEndpointIdentityPrintsProviderJSONWithoutArchiving(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	beforeIdentityJSON := archivedConnectionIdentityJSON(t, archivePath)
+	installRawFetchFake(t, "connect-access-secret", func(request rawProviderRequest) []byte {
+		if request.url != googleHealthIdentityURL {
+			t.Fatalf("raw URL = %q, want identity URL", request.url)
+		}
+		return []byte(`{"healthUserId":"999999999999999999","legacyUserId":"RAW"}`)
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"raw", "endpoint", "getIdentity", "--config", configPath, "--db", archivePath}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("raw exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stdout.String() != `{"healthUserId":"999999999999999999","legacyUserId":"RAW"}` {
+		t.Fatalf("stdout = %q, want raw provider JSON", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	if got := archivedConnectionIdentityJSON(t, archivePath); got != beforeIdentityJSON {
+		t.Fatalf("raw mutated archived identity JSON: %s", got)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 0)
+	assertArchiveTableCount(t, archivePath, "sync_runs", 0)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+	if strings.Contains(stdout.String()+stderr.String(), "connect-access-secret") {
+		t.Fatalf("raw output leaked token material:\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+}
+
+func TestRawDataTypeStepsPrintsFixtureJSON(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	fixture := readTestFixture(t, "googlehealth_steps_list.json")
+	installRawFetchFake(t, "connect-access-secret", func(request rawProviderRequest) []byte {
+		if request.endpointName != "dataTypes.steps.list" || request.dataType != "steps" {
+			t.Fatalf("raw request = (%q, %q), want steps list", request.endpointName, request.dataType)
+		}
+		parsedURL, err := url.Parse(request.url)
+		if err != nil {
+			t.Fatalf("parse raw URL: %v", err)
+		}
+		if parsedURL.Path != "/v4/users/me/dataTypes/steps/dataPoints" {
+			t.Fatalf("raw path = %q, want steps dataPoints path", parsedURL.Path)
+		}
+		query := parsedURL.Query()
+		wantFilter := `steps.interval.start_time >= "2026-01-01T00:00:00Z" AND steps.interval.start_time < "2026-01-02T00:00:00Z"`
+		if query.Get("filter") != wantFilter {
+			t.Fatalf("filter = %q, want %q", query.Get("filter"), wantFilter)
+		}
+		if query.Get("pageSize") != "12" || query.Get("pageToken") != "abc123" {
+			t.Fatalf("pagination query = %v, want pageSize/pageToken", query)
+		}
+		return fixture
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"raw",
+		"data-type", "steps",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--page-size", "12",
+		"--page-token", "abc123",
+		"--config", configPath,
+		"--db", archivePath,
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("raw exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if !bytes.Equal(stdout.Bytes(), fixture) {
+		t.Fatalf("stdout = %q, want fixture JSON", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 0)
+	assertArchiveTableCount(t, archivePath, "sync_runs", 0)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestRawProviderErrorDoesNotLeakToken(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	originalFetchRawProvider := fetchRawProvider
+	fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		if accessToken != "connect-access-secret" {
+			t.Fatalf("raw access token = %q, want stored token", accessToken)
+		}
+		return nil, errors.New("Google Health raw request failed with HTTP 403")
+	}
+	t.Cleanup(func() { fetchRawProvider = originalFetchRawProvider })
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"raw", "endpoint", "getIdentity", "--config", configPath, "--db", archivePath}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("raw exit code = %d, want 1", code)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "HTTP 403") {
+		t.Fatalf("stderr = %q, want provider status", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "connect-access-secret") || strings.Contains(stderr.String(), "connect-refresh-secret") {
+		t.Fatalf("raw error leaked token material: %s", stderr.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestBuildGoogleHealthRawRequestUsesProviderNamingConventions(t *testing.T) {
+	request, err := buildGoogleHealthRawRequest([]string{"endpoint", "dataTypes.heart-rate.list"}, "2026-01-01", "", 0, "")
+	if err != nil {
+		t.Fatalf("build raw request: %v", err)
+	}
+	parsedURL, err := url.Parse(request.url)
+	if err != nil {
+		t.Fatalf("parse raw URL: %v", err)
+	}
+	if parsedURL.Path != "/v4/users/me/dataTypes/heart-rate/dataPoints" {
+		t.Fatalf("path = %q, want kebab-case Data Type path", parsedURL.Path)
+	}
+	wantFilter := `heart_rate.interval.start_time >= "2026-01-01T00:00:00Z"`
+	if parsedURL.Query().Get("filter") != wantFilter {
+		t.Fatalf("filter = %q, want snake-case filter", parsedURL.Query().Get("filter"))
+	}
+}
+
 func TestConnectAcceptsGlobalNoInput(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -2135,6 +2296,36 @@ func TestFetchGoogleIdentityUsesGetIdentityEndpoint(t *testing.T) {
 	}
 	if identity.healthUserID != "111111256096816351" || identity.legacyFitbitUserID != "A1B2C3" {
 		t.Fatalf("identity = (%q, %q), want response identity", identity.healthUserID, identity.legacyFitbitUserID)
+	}
+}
+
+func TestFetchGoogleHealthRawUsesBearerAndHidesErrorBody(t *testing.T) {
+	originalClient := http.DefaultClient
+	t.Cleanup(func() { http.DefaultClient = originalClient })
+
+	http.DefaultClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.String() != googleHealthIdentityURL {
+			t.Fatalf("raw URL = %q, want identity URL", request.URL.String())
+		}
+		if request.Header.Get("Authorization") != "Bearer access-secret-value" {
+			t.Fatalf("Authorization = %q, want bearer token", request.Header.Get("Authorization"))
+		}
+		return &http.Response{
+			StatusCode: http.StatusForbidden,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"error":"access-secret-value rejected"}`)),
+		}, nil
+	})}
+
+	_, err := fetchGoogleHealthRaw(rawProviderRequest{endpointName: "getIdentity", url: googleHealthIdentityURL}, "access-secret-value")
+	if err == nil {
+		t.Fatal("fetch raw error = nil, want HTTP failure")
+	}
+	if !strings.Contains(err.Error(), "HTTP 403") {
+		t.Fatalf("fetch raw error = %v, want status", err)
+	}
+	if strings.Contains(err.Error(), "access-secret-value") {
+		t.Fatalf("fetch raw error leaked token/body: %v", err)
 	}
 }
 
@@ -2815,6 +3006,21 @@ func installIdentityFetchFake(t *testing.T, wantAccessToken string, identity goo
 	})
 }
 
+func installRawFetchFake(t *testing.T, wantAccessToken string, response func(rawProviderRequest) []byte) {
+	t.Helper()
+
+	originalFetchRawProvider := fetchRawProvider
+	fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		if accessToken != wantAccessToken {
+			t.Fatalf("raw access token = %q, want stored token", accessToken)
+		}
+		return response(request), nil
+	}
+	t.Cleanup(func() {
+		fetchRawProvider = originalFetchRawProvider
+	})
+}
+
 func initializeFileCredentialSetup(t *testing.T, tempDir string) (string, string, string) {
 	t.Helper()
 
@@ -2839,6 +3045,48 @@ func initializeFileCredentialSetup(t *testing.T, tempDir string) (string, string
 		t.Fatalf("write config: %v", err)
 	}
 	return configPath, archivePath, tokenStorePath
+}
+
+func readTestFixture(t *testing.T, name string) []byte {
+	t.Helper()
+
+	content, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", name, err)
+	}
+	return content
+}
+
+func archivedConnectionIdentityJSON(t *testing.T, archivePath string) string {
+	t.Helper()
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	var identityJSON string
+	if err := db.QueryRow(`SELECT google_identity_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&identityJSON); err != nil {
+		t.Fatalf("query archived identity JSON: %v", err)
+	}
+	return identityJSON
+}
+
+func assertArchiveTableCount(t *testing.T, archivePath, table string, want int) {
+	t.Helper()
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	var got int
+	if err := db.QueryRow(`SELECT count(*) FROM ` + table).Scan(&got); err != nil {
+		t.Fatalf("count %s: %v", table, err)
+	}
+	if got != want {
+		t.Fatalf("%s count = %d, want %d", table, got, want)
+	}
 }
 
 func createLegacyV1Archive(t *testing.T, archivePath string) {
