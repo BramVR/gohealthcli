@@ -363,6 +363,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "missing command")
 		return 1
 	}
+	globalArchivePathExplicit := flagWasProvided(flags, "db")
 
 	switch flags.Arg(0) {
 	case "doctor":
@@ -378,7 +379,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "sync":
 		return runSync(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	case "status":
-		return runStatus(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
+		return runStatus(flags.Args()[1:], *configPath, *archivePath, globalArchivePathExplicit, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	case "raw":
 		return runRaw(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	default:
@@ -390,6 +391,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 type outputMode struct {
 	json  bool
 	plain bool
+}
+
+func flagWasProvided(flags *flag.FlagSet, name string) bool {
+	provided := false
+	flags.Visit(func(item *flag.Flag) {
+		if item.Name == name {
+			provided = true
+		}
+	})
+	return provided
 }
 
 func runDoctor(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
@@ -503,7 +514,7 @@ func runDoctorOnline(configPath, archivePath string, mode outputMode, stdout, st
 	return 0
 }
 
-func runStatus(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
+func runStatus(args []string, configPath, archivePath string, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("status", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -525,7 +536,7 @@ func runStatus(args []string, configPath, archivePath string, mode outputMode, s
 	}
 
 	mode = outputMode{json: *statusJSONOutput, plain: *statusPlainOutput}
-	resolvedArchivePath, err := resolveStatusArchivePath(*statusConfigPath, *statusArchivePath)
+	resolvedArchivePath, err := resolveStatusArchivePath(*statusConfigPath, *statusArchivePath, archivePathExplicit || flagWasProvided(flags, "db"))
 	if err != nil {
 		result := statusResult{Status: "status_failed", ArchivePath: *statusArchivePath, Message: err.Error()}
 		if writeErr := writeStatusResult(result, mode, stdout); writeErr != nil {
@@ -1272,7 +1283,7 @@ func syncResultTotalCounts(result syncResult) (int, int, int) {
 		result.DataPointsUpdated + result.RollupsUpdated
 }
 
-func resolveStatusArchivePath(configPath, archivePath string) (string, error) {
+func resolveStatusArchivePath(configPath, archivePath string, archivePathExplicit bool) (string, error) {
 	configArchivePath, configExists, err := readStatusConfigArchivePath(configPath)
 	if err != nil {
 		return "", err
@@ -1280,7 +1291,7 @@ func resolveStatusArchivePath(configPath, archivePath string) (string, error) {
 	if !configExists {
 		return archivePath, nil
 	}
-	if archivePath == defaultArchivePath() {
+	if !archivePathExplicit {
 		return configArchivePath, nil
 	}
 	if configArchivePath != archivePath {

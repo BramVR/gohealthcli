@@ -2618,6 +2618,55 @@ func TestStatusRejectsConfigArchiveMismatch(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestStatusRejectsExplicitDefaultArchiveMismatch(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", filepath.Join(tempDir, "xdg-data"))
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	defaultArchivePath := defaultArchivePath()
+	if defaultArchivePath == archivePath {
+		t.Fatalf("default archive path unexpectedly matches config archive path: %s", archivePath)
+	}
+	if err := createArchive(defaultArchivePath); err != nil {
+		t.Fatalf("create default archive: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "status flag",
+			args: []string{"status", "--config", configPath, "--db", defaultArchivePath, "--json"},
+		},
+		{
+			name: "global flag",
+			args: []string{"--config", configPath, "--db", defaultArchivePath, "status", "--json"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout := new(bytes.Buffer)
+			stderr := new(bytes.Buffer)
+			code := run(tc.args, stdout, stderr)
+			if code != 1 {
+				t.Fatalf("status exit code = %d, want 1", code)
+			}
+			if stderr.String() != "" {
+				t.Fatalf("stderr = %q, want empty", stderr.String())
+			}
+			var got map[string]any
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+				t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+			}
+			assertJSONString(t, got, "status", "status_failed")
+			wantMessage := fmt.Sprintf("archive_path points to %s, want %s", archivePath, defaultArchivePath)
+			if got["message"] != wantMessage {
+				t.Fatalf("message = %q, want %q", got["message"], wantMessage)
+			}
+			assertNoSecretWords(t, stdout.String()+stderr.String())
+		})
+	}
+}
+
 func TestStatusReportsSchemaVersionOnArchiveValidationFailure(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
