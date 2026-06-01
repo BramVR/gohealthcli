@@ -39,6 +39,11 @@ reports OAuth client source kind, Credential Store kind, schema version,
 Connection count, and token metadata status without printing token values or
 OAuth client secrets.
 
+With `--online`, `doctor` requires a current Connection, validates token refresh,
+calls Google Health `getIdentity` with the refreshed access token, and reports
+Connection health failures as `connection_unhealthy` instead of archive setup
+failures.
+
 `connect`: run OAuth browser flow and create a Connection. It consumes resolved
 OAuth client config, does not search Secret Providers, stores runtime token
 material in the configured Credential Store, and immediately archives Google

@@ -1320,6 +1320,414 @@ func TestDoctorDoesNotLeakTokenMetadataSecretMaterial(t *testing.T) {
 	assertNoSecretWords(t, combined)
 }
 
+func TestDoctorOnlineRefreshesExpiredTokenAndChecksProvider(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
+		accessToken:        "old-access-secret",
+		refreshToken:       "refresh-secret-value",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	setConnectionTokenExpiry(t, archivePath, "2026-05-31T21:00:00Z")
+	installDoctorOnlineFakes(t, fakeDoctorOnlineConfig{
+		now:                     time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
+		refreshedAccessToken:    "refreshed-access-secret",
+		wantRefreshToken:        "refresh-secret-value",
+		wantProviderAccessToken: "refreshed-access-secret",
+		healthUserID:            "111111256096816351",
+		legacyFitbitUserID:      "A1B2C3",
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("doctor --online exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "ok")
+	assertJSONString(t, got, "token_status", "online_ok")
+	assertJSONString(t, got, "message", "online Google Health check passed")
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+	if strings.Contains(stdout.String()+stderr.String(), "old-access-secret") || strings.Contains(stdout.String()+stderr.String(), "refreshed-access-secret") || strings.Contains(stdout.String()+stderr.String(), "refresh-secret-value") {
+		t.Fatalf("doctor --online output leaked token material:\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+	tokenStoreBytes, err := os.ReadFile(tokenStorePath)
+	if err != nil {
+		t.Fatalf("read token store: %v", err)
+	}
+	if !strings.Contains(string(tokenStoreBytes), "refreshed-access-secret") || !strings.Contains(string(tokenStoreBytes), "refresh-secret-value") {
+		t.Fatal("token store was not refreshed")
+	}
+	tokenMetadata := archivedConnectionTokenMetadata(t, archivePath)
+	if strings.Contains(tokenMetadata, "refreshed-access-secret") || strings.Contains(tokenMetadata, "refresh-secret-value") {
+		t.Fatalf("token metadata leaked refreshed token material: %s", tokenMetadata)
+	}
+	if !strings.Contains(tokenMetadata, `"expires_at":"2026-05-31T23:00:00Z"`) {
+		t.Fatalf("token metadata = %s, want refreshed expiry", tokenMetadata)
+	}
+}
+
+func TestDoctorOnlineReportsRefreshFailureAsConnectionHealth(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
+		accessToken:        "old-access-secret",
+		refreshToken:       "refresh-secret-value",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	setConnectionTokenExpiry(t, archivePath, "2026-05-31T21:00:00Z")
+	installDoctorOnlineFakes(t, fakeDoctorOnlineConfig{
+		now:                  time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
+		wantRefreshToken:     "refresh-secret-value",
+		refreshErr:           errors.New("OAuth token refresh failed with HTTP 400"),
+		failProviderIfCalled: true,
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("doctor --online exit code = %d, want 1", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "connection_unhealthy")
+	assertJSONString(t, got, "token_status", "refresh_failed")
+	if message, ok := got["message"].(string); !ok || !strings.Contains(message, "HTTP 400") {
+		t.Fatalf("message = %T(%v), want refresh failure", got["message"], got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+	if strings.Contains(stdout.String()+stderr.String(), "refresh-secret-value") || strings.Contains(stdout.String()+stderr.String(), "old-access-secret") {
+		t.Fatalf("doctor --online output leaked token material:\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+}
+
+func TestDoctorOnlineValidatesRefreshWhenAccessTokenIsCurrent(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
+		accessToken:        "current-access-secret",
+		refreshToken:       "refresh-secret-value",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	installDoctorOnlineFakes(t, fakeDoctorOnlineConfig{
+		now:                  time.Date(2026, 5, 31, 20, 30, 0, 0, time.UTC),
+		wantRefreshToken:     "refresh-secret-value",
+		refreshErr:           errors.New("OAuth token refresh failed with HTTP 400"),
+		failProviderIfCalled: true,
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("doctor --online exit code = %d, want 1", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "connection_unhealthy")
+	assertJSONString(t, got, "token_status", "refresh_failed")
+	if message, ok := got["message"].(string); !ok || !strings.Contains(message, "HTTP 400") {
+		t.Fatalf("message = %T(%v), want refresh failure", got["message"], got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+	if strings.Contains(stdout.String()+stderr.String(), "refresh-secret-value") || strings.Contains(stdout.String()+stderr.String(), "current-access-secret") {
+		t.Fatalf("doctor --online output leaked token material:\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+}
+
+func TestDoctorOnlineReportsProviderFailureAsConnectionHealth(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	installDoctorOnlineFakes(t, fakeDoctorOnlineConfig{
+		now:                     time.Date(2026, 5, 31, 20, 30, 0, 0, time.UTC),
+		refreshedAccessToken:    "refreshed-access-secret",
+		wantRefreshToken:        "connect-refresh-secret",
+		wantProviderAccessToken: "refreshed-access-secret",
+		providerErr:             errors.New("Google Health identity request failed with HTTP 503"),
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("doctor --online exit code = %d, want 1", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "connection_unhealthy")
+	assertJSONString(t, got, "token_status", "provider_unreachable")
+	if message, ok := got["message"].(string); !ok || !strings.Contains(message, "HTTP 503") {
+		t.Fatalf("message = %T(%v), want provider failure", got["message"], got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+	tokenStoreBytes, err := os.ReadFile(tokenStorePath)
+	if err != nil {
+		t.Fatalf("read token store: %v", err)
+	}
+	if strings.Contains(string(tokenStoreBytes), "refreshed-access-secret") || !strings.Contains(string(tokenStoreBytes), "connect-access-secret") {
+		t.Fatal("token store should keep old token material after provider failure")
+	}
+}
+
+func TestDoctorOnlineReportsMissingTokenAsConnectionHealth(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	store := fileCredentialStore{path: tokenStorePath}
+	if err := store.Store("googlehealth:111111256096816351", map[string]any{"refresh_token": "connect-refresh-secret"}); err != nil {
+		t.Fatalf("replace token material: %v", err)
+	}
+	installDoctorOnlineFakes(t, fakeDoctorOnlineConfig{
+		failRefreshIfCalled:  true,
+		failProviderIfCalled: true,
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("doctor --online exit code = %d, want 1", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "connection_unhealthy")
+	assertJSONString(t, got, "token_status", "token_missing")
+	if message, ok := got["message"].(string); !ok || !strings.Contains(message, "missing access token") {
+		t.Fatalf("message = %T(%v), want missing access token", got["message"], got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorOnlineReportsMissingRefreshTokenBeforeProvider(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	store := fileCredentialStore{path: tokenStorePath}
+	if err := store.Store("googlehealth:111111256096816351", map[string]any{"access_token": "connect-access-secret"}); err != nil {
+		t.Fatalf("replace token material: %v", err)
+	}
+	installDoctorOnlineFakes(t, fakeDoctorOnlineConfig{
+		now:                  time.Date(2026, 5, 31, 20, 30, 0, 0, time.UTC),
+		failRefreshIfCalled:  true,
+		failProviderIfCalled: true,
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("doctor --online exit code = %d, want 1", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "connection_unhealthy")
+	assertJSONString(t, got, "token_status", "token_missing")
+	if message, ok := got["message"].(string); !ok || !strings.Contains(message, "missing refresh token") {
+		t.Fatalf("message = %T(%v), want missing refresh token", got["message"], got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorOnlineDoesNotPersistRefreshBeforeIdentityMatch(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
+		accessToken:        "old-access-secret",
+		refreshToken:       "refresh-secret-value",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	setConnectionTokenExpiry(t, archivePath, "2026-05-31T21:00:00Z")
+	installDoctorOnlineFakes(t, fakeDoctorOnlineConfig{
+		now:                     time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
+		refreshedAccessToken:    "refreshed-access-secret",
+		wantRefreshToken:        "refresh-secret-value",
+		wantProviderAccessToken: "refreshed-access-secret",
+		healthUserID:            "222222256096816351",
+		legacyFitbitUserID:      "DIFFERENT",
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("doctor --online exit code = %d, want 1", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "connection_unhealthy")
+	assertJSONString(t, got, "token_status", "identity_mismatch")
+	tokenStoreBytes, err := os.ReadFile(tokenStorePath)
+	if err != nil {
+		t.Fatalf("read token store: %v", err)
+	}
+	if strings.Contains(string(tokenStoreBytes), "refreshed-access-secret") || !strings.Contains(string(tokenStoreBytes), "old-access-secret") {
+		t.Fatal("token store should keep old token material after identity mismatch")
+	}
+	tokenMetadata := archivedConnectionTokenMetadata(t, archivePath)
+	if strings.Contains(tokenMetadata, `"expires_at":"2026-05-31T23:00:00Z"`) || !strings.Contains(tokenMetadata, `"expires_at":"2026-05-31T21:00:00Z"`) {
+		t.Fatalf("token metadata should keep old expiry after identity mismatch: %s", tokenMetadata)
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+	if strings.Contains(stdout.String()+stderr.String(), "old-access-secret") || strings.Contains(stdout.String()+stderr.String(), "refreshed-access-secret") || strings.Contains(stdout.String()+stderr.String(), "refresh-secret-value") {
+		t.Fatalf("doctor --online output leaked token material:\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+}
+
+func TestPersistDoctorOnlineRefreshedTokenRollsBackOnMetadataFailure(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
+		accessToken:        "old-access-secret",
+		refreshToken:       "refresh-secret-value",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	store := fileCredentialStore{path: tokenStorePath}
+	previousTokenMaterial, err := store.Load("googlehealth:111111256096816351")
+	if err != nil {
+		t.Fatalf("load previous token material: %v", err)
+	}
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM connections WHERE id = ?`, "googlehealth:111111256096816351"); err != nil {
+		_ = db.Close()
+		t.Fatalf("delete connection: %v", err)
+	}
+	refreshedToken := oauthTokenResponse{
+		accessToken:  "refreshed-access-secret",
+		refreshToken: "refresh-secret-value",
+		tokenType:    "Bearer",
+		scopes:       []string{googleHealthActivityReadonlyScope},
+		expiresAt:    time.Date(2026, 5, 31, 23, 0, 0, 0, time.UTC),
+		rawTokenMaterialObject: map[string]any{
+			"access_token":  "refreshed-access-secret",
+			"refresh_token": "refresh-secret-value",
+			"expires_in":    float64(3600),
+			"scope":         googleHealthActivityReadonlyScope,
+			"token_type":    "Bearer",
+		},
+	}
+	err = persistDoctorOnlineRefreshedToken(db, credentialStoreConfig{kind: "file", path: tokenStorePath}, "googlehealth:111111256096816351", refreshedToken, previousTokenMaterial)
+	if closeErr := db.Close(); closeErr != nil {
+		t.Fatalf("close archive: %v", closeErr)
+	}
+	if err == nil {
+		t.Fatal("persist refreshed token succeeded after connection was removed")
+	}
+	tokenStoreBytes, err := os.ReadFile(tokenStorePath)
+	if err != nil {
+		t.Fatalf("read token store: %v", err)
+	}
+	if strings.Contains(string(tokenStoreBytes), "refreshed-access-secret") || !strings.Contains(string(tokenStoreBytes), "old-access-secret") {
+		t.Fatal("token store should roll back to previous token material")
+	}
+}
+
+func TestDoctorDefaultDoesNotRefreshOrCallProvider(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	setConnectionTokenExpiry(t, archivePath, "2026-05-31T19:00:00Z")
+	installDoctorOnlineFakes(t, fakeDoctorOnlineConfig{
+		now:                  time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
+		failRefreshIfCalled:  true,
+		failProviderIfCalled: true,
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"doctor", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("doctor exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "ok")
+	assertJSONString(t, got, "token_status", "metadata_present")
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestConnectStoresFileFallbackTokenAndAnchorsIdentity(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
@@ -3065,6 +3473,19 @@ type fakeConnectConfig struct {
 	failIfCalled       bool
 }
 
+type fakeDoctorOnlineConfig struct {
+	now                     time.Time
+	refreshedAccessToken    string
+	wantRefreshToken        string
+	wantProviderAccessToken string
+	healthUserID            string
+	legacyFitbitUserID      string
+	refreshErr              error
+	providerErr             error
+	failRefreshIfCalled     bool
+	failProviderIfCalled    bool
+}
+
 func installConnectFakes(t *testing.T, config fakeConnectConfig) {
 	t.Helper()
 
@@ -3128,6 +3549,79 @@ func installConnectFakes(t *testing.T, config fakeConnectConfig) {
 	currentTime = func() time.Time { return config.now }
 	t.Cleanup(func() {
 		runOAuthFlow = originalOAuthFlow
+		fetchIdentity = originalFetchIdentity
+		currentTime = originalCurrentTime
+	})
+}
+
+func installDoctorOnlineFakes(t *testing.T, config fakeDoctorOnlineConfig) {
+	t.Helper()
+
+	originalRefreshOAuthToken := refreshOAuthToken
+	originalFetchIdentity := fetchIdentity
+	originalCurrentTime := currentTime
+	if config.now.IsZero() {
+		config.now = time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC)
+	}
+	if config.refreshedAccessToken == "" {
+		config.refreshedAccessToken = "refreshed-access-secret"
+	}
+	if config.wantRefreshToken == "" {
+		config.wantRefreshToken = "refresh-secret-value"
+	}
+	if config.wantProviderAccessToken == "" {
+		config.wantProviderAccessToken = config.refreshedAccessToken
+	}
+	if config.healthUserID == "" {
+		config.healthUserID = "111111256096816351"
+	}
+	refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
+		if config.failRefreshIfCalled {
+			t.Fatal("token refresh should not be called")
+		}
+		if refreshToken != config.wantRefreshToken {
+			t.Fatalf("refresh token = %q, want configured refresh token", refreshToken)
+		}
+		if len(fallbackScopes) == 0 {
+			t.Fatal("fallback scopes empty")
+		}
+		if config.refreshErr != nil {
+			return oauthTokenResponse{}, config.refreshErr
+		}
+		return oauthTokenResponse{
+			accessToken:  config.refreshedAccessToken,
+			refreshToken: refreshToken,
+			tokenType:    "Bearer",
+			scopes:       fallbackScopes,
+			expiresAt:    config.now.Add(time.Hour),
+			rawTokenMaterialObject: map[string]any{
+				"access_token":  config.refreshedAccessToken,
+				"refresh_token": refreshToken,
+				"expires_in":    float64(3600),
+				"scope":         strings.Join(fallbackScopes, " "),
+				"token_type":    "Bearer",
+			},
+		}, nil
+	}
+	fetchIdentity = func(accessToken string) (googleIdentity, error) {
+		if config.failProviderIfCalled {
+			t.Fatal("provider reachability check should not be called")
+		}
+		if accessToken != config.wantProviderAccessToken {
+			t.Fatalf("provider access token = %q, want configured token", accessToken)
+		}
+		if config.providerErr != nil {
+			return googleIdentity{}, config.providerErr
+		}
+		return googleIdentity{
+			healthUserID:       config.healthUserID,
+			legacyFitbitUserID: config.legacyFitbitUserID,
+			rawJSON:            fmt.Sprintf(`{"healthUserId":%q,"legacyUserId":%q}`, config.healthUserID, config.legacyFitbitUserID),
+		}, nil
+	}
+	currentTime = func() time.Time { return config.now }
+	t.Cleanup(func() {
+		refreshOAuthToken = originalRefreshOAuthToken
 		fetchIdentity = originalFetchIdentity
 		currentTime = originalCurrentTime
 	})
@@ -3212,6 +3706,46 @@ func archivedConnectionIdentityJSON(t *testing.T, archivePath string) string {
 		t.Fatalf("query archived identity JSON: %v", err)
 	}
 	return identityJSON
+}
+
+func archivedConnectionTokenMetadata(t *testing.T, archivePath string) string {
+	t.Helper()
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	var tokenMetadata string
+	if err := db.QueryRow(`SELECT token_metadata_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&tokenMetadata); err != nil {
+		t.Fatalf("query archived token metadata: %v", err)
+	}
+	return tokenMetadata
+}
+
+func setConnectionTokenExpiry(t *testing.T, archivePath, expiresAt string) {
+	t.Helper()
+
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(archivedConnectionTokenMetadata(t, archivePath)), &metadata); err != nil {
+		t.Fatalf("unmarshal token metadata: %v", err)
+	}
+	metadata["expires_at"] = expiresAt
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("marshal token metadata: %v", err)
+	}
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	_, err = db.Exec(`UPDATE connections SET token_metadata_json = ? WHERE id = ?`, string(metadataJSON), "googlehealth:111111256096816351")
+	if closeErr := db.Close(); closeErr != nil {
+		t.Fatalf("close archive: %v", closeErr)
+	}
+	if err != nil {
+		t.Fatalf("update token metadata: %v", err)
+	}
 }
 
 func assertArchiveTableCount(t *testing.T, archivePath, table string, want int) {

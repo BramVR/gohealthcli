@@ -182,6 +182,7 @@ type googleIdentity struct {
 }
 
 var runOAuthFlow = runBrowserOAuthFlow
+var refreshOAuthToken = refreshGoogleOAuthToken
 var fetchIdentity = fetchGoogleIdentity
 var fetchRawProvider = fetchGoogleHealthRaw
 var currentTime = func() time.Time { return time.Now().UTC() }
@@ -256,6 +257,7 @@ func runDoctor(args []string, configPath, archivePath string, mode outputMode, s
 	doctorArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
 	doctorJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
 	doctorPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
+	doctorOnline := flags.Bool("online", false, "refresh tokens and check provider reachability")
 	flags.Bool("no-input", false, "never prompt, never wait for browser input")
 
 	if err := flags.Parse(args); err != nil {
@@ -271,6 +273,9 @@ func runDoctor(args []string, configPath, archivePath string, mode outputMode, s
 
 	mode = outputMode{json: *doctorJSONOutput, plain: *doctorPlainOutput}
 	if fileExists(*doctorConfigPath) && fileExists(*doctorArchivePath) {
+		if *doctorOnline {
+			return runDoctorOnline(*doctorConfigPath, *doctorArchivePath, mode, stdout, stderr)
+		}
 		config, err := inspectConfig(*doctorConfigPath, *doctorArchivePath)
 		if err != nil {
 			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, fmt.Sprintf("config check failed: %v", err), mode, stdout, stderr)
@@ -333,6 +338,26 @@ func runDoctorInvalid(configPath, archivePath, message string, mode outputMode, 
 		return 1
 	}
 	return 1
+}
+
+func runDoctorOnline(configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
+	result, err := doctorOnlineSetup(configPath, archivePath)
+	if err != nil {
+		if result.Status == "" || result.Status == "ok" {
+			result.Status = "connection_unhealthy"
+		}
+		result.Message = err.Error()
+		if writeErr := writeDoctorResult(result, mode, stdout); writeErr != nil {
+			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
+			return 1
+		}
+		return 1
+	}
+	if err := writeDoctorResult(result, mode, stdout); err != nil {
+		fmt.Fprintf(stderr, "write output: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func runInit(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
@@ -666,6 +691,147 @@ func identitySetup(configPath, archivePath string) (identityResult, error) {
 	}
 	result.Message = "Google Identity refreshed"
 	return result, nil
+}
+
+func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
+	config, err := inspectFullConfig(configPath, archivePath)
+	if err != nil {
+		return doctorResult{Status: "setup_invalid", ConfigPath: configPath, ArchivePath: archivePath, TokenStatus: "unknown"}, fmt.Errorf("config check failed: %w", err)
+	}
+	result := doctorResult{
+		Status:            "ok",
+		ConfigPath:        configPath,
+		ArchivePath:       archivePath,
+		OAuthClientSource: config.oauthClient.kind,
+		CredentialStore:   config.credentialStore.kind,
+	}
+	if err := migrateArchiveIfNeeded(archivePath); err != nil {
+		result.Status = "setup_invalid"
+		result.TokenStatus = "unknown"
+		return result, fmt.Errorf("Health Archive migration failed: %w", err)
+	}
+	archive, err := inspectArchive(archivePath, true)
+	if err != nil {
+		result.Status = "setup_invalid"
+		result.TokenStatus = "unknown"
+		return result, fmt.Errorf("Health Archive check failed: %w", err)
+	}
+	result.SchemaVersion = &archive.schemaVersion
+	result.ConnectionCount = &archive.connectionCount
+	result.TokenStatus = archive.tokenStatus
+	if archive.connectionCount == 0 {
+		result.TokenStatus = "not_connected"
+		return result, errors.New("no Connection found; run `gohealthcli connect` first")
+	}
+	db, err := openArchive(archivePath)
+	if err != nil {
+		result.Status = "setup_invalid"
+		result.TokenStatus = "archive_unavailable"
+		return result, err
+	}
+	defer db.Close()
+	connection, err := readCurrentConnection(db)
+	if err != nil {
+		result.TokenStatus = "connection_unavailable"
+		return result, err
+	}
+	protectedPaths := []string{configPath, archivePath, config.oauthClient.path}
+	tokenCheck, err := doctorOnlineAccessToken(config, connection, protectedPaths)
+	if err != nil {
+		if result.TokenStatus == archive.tokenStatus {
+			if strings.Contains(err.Error(), "missing access token") || strings.Contains(err.Error(), "missing refresh token") || strings.Contains(err.Error(), "token material not found") {
+				result.TokenStatus = "token_missing"
+			} else {
+				result.TokenStatus = "refresh_failed"
+			}
+		}
+		return result, err
+	}
+	if tokenCheck.refreshedToken == nil {
+		result.TokenStatus = "metadata_present"
+	}
+	identity, err := fetchIdentity(tokenCheck.accessToken)
+	if err != nil {
+		result.TokenStatus = "provider_unreachable"
+		if strings.Contains(err.Error(), "HTTP 401") {
+			return result, errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again")
+		}
+		return result, err
+	}
+	if identity.healthUserID != connection.googleHealthUserID {
+		result.TokenStatus = "identity_mismatch"
+		return result, errors.New("Provider returned a different Google Identity; use a new archive path")
+	}
+	if tokenCheck.refreshedToken != nil {
+		if err := persistDoctorOnlineRefreshedToken(db, config.credentialStore, connection.id, *tokenCheck.refreshedToken, tokenCheck.previousTokenMaterial); err != nil {
+			result.TokenStatus = "refresh_failed"
+			return result, err
+		}
+	}
+	result.TokenStatus = "online_ok"
+	result.Message = "online Google Health check passed"
+	return result, nil
+}
+
+type doctorOnlineTokenCheck struct {
+	accessToken           string
+	refreshedToken        *oauthTokenResponse
+	previousTokenMaterial map[string]any
+}
+
+func doctorOnlineAccessToken(config fullConfigCheck, connection archivedConnection, protectedPaths []string) (doctorOnlineTokenCheck, error) {
+	if err := validateCredentialStoreRuntime(config.credentialStore, protectedPaths); err != nil {
+		return doctorOnlineTokenCheck{}, err
+	}
+	store, err := newCredentialStore(config.credentialStore)
+	if err != nil {
+		return doctorOnlineTokenCheck{}, err
+	}
+	tokenMaterial, err := store.Load(connection.id)
+	if err != nil {
+		return doctorOnlineTokenCheck{}, err
+	}
+	accessToken, ok := tokenMaterial["access_token"].(string)
+	if !ok || accessToken == "" {
+		return doctorOnlineTokenCheck{}, errors.New("Credential Store token material is missing access token; run `gohealthcli connect` again")
+	}
+	refreshToken, ok := tokenMaterial["refresh_token"].(string)
+	if !ok || refreshToken == "" {
+		return doctorOnlineTokenCheck{}, errors.New("Credential Store token material is missing refresh token; run `gohealthcli connect` again")
+	}
+	_, scopes, err := connectionTokenExpiryAndScopes(connection.tokenMetadataJSON)
+	if err != nil {
+		return doctorOnlineTokenCheck{}, err
+	}
+	if config.oauthClient.kind != "file" {
+		return doctorOnlineTokenCheck{}, errors.New("doctor --online requires an OAuth client file source to refresh tokens; run `gohealthcli connect` again")
+	}
+	client, err := loadOAuthClientConfig(config.oauthClient.path)
+	if err != nil {
+		return doctorOnlineTokenCheck{}, err
+	}
+	token, err := refreshOAuthToken(client, refreshToken, scopes)
+	if err != nil {
+		return doctorOnlineTokenCheck{}, err
+	}
+	return doctorOnlineTokenCheck{accessToken: token.accessToken, refreshedToken: &token, previousTokenMaterial: tokenMaterial}, nil
+}
+
+func persistDoctorOnlineRefreshedToken(db *sql.DB, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse, previousTokenMaterial map[string]any) error {
+	store, err := newCredentialStore(credentialStore)
+	if err != nil {
+		return err
+	}
+	if err := store.Store(connectionID, token.rawTokenMaterialObject); err != nil {
+		return err
+	}
+	if err := updateConnectionTokenMetadata(db, connectionID, token, currentTime()); err != nil {
+		if rollbackErr := store.Store(connectionID, previousTokenMaterial); rollbackErr != nil {
+			return fmt.Errorf("%w; rollback Credential Store token material: %v", err, rollbackErr)
+		}
+		return err
+	}
+	return nil
 }
 
 func rawSetup(configPath, archivePath string, request rawProviderRequest) ([]byte, error) {
@@ -1669,6 +1835,27 @@ func exchangeOAuthCode(client oauthClientConfig, redirectURI, code, verifier str
 	return parseOAuthTokenResponse(body, currentTime())
 }
 
+func refreshGoogleOAuthToken(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
+	values := url.Values{}
+	values.Set("client_id", client.clientID)
+	values.Set("client_secret", client.clientSecret)
+	values.Set("refresh_token", refreshToken)
+	values.Set("grant_type", "refresh_token")
+	response, err := http.PostForm(client.tokenURI, values)
+	if err != nil {
+		return oauthTokenResponse{}, err
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return oauthTokenResponse{}, err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return oauthTokenResponse{}, fmt.Errorf("OAuth token refresh failed with HTTP %d", response.StatusCode)
+	}
+	return parseOAuthRefreshTokenResponse(body, currentTime(), refreshToken, fallbackScopes)
+}
+
 func parseOAuthTokenResponse(body []byte, now time.Time) (oauthTokenResponse, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(body, &raw); err != nil {
@@ -1692,6 +1879,57 @@ func parseOAuthTokenResponse(body []byte, now time.Time) (oauthTokenResponse, er
 	}
 	scopeText, _ := raw["scope"].(string)
 	scopes := strings.Fields(scopeText)
+	if len(scopes) == 0 {
+		return oauthTokenResponse{}, errors.New("OAuth token response missing scopes")
+	}
+	var refreshExpiresAt *time.Time
+	if refreshExpiresIn, ok := raw["refresh_token_expires_in"].(float64); ok && refreshExpiresIn > 0 {
+		value := now.Add(time.Duration(refreshExpiresIn) * time.Second).UTC()
+		refreshExpiresAt = &value
+	}
+	return oauthTokenResponse{
+		accessToken:            accessToken,
+		refreshToken:           refreshToken,
+		tokenType:              tokenType,
+		scopes:                 scopes,
+		expiresAt:              now.Add(time.Duration(expiresIn) * time.Second).UTC(),
+		refreshTokenExpiresAt:  refreshExpiresAt,
+		rawTokenMaterialObject: raw,
+	}, nil
+}
+
+func parseOAuthRefreshTokenResponse(body []byte, now time.Time, fallbackRefreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return oauthTokenResponse{}, errors.New("OAuth token response is not valid JSON")
+	}
+	accessToken, _ := raw["access_token"].(string)
+	if accessToken == "" {
+		return oauthTokenResponse{}, errors.New("OAuth token response missing access token")
+	}
+	refreshToken, _ := raw["refresh_token"].(string)
+	if refreshToken == "" {
+		refreshToken = fallbackRefreshToken
+		raw["refresh_token"] = fallbackRefreshToken
+	}
+	if refreshToken == "" {
+		return oauthTokenResponse{}, errors.New("OAuth token response missing refresh token; run `gohealthcli connect` again")
+	}
+	tokenType, _ := raw["token_type"].(string)
+	if tokenType == "" {
+		tokenType = "Bearer"
+		raw["token_type"] = tokenType
+	}
+	expiresIn, _ := raw["expires_in"].(float64)
+	if expiresIn <= 0 {
+		return oauthTokenResponse{}, errors.New("OAuth token response missing expiry")
+	}
+	scopeText, _ := raw["scope"].(string)
+	scopes := strings.Fields(scopeText)
+	if len(scopes) == 0 {
+		scopes = fallbackScopes
+		raw["scope"] = strings.Join(scopes, " ")
+	}
 	if len(scopes) == 0 {
 		return oauthTokenResponse{}, errors.New("OAuth token response missing scopes")
 	}
@@ -2262,16 +2500,7 @@ func readCurrentConnection(db *sql.DB) (archivedConnection, error) {
 }
 
 func upsertConnection(db *sql.DB, connectionID string, identity googleIdentity, token oauthTokenResponse, now time.Time) error {
-	metadata := map[string]any{
-		"credential_store_key": connectionID,
-		"expires_at":           token.expiresAt.UTC().Format(time.RFC3339),
-		"scopes":               token.scopes,
-		"token_type":           token.tokenType,
-	}
-	if token.refreshTokenExpiresAt != nil {
-		metadata["refresh_expires_at"] = token.refreshTokenExpiresAt.UTC().Format(time.RFC3339)
-	}
-	metadataJSON, err := json.Marshal(metadata)
+	metadataJSON, err := connectionTokenMetadataJSON(connectionID, token)
 	if err != nil {
 		return err
 	}
@@ -2301,6 +2530,42 @@ func upsertConnection(db *sql.DB, connectionID string, identity googleIdentity, 
 		nowText,
 	)
 	return err
+}
+
+func updateConnectionTokenMetadata(db *sql.DB, connectionID string, token oauthTokenResponse, now time.Time) error {
+	metadataJSON, err := connectionTokenMetadataJSON(connectionID, token)
+	if err != nil {
+		return err
+	}
+	result, err := db.Exec(`UPDATE connections SET token_metadata_json = ?, updated_at = ? WHERE id = ?`,
+		string(metadataJSON),
+		now.UTC().Format(time.RFC3339),
+		connectionID,
+	)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected != 1 {
+		return fmt.Errorf("Connection %s not found", connectionID)
+	}
+	return nil
+}
+
+func connectionTokenMetadataJSON(connectionID string, token oauthTokenResponse) ([]byte, error) {
+	metadata := map[string]any{
+		"credential_store_key": connectionID,
+		"expires_at":           token.expiresAt.UTC().Format(time.RFC3339),
+		"scopes":               token.scopes,
+		"token_type":           token.tokenType,
+	}
+	if token.refreshTokenExpiresAt != nil {
+		metadata["refresh_expires_at"] = token.refreshTokenExpiresAt.UTC().Format(time.RFC3339)
+	}
+	return json.Marshal(metadata)
 }
 
 func refreshConnectionIdentity(db *sql.DB, connection archivedConnection, identity googleIdentity, now time.Time) error {
@@ -2437,22 +2702,43 @@ func validateTokenMetadata(metadata string) error {
 }
 
 func requireUsableConnectionAccessToken(metadata string, now time.Time) error {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(metadata), &raw); err != nil {
-		return errors.New("Connection token metadata is not valid JSON; run `gohealthcli connect` again")
-	}
-	expiresAtText, err := requireJSONString(raw, "expires_at")
+	expiresAt, _, err := connectionTokenExpiryAndScopes(metadata)
 	if err != nil {
-		return errors.New("Connection token metadata is incomplete; run `gohealthcli connect` again")
-	}
-	expiresAt, err := time.Parse(time.RFC3339, expiresAtText)
-	if err != nil {
-		return errors.New("Connection token expiry is invalid; run `gohealthcli connect` again")
+		return err
 	}
 	if !expiresAt.After(now.UTC()) {
 		return errors.New("Connection token has expired; run `gohealthcli connect` again")
 	}
 	return nil
+}
+
+func connectionTokenExpiryAndScopes(metadata string) (time.Time, []string, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(metadata), &raw); err != nil {
+		return time.Time{}, nil, errors.New("Connection token metadata is not valid JSON; run `gohealthcli connect` again")
+	}
+	expiresAtText, err := requireJSONString(raw, "expires_at")
+	if err != nil {
+		return time.Time{}, nil, errors.New("Connection token metadata is incomplete; run `gohealthcli connect` again")
+	}
+	expiresAt, err := time.Parse(time.RFC3339, expiresAtText)
+	if err != nil {
+		return time.Time{}, nil, errors.New("Connection token expiry is invalid; run `gohealthcli connect` again")
+	}
+	value, ok := raw["scopes"]
+	if !ok {
+		return time.Time{}, nil, errors.New("Connection token metadata is missing scopes; run `gohealthcli connect` again")
+	}
+	var scopes []string
+	if err := json.Unmarshal(value, &scopes); err != nil || len(scopes) == 0 {
+		return time.Time{}, nil, errors.New("Connection token metadata scopes are invalid; run `gohealthcli connect` again")
+	}
+	for _, scope := range scopes {
+		if strings.TrimSpace(scope) == "" {
+			return time.Time{}, nil, errors.New("Connection token metadata scopes are invalid; run `gohealthcli connect` again")
+		}
+	}
+	return expiresAt, scopes, nil
 }
 
 func metadataContainsSecretKeys(value any) bool {
@@ -2824,6 +3110,10 @@ func writeDoctorResult(result doctorResult, mode outputMode, stdout io.Writer) e
 	switch result.Status {
 	case "ok":
 		if _, err := fmt.Fprintln(stdout, "Setup ok"); err != nil {
+			return err
+		}
+	case "connection_unhealthy":
+		if _, err := fmt.Fprintln(stdout, "Connection unhealthy"); err != nil {
 			return err
 		}
 	case "setup_invalid":
