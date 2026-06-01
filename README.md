@@ -30,5 +30,6 @@ empty Health Archive, `gohealthcli doctor` validates local setup offline,
 refreshes it, and `gohealthcli profile` archives Profile Snapshots.
 `gohealthcli sync` archives steps Data Points, wearable-filtered steps, and
 explicit steps daily Rollups idempotently, `gohealthcli status` summarizes the
-local Health Archive, `gohealthcli raw` prints provider JSON for exploration,
-and `gohealthcli --version` is available.
+local Health Archive, `gohealthcli query` runs guarded read-only SQL over the
+archive, `gohealthcli raw` prints provider JSON for exploration, and
+`gohealthcli --version` is available.

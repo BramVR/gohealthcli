@@ -380,6 +380,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runSync(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	case "status":
 		return runStatus(flags.Args()[1:], *configPath, *archivePath, globalArchivePathExplicit, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
+	case "query":
+		return runQuery(flags.Args()[1:], *configPath, *archivePath, globalArchivePathExplicit, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	case "raw":
 		return runRaw(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	default:
@@ -536,7 +538,7 @@ func runStatus(args []string, configPath, archivePath string, archivePathExplici
 	}
 
 	mode = outputMode{json: *statusJSONOutput, plain: *statusPlainOutput}
-	resolvedArchivePath, err := resolveStatusArchivePath(*statusConfigPath, *statusArchivePath, archivePathExplicit || flagWasProvided(flags, "db"))
+	resolvedArchivePath, err := resolveConfiguredArchivePath(*statusConfigPath, *statusArchivePath, archivePathExplicit || flagWasProvided(flags, "db"))
 	if err != nil {
 		result := statusResult{Status: "status_failed", ArchivePath: *statusArchivePath, Message: err.Error()}
 		if writeErr := writeStatusResult(result, mode, stdout); writeErr != nil {
@@ -1283,8 +1285,8 @@ func syncResultTotalCounts(result syncResult) (int, int, int) {
 		result.DataPointsUpdated + result.RollupsUpdated
 }
 
-func resolveStatusArchivePath(configPath, archivePath string, archivePathExplicit bool) (string, error) {
-	configArchivePath, configExists, err := readStatusConfigArchivePath(configPath)
+func resolveConfiguredArchivePath(configPath, archivePath string, archivePathExplicit bool) (string, error) {
+	configArchivePath, configExists, err := readConfigArchivePath(configPath)
 	if err != nil {
 		return "", err
 	}
@@ -1300,7 +1302,7 @@ func resolveStatusArchivePath(configPath, archivePath string, archivePathExplici
 	return archivePath, nil
 }
 
-func readStatusConfigArchivePath(configPath string) (string, bool, error) {
+func readConfigArchivePath(configPath string) (string, bool, error) {
 	info, err := os.Stat(configPath)
 	if errors.Is(err, os.ErrNotExist) && configPath == defaultConfigPath() {
 		return "", false, nil

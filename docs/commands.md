@@ -113,6 +113,7 @@ gohealthcli sync --types steps --source-family wearable --from 2026-01-01
 ## Export Sketch
 
 ```bash
+gohealthcli query 'SELECT data_type, end_time_utc FROM data_points ORDER BY end_time_utc DESC LIMIT 10'
 gohealthcli export daily-steps --format csv --output steps.csv
 gohealthcli export sleep-sessions --format jsonl --output sleep.jsonl
 gohealthcli export daily-steps --format jsonl --stdout
@@ -187,6 +188,18 @@ data_type.steps.newest_data_point_timestamp: 2026-01-02T00:00:00Z
 latest_successful_sync_run_id: 4
 latest_successful_sync_run_status: sync_completed
 message: Health Archive status summarized
+```
+
+Query plain mode:
+
+```text
+status: query_completed
+archive_path: /path/to/gohealthcli.sqlite
+columns: data_type,end_time_utc
+row_count: 1
+row.1.1: steps
+row.1.2: 2026-01-02T00:00:00Z
+message: Query completed
 ```
 
 Connect plain mode:
