@@ -2601,11 +2601,11 @@ func googleHealthCivilTimeIntervalJSON(from, to string) (json.RawMessage, error)
 	if to == "" {
 		return nil, errors.New("daily Rollup calls require --to")
 	}
-	start, err := googleHealthCivilDateTimeJSON(from)
+	start, err := googleHealthCivilDateJSON(from)
 	if err != nil {
 		return nil, fmt.Errorf("--from: %w", err)
 	}
-	end, err := googleHealthCivilDateTimeJSON(to)
+	end, err := googleHealthCivilDateJSON(to)
 	if err != nil {
 		return nil, fmt.Errorf("--to: %w", err)
 	}
@@ -2622,43 +2622,22 @@ func googleHealthCivilTimeIntervalJSON(from, to string) (json.RawMessage, error)
 	return content, nil
 }
 
-func googleHealthCivilDateTimeJSON(value string) (json.RawMessage, error) {
+func googleHealthCivilDateJSON(value string) (json.RawMessage, error) {
 	if parsed, err := time.Parse("2006-01-02", value); err == nil {
-		return googleHealthCivilDateJSON(parsed, nil)
-	}
-	return nil, errors.New("expected YYYY-MM-DD")
-}
-
-func googleHealthCivilDateJSON(parsed time.Time, timeValue *time.Time) (json.RawMessage, error) {
-	date := struct {
-		Year  int `json:"year"`
-		Month int `json:"month"`
-		Day   int `json:"day"`
-	}{
-		Year:  parsed.Year(),
-		Month: int(parsed.Month()),
-		Day:   parsed.Day(),
-	}
-	if timeValue == nil {
+		date := struct {
+			Year  int `json:"year"`
+			Month int `json:"month"`
+			Day   int `json:"day"`
+		}{
+			Year:  parsed.Year(),
+			Month: int(parsed.Month()),
+			Day:   parsed.Day(),
+		}
 		return json.Marshal(struct {
 			Date any `json:"date"`
 		}{Date: date})
 	}
-	timeOfDay := struct {
-		Hours   int `json:"hours"`
-		Minutes int `json:"minutes,omitempty"`
-		Seconds int `json:"seconds,omitempty"`
-		Nanos   int `json:"nanos,omitempty"`
-	}{
-		Hours:   timeValue.Hour(),
-		Minutes: timeValue.Minute(),
-		Seconds: timeValue.Second(),
-		Nanos:   timeValue.Nanosecond(),
-	}
-	return json.Marshal(struct {
-		Date any `json:"date"`
-		Time any `json:"time"`
-	}{Date: date, Time: timeOfDay})
+	return nil, errors.New("expected YYYY-MM-DD")
 }
 
 func validateRawGoogleHealthDataType(dataType string) error {
