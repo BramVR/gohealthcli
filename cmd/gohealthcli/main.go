@@ -126,6 +126,44 @@ type syncResult struct {
 	Message           string   `json:"message"`
 }
 
+type statusResult struct {
+	Status               string           `json:"status"`
+	ArchivePath          string           `json:"archive_path"`
+	SchemaVersion        int              `json:"schema_version,omitempty"`
+	DataPointCount       int              `json:"data_point_count"`
+	RollupCount          int              `json:"rollup_count"`
+	ProfileSnapshotCount int              `json:"profile_snapshot_count"`
+	SyncRunCount         int              `json:"sync_run_count"`
+	DataTypes            []statusDataType `json:"data_types,omitempty"`
+	LatestSuccessfulRun  *statusSyncRun   `json:"latest_successful_sync_run,omitempty"`
+	LatestFailedRun      *statusSyncRun   `json:"latest_failed_sync_run,omitempty"`
+	Message              string           `json:"message"`
+}
+
+type statusDataType struct {
+	DataType                 string `json:"data_type"`
+	DataPointCount           int    `json:"data_point_count"`
+	RollupCount              int    `json:"rollup_count"`
+	NewestDataPointTimestamp string `json:"newest_data_point_timestamp,omitempty"`
+	NewestRollupTimestamp    string `json:"newest_rollup_timestamp,omitempty"`
+}
+
+type statusSyncRun struct {
+	ID                 int64    `json:"id"`
+	Status             string   `json:"status"`
+	DataTypes          []string `json:"data_types,omitempty"`
+	From               string   `json:"from,omitempty"`
+	To                 string   `json:"to,omitempty"`
+	EndpointFamily     string   `json:"endpoint_family,omitempty"`
+	SourceFamilyFilter string   `json:"source_family_filter,omitempty"`
+	SeenCount          int      `json:"seen_count"`
+	NewCount           int      `json:"new_count"`
+	UpdatedCount       int      `json:"updated_count"`
+	StartedAt          string   `json:"started_at,omitempty"`
+	FinishedAt         string   `json:"finished_at,omitempty"`
+	ErrorSummary       string   `json:"error_summary,omitempty"`
+}
+
 type archivedConnection struct {
 	id                 string
 	providerName       string
@@ -325,6 +363,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "missing command")
 		return 1
 	}
+	globalArchivePathExplicit := flagWasProvided(flags, "db")
 
 	switch flags.Arg(0) {
 	case "doctor":
@@ -339,6 +378,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runProfile(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	case "sync":
 		return runSync(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
+	case "status":
+		return runStatus(flags.Args()[1:], *configPath, *archivePath, globalArchivePathExplicit, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	case "raw":
 		return runRaw(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	default:
@@ -350,6 +391,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 type outputMode struct {
 	json  bool
 	plain bool
+}
+
+func flagWasProvided(flags *flag.FlagSet, name string) bool {
+	provided := false
+	flags.Visit(func(item *flag.Flag) {
+		if item.Name == name {
+			provided = true
+		}
+	})
+	return provided
 }
 
 func runDoctor(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
@@ -457,6 +508,56 @@ func runDoctorOnline(configPath, archivePath string, mode outputMode, stdout, st
 		return 1
 	}
 	if err := writeDoctorResult(result, mode, stdout); err != nil {
+		fmt.Fprintf(stderr, "write output: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runStatus(args []string, configPath, archivePath string, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("status", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+
+	statusConfigPath := flags.String("config", configPath, "config file path")
+	statusArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
+	statusJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
+	statusPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
+	flags.Bool("no-input", false, "never prompt, never wait for browser input")
+
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 1
+	}
+	if flags.NArg() != 0 {
+		fmt.Fprintf(stderr, "unexpected status argument: %s\n", flags.Arg(0))
+		return 1
+	}
+
+	mode = outputMode{json: *statusJSONOutput, plain: *statusPlainOutput}
+	resolvedArchivePath, err := resolveStatusArchivePath(*statusConfigPath, *statusArchivePath, archivePathExplicit || flagWasProvided(flags, "db"))
+	if err != nil {
+		result := statusResult{Status: "status_failed", ArchivePath: *statusArchivePath, Message: err.Error()}
+		if writeErr := writeStatusResult(result, mode, stdout); writeErr != nil {
+			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
+			return 1
+		}
+		return 1
+	}
+	result, err := statusSetup(resolvedArchivePath)
+	if err != nil {
+		if result.Status == "" {
+			result.Status = "status_failed"
+		}
+		result.Message = err.Error()
+		if writeErr := writeStatusResult(result, mode, stdout); writeErr != nil {
+			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
+			return 1
+		}
+		return 1
+	}
+	if err := writeStatusResult(result, mode, stdout); err != nil {
 		fmt.Fprintf(stderr, "write output: %v\n", err)
 		return 1
 	}
@@ -1180,6 +1281,247 @@ func syncResultTotalCounts(result syncResult) (int, int, int) {
 	return result.DataPointsSeen + result.RollupsSeen,
 		result.DataPointsNew + result.RollupsNew,
 		result.DataPointsUpdated + result.RollupsUpdated
+}
+
+func resolveStatusArchivePath(configPath, archivePath string, archivePathExplicit bool) (string, error) {
+	configArchivePath, configExists, err := readStatusConfigArchivePath(configPath)
+	if err != nil {
+		return "", err
+	}
+	if !configExists {
+		return archivePath, nil
+	}
+	if !archivePathExplicit {
+		return configArchivePath, nil
+	}
+	if configArchivePath != archivePath {
+		return "", fmt.Errorf("archive_path points to %s, want %s", configArchivePath, archivePath)
+	}
+	return archivePath, nil
+}
+
+func readStatusConfigArchivePath(configPath string) (string, bool, error) {
+	info, err := os.Stat(configPath)
+	if errors.Is(err, os.ErrNotExist) && configPath == defaultConfigPath() {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if err := validateOwnerOnlyDir(filepath.Dir(configPath)); err != nil {
+		return "", false, err
+	}
+	if info.IsDir() {
+		return "", false, fmt.Errorf("%s is a directory", configPath)
+	}
+	if usesPOSIXPermissions() && info.Mode().Perm() != 0o600 {
+		mode := info.Mode().Perm()
+		return "", false, fmt.Errorf("%s is not owner-only: mode %04o, want 0600", configPath, mode)
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", false, err
+	}
+	config, err := parseConfig(string(configBytes))
+	if err != nil {
+		return "", false, err
+	}
+	if config.archivePath == "" {
+		return "", false, errors.New("missing archive_path")
+	}
+	return config.archivePath, true, nil
+}
+
+func statusSetup(archivePath string) (statusResult, error) {
+	result := statusResult{
+		Status:      "status_failed",
+		ArchivePath: archivePath,
+	}
+	archive, err := inspectArchive(archivePath, false)
+	result.SchemaVersion = archive.schemaVersion
+	if err != nil {
+		return result, fmt.Errorf("Health Archive check failed: %w", err)
+	}
+
+	db, err := openArchiveReadOnly(archivePath)
+	if err != nil {
+		return result, err
+	}
+	defer db.Close()
+
+	if result.DataPointCount, err = countArchiveRows(db, "data_points"); err != nil {
+		return result, err
+	}
+	if result.RollupCount, err = countArchiveRows(db, "rollups"); err != nil {
+		return result, err
+	}
+	if result.ProfileSnapshotCount, err = countArchiveRows(db, "profile_snapshots"); err != nil {
+		return result, err
+	}
+	if result.SyncRunCount, err = countArchiveRows(db, "sync_runs"); err != nil {
+		return result, err
+	}
+	result.DataTypes, err = readStatusDataTypes(db)
+	if err != nil {
+		return result, err
+	}
+	result.LatestSuccessfulRun, err = readStatusSyncRun(db, "sync_completed")
+	if err != nil {
+		return result, err
+	}
+	result.LatestFailedRun, err = readStatusSyncRun(db, "sync_failed")
+	if err != nil {
+		return result, err
+	}
+	result.Status = "ok"
+	result.Message = "Health Archive status summarized"
+	return result, nil
+}
+
+func countArchiveRows(db *sql.DB, table string) (int, error) {
+	query, ok := archiveCountQueryByTable[table]
+	if !ok {
+		return 0, fmt.Errorf("unsupported Health Archive table: %s", table)
+	}
+	var count int
+	if err := db.QueryRow(query).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+var archiveCountQueryByTable = map[string]string{
+	"data_points":       `SELECT count(*) FROM data_points`,
+	"rollups":           `SELECT count(*) FROM rollups`,
+	"profile_snapshots": `SELECT count(*) FROM profile_snapshots`,
+	"sync_runs":         `SELECT count(*) FROM sync_runs`,
+}
+
+func readStatusDataTypes(db *sql.DB) ([]statusDataType, error) {
+	rows, err := db.Query(`SELECT
+		data_type,
+		sum(data_point_count),
+		sum(rollup_count),
+		max(newest_data_point_timestamp),
+		max(newest_rollup_timestamp)
+	FROM (
+		SELECT
+			data_type,
+			count(*) AS data_point_count,
+			0 AS rollup_count,
+			max(COALESCE(end_time_utc, start_time_utc, end_civil_time, start_civil_time, provider_civil_date, updated_at, '')) AS newest_data_point_timestamp,
+			'' AS newest_rollup_timestamp
+		FROM data_points
+		GROUP BY data_type
+		UNION ALL
+		SELECT
+			data_type,
+			0 AS data_point_count,
+			count(*) AS rollup_count,
+			'' AS newest_data_point_timestamp,
+			max(COALESCE(window_end_utc, window_start_utc, civil_date, updated_at, '')) AS newest_rollup_timestamp
+		FROM rollups
+		GROUP BY data_type
+	)
+	GROUP BY data_type
+	ORDER BY data_type`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var dataTypes []statusDataType
+	for rows.Next() {
+		var item statusDataType
+		var newestDataPoint, newestRollup sql.NullString
+		if err := rows.Scan(&item.DataType, &item.DataPointCount, &item.RollupCount, &newestDataPoint, &newestRollup); err != nil {
+			return nil, err
+		}
+		if newestDataPoint.Valid {
+			item.NewestDataPointTimestamp = newestDataPoint.String
+		}
+		if newestRollup.Valid {
+			item.NewestRollupTimestamp = newestRollup.String
+		}
+		dataTypes = append(dataTypes, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return dataTypes, nil
+}
+
+func readStatusSyncRun(db *sql.DB, syncStatus string) (*statusSyncRun, error) {
+	var item statusSyncRun
+	var dataTypesJSON, rangeJSON string
+	var sourceFamily, finishedAt, errorSummary sql.NullString
+	err := db.QueryRow(`SELECT
+		id,
+		status,
+		data_types_requested,
+		range_requested_json,
+		endpoint_family,
+		source_family_filter,
+		seen_count,
+		new_count,
+		updated_count,
+		started_at,
+		finished_at,
+		error_summary
+	FROM sync_runs
+	WHERE status = ?
+	ORDER BY COALESCE(finished_at, started_at) DESC, id DESC
+	LIMIT 1`, syncStatus).Scan(
+		&item.ID,
+		&item.Status,
+		&dataTypesJSON,
+		&rangeJSON,
+		&item.EndpointFamily,
+		&sourceFamily,
+		&item.SeenCount,
+		&item.NewCount,
+		&item.UpdatedCount,
+		&item.StartedAt,
+		&finishedAt,
+		&errorSummary,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(dataTypesJSON), &item.DataTypes); err != nil {
+		return nil, fmt.Errorf("Sync Run %d data types are not valid JSON: %w", item.ID, err)
+	}
+	var requestedRange struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if err := json.Unmarshal([]byte(rangeJSON), &requestedRange); err != nil {
+		return nil, fmt.Errorf("Sync Run %d range is not valid JSON: %w", item.ID, err)
+	}
+	item.From = requestedRange.From
+	item.To = requestedRange.To
+	if sourceFamily.Valid {
+		item.SourceFamilyFilter = sourceFamily.String
+	}
+	if finishedAt.Valid {
+		item.FinishedAt = finishedAt.String
+	}
+	if errorSummary.Valid {
+		item.ErrorSummary = shortErrorSummary(errorSummary.String)
+	}
+	return &item, nil
+}
+
+func shortErrorSummary(summary string) string {
+	summary = strings.TrimSpace(strings.Split(summary, "\n")[0])
+	const maxErrorSummaryLength = 160
+	if len(summary) <= maxErrorSummaryLength {
+		return summary
+	}
+	return summary[:maxErrorSummaryLength-3] + "..."
 }
 
 func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
@@ -3924,7 +4266,7 @@ func inspectArchive(archivePath string, validateTokens bool) (archiveCheck, erro
 		return archiveCheck{}, err
 	}
 	if userVersion != currentSchemaVersion {
-		return archiveCheck{}, fmt.Errorf("schema version %d, want %d", userVersion, currentSchemaVersion)
+		return archiveCheck{schemaVersion: userVersion}, fmt.Errorf("schema version %d, want %d", userVersion, currentSchemaVersion)
 	}
 
 	for version, name := range expectedSchemaMigrations() {
@@ -4397,6 +4739,209 @@ func initialMigrationStatements() []string {
 			FOREIGN KEY (connection_id) REFERENCES connections(id)
 		)`,
 	}
+}
+
+func writeStatusResult(result statusResult, mode outputMode, stdout io.Writer) error {
+	if mode.json {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+	if mode.plain {
+		if _, err := fmt.Fprintf(stdout, "status: %s\n", result.Status); err != nil {
+			return err
+		}
+		if result.ArchivePath != "" {
+			if _, err := fmt.Fprintf(stdout, "archive_path: %s\n", result.ArchivePath); err != nil {
+				return err
+			}
+		}
+		if result.SchemaVersion != 0 {
+			if _, err := fmt.Fprintf(stdout, "schema_version: %d\n", result.SchemaVersion); err != nil {
+				return err
+			}
+		}
+		if err := writeStatusCounts(result, stdout); err != nil {
+			return err
+		}
+		if len(result.DataTypes) != 0 {
+			if _, err := fmt.Fprintf(stdout, "known_data_types: %s\n", strings.Join(statusDataTypeNames(result.DataTypes), ",")); err != nil {
+				return err
+			}
+			for _, dataType := range result.DataTypes {
+				prefix := "data_type." + dataType.DataType + "."
+				if _, err := fmt.Fprintf(stdout, "%sdata_point_count: %d\n", prefix, dataType.DataPointCount); err != nil {
+					return err
+				}
+				if _, err := fmt.Fprintf(stdout, "%srollup_count: %d\n", prefix, dataType.RollupCount); err != nil {
+					return err
+				}
+				if dataType.NewestDataPointTimestamp != "" {
+					if _, err := fmt.Fprintf(stdout, "%snewest_data_point_timestamp: %s\n", prefix, dataType.NewestDataPointTimestamp); err != nil {
+						return err
+					}
+				}
+				if dataType.NewestRollupTimestamp != "" {
+					if _, err := fmt.Fprintf(stdout, "%snewest_rollup_timestamp: %s\n", prefix, dataType.NewestRollupTimestamp); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		if err := writeStatusSyncRunPlain(stdout, "latest_successful_sync_run", result.LatestSuccessfulRun); err != nil {
+			return err
+		}
+		if err := writeStatusSyncRunPlain(stdout, "latest_failed_sync_run", result.LatestFailedRun); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
+		return err
+	}
+
+	if result.Status == "ok" {
+		if _, err := fmt.Fprintln(stdout, "Health Archive status"); err != nil {
+			return err
+		}
+	} else {
+		if _, err := fmt.Fprintln(stdout, "Health Archive status failed"); err != nil {
+			return err
+		}
+	}
+	if result.ArchivePath != "" {
+		if _, err := fmt.Fprintf(stdout, "Health Archive: %s\n", result.ArchivePath); err != nil {
+			return err
+		}
+	}
+	if result.SchemaVersion != 0 {
+		if _, err := fmt.Fprintf(stdout, "Schema version: %d\n", result.SchemaVersion); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(stdout, "Counts: %d Data Points, %d Rollups, %d Profile Snapshots, %d Sync Runs\n", result.DataPointCount, result.RollupCount, result.ProfileSnapshotCount, result.SyncRunCount); err != nil {
+		return err
+	}
+	if len(result.DataTypes) != 0 {
+		if _, err := fmt.Fprintf(stdout, "Known Data Types: %s\n", strings.Join(statusDataTypeNames(result.DataTypes), ", ")); err != nil {
+			return err
+		}
+		for _, dataType := range result.DataTypes {
+			if _, err := fmt.Fprintf(stdout, "- %s: %d Data Points, %d Rollups", dataType.DataType, dataType.DataPointCount, dataType.RollupCount); err != nil {
+				return err
+			}
+			if dataType.NewestDataPointTimestamp != "" {
+				if _, err := fmt.Fprintf(stdout, ", newest Data Point %s", dataType.NewestDataPointTimestamp); err != nil {
+					return err
+				}
+			}
+			if dataType.NewestRollupTimestamp != "" {
+				if _, err := fmt.Fprintf(stdout, ", newest Rollup %s", dataType.NewestRollupTimestamp); err != nil {
+					return err
+				}
+			}
+			if _, err := fmt.Fprintln(stdout); err != nil {
+				return err
+			}
+		}
+	}
+	if result.LatestSuccessfulRun != nil {
+		if _, err := fmt.Fprintf(stdout, "Latest successful Sync Run: %d (%s to %s)\n", result.LatestSuccessfulRun.ID, result.LatestSuccessfulRun.From, result.LatestSuccessfulRun.To); err != nil {
+			return err
+		}
+	}
+	if result.LatestFailedRun != nil {
+		if _, err := fmt.Fprintf(stdout, "Latest failed Sync Run: %d (%s)\n", result.LatestFailedRun.ID, result.LatestFailedRun.ErrorSummary); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintf(stdout, "Message: %s\n", result.Message)
+	return err
+}
+
+func writeStatusCounts(result statusResult, stdout io.Writer) error {
+	for _, item := range []struct {
+		key   string
+		count int
+	}{
+		{"data_point_count", result.DataPointCount},
+		{"rollup_count", result.RollupCount},
+		{"profile_snapshot_count", result.ProfileSnapshotCount},
+		{"sync_run_count", result.SyncRunCount},
+	} {
+		if _, err := fmt.Fprintf(stdout, "%s: %d\n", item.key, item.count); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func statusDataTypeNames(dataTypes []statusDataType) []string {
+	names := make([]string, 0, len(dataTypes))
+	for _, dataType := range dataTypes {
+		names = append(names, dataType.DataType)
+	}
+	return names
+}
+
+func writeStatusSyncRunPlain(stdout io.Writer, prefix string, run *statusSyncRun) error {
+	if run == nil {
+		return nil
+	}
+	if _, err := fmt.Fprintf(stdout, "%s_id: %d\n", prefix, run.ID); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "%s_status: %s\n", prefix, run.Status); err != nil {
+		return err
+	}
+	if len(run.DataTypes) != 0 {
+		if _, err := fmt.Fprintf(stdout, "%s_data_types: %s\n", prefix, strings.Join(run.DataTypes, ",")); err != nil {
+			return err
+		}
+	}
+	if run.From != "" {
+		if _, err := fmt.Fprintf(stdout, "%s_from: %s\n", prefix, run.From); err != nil {
+			return err
+		}
+	}
+	if run.To != "" {
+		if _, err := fmt.Fprintf(stdout, "%s_to: %s\n", prefix, run.To); err != nil {
+			return err
+		}
+	}
+	if run.EndpointFamily != "" {
+		if _, err := fmt.Fprintf(stdout, "%s_endpoint_family: %s\n", prefix, run.EndpointFamily); err != nil {
+			return err
+		}
+	}
+	if run.SourceFamilyFilter != "" {
+		if _, err := fmt.Fprintf(stdout, "%s_source_family_filter: %s\n", prefix, run.SourceFamilyFilter); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(stdout, "%s_seen_count: %d\n", prefix, run.SeenCount); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "%s_new_count: %d\n", prefix, run.NewCount); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "%s_updated_count: %d\n", prefix, run.UpdatedCount); err != nil {
+		return err
+	}
+	if run.StartedAt != "" {
+		if _, err := fmt.Fprintf(stdout, "%s_started_at: %s\n", prefix, run.StartedAt); err != nil {
+			return err
+		}
+	}
+	if run.FinishedAt != "" {
+		if _, err := fmt.Fprintf(stdout, "%s_finished_at: %s\n", prefix, run.FinishedAt); err != nil {
+			return err
+		}
+	}
+	if run.ErrorSummary != "" {
+		if _, err := fmt.Fprintf(stdout, "%s_error_summary: %s\n", prefix, run.ErrorSummary); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func writeDoctorResult(result doctorResult, mode outputMode, stdout io.Writer) error {
