@@ -30,6 +30,7 @@ const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
 const googleHealthSleepReadonlyScope = "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
+const googleHealthProfileReadonlyScope = "https://www.googleapis.com/auth/googlehealth.profile.readonly"
 const googleHealthBaseURL = "https://health.googleapis.com/v4"
 const googleHealthIdentityURL = "https://health.googleapis.com/v4/users/me/identity"
 const googleHealthProfileURL = "https://health.googleapis.com/v4/users/me/profile"
@@ -785,6 +786,9 @@ func profileSetup(configPath, archivePath string) (profileResult, error) {
 		LegacyFitbitUserID: connection.legacyFitbitUserID,
 	}
 	if err := requireUsableConnectionAccessToken(connection.tokenMetadataJSON, currentTime()); err != nil {
+		return result, err
+	}
+	if err := requireConnectionScopes(connection.tokenMetadataJSON, []string{googleHealthProfileReadonlyScope}); err != nil {
 		return result, err
 	}
 	accessToken, err := loadAccessTokenForConnection(config.credentialStore, connection, []string{configPath, archivePath})
@@ -1772,6 +1776,7 @@ func parseOAuthClientConfigContent(content []byte) (oauthClientConfig, error) {
 
 func oauthScopesForDataTypes(dataTypes []string) []string {
 	needed := make(map[string]struct{})
+	needed[googleHealthProfileReadonlyScope] = struct{}{}
 	for _, dataType := range dataTypes {
 		for _, scope := range googleHealthScopesForDataType(dataType) {
 			needed[scope] = struct{}{}
@@ -1784,6 +1789,7 @@ func oauthScopesForDataTypes(dataTypes []string) []string {
 		googleHealthActivityReadonlyScope,
 		googleHealthHealthMetricsReadonlyScope,
 		googleHealthSleepReadonlyScope,
+		googleHealthProfileReadonlyScope,
 	}
 	scopes := make([]string, 0, len(needed))
 	for _, scope := range ordered {

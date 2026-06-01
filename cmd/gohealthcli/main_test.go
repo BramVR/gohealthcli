@@ -2326,6 +2326,47 @@ func TestProfileProviderFailureDoesNotArchiveSnapshot(t *testing.T) {
 	}
 }
 
+func TestProfileFailsBeforeProviderWhenProfileScopeMissing(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	setConnectionTokenScopes(t, archivePath, []string{googleHealthActivityReadonlyScope})
+	originalFetchProfile := fetchProfile
+	fetchProfile = func(accessToken string) (googleProfile, error) {
+		t.Fatalf("profile fetch should not be called when profile scope is missing")
+		return googleProfile{}, nil
+	}
+	t.Cleanup(func() { fetchProfile = originalFetchProfile })
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("profile exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, googleHealthProfileReadonlyScope) || !strings.Contains(message, "connect") {
+		t.Fatalf("message = %T(%v), want profile-scope reconnect guidance", got["message"], got["message"])
+	}
+	assertArchiveTableCount(t, archivePath, "profile_snapshots", 0)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestProfileRejectsDifferentGoogleIdentityWithoutArchiving(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -2954,12 +2995,13 @@ func TestOAuthScopesUseRecognizedGoogleHealthScopes(t *testing.T) {
 		googleHealthActivityReadonlyScope,
 		googleHealthHealthMetricsReadonlyScope,
 		googleHealthSleepReadonlyScope,
+		googleHealthProfileReadonlyScope,
 	}
 	if !slices.Equal(scopes, wantScopes) {
 		t.Fatalf("scopes = %v, want configured Google Health readonly scopes %v", scopes, wantScopes)
 	}
 	for _, scope := range scopes {
-		for _, invalid := range []string{"profile.readonly", "settings.readonly"} {
+		for _, invalid := range []string{"settings.readonly"} {
 			if strings.Contains(scope, invalid) {
 				t.Fatalf("scopes include unrecognized Google Health scope %q: %v", invalid, scopes)
 			}
@@ -3969,6 +4011,31 @@ func setConnectionTokenExpiry(t *testing.T, archivePath, expiresAt string) {
 		t.Fatalf("unmarshal token metadata: %v", err)
 	}
 	metadata["expires_at"] = expiresAt
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("marshal token metadata: %v", err)
+	}
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	_, err = db.Exec(`UPDATE connections SET token_metadata_json = ? WHERE id = ?`, string(metadataJSON), "googlehealth:111111256096816351")
+	if closeErr := db.Close(); closeErr != nil {
+		t.Fatalf("close archive: %v", closeErr)
+	}
+	if err != nil {
+		t.Fatalf("update token metadata: %v", err)
+	}
+}
+
+func setConnectionTokenScopes(t *testing.T, archivePath string, scopes []string) {
+	t.Helper()
+
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(archivedConnectionTokenMetadata(t, archivePath)), &metadata); err != nil {
+		t.Fatalf("unmarshal token metadata: %v", err)
+	}
+	metadata["scopes"] = scopes
 	metadataJSON, err := json.Marshal(metadata)
 	if err != nil {
 		t.Fatalf("marshal token metadata: %v", err)
