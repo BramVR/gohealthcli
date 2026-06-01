@@ -119,6 +119,9 @@ type syncResult struct {
 	DataPointsSeen    int      `json:"data_points_seen"`
 	DataPointsNew     int      `json:"data_points_new"`
 	DataPointsUpdated int      `json:"data_points_updated"`
+	RollupsSeen       int      `json:"rollups_seen"`
+	RollupsNew        int      `json:"rollups_new"`
+	RollupsUpdated    int      `json:"rollups_updated"`
 	Message           string   `json:"message"`
 }
 
@@ -133,7 +136,9 @@ type archivedConnection struct {
 type rawProviderRequest struct {
 	endpointName   string
 	dataType       string
+	method         string
 	url            string
+	body           []byte
 	requiredScopes []string
 }
 
@@ -153,6 +158,7 @@ type syncCommandOptions struct {
 	dataTypes   []string
 	from        string
 	to          string
+	rollup      string
 }
 
 type oauthClientSource struct {
@@ -230,6 +236,16 @@ type googleHealthDataPointList struct {
 	nextPageToken string
 }
 
+type googleHealthRollupList struct {
+	rollups       []json.RawMessage
+	nextPageToken string
+}
+
+type googleHealthDateRange struct {
+	from string
+	to   string
+}
+
 type archivedDataPoint struct {
 	providerName         string
 	connectionID         string
@@ -243,6 +259,18 @@ type archivedDataPoint struct {
 	providerCivilDate    string
 	timezoneMetadataJSON string
 	dataSourceJSON       string
+	rawJSON              string
+}
+
+type archivedRollup struct {
+	providerName         string
+	connectionID         string
+	dataType             string
+	rollupKind           string
+	windowStartUTC       string
+	windowEndUTC         string
+	civilDate            string
+	timezoneMetadataJSON string
 	rawJSON              string
 }
 
@@ -656,6 +684,7 @@ func runSync(args []string, configPath, archivePath string, mode outputMode, std
 	syncTypes := flags.String("types", "steps", "comma-separated Data Types")
 	syncFrom := flags.String("from", "", "inclusive sync range start")
 	syncTo := flags.String("to", "", "exclusive sync range end")
+	syncRollup := flags.String("rollup", "", "rollup kind to sync; supported: daily")
 	flags.Bool("no-input", false, "never prompt, never wait for browser input")
 
 	if err := flags.Parse(args); err != nil {
@@ -676,6 +705,7 @@ func runSync(args []string, configPath, archivePath string, mode outputMode, std
 		dataTypes:   parseCommaList(*syncTypes),
 		from:        *syncFrom,
 		to:          *syncTo,
+		rollup:      *syncRollup,
 	})
 	if err != nil {
 		if result.Status == "" {
@@ -935,11 +965,18 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 	if len(options.dataTypes) != 1 || options.dataTypes[0] != "steps" {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync currently supports only Data Type steps")
 	}
+	if options.rollup != "" && options.rollup != "daily" {
+		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync --rollup currently supports only daily")
+	}
 	if options.from == "" {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync requires --from")
 	}
 	if options.to == "" {
-		options.to = currentTime().UTC().Format(time.RFC3339)
+		if options.rollup == "daily" {
+			options.to = currentTime().UTC().Format("2006-01-02")
+		} else {
+			options.to = currentTime().UTC().Format(time.RFC3339)
+		}
 	}
 
 	config, err := inspectIdentityConfig(options.configPath, options.archivePath)
@@ -965,13 +1002,17 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 		}
 		return result, err
 	}
+	endpointFamily := "list"
+	if options.rollup == "daily" {
+		endpointFamily = "dailyRollUp"
+	}
 	result := syncResult{
 		ConnectionID:   connection.id,
 		ProviderName:   connection.providerName,
 		DataTypes:      options.dataTypes,
 		From:           options.from,
 		To:             options.to,
-		EndpointFamily: "list",
+		EndpointFamily: endpointFamily,
 	}
 	startedAt := currentTime().UTC().Format(time.RFC3339)
 	syncRunID, err := insertSyncRun(db, connection, options.dataTypes, options.from, options.to, result.EndpointFamily, startedAt)
@@ -982,7 +1023,8 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 	fail := func(cause error) (syncResult, error) {
 		result.Status = "sync_failed"
 		result.Message = cause.Error()
-		if updateErr := finishSyncRunRecord(db, syncRunID, result.Status, result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated, currentTime().UTC().Format(time.RFC3339), result.Message); updateErr != nil {
+		seen, newCount, updated := syncResultTotalCounts(result)
+		if updateErr := finishSyncRunRecord(db, syncRunID, result.Status, seen, newCount, updated, currentTime().UTC().Format(time.RFC3339), result.Message); updateErr != nil {
 			return result, fmt.Errorf("%w; record failed Sync Run: %v", cause, updateErr)
 		}
 		return result, cause
@@ -1007,57 +1049,120 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 	if identity.healthUserID != connection.googleHealthUserID {
 		return fail(errors.New("Provider returned a different Google Identity; use a new archive path"))
 	}
-	seenPageTokens := map[string]struct{}{}
-	for pageToken := ""; ; {
-		request, err := buildGoogleHealthDataTypeListRawRequest("steps", options.from, options.to, 0, pageToken)
+	if options.rollup == "daily" {
+		windows, err := googleHealthDailyRollupDateWindows(options.from, options.to)
 		if err != nil {
 			return fail(err)
 		}
-		body, err := fetchRawProvider(request, accessToken)
-		if err != nil {
-			if strings.Contains(err.Error(), "HTTP 401") {
-				return fail(errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again"))
+		for _, window := range windows {
+			seenPageTokens := map[string]struct{}{}
+			for pageToken := ""; ; {
+				request, err := buildGoogleHealthDailyRollupRawRequest("steps", window.from, window.to, 0, pageToken)
+				if err != nil {
+					return fail(err)
+				}
+				body, err := fetchRawProvider(request, accessToken)
+				if err != nil {
+					if strings.Contains(err.Error(), "HTTP 401") {
+						return fail(errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again"))
+					}
+					return fail(err)
+				}
+				page, err := parseGoogleHealthRollupList(body)
+				if err != nil {
+					return fail(err)
+				}
+				for _, rawRollup := range page.rollups {
+					rollup, err := parseGoogleHealthStepsDailyRollup(connection, rawRollup)
+					if err != nil {
+						return fail(err)
+					}
+					status, err := upsertRollup(db, rollup, currentTime().UTC().Format(time.RFC3339))
+					if err != nil {
+						return fail(err)
+					}
+					result.RollupsSeen++
+					switch status {
+					case "new":
+						result.RollupsNew++
+					case "updated":
+						result.RollupsUpdated++
+					}
+				}
+				if page.nextPageToken == "" {
+					break
+				}
+				if _, ok := seenPageTokens[page.nextPageToken]; ok {
+					return fail(errors.New("Google Health steps dailyRollUp returned a repeated page token"))
+				}
+				seenPageTokens[page.nextPageToken] = struct{}{}
+				pageToken = page.nextPageToken
 			}
-			return fail(err)
 		}
-		page, err := parseGoogleHealthDataPointList(body)
-		if err != nil {
-			return fail(err)
-		}
-		for _, rawPoint := range page.dataPoints {
-			point, err := parseGoogleHealthStepsDataPoint(connection, rawPoint)
+	} else {
+		seenPageTokens := map[string]struct{}{}
+		for pageToken := ""; ; {
+			request, err := buildGoogleHealthDataTypeListRawRequest("steps", options.from, options.to, 0, pageToken)
 			if err != nil {
 				return fail(err)
 			}
-			status, err := upsertDataPoint(db, point, currentTime().UTC().Format(time.RFC3339))
+			body, err := fetchRawProvider(request, accessToken)
+			if err != nil {
+				if strings.Contains(err.Error(), "HTTP 401") {
+					return fail(errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again"))
+				}
+				return fail(err)
+			}
+			page, err := parseGoogleHealthDataPointList(body)
 			if err != nil {
 				return fail(err)
 			}
-			result.DataPointsSeen++
-			switch status {
-			case "new":
-				result.DataPointsNew++
-			case "updated":
-				result.DataPointsUpdated++
+			for _, rawPoint := range page.dataPoints {
+				point, err := parseGoogleHealthStepsDataPoint(connection, rawPoint)
+				if err != nil {
+					return fail(err)
+				}
+				status, err := upsertDataPoint(db, point, currentTime().UTC().Format(time.RFC3339))
+				if err != nil {
+					return fail(err)
+				}
+				result.DataPointsSeen++
+				switch status {
+				case "new":
+					result.DataPointsNew++
+				case "updated":
+					result.DataPointsUpdated++
+				}
 			}
+			if page.nextPageToken == "" {
+				break
+			}
+			if _, ok := seenPageTokens[page.nextPageToken]; ok {
+				return fail(errors.New("Google Health steps list returned a repeated page token"))
+			}
+			seenPageTokens[page.nextPageToken] = struct{}{}
+			pageToken = page.nextPageToken
 		}
-		if page.nextPageToken == "" {
-			break
-		}
-		if _, ok := seenPageTokens[page.nextPageToken]; ok {
-			return fail(errors.New("Google Health steps list returned a repeated page token"))
-		}
-		seenPageTokens[page.nextPageToken] = struct{}{}
-		pageToken = page.nextPageToken
 	}
-	if err := finishSyncRunRecord(db, syncRunID, "sync_completed", result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated, currentTime().UTC().Format(time.RFC3339), ""); err != nil {
+	seen, newCount, updated := syncResultTotalCounts(result)
+	if err := finishSyncRunRecord(db, syncRunID, "sync_completed", seen, newCount, updated, currentTime().UTC().Format(time.RFC3339), ""); err != nil {
 		result.Status = "sync_failed"
 		result.Message = err.Error()
 		return result, err
 	}
 	result.Status = "sync_completed"
-	result.Message = "Sync Run archived steps Data Points"
+	if options.rollup == "daily" {
+		result.Message = "Sync Run archived steps daily Rollups"
+	} else {
+		result.Message = "Sync Run archived steps Data Points"
+	}
 	return result, nil
+}
+
+func syncResultTotalCounts(result syncResult) (int, int, int) {
+	return result.DataPointsSeen + result.RollupsSeen,
+		result.DataPointsNew + result.RollupsNew,
+		result.DataPointsUpdated + result.RollupsUpdated
 }
 
 func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
@@ -2458,9 +2563,119 @@ func buildGoogleHealthDataTypeListRawRequest(dataType, from, to string, pageSize
 	return rawProviderRequest{
 		endpointName:   "dataTypes." + dataType + ".list",
 		dataType:       dataType,
+		method:         http.MethodGet,
 		url:            requestURL,
 		requiredScopes: googleHealthScopesForDataType(dataType),
 	}, nil
+}
+
+func buildGoogleHealthDailyRollupRawRequest(dataType, from, to string, pageSize int64, pageToken string) (rawProviderRequest, error) {
+	if err := validateRawGoogleHealthDataType(dataType); err != nil {
+		return rawProviderRequest{}, err
+	}
+	if dataType != "steps" {
+		return rawProviderRequest{}, errors.New("daily Rollup sync currently supports only Data Type steps")
+	}
+	if from == "" {
+		return rawProviderRequest{}, errors.New("daily Rollup calls require --from")
+	}
+	rangeJSON, err := googleHealthCivilTimeIntervalJSON(from, to)
+	if err != nil {
+		return rawProviderRequest{}, err
+	}
+	body := struct {
+		Range          json.RawMessage `json:"range"`
+		WindowSizeDays int             `json:"windowSizeDays"`
+		PageSize       int64           `json:"pageSize,omitempty"`
+		PageToken      string          `json:"pageToken,omitempty"`
+	}{
+		Range:          rangeJSON,
+		WindowSizeDays: 1,
+		PageSize:       pageSize,
+		PageToken:      pageToken,
+	}
+	bodyJSON, err := json.Marshal(body)
+	if err != nil {
+		return rawProviderRequest{}, err
+	}
+	return rawProviderRequest{
+		endpointName:   "dataTypes." + dataType + ".dailyRollUp",
+		dataType:       dataType,
+		method:         http.MethodPost,
+		url:            googleHealthBaseURL + "/users/me/dataTypes/" + url.PathEscape(dataType) + "/dataPoints:dailyRollUp",
+		body:           bodyJSON,
+		requiredScopes: googleHealthScopesForDataType(dataType),
+	}, nil
+}
+
+func googleHealthCivilTimeIntervalJSON(from, to string) (json.RawMessage, error) {
+	if to == "" {
+		return nil, errors.New("daily Rollup calls require --to")
+	}
+	start, err := googleHealthCivilDateJSON(from)
+	if err != nil {
+		return nil, fmt.Errorf("--from: %w", err)
+	}
+	end, err := googleHealthCivilDateJSON(to)
+	if err != nil {
+		return nil, fmt.Errorf("--to: %w", err)
+	}
+	content, err := json.Marshal(struct {
+		Start json.RawMessage `json:"start"`
+		End   json.RawMessage `json:"end"`
+	}{
+		Start: start,
+		End:   end,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return content, nil
+}
+
+func googleHealthDailyRollupDateWindows(from, to string) ([]googleHealthDateRange, error) {
+	start, err := time.Parse("2006-01-02", from)
+	if err != nil {
+		return nil, fmt.Errorf("--from: expected YYYY-MM-DD")
+	}
+	end, err := time.Parse("2006-01-02", to)
+	if err != nil {
+		return nil, fmt.Errorf("--to: expected YYYY-MM-DD")
+	}
+	if !end.After(start) {
+		return nil, errors.New("--to must be after --from for daily Rollup sync")
+	}
+	var windows []googleHealthDateRange
+	for current := start; current.Before(end); {
+		next := current.AddDate(0, 0, 90)
+		if next.After(end) {
+			next = end
+		}
+		windows = append(windows, googleHealthDateRange{
+			from: current.Format("2006-01-02"),
+			to:   next.Format("2006-01-02"),
+		})
+		current = next
+	}
+	return windows, nil
+}
+
+func googleHealthCivilDateJSON(value string) (json.RawMessage, error) {
+	if parsed, err := time.Parse("2006-01-02", value); err == nil {
+		date := struct {
+			Year  int `json:"year"`
+			Month int `json:"month"`
+			Day   int `json:"day"`
+		}{
+			Year:  parsed.Year(),
+			Month: int(parsed.Month()),
+			Day:   parsed.Day(),
+		}
+		return json.Marshal(struct {
+			Date any `json:"date"`
+		}{Date: date})
+	}
+	return nil, errors.New("expected YYYY-MM-DD")
 }
 
 func validateRawGoogleHealthDataType(dataType string) error {
@@ -2540,12 +2755,23 @@ func googleHealthFilterValue(field, value string) (string, error) {
 }
 
 func fetchGoogleHealthRaw(request rawProviderRequest, accessToken string) ([]byte, error) {
-	httpRequest, err := http.NewRequest(http.MethodGet, request.url, nil)
+	method := request.method
+	if method == "" {
+		method = http.MethodGet
+	}
+	var requestBody io.Reader
+	if len(request.body) != 0 {
+		requestBody = bytes.NewReader(request.body)
+	}
+	httpRequest, err := http.NewRequest(method, request.url, requestBody)
 	if err != nil {
 		return nil, err
 	}
 	httpRequest.Header.Set("Authorization", "Bearer "+accessToken)
 	httpRequest.Header.Set("Accept", "application/json")
+	if len(request.body) != 0 {
+		httpRequest.Header.Set("Content-Type", "application/json")
+	}
 	response, err := http.DefaultClient.Do(httpRequest)
 	if err != nil {
 		return nil, err
@@ -2584,6 +2810,17 @@ func parseGoogleHealthDataPointList(body []byte) (googleHealthDataPointList, err
 		return googleHealthDataPointList{}, errors.New("Google Health Data Point list response is not valid JSON")
 	}
 	return googleHealthDataPointList{dataPoints: raw.DataPoints, nextPageToken: raw.NextPageToken}, nil
+}
+
+func parseGoogleHealthRollupList(body []byte) (googleHealthRollupList, error) {
+	var raw struct {
+		Rollups       []json.RawMessage `json:"rollupDataPoints"`
+		NextPageToken string            `json:"nextPageToken"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return googleHealthRollupList{}, errors.New("Google Health Rollup response is not valid JSON")
+	}
+	return googleHealthRollupList{rollups: raw.Rollups, nextPageToken: raw.NextPageToken}, nil
 }
 
 func parseGoogleHealthStepsDataPoint(connection archivedConnection, rawPoint json.RawMessage) (archivedDataPoint, error) {
@@ -2655,6 +2892,49 @@ func parseGoogleHealthStepsDataPoint(connection archivedConnection, rawPoint jso
 	}, nil
 }
 
+func parseGoogleHealthStepsDailyRollup(connection archivedConnection, rawRollup json.RawMessage) (archivedRollup, error) {
+	canonicalRaw, err := compactJSONString(rawRollup)
+	if err != nil {
+		return archivedRollup{}, errors.New("Google Health steps daily Rollup is not valid JSON")
+	}
+	var raw struct {
+		Steps          *json.RawMessage `json:"steps"`
+		CivilStartTime json.RawMessage  `json:"civilStartTime"`
+		CivilEndTime   json.RawMessage  `json:"civilEndTime"`
+	}
+	if err := json.Unmarshal(rawRollup, &raw); err != nil {
+		return archivedRollup{}, errors.New("Google Health steps daily Rollup is not valid JSON")
+	}
+	if raw.Steps == nil {
+		return archivedRollup{}, errors.New("Google Health steps daily Rollup missing steps value")
+	}
+	_, civilDate, err := googleCivilDateTimeText(raw.CivilStartTime)
+	if err != nil {
+		return archivedRollup{}, fmt.Errorf("Google Health steps daily Rollup civilStartTime: %w", err)
+	}
+	if civilDate == "" {
+		return archivedRollup{}, errors.New("Google Health steps daily Rollup missing civilStartTime")
+	}
+	if _, endCivilDate, err := googleCivilDateTimeText(raw.CivilEndTime); err != nil {
+		return archivedRollup{}, fmt.Errorf("Google Health steps daily Rollup civilEndTime: %w", err)
+	} else if endCivilDate == "" {
+		return archivedRollup{}, errors.New("Google Health steps daily Rollup missing civilEndTime")
+	}
+	timezoneMetadata, err := googleDailyRollupTimeMetadataJSON(raw.CivilStartTime, raw.CivilEndTime)
+	if err != nil {
+		return archivedRollup{}, err
+	}
+	return archivedRollup{
+		providerName:         connection.providerName,
+		connectionID:         connection.id,
+		dataType:             "steps",
+		rollupKind:           "dailyRollUp",
+		civilDate:            civilDate,
+		timezoneMetadataJSON: timezoneMetadata,
+		rawJSON:              canonicalRaw,
+	}, nil
+}
+
 func compactJSONString(raw json.RawMessage) (string, error) {
 	var out bytes.Buffer
 	if err := json.Compact(&out, raw); err != nil {
@@ -2714,6 +2994,32 @@ func googleIntervalTimezoneMetadataJSON(startUTCOffset, endUTCOffset string) (st
 	}
 	if endUTCOffset != "" {
 		metadata["end_utc_offset"] = endUTCOffset
+	}
+	if len(metadata) == 0 {
+		return "", nil
+	}
+	content, err := json.Marshal(metadata)
+	if err != nil {
+		return "", err
+	}
+	return string(content), nil
+}
+
+func googleDailyRollupTimeMetadataJSON(civilStartTime, civilEndTime json.RawMessage) (string, error) {
+	metadata := map[string]json.RawMessage{}
+	if len(civilStartTime) != 0 && string(civilStartTime) != "null" {
+		start, err := compactJSONString(civilStartTime)
+		if err != nil {
+			return "", errors.New("Google Health steps daily Rollup civilStartTime is not valid JSON")
+		}
+		metadata["civil_start_time"] = json.RawMessage(start)
+	}
+	if len(civilEndTime) != 0 && string(civilEndTime) != "null" {
+		end, err := compactJSONString(civilEndTime)
+		if err != nil {
+			return "", errors.New("Google Health steps daily Rollup civilEndTime is not valid JSON")
+		}
+		metadata["civil_end_time"] = json.RawMessage(end)
 	}
 	if len(metadata) == 0 {
 		return "", nil
@@ -3212,6 +3518,107 @@ func upsertDataPoint(db *sql.DB, point archivedDataPoint, now string) (string, e
 		return "", err
 	}
 	return "updated", nil
+}
+
+func upsertRollup(db *sql.DB, rollup archivedRollup, now string) (string, error) {
+	existingID, existingRawJSON, found, err := findExistingRollup(db, rollup)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		_, err := db.Exec(`INSERT INTO rollups (
+			provider_name,
+			connection_id,
+			data_type,
+			rollup_kind,
+			window_start_utc,
+			window_end_utc,
+			civil_date,
+			timezone_metadata,
+			raw_json,
+			inserted_at,
+			updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			rollup.providerName,
+			rollup.connectionID,
+			rollup.dataType,
+			rollup.rollupKind,
+			nullString(rollup.windowStartUTC),
+			nullString(rollup.windowEndUTC),
+			nullString(rollup.civilDate),
+			nullString(rollup.timezoneMetadataJSON),
+			rollup.rawJSON,
+			now,
+			now,
+		)
+		if err != nil {
+			return "", err
+		}
+		return "new", nil
+	}
+	if sameJSONValue(existingRawJSON, rollup.rawJSON) {
+		return "unchanged", nil
+	}
+	_, err = db.Exec(`UPDATE rollups SET
+		timezone_metadata = ?,
+		raw_json = ?,
+		updated_at = ?
+	WHERE id = ?`,
+		nullString(rollup.timezoneMetadataJSON),
+		rollup.rawJSON,
+		now,
+		existingID,
+	)
+	if err != nil {
+		return "", err
+	}
+	return "updated", nil
+}
+
+func findExistingRollup(db *sql.DB, rollup archivedRollup) (int64, string, bool, error) {
+	rows, err := db.Query(`SELECT id, raw_json FROM rollups
+	WHERE provider_name = ?
+		AND connection_id = ?
+		AND data_type = ?
+		AND rollup_kind = ?
+		AND IFNULL(window_start_utc, '') = ?
+		AND IFNULL(window_end_utc, '') = ?
+		AND IFNULL(civil_date, '') = ?
+	ORDER BY id LIMIT 2`,
+		rollup.providerName,
+		rollup.connectionID,
+		rollup.dataType,
+		rollup.rollupKind,
+		rollup.windowStartUTC,
+		rollup.windowEndUTC,
+		rollup.civilDate,
+	)
+	if err != nil {
+		return 0, "", false, err
+	}
+	defer rows.Close()
+	type match struct {
+		id      int64
+		rawJSON string
+	}
+	var matches []match
+	for rows.Next() {
+		var item match
+		if err := rows.Scan(&item.id, &item.rawJSON); err != nil {
+			return 0, "", false, err
+		}
+		matches = append(matches, item)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, "", false, err
+	}
+	if len(matches) == 0 {
+		return 0, "", false, nil
+	}
+	if len(matches) > 1 {
+		return 0, "", false, errors.New("multiple archived Rollups match provider identity and window")
+	}
+	return matches[0].id, matches[0].rawJSON, true, nil
 }
 
 func findExistingDataPoint(db *sql.DB, point archivedDataPoint) (int64, string, bool, error) {
@@ -4264,6 +4671,15 @@ func writeSyncResult(result syncResult, mode outputMode, stdout io.Writer) error
 		if _, err := fmt.Fprintf(stdout, "data_points_updated: %d\n", result.DataPointsUpdated); err != nil {
 			return err
 		}
+		if _, err := fmt.Fprintf(stdout, "rollups_seen: %d\n", result.RollupsSeen); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(stdout, "rollups_new: %d\n", result.RollupsNew); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(stdout, "rollups_updated: %d\n", result.RollupsUpdated); err != nil {
+			return err
+		}
 		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
 		return err
 	}
@@ -4298,6 +4714,9 @@ func writeSyncResult(result syncResult, mode outputMode, stdout io.Writer) error
 		}
 	}
 	if _, err := fmt.Fprintf(stdout, "Data Points: seen %d, new %d, updated %d\n", result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "Rollups: seen %d, new %d, updated %d\n", result.RollupsSeen, result.RollupsNew, result.RollupsUpdated); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintf(stdout, "Message: %s\n", result.Message)

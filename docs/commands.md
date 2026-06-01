@@ -60,14 +60,18 @@ archive the raw Profile Snapshot with `fetched_at`, and print stable summary
 fields including `snapshot_id`. Profile Snapshots stay separate from Data Points
 and Rollups.
 
-`sync`: currently archives raw `steps` Data Points from the provider list path.
-By default, sync raw Data Points from all Data Sources exposed by the Provider.
-Sync is idempotent and reports seen, new, and updated counts. If required scopes
-are missing, fail with a clear re-connect instruction instead of starting
-browser consent. Require `--from`; `--to` defaults to now when omitted.
-Preserve physical UTC interval times, provider civil time metadata, Data Source
-JSON, and raw provider JSON. Corrected upstream raw JSON updates the canonical
-Data Point and stores the previous raw JSON as a Data Point Revision.
+`sync`: currently archives raw `steps` Data Points from the provider list path,
+or steps daily Rollups when `--rollup daily` is explicit. Default sync fetches
+Data Points only and never calls Rollup endpoints. Sync is idempotent and
+reports Data Point and Rollup seen, new, and updated counts separately. If
+required scopes are missing, fail with a clear re-connect instruction instead of
+starting browser consent. Require `--from`; Data Point sync `--to` defaults to
+current UTC time when omitted, while daily Rollup sync `--to` defaults to the
+current civil date and accepts date-only `YYYY-MM-DD` ranges.
+Preserve physical UTC interval times when available, provider civil time
+metadata, Data Source JSON, and raw provider JSON. Corrected upstream raw Data
+Point JSON updates the canonical Data Point and stores the previous raw JSON as
+a Data Point Revision; corrected Rollup JSON updates the Rollup in place.
 
 `status`: show archive counts, known Data Types, newest archived timestamps,
 latest successful Sync Run, and latest failed Sync Run with a short error
@@ -135,6 +139,9 @@ endpoint_family: list
 data_points_seen: 12043
 data_points_new: 11880
 data_points_updated: 12
+rollups_seen: 0
+rollups_new: 0
+rollups_updated: 0
 message: Sync Run archived steps Data Points
 ```
 
@@ -153,6 +160,9 @@ JSON mode:
   "data_points_seen": 12043,
   "data_points_new": 11880,
   "data_points_updated": 12,
+  "rollups_seen": 0,
+  "rollups_new": 0,
+  "rollups_updated": 0,
   "message": "Sync Run archived steps Data Points"
 }
 ```
