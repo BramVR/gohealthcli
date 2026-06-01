@@ -34,6 +34,8 @@ Likely Go module: `google.golang.org/api/health/v4`.
 
 - Reconciled stream across sources.
 - Supports data source family filtering such as wearable-only data.
+- Wearable filter maps to
+  `users/me/dataSourceFamilies/google-wearables`.
 - Use when source-family filtering is requested, or if provider behavior proves
   it has better correction semantics than `list`.
 - Important for "watch data" questions.

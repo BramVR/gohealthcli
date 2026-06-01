@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -323,8 +324,8 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	assertJSONString(t, got, "config_path", configPath)
 	assertJSONString(t, got, "archive_path", archivePath)
 	assertJSONString(t, got, "oauth_client_source", "file")
-	if got["schema_version"] != float64(2) {
-		t.Fatalf("schema_version = %v, want 2", got["schema_version"])
+	if got["schema_version"] != float64(3) {
+		t.Fatalf("schema_version = %v, want 3", got["schema_version"])
 	}
 	dataTypes, ok := got["default_data_types"].([]any)
 	if !ok {
@@ -402,8 +403,8 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("schema migration rows: %v", err)
 	}
-	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json" {
-		t.Fatalf("migrations = %v, want initial + identity", migrations)
+	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter" {
+		t.Fatalf("migrations = %v, want initial + identity + source family", migrations)
 	}
 
 	for _, table := range []string{
@@ -502,8 +503,8 @@ func TestDoctorReportsInitializedSetup(t *testing.T) {
 	assertJSONString(t, got, "oauth_client_source", "file")
 	assertJSONString(t, got, "credential_store", expectedDefaultCredentialStoreKind())
 	assertJSONString(t, got, "token_status", "not_connected")
-	if got["schema_version"] != float64(2) {
-		t.Fatalf("schema_version = %v, want 2", got["schema_version"])
+	if got["schema_version"] != float64(3) {
+		t.Fatalf("schema_version = %v, want 3", got["schema_version"])
 	}
 	if got["connection_count"] != float64(0) {
 		t.Fatalf("connection_count = %v, want 0", got["connection_count"])
@@ -539,7 +540,7 @@ func TestDoctorPlainReportsOfflineHealthCheck(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 
-	want := fmt.Sprintf("status: ok\nconfig_path: %s\narchive_path: %s\noauth_client_source: file\ncredential_store: %s\nschema_version: 2\nconnection_count: 0\ntoken_status: not_connected\nmessage: local gohealthcli setup is initialized\n", configPath, archivePath, expectedDefaultCredentialStoreKind())
+	want := fmt.Sprintf("status: ok\nconfig_path: %s\narchive_path: %s\noauth_client_source: file\ncredential_store: %s\nschema_version: 3\nconnection_count: 0\ntoken_status: not_connected\nmessage: local gohealthcli setup is initialized\n", configPath, archivePath, expectedDefaultCredentialStoreKind())
 	if stdout.String() != want {
 		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 	}
@@ -2671,6 +2672,117 @@ func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestSyncArchivesWearableStepsViaReconcile(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	originalCurrentTime := currentTime
+	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { currentTime = originalCurrentTime })
+
+	defaultPage := `{"dataPoints": [{
+		"name": "users/me/dataTypes/steps/dataPoints/shared-step",
+		"dataSource": {"platform": "FITBIT", "device": {"manufacturer": "Google", "model": "Pixel Watch"}},
+		"steps": {"interval": {"startTime": "2026-01-01T08:00:00Z", "endTime": "2026-01-01T08:15:00Z"}, "count": "512"}
+	}]}`
+	listRequests := installStepSyncFetchFake(t, "connect-access-secret", map[string]string{"": defaultPage})
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--from", "2026-01-01",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("default sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if len(*listRequests) != 1 {
+		t.Fatalf("default request count = %d, want 1", len(*listRequests))
+	}
+	if query := mustURLQuery(t, (*listRequests)[0].url); query.Get("dataSourceFamily") != "" {
+		t.Fatalf("default sync dataSourceFamily = %q, want empty", query.Get("dataSourceFamily"))
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 1)
+	assertSyncRunWithEndpointFamilyAndSourceFamily(t, archivePath, 1, "sync_completed", "list", "", 1, 1, 0, "")
+
+	reconciledPage := `{"dataPoints": [{
+		"dataPointName": "users/me/dataTypes/steps/dataPoints/shared-step",
+		"steps": {"interval": {"startTime": "2026-01-01T08:00:00Z", "endTime": "2026-01-01T08:15:00Z"}, "count": "512"}
+	}]}`
+	reconcileRequests := installStepReconcileFetchFake(t, "connect-access-secret", map[string]string{"": reconciledPage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--source-family", "wearable",
+		"--from", "2026-01-01",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("wearable sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("wearable stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "endpoint_family", "reconcile")
+	assertJSONString(t, got, "source_family", "wearable")
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 1)
+	assertJSONNumber(t, got, "data_points_updated", 0)
+	if len(*reconcileRequests) != 1 {
+		t.Fatalf("reconcile request count = %d, want 1", len(*reconcileRequests))
+	}
+	query := mustURLQuery(t, (*reconcileRequests)[0].url)
+	if gotFamily := query.Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
+		t.Fatalf("dataSourceFamily = %q, want google-wearables", gotFamily)
+	}
+	wantFilter := `steps.interval.start_time >= "2026-01-01T00:00:00Z" AND steps.interval.start_time < "2026-01-02T00:00:00Z"`
+	if gotFilter := query.Get("filter"); gotFilter != wantFilter {
+		t.Fatalf("filter = %q, want %q", gotFilter, wantFilter)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 2)
+	assertDataPointSourceFamilyCounts(t, archivePath, map[string]int{"": 1, "wearable": 1})
+	assertSyncRunWithEndpointFamilyAndSourceFamily(t, archivePath, 2, "sync_completed", "reconcile", "wearable", 1, 1, 0, "")
+
+	installStepReconcileFetchFake(t, "connect-access-secret", map[string]string{"": reconciledPage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--source-family", "wearable",
+		"--from", "2026-01-01",
+		"--plain",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("idempotent wearable sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "source_family: wearable\n") {
+		t.Fatalf("plain stdout = %q, want source family", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "data_points_new: 0\n") {
+		t.Fatalf("plain stdout = %q, want idempotent count", stdout.String())
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 2)
+	assertDataPointSourceFamilyCounts(t, archivePath, map[string]int{"": 1, "wearable": 1})
+	assertSyncRunWithEndpointFamilyAndSourceFamily(t, archivePath, 3, "sync_completed", "reconcile", "wearable", 1, 0, 0, "")
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -3454,8 +3566,8 @@ func TestConnectMigratesLegacyV1ArchiveBeforeStoringIdentity(t *testing.T) {
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
 		t.Fatalf("query user_version: %v", err)
 	}
-	if userVersion != 2 {
-		t.Fatalf("user_version = %d, want 2", userVersion)
+	if userVersion != 3 {
+		t.Fatalf("user_version = %d, want 3", userVersion)
 	}
 	var identityJSON string
 	if err := db.QueryRow(`SELECT google_identity_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&identityJSON); err != nil {
@@ -3484,10 +3596,10 @@ func TestDoctorMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
 	}
-	if got["schema_version"] != float64(2) {
-		t.Fatalf("schema_version = %v, want 2", got["schema_version"])
+	if got["schema_version"] != float64(3) {
+		t.Fatalf("schema_version = %v, want 3", got["schema_version"])
 	}
-	assertArchiveUserVersion(t, archivePath, 2)
+	assertArchiveUserVersion(t, archivePath, 3)
 }
 
 func TestInitMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
@@ -3514,10 +3626,10 @@ func TestInitMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
 	}
-	if got["schema_version"] != float64(2) {
-		t.Fatalf("schema_version = %v, want 2", got["schema_version"])
+	if got["schema_version"] != float64(3) {
+		t.Fatalf("schema_version = %v, want 3", got["schema_version"])
 	}
-	assertArchiveUserVersion(t, archivePath, 2)
+	assertArchiveUserVersion(t, archivePath, 3)
 }
 
 func TestConnectRejectsUnsupportedOSNativeStoreBeforeOAuth(t *testing.T) {
@@ -4035,7 +4147,7 @@ func TestInitStoresSecretProviderReference(t *testing.T) {
 	for _, want := range []string{
 		"status: initialized\n",
 		"oauth_client_source: secret_provider\n",
-		"schema_version: 2\n",
+		"schema_version: 3\n",
 	} {
 		if !strings.Contains(outText, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, outText)
@@ -4691,6 +4803,42 @@ func installStepSyncFetchFake(t *testing.T, wantAccessToken string, pages map[st
 	return &requests
 }
 
+func installStepReconcileFetchFake(t *testing.T, wantAccessToken string, pages map[string]string) *[]rawProviderRequest {
+	t.Helper()
+
+	originalFetchRawProvider := fetchRawProvider
+	var requests []rawProviderRequest
+	fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		if accessToken != wantAccessToken {
+			t.Fatalf("reconcile sync access token = %q, want stored token", accessToken)
+		}
+		if request.endpointName != "dataTypes.steps.reconcile" || request.dataType != "steps" {
+			t.Fatalf("reconcile sync request = (%q, %q), want steps reconcile", request.endpointName, request.dataType)
+		}
+		if request.sourceFamilyFilter != "wearable" {
+			t.Fatalf("source family filter = %q, want wearable", request.sourceFamilyFilter)
+		}
+		parsedURL, err := url.Parse(request.url)
+		if err != nil {
+			t.Fatalf("parse reconcile URL: %v", err)
+		}
+		if parsedURL.Path != "/v4/users/me/dataTypes/steps/dataPoints:reconcile" {
+			t.Fatalf("reconcile path = %q, want reconcile path", parsedURL.Path)
+		}
+		requests = append(requests, request)
+		pageToken := parsedURL.Query().Get("pageToken")
+		body, ok := pages[pageToken]
+		if !ok {
+			t.Fatalf("no fake reconcile page for pageToken %q", pageToken)
+		}
+		return []byte(body), nil
+	}
+	t.Cleanup(func() {
+		fetchRawProvider = originalFetchRawProvider
+	})
+	return &requests
+}
+
 func installStepDailyRollupFetchFake(t *testing.T, wantAccessToken string, pages map[string]string) *[]rawProviderRequest {
 	t.Helper()
 
@@ -5122,12 +5270,19 @@ func assertSyncRun(t *testing.T, archivePath string, id int64, wantStatus string
 func assertSyncRunWithEndpointFamily(t *testing.T, archivePath string, id int64, wantStatus, wantEndpointFamily string, wantSeen, wantNew, wantUpdated int, wantErrorContains string) {
 	t.Helper()
 
+	assertSyncRunWithEndpointFamilyAndSourceFamily(t, archivePath, id, wantStatus, wantEndpointFamily, "", wantSeen, wantNew, wantUpdated, wantErrorContains)
+}
+
+func assertSyncRunWithEndpointFamilyAndSourceFamily(t *testing.T, archivePath string, id int64, wantStatus, wantEndpointFamily, wantSourceFamily string, wantSeen, wantNew, wantUpdated int, wantErrorContains string) {
+	t.Helper()
+
 	db, err := openArchive(archivePath)
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
 	defer db.Close()
 	var status, dataTypesJSON, rangeJSON, endpointFamily string
+	var sourceFamily sql.NullString
 	var seen, newCount, updated int
 	var errorSummary sql.NullString
 	if err := db.QueryRow(`SELECT
@@ -5135,6 +5290,7 @@ func assertSyncRunWithEndpointFamily(t *testing.T, archivePath string, id int64,
 		data_types_requested,
 		range_requested_json,
 		endpoint_family,
+		source_family_filter,
 		seen_count,
 		new_count,
 		updated_count,
@@ -5144,6 +5300,7 @@ func assertSyncRunWithEndpointFamily(t *testing.T, archivePath string, id int64,
 		&dataTypesJSON,
 		&rangeJSON,
 		&endpointFamily,
+		&sourceFamily,
 		&seen,
 		&newCount,
 		&updated,
@@ -5153,6 +5310,9 @@ func assertSyncRunWithEndpointFamily(t *testing.T, archivePath string, id int64,
 	}
 	if status != wantStatus || endpointFamily != wantEndpointFamily {
 		t.Fatalf("Sync Run status/family = (%q, %q), want (%q, %s)", status, endpointFamily, wantStatus, wantEndpointFamily)
+	}
+	if sourceFamily.String != wantSourceFamily || sourceFamily.Valid != (wantSourceFamily != "") {
+		t.Fatalf("source_family_filter = %v(%q), want %q", sourceFamily.Valid, sourceFamily.String, wantSourceFamily)
 	}
 	if dataTypesJSON != `["steps"]` {
 		t.Fatalf("data_types_requested = %q, want steps", dataTypesJSON)
@@ -5171,6 +5331,36 @@ func assertSyncRunWithEndpointFamily(t *testing.T, archivePath string, id int64,
 	}
 	if !errorSummary.Valid || !strings.Contains(errorSummary.String, wantErrorContains) {
 		t.Fatalf("error_summary = %v(%q), want %q", errorSummary.Valid, errorSummary.String, wantErrorContains)
+	}
+}
+
+func assertDataPointSourceFamilyCounts(t *testing.T, archivePath string, want map[string]int) {
+	t.Helper()
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT IFNULL(source_family_filter, ''), count(*) FROM data_points GROUP BY IFNULL(source_family_filter, '')`)
+	if err != nil {
+		t.Fatalf("query Data Point source families: %v", err)
+	}
+	defer rows.Close()
+	got := map[string]int{}
+	for rows.Next() {
+		var sourceFamily string
+		var count int
+		if err := rows.Scan(&sourceFamily, &count); err != nil {
+			t.Fatalf("scan Data Point source family count: %v", err)
+		}
+		got[sourceFamily] = count
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Data Point source family rows: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Data Point source family counts = %v, want %v", got, want)
 	}
 }
 

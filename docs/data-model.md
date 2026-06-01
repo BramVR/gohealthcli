@@ -58,6 +58,7 @@ read_when:
 - start/end civil time or provider civil date when supplied
 - timezone offset or provider timezone metadata when supplied
 - Data Source JSON
+- source-family filter when fetched through `reconcile`
 - raw Data Point JSON
 - inserted/updated timestamps
 
@@ -102,6 +103,7 @@ correction behavior warrants it.
 - Data Types requested
 - range requested
 - endpoint family used
+- source-family filter when requested
 - status
 - seen/new/updated counts
 - started/finished timestamps
@@ -130,5 +132,5 @@ history quality.
 - Are upstream Data Point names stable across repeated list/reconcile calls?
 - Are Rollups deterministic enough to upsert by Data Type and window?
 - Do corrected historical records appear with the same name or as replacements?
-- How should source-family-filtered `reconcile` records coexist with default
-  unfiltered `list` records?
+- Are upstream Data Point names stable across source-family-filtered `reconcile`
+  and default `list` records?
