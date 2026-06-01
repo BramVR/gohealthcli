@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -3165,7 +3166,7 @@ func upsertDataPoint(db *sql.DB, point archivedDataPoint, now string) (string, e
 		}
 		return "new", nil
 	}
-	if existingRawJSON == point.rawJSON {
+	if sameJSONValue(existingRawJSON, point.rawJSON) {
 		return "unchanged", nil
 	}
 	tx, err := db.Begin()
@@ -3254,6 +3255,21 @@ func findExistingDataPoint(db *sql.DB, point archivedDataPoint) (int64, string, 
 		point.timezoneMetadataJSON,
 		point.dataSourceJSON,
 	)
+}
+
+func sameJSONValue(left, right string) bool {
+	if left == right {
+		return true
+	}
+	var leftValue any
+	var rightValue any
+	if err := json.Unmarshal([]byte(left), &leftValue); err != nil {
+		return false
+	}
+	if err := json.Unmarshal([]byte(right), &rightValue); err != nil {
+		return false
+	}
+	return reflect.DeepEqual(leftValue, rightValue)
 }
 
 func findExistingDataPointByQuery(db *sql.DB, query string, args ...any) (int64, string, bool, error) {

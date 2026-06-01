@@ -27,6 +27,6 @@ through the Google Health API.
 First CLI tracer in progress. `gohealthcli init` creates local config and an
 empty Health Archive, `gohealthcli doctor` validates local setup offline,
 `gohealthcli connect` anchors a Google Identity, `gohealthcli identity`
-refreshes it, `gohealthcli profile` archives Profile Snapshots, `gohealthcli
-sync` archives steps Data Points idempotently, `gohealthcli raw` prints provider
-JSON for exploration, and `gohealthcli --version` is available.
+refreshes it, and `gohealthcli profile` archives Profile Snapshots.
+`gohealthcli sync` archives steps Data Points idempotently, `gohealthcli raw`
+prints provider JSON for exploration, and `gohealthcli --version` is available.

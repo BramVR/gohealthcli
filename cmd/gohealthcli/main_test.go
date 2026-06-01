@@ -2484,7 +2484,9 @@ func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
+	originalCurrentTime := currentTime
 	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { currentTime = originalCurrentTime })
 	firstPage := `{
 		"dataPoints": [{
 			"name": "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a",
@@ -2590,6 +2592,50 @@ func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 	assertArchiveTableCount(t, archivePath, "data_point_revisions", 0)
 	assertSyncRun(t, archivePath, 2, "sync_completed", 2, 0, 0, "")
 
+	semanticallySameFirstPage := `{
+		"nextPageToken": "page-2",
+		"dataPoints": [{
+			"steps": {
+				"count": "512",
+				"interval": {
+					"civilEndTime": {"time": {"minutes": 15, "hours": 8}, "date": {"day": 1, "month": 1, "year": 2026}},
+					"civilStartTime": {"time": {"hours": 8}, "date": {"day": 1, "month": 1, "year": 2026}},
+					"endUtcOffset": "3600s",
+					"endTime": "2026-01-01T08:15:00+01:00",
+					"startUtcOffset": "3600s",
+					"startTime": "2026-01-01T08:00:00+01:00"
+				}
+			},
+			"dataSource": {"device": {"model": "Pixel Watch", "manufacturer": "Google"}, "platform": "FITBIT"},
+			"name": "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a"
+		}]
+	}`
+	installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+		"":       semanticallySameFirstPage,
+		"page-2": secondPage,
+	})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--from", "2026-01-01",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("semantic sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("semantic stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 2)
+	assertJSONNumber(t, got, "data_points_new", 0)
+	assertJSONNumber(t, got, "data_points_updated", 0)
+	assertArchiveTableCount(t, archivePath, "data_points", 2)
+	assertArchiveTableCount(t, archivePath, "data_point_revisions", 0)
+	assertSyncRun(t, archivePath, 3, "sync_completed", 2, 0, 0, "")
+
 	correctedFirstPage := strings.Replace(firstPage, `"count": "512"`, `"count": "999"`, 1)
 	correctedFirstPage = strings.Replace(correctedFirstPage, `"startTime": "2026-01-01T08:00:00+01:00"`, `"startTime": "2026-01-01T08:01:00+01:00"`, 1)
 	correctedFirstPage = strings.Replace(correctedFirstPage, `"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}, "time": {"hours": 8}}`, `"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}, "time": {"hours": 8, "minutes": 1}}`, 1)
@@ -2617,7 +2663,7 @@ func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 	assertJSONNumber(t, got, "data_points_updated", 1)
 	assertArchiveTableCount(t, archivePath, "data_points", 2)
 	assertArchiveTableCount(t, archivePath, "data_point_revisions", 1)
-	assertSyncRun(t, archivePath, 3, "sync_completed", 2, 0, 1, "")
+	assertSyncRun(t, archivePath, 4, "sync_completed", 2, 0, 1, "")
 	assertCorrectedStepRevision(t, archivePath)
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
