@@ -734,7 +734,8 @@ func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
 		result.TokenStatus = "connection_unavailable"
 		return result, err
 	}
-	accessToken, refreshed, err := doctorOnlineAccessToken(db, config, connection, []string{configPath, archivePath, config.oauthClient.path})
+	protectedPaths := []string{configPath, archivePath, config.oauthClient.path}
+	tokenCheck, err := doctorOnlineAccessToken(config, connection, protectedPaths)
 	if err != nil {
 		if result.TokenStatus == archive.tokenStatus {
 			if strings.Contains(err.Error(), "missing access token") || strings.Contains(err.Error(), "missing refresh token") || strings.Contains(err.Error(), "token material not found") {
@@ -745,10 +746,10 @@ func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
 		}
 		return result, err
 	}
-	if !refreshed {
+	if tokenCheck.refreshedToken == nil {
 		result.TokenStatus = "metadata_present"
 	}
-	identity, err := fetchIdentity(accessToken)
+	identity, err := fetchIdentity(tokenCheck.accessToken)
 	if err != nil {
 		result.TokenStatus = "provider_unreachable"
 		if strings.Contains(err.Error(), "HTTP 401") {
@@ -760,56 +761,72 @@ func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
 		result.TokenStatus = "identity_mismatch"
 		return result, errors.New("Provider returned a different Google Identity; use a new archive path")
 	}
+	if tokenCheck.refreshedToken != nil {
+		if err := persistDoctorOnlineRefreshedToken(db, config.credentialStore, connection.id, *tokenCheck.refreshedToken); err != nil {
+			result.TokenStatus = "refresh_failed"
+			return result, err
+		}
+	}
 	result.TokenStatus = "online_ok"
 	result.Message = "online Google Health check passed"
 	return result, nil
 }
 
-func doctorOnlineAccessToken(db *sql.DB, config fullConfigCheck, connection archivedConnection, protectedPaths []string) (string, bool, error) {
+type doctorOnlineTokenCheck struct {
+	accessToken    string
+	refreshedToken *oauthTokenResponse
+}
+
+func doctorOnlineAccessToken(config fullConfigCheck, connection archivedConnection, protectedPaths []string) (doctorOnlineTokenCheck, error) {
 	if err := validateCredentialStoreRuntime(config.credentialStore, protectedPaths); err != nil {
-		return "", false, err
+		return doctorOnlineTokenCheck{}, err
 	}
 	store, err := newCredentialStore(config.credentialStore)
 	if err != nil {
-		return "", false, err
+		return doctorOnlineTokenCheck{}, err
 	}
 	tokenMaterial, err := store.Load(connection.id)
 	if err != nil {
-		return "", false, err
+		return doctorOnlineTokenCheck{}, err
 	}
 	accessToken, ok := tokenMaterial["access_token"].(string)
 	if !ok || accessToken == "" {
-		return "", false, errors.New("Credential Store token material is missing access token; run `gohealthcli connect` again")
-	}
-	expiresAt, scopes, err := connectionTokenExpiryAndScopes(connection.tokenMetadataJSON)
-	if err != nil {
-		return "", false, err
-	}
-	if expiresAt.After(currentTime().UTC()) {
-		return accessToken, false, nil
+		return doctorOnlineTokenCheck{}, errors.New("Credential Store token material is missing access token; run `gohealthcli connect` again")
 	}
 	refreshToken, ok := tokenMaterial["refresh_token"].(string)
 	if !ok || refreshToken == "" {
-		return "", false, errors.New("Credential Store token material is missing refresh token; run `gohealthcli connect` again")
+		return doctorOnlineTokenCheck{}, errors.New("Credential Store token material is missing refresh token; run `gohealthcli connect` again")
+	}
+	expiresAt, scopes, err := connectionTokenExpiryAndScopes(connection.tokenMetadataJSON)
+	if err != nil {
+		return doctorOnlineTokenCheck{}, err
+	}
+	if expiresAt.After(currentTime().UTC()) {
+		return doctorOnlineTokenCheck{accessToken: accessToken}, nil
 	}
 	if config.oauthClient.kind != "file" {
-		return "", false, errors.New("doctor --online requires an OAuth client file source to refresh tokens; run `gohealthcli connect` again")
+		return doctorOnlineTokenCheck{}, errors.New("doctor --online requires an OAuth client file source to refresh tokens; run `gohealthcli connect` again")
 	}
 	client, err := loadOAuthClientConfig(config.oauthClient.path)
 	if err != nil {
-		return "", false, err
+		return doctorOnlineTokenCheck{}, err
 	}
 	token, err := refreshOAuthToken(client, refreshToken, scopes)
 	if err != nil {
-		return "", false, err
+		return doctorOnlineTokenCheck{}, err
 	}
-	if err := store.Store(connection.id, token.rawTokenMaterialObject); err != nil {
-		return "", false, err
+	return doctorOnlineTokenCheck{accessToken: token.accessToken, refreshedToken: &token}, nil
+}
+
+func persistDoctorOnlineRefreshedToken(db *sql.DB, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse) error {
+	store, err := newCredentialStore(credentialStore)
+	if err != nil {
+		return err
 	}
-	if err := updateConnectionTokenMetadata(db, connection.id, token, currentTime()); err != nil {
-		return "", false, err
+	if err := store.Store(connectionID, token.rawTokenMaterialObject); err != nil {
+		return err
 	}
-	return token.accessToken, true, nil
+	return updateConnectionTokenMetadata(db, connectionID, token, currentTime())
 }
 
 func rawSetup(configPath, archivePath string, request rawProviderRequest) ([]byte, error) {
