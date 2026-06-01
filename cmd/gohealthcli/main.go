@@ -107,7 +107,6 @@ type rawProviderRequest struct {
 type rawCommandOptions struct {
 	configPath  string
 	archivePath string
-	mode        outputMode
 	from        string
 	to          string
 	pageSize    int64
@@ -506,8 +505,8 @@ func runIdentity(args []string, configPath, archivePath string, mode outputMode,
 	return 0
 }
 
-func runRaw(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
-	options, err := parseRawCommandOptions(args, configPath, archivePath, mode)
+func runRaw(args []string, configPath, archivePath string, _ outputMode, stdout, stderr io.Writer) int {
+	options, err := parseRawCommandOptions(args, configPath, archivePath)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintln(stdout, "usage: gohealthcli raw endpoint getIdentity")
@@ -725,18 +724,14 @@ func loadAccessTokenForConnection(config credentialStoreConfig, connection archi
 	return accessToken, nil
 }
 
-func parseRawCommandOptions(args []string, configPath, archivePath string, mode outputMode) (rawCommandOptions, error) {
-	options := rawCommandOptions{configPath: configPath, archivePath: archivePath, mode: mode}
+func parseRawCommandOptions(args []string, configPath, archivePath string) (rawCommandOptions, error) {
+	options := rawCommandOptions{configPath: configPath, archivePath: archivePath}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
 		case arg == "-h" || arg == "--help":
 			return rawCommandOptions{}, flag.ErrHelp
-		case arg == "--json":
-			options.mode = outputMode{json: true}
-		case arg == "--plain":
-			options.mode = outputMode{plain: true}
-		case arg == "--no-input":
+		case arg == "--json" || arg == "--plain" || arg == "--no-input":
 		case arg == "--config" || arg == "--db" || arg == "--from" || arg == "--to" || arg == "--page-size" || arg == "--page-token":
 			index++
 			if index >= len(args) {
