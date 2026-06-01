@@ -2877,6 +2877,19 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestParseStepsDailyRollupRequiresCivilEndTime(t *testing.T) {
+	_, err := parseGoogleHealthStepsDailyRollup(archivedConnection{
+		providerName: "googlehealth",
+		id:           "googlehealth:111111256096816351",
+	}, json.RawMessage(`{
+		"steps": {"countSum": "1234"},
+		"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}}
+	}`))
+	if err == nil || !strings.Contains(err.Error(), "missing civilEndTime") {
+		t.Fatalf("parse error = %v, want missing civilEndTime", err)
+	}
+}
+
 func TestSyncProviderFailureRecordsFailedRun(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)

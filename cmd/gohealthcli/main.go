@@ -2915,8 +2915,10 @@ func parseGoogleHealthStepsDailyRollup(connection archivedConnection, rawRollup 
 	if civilDate == "" {
 		return archivedRollup{}, errors.New("Google Health steps daily Rollup missing civilStartTime")
 	}
-	if _, _, err := googleCivilDateTimeText(raw.CivilEndTime); err != nil {
+	if _, endCivilDate, err := googleCivilDateTimeText(raw.CivilEndTime); err != nil {
 		return archivedRollup{}, fmt.Errorf("Google Health steps daily Rollup civilEndTime: %w", err)
+	} else if endCivilDate == "" {
+		return archivedRollup{}, errors.New("Google Health steps daily Rollup missing civilEndTime")
 	}
 	timezoneMetadata, err := googleDailyRollupTimeMetadataJSON(raw.CivilStartTime, raw.CivilEndTime)
 	if err != nil {
