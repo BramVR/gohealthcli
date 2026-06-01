@@ -30,5 +30,6 @@ model, scope, risks, and early architecture explicit before writing the CLI.
 First CLI tracer in progress. `gohealthcli init` creates local config and an
 empty Health Archive, `gohealthcli doctor` validates local setup offline,
 `gohealthcli connect` anchors a Google Identity, `gohealthcli identity`
-refreshes it, `gohealthcli raw` prints provider JSON for exploration, and
-`gohealthcli --version` is available.
+refreshes it, `gohealthcli profile` archives Profile Snapshots, `gohealthcli
+raw` prints provider JSON for exploration, and `gohealthcli --version` is
+available.
