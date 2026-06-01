@@ -1323,10 +1323,12 @@ func TestConnectStoresFileFallbackTokenAndAnchorsIdentity(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
 	connectNow := time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC)
+	refreshExpiresAt := connectNow.Add(24 * time.Hour)
 	installConnectFakes(t, fakeConnectConfig{
 		now:                connectNow,
 		accessToken:        "access-secret-value",
 		refreshToken:       "refresh-secret-value",
+		refreshExpiresAt:   &refreshExpiresAt,
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
@@ -1384,6 +1386,15 @@ func TestConnectStoresFileFallbackTokenAndAnchorsIdentity(t *testing.T) {
 		if !strings.Contains(tokenMetadata, want) {
 			t.Fatalf("token metadata missing %q: %s", want, tokenMetadata)
 		}
+	}
+	if strings.Contains(tokenMetadata, "refresh_token_expires_at") {
+		t.Fatalf("token metadata uses rejected refresh token key: %s", tokenMetadata)
+	}
+	if !strings.Contains(tokenMetadata, "refresh_expires_at") {
+		t.Fatalf("token metadata missing refresh expiry: %s", tokenMetadata)
+	}
+	if err := validateTokenMetadata(tokenMetadata); err != nil {
+		t.Fatalf("token metadata does not validate: %v", err)
 	}
 	if !strings.Contains(identityJSON, `"healthUserId":"111111256096816351"`) {
 		t.Fatalf("identity JSON not archived: %s", identityJSON)
@@ -2347,6 +2358,7 @@ type fakeConnectConfig struct {
 	now                time.Time
 	accessToken        string
 	refreshToken       string
+	refreshExpiresAt   *time.Time
 	healthUserID       string
 	legacyFitbitUserID string
 	wantNoInput        *bool
@@ -2385,11 +2397,12 @@ func installConnectFakes(t *testing.T, config fakeConnectConfig) {
 			t.Fatalf("noInput = %v, want %v", noInput, *config.wantNoInput)
 		}
 		return oauthTokenResponse{
-			accessToken:  config.accessToken,
-			refreshToken: config.refreshToken,
-			tokenType:    "Bearer",
-			scopes:       scopes,
-			expiresAt:    config.now.Add(time.Hour),
+			accessToken:           config.accessToken,
+			refreshToken:          config.refreshToken,
+			tokenType:             "Bearer",
+			scopes:                scopes,
+			expiresAt:             config.now.Add(time.Hour),
+			refreshTokenExpiresAt: config.refreshExpiresAt,
 			rawTokenMaterialObject: map[string]any{
 				"access_token":  config.accessToken,
 				"refresh_token": config.refreshToken,

@@ -1450,7 +1450,7 @@ func upsertConnection(db *sql.DB, connectionID string, identity googleIdentity, 
 		"token_type":           token.tokenType,
 	}
 	if token.refreshTokenExpiresAt != nil {
-		metadata["refresh_token_expires_at"] = token.refreshTokenExpiresAt.UTC().Format(time.RFC3339)
+		metadata["refresh_expires_at"] = token.refreshTokenExpiresAt.UTC().Format(time.RFC3339)
 	}
 	metadataJSON, err := json.Marshal(metadata)
 	if err != nil {
