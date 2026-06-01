@@ -128,6 +128,35 @@ func TestQueryAcceptsSelectCTE(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestQueryAcceptsTrailingCommentsAfterTerminator(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"query",
+		"--config", configPath,
+		"--json",
+		"SELECT count(*) AS data_point_count FROM data_points; -- read-only count",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("query exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "query_completed")
+	assertJSONNumber(t, got, "row_count", 1)
+	assertArchiveTableCount(t, archivePath, "data_points", 3)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestQueryRejectsWriteAttemptsWithoutChangingArchive(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -165,6 +194,13 @@ func TestQueryRejectsWriteAttemptsWithoutChangingArchive(t *testing.T) {
 			name:       "cte mutation",
 			statement:  "WITH target AS (SELECT id FROM data_points) DELETE FROM data_points WHERE id IN (SELECT id FROM target)",
 			wantError:  "SELECT statements only",
+			wantUserV:  currentSchemaVersion,
+			wantPoints: 3,
+		},
+		{
+			name:       "mutation after trailing comment",
+			statement:  "SELECT count(*) FROM data_points; -- comment\nDELETE FROM data_points",
+			wantError:  "one SELECT statement only",
 			wantUserV:  currentSchemaVersion,
 			wantPoints: 3,
 		},

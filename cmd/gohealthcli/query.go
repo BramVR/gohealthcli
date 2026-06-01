@@ -194,7 +194,7 @@ func singleSQLStatement(statement string) (string, error) {
 			inDoubleQuote = true
 		case current == ';':
 			statementEnd = index
-			if strings.TrimSpace(statement[index+1:]) != "" {
+			if trimSQLSpaceAndComments(statement[index+1:]) != "" {
 				return "", errors.New("query accepts one SELECT statement only")
 			}
 		}
