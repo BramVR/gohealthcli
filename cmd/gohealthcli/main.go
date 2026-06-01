@@ -1809,7 +1809,7 @@ func googleHealthFilterValue(field, value string) (string, error) {
 		return "", errors.New("expected YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
 	}
 	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
-		return strconv.Quote(parsed.UTC().Format(time.RFC3339)), nil
+		return strconv.Quote(parsed.UTC().Format(time.RFC3339Nano)), nil
 	}
 	if parsed, err := time.Parse("2006-01-02", value); err == nil {
 		return strconv.Quote(parsed.UTC().Format("2006-01-02T00:00:00Z")), nil

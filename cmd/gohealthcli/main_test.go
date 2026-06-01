@@ -1973,6 +1973,17 @@ func TestGoogleHealthRawFilterFieldsCoverFirstReleaseDataTypes(t *testing.T) {
 	}
 }
 
+func TestGoogleHealthRawFilterPreservesFractionalRFC3339Bounds(t *testing.T) {
+	filter, err := googleHealthDataTypeListFilter("heart-rate", "2026-01-01T00:00:00.500Z", "2026-01-01T01:02:03.123456789+02:00")
+	if err != nil {
+		t.Fatalf("filter: %v", err)
+	}
+	want := `heart_rate.sample_time.physical_time >= "2026-01-01T00:00:00.5Z" AND heart_rate.sample_time.physical_time < "2025-12-31T23:02:03.123456789Z"`
+	if filter != want {
+		t.Fatalf("filter = %q, want %q", filter, want)
+	}
+}
+
 func TestConnectAcceptsGlobalNoInput(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
