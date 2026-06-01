@@ -2799,6 +2799,43 @@ func TestQueryPlainOutputIsStable(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestQueryAcceptsSelectCTE(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"query",
+		"--config", configPath,
+		"--json",
+		"WITH recent AS (SELECT data_type FROM data_points WHERE data_type = 'steps') SELECT count(*) AS count FROM recent",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("query exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "query_completed")
+	assertJSONNumber(t, got, "row_count", 1)
+	rows, ok := got["rows"].([]any)
+	if !ok || len(rows) != 1 {
+		t.Fatalf("rows = %T(%v), want one row", got["rows"], got["rows"])
+	}
+	firstRow, ok := rows[0].([]any)
+	if !ok || len(firstRow) != 1 || firstRow[0] != float64(2) {
+		t.Fatalf("first row = %T(%v), want count 2", rows[0], rows[0])
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 3)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestQueryRejectsWriteAttemptsWithoutChangingArchive(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -2829,6 +2866,13 @@ func TestQueryRejectsWriteAttemptsWithoutChangingArchive(t *testing.T) {
 			name:       "multi statement mutation",
 			statement:  "SELECT count(*) FROM data_points; DELETE FROM data_points",
 			wantError:  "one SELECT statement only",
+			wantUserV:  currentSchemaVersion,
+			wantPoints: 3,
+		},
+		{
+			name:       "cte mutation",
+			statement:  "WITH target AS (SELECT id FROM data_points) DELETE FROM data_points WHERE id IN (SELECT id FROM target)",
+			wantError:  "SELECT statements only",
 			wantUserV:  currentSchemaVersion,
 			wantPoints: 3,
 		},

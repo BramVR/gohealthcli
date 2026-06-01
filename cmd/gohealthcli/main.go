@@ -5063,8 +5063,11 @@ func validateQueryStatement(statement string) error {
 	if err != nil {
 		return err
 	}
-	firstToken := firstSQLToken(body)
-	if firstToken != "select" {
+	statementKind, err := queryStatementKind(body)
+	if err != nil {
+		return err
+	}
+	if statementKind != "select" {
 		return errors.New("query accepts SELECT statements only")
 	}
 	return nil
@@ -5142,7 +5145,71 @@ func singleSQLStatement(statement string) (string, error) {
 	return statement, nil
 }
 
-func firstSQLToken(statement string) string {
+func queryStatementKind(statement string) (string, error) {
+	firstToken, rest := consumeSQLToken(statement)
+	if firstToken != "with" {
+		return firstToken, nil
+	}
+	token, rest := consumeSQLToken(rest)
+	if token == "recursive" {
+		token, rest = consumeSQLToken(rest)
+	}
+	for {
+		if token == "" {
+			return "", errors.New("query CTE is incomplete")
+		}
+		rest = trimSQLSpaceAndComments(rest)
+		if strings.HasPrefix(rest, "(") {
+			var err error
+			rest, err = skipSQLParenthetical(rest)
+			if err != nil {
+				return "", err
+			}
+		}
+		token, rest = consumeSQLToken(rest)
+		if token != "as" {
+			return "", errors.New("query CTE is incomplete")
+		}
+		rest = trimSQLSpaceAndComments(rest)
+		token, afterOption := consumeSQLToken(rest)
+		if token == "materialized" {
+			rest = afterOption
+		} else if token == "not" {
+			token, rest = consumeSQLToken(afterOption)
+			if token != "materialized" {
+				return "", errors.New("query CTE is incomplete")
+			}
+		}
+		rest = trimSQLSpaceAndComments(rest)
+		if !strings.HasPrefix(rest, "(") {
+			return "", errors.New("query CTE is incomplete")
+		}
+		var err error
+		rest, err = skipSQLParenthetical(rest)
+		if err != nil {
+			return "", err
+		}
+		rest = trimSQLSpaceAndComments(rest)
+		if strings.HasPrefix(rest, ",") {
+			token, rest = consumeSQLToken(rest[1:])
+			continue
+		}
+		token, _ = consumeSQLToken(rest)
+		return token, nil
+	}
+}
+
+func consumeSQLToken(statement string) (string, string) {
+	trimmed := trimSQLSpaceAndComments(statement)
+	for index, char := range trimmed {
+		if !(char == '_' || char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z') {
+			return strings.ToLower(trimmed[:index]), trimmed[index:]
+		}
+	}
+	return strings.ToLower(trimmed), ""
+}
+
+func trimSQLSpaceAndComments(statement string) string {
 	trimmed := strings.TrimSpace(statement)
 	for {
 		switch {
@@ -5159,14 +5226,80 @@ func firstSQLToken(statement string) string {
 			}
 			trimmed = strings.TrimSpace(trimmed[end+2:])
 		default:
-			for index, char := range trimmed {
-				if !(char == '_' || char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z') {
-					return strings.ToLower(trimmed[:index])
-				}
-			}
-			return strings.ToLower(trimmed)
+			return trimmed
 		}
 	}
+}
+
+func skipSQLParenthetical(statement string) (string, error) {
+	if !strings.HasPrefix(statement, "(") {
+		return statement, nil
+	}
+	depth := 0
+	inSingleQuote := false
+	inDoubleQuote := false
+	inLineComment := false
+	inBlockComment := false
+	for index := 0; index < len(statement); index++ {
+		current := statement[index]
+		var next byte
+		if index+1 < len(statement) {
+			next = statement[index+1]
+		}
+		if inLineComment {
+			if current == '\n' || current == '\r' {
+				inLineComment = false
+			}
+			continue
+		}
+		if inBlockComment {
+			if current == '*' && next == '/' {
+				inBlockComment = false
+				index++
+			}
+			continue
+		}
+		if inSingleQuote {
+			if current == '\'' {
+				if next == '\'' {
+					index++
+				} else {
+					inSingleQuote = false
+				}
+			}
+			continue
+		}
+		if inDoubleQuote {
+			if current == '"' {
+				if next == '"' {
+					index++
+				} else {
+					inDoubleQuote = false
+				}
+			}
+			continue
+		}
+		switch {
+		case current == '-' && next == '-':
+			inLineComment = true
+			index++
+		case current == '/' && next == '*':
+			inBlockComment = true
+			index++
+		case current == '\'':
+			inSingleQuote = true
+		case current == '"':
+			inDoubleQuote = true
+		case current == '(':
+			depth++
+		case current == ')':
+			depth--
+			if depth == 0 {
+				return statement[index+1:], nil
+			}
+		}
+	}
+	return "", errors.New("query SQL is incomplete")
 }
 
 func queryOutputValue(value any) any {
