@@ -2547,6 +2547,9 @@ func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 	assertJSONNumber(t, got, "data_points_seen", 2)
 	assertJSONNumber(t, got, "data_points_new", 2)
 	assertJSONNumber(t, got, "data_points_updated", 0)
+	assertJSONNumber(t, got, "rollups_seen", 0)
+	assertJSONNumber(t, got, "rollups_new", 0)
+	assertJSONNumber(t, got, "rollups_updated", 0)
 	if len(*requests) != 2 {
 		t.Fatalf("request count = %d, want 2", len(*requests))
 	}
@@ -2581,7 +2584,7 @@ func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("second sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
-	wantPlain := "status: sync_completed\nsync_run_id: 2\nconnection_id: googlehealth:111111256096816351\nprovider_name: googlehealth\ndata_types: steps\nfrom: 2026-01-01\nto: 2026-01-02T00:00:00Z\nendpoint_family: list\ndata_points_seen: 2\ndata_points_new: 0\ndata_points_updated: 0\nmessage: Sync Run archived steps Data Points\n"
+	wantPlain := "status: sync_completed\nsync_run_id: 2\nconnection_id: googlehealth:111111256096816351\nprovider_name: googlehealth\ndata_types: steps\nfrom: 2026-01-01\nto: 2026-01-02T00:00:00Z\nendpoint_family: list\ndata_points_seen: 2\ndata_points_new: 0\ndata_points_updated: 0\nrollups_seen: 0\nrollups_new: 0\nrollups_updated: 0\nmessage: Sync Run archived steps Data Points\n"
 	if stdout.String() != wantPlain {
 		t.Fatalf("stdout = %q, want %q", stdout.String(), wantPlain)
 	}
@@ -2665,6 +2668,155 @@ func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 	assertArchiveTableCount(t, archivePath, "data_point_revisions", 1)
 	assertSyncRun(t, archivePath, 4, "sync_completed", 2, 0, 1, "")
 	assertCorrectedStepRevision(t, archivePath)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	originalCurrentTime := currentTime
+	currentTime = func() time.Time { return time.Date(2026, 1, 4, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { currentTime = originalCurrentTime })
+
+	listRequests := installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+		"": `{"dataPoints":[]}`,
+	})
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("default sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("default stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "endpoint_family", "list")
+	assertJSONNumber(t, got, "data_points_seen", 0)
+	assertJSONNumber(t, got, "rollups_seen", 0)
+	if len(*listRequests) != 1 {
+		t.Fatalf("default request count = %d, want 1", len(*listRequests))
+	}
+	if (*listRequests)[0].endpointName != "dataTypes.steps.list" {
+		t.Fatalf("default endpoint = %q, want list", (*listRequests)[0].endpointName)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 0)
+	assertArchiveTableCount(t, archivePath, "rollups", 0)
+	assertSyncRunWithEndpointFamily(t, archivePath, 1, "sync_completed", "list", 0, 0, 0, "")
+
+	firstRollupPage := `{
+		"rollupDataPoints": [{
+			"steps": {"countSum": "1234"},
+			"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+			"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}
+		}]
+	}`
+	rollupRequests := installStepDailyRollupFetchFake(t, "connect-access-secret", map[string]string{
+		"": firstRollupPage,
+	})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "steps",
+		"--rollup", "daily",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("rollup sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("rollup stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "endpoint_family", "dailyRollUp")
+	assertJSONNumber(t, got, "data_points_seen", 0)
+	assertJSONNumber(t, got, "data_points_new", 0)
+	assertJSONNumber(t, got, "data_points_updated", 0)
+	assertJSONNumber(t, got, "rollups_seen", 1)
+	assertJSONNumber(t, got, "rollups_new", 1)
+	assertJSONNumber(t, got, "rollups_updated", 0)
+	if len(*rollupRequests) != 1 {
+		t.Fatalf("rollup request count = %d, want 1", len(*rollupRequests))
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 0)
+	assertArchiveTableCount(t, archivePath, "rollups", 1)
+	assertArchivedStepsDailyRollup(t, archivePath, "1234")
+	assertSyncRunWithEndpointFamily(t, archivePath, 2, "sync_completed", "dailyRollUp", 1, 1, 0, "")
+
+	installStepDailyRollupFetchFake(t, "connect-access-secret", map[string]string{
+		"": firstRollupPage,
+	})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--rollup", "daily",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("idempotent rollup sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("idempotent rollup stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "rollups_seen", 1)
+	assertJSONNumber(t, got, "rollups_new", 0)
+	assertJSONNumber(t, got, "rollups_updated", 0)
+	assertArchiveTableCount(t, archivePath, "rollups", 1)
+	assertSyncRunWithEndpointFamily(t, archivePath, 3, "sync_completed", "dailyRollUp", 1, 0, 0, "")
+
+	correctedRollupPage := strings.Replace(firstRollupPage, `"countSum": "1234"`, `"countSum": "4321"`, 1)
+	installStepDailyRollupFetchFake(t, "connect-access-secret", map[string]string{
+		"": correctedRollupPage,
+	})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--rollup", "daily",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("corrected rollup sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("corrected rollup stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "rollups_seen", 1)
+	assertJSONNumber(t, got, "rollups_new", 0)
+	assertJSONNumber(t, got, "rollups_updated", 1)
+	assertArchiveTableCount(t, archivePath, "rollups", 1)
+	assertArchivedStepsDailyRollup(t, archivePath, "4321")
+	assertArchiveTableCount(t, archivePath, "data_point_revisions", 0)
+	assertSyncRunWithEndpointFamily(t, archivePath, 4, "sync_completed", "dailyRollUp", 1, 0, 1, "")
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
@@ -2984,6 +3136,36 @@ func TestRawDataTypeStepsPrintsFixtureJSON(t *testing.T) {
 	assertArchiveTableCount(t, archivePath, "data_points", 0)
 	assertArchiveTableCount(t, archivePath, "sync_runs", 0)
 	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDailyNamedDataTypeListRequestIsNotRollup(t *testing.T) {
+	request, err := buildGoogleHealthDataTypeListRawRequest("daily-resting-heart-rate", "2026-01-01", "2026-01-02", 0, "")
+	if err != nil {
+		t.Fatalf("build daily-named list request: %v", err)
+	}
+	if request.endpointName != "dataTypes.daily-resting-heart-rate.list" {
+		t.Fatalf("endpointName = %q, want daily Data Type list", request.endpointName)
+	}
+	if request.method != http.MethodGet {
+		t.Fatalf("method = %q, want GET", request.method)
+	}
+	if len(request.body) != 0 {
+		t.Fatalf("request body = %s, want empty list request body", string(request.body))
+	}
+	parsedURL, err := url.Parse(request.url)
+	if err != nil {
+		t.Fatalf("parse URL: %v", err)
+	}
+	if parsedURL.Path != "/v4/users/me/dataTypes/daily-resting-heart-rate/dataPoints" {
+		t.Fatalf("path = %q, want Data Points list path", parsedURL.Path)
+	}
+	if strings.Contains(request.endpointName+parsedURL.Path, "RollUp") || strings.Contains(parsedURL.Path, "rollUp") {
+		t.Fatalf("daily Data Type request used Rollup endpoint: %s %s", request.endpointName, parsedURL.Path)
+	}
+	wantFilter := `daily_resting_heart_rate.date >= "2026-01-01" AND daily_resting_heart_rate.date < "2026-01-02"`
+	if got := parsedURL.Query().Get("filter"); got != wantFilter {
+		t.Fatalf("filter = %q, want %q", got, wantFilter)
+	}
 }
 
 func TestRawProviderErrorDoesNotLeakToken(t *testing.T) {
@@ -4439,6 +4621,73 @@ func installStepSyncFetchFake(t *testing.T, wantAccessToken string, pages map[st
 	return &requests
 }
 
+func installStepDailyRollupFetchFake(t *testing.T, wantAccessToken string, pages map[string]string) *[]rawProviderRequest {
+	t.Helper()
+
+	originalFetchRawProvider := fetchRawProvider
+	var requests []rawProviderRequest
+	fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		if accessToken != wantAccessToken {
+			t.Fatalf("rollup sync access token = %q, want stored token", accessToken)
+		}
+		if request.endpointName != "dataTypes.steps.dailyRollUp" || request.dataType != "steps" {
+			t.Fatalf("rollup sync request = (%q, %q), want steps dailyRollUp", request.endpointName, request.dataType)
+		}
+		if request.method != http.MethodPost {
+			t.Fatalf("rollup method = %q, want POST", request.method)
+		}
+		parsedURL, err := url.Parse(request.url)
+		if err != nil {
+			t.Fatalf("parse rollup URL: %v", err)
+		}
+		if parsedURL.Path != "/v4/users/me/dataTypes/steps/dataPoints:dailyRollUp" {
+			t.Fatalf("rollup path = %q, want dailyRollUp path", parsedURL.Path)
+		}
+		var body struct {
+			Range struct {
+				Start struct {
+					Date struct {
+						Year  int `json:"year"`
+						Month int `json:"month"`
+						Day   int `json:"day"`
+					} `json:"date"`
+				} `json:"start"`
+				End struct {
+					Date struct {
+						Year  int `json:"year"`
+						Month int `json:"month"`
+						Day   int `json:"day"`
+					} `json:"date"`
+				} `json:"end"`
+			} `json:"range"`
+			WindowSizeDays int    `json:"windowSizeDays"`
+			PageToken      string `json:"pageToken"`
+		}
+		if err := json.Unmarshal(request.body, &body); err != nil {
+			t.Fatalf("rollup body is not valid JSON: %v\nbody: %s", err, string(request.body))
+		}
+		if body.Range.Start.Date.Year != 2026 || body.Range.Start.Date.Month != 1 || body.Range.Start.Date.Day != 1 {
+			t.Fatalf("rollup start date = %+v, want 2026-01-01", body.Range.Start.Date)
+		}
+		if body.Range.End.Date.Year != 2026 || body.Range.End.Date.Month != 1 || body.Range.End.Date.Day != 2 {
+			t.Fatalf("rollup end date = %+v, want 2026-01-02", body.Range.End.Date)
+		}
+		if body.WindowSizeDays != 1 {
+			t.Fatalf("windowSizeDays = %d, want 1", body.WindowSizeDays)
+		}
+		requests = append(requests, request)
+		response, ok := pages[body.PageToken]
+		if !ok {
+			t.Fatalf("no fake rollup page for pageToken %q", body.PageToken)
+		}
+		return []byte(response), nil
+	}
+	t.Cleanup(func() {
+		fetchRawProvider = originalFetchRawProvider
+	})
+	return &requests
+}
+
 func initializeFileCredentialSetup(t *testing.T, tempDir string) (string, string, string) {
 	t.Helper()
 
@@ -4794,6 +5043,12 @@ func assertArchivedStepDataPoint(t *testing.T, archivePath string) {
 func assertSyncRun(t *testing.T, archivePath string, id int64, wantStatus string, wantSeen, wantNew, wantUpdated int, wantErrorContains string) {
 	t.Helper()
 
+	assertSyncRunWithEndpointFamily(t, archivePath, id, wantStatus, "list", wantSeen, wantNew, wantUpdated, wantErrorContains)
+}
+
+func assertSyncRunWithEndpointFamily(t *testing.T, archivePath string, id int64, wantStatus, wantEndpointFamily string, wantSeen, wantNew, wantUpdated int, wantErrorContains string) {
+	t.Helper()
+
 	db, err := openArchive(archivePath)
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
@@ -4823,8 +5078,8 @@ func assertSyncRun(t *testing.T, archivePath string, id int64, wantStatus string
 	); err != nil {
 		t.Fatalf("query Sync Run %d: %v", id, err)
 	}
-	if status != wantStatus || endpointFamily != "list" {
-		t.Fatalf("Sync Run status/family = (%q, %q), want (%q, list)", status, endpointFamily, wantStatus)
+	if status != wantStatus || endpointFamily != wantEndpointFamily {
+		t.Fatalf("Sync Run status/family = (%q, %q), want (%q, %s)", status, endpointFamily, wantStatus, wantEndpointFamily)
 	}
 	if dataTypesJSON != `["steps"]` {
 		t.Fatalf("data_types_requested = %q, want steps", dataTypesJSON)
@@ -4843,6 +5098,56 @@ func assertSyncRun(t *testing.T, archivePath string, id int64, wantStatus string
 	}
 	if !errorSummary.Valid || !strings.Contains(errorSummary.String, wantErrorContains) {
 		t.Fatalf("error_summary = %v(%q), want %q", errorSummary.Valid, errorSummary.String, wantErrorContains)
+	}
+}
+
+func assertArchivedStepsDailyRollup(t *testing.T, archivePath, wantCount string) {
+	t.Helper()
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	var providerName, connectionID, dataType, rollupKind, civilDate, rawJSON string
+	var windowStart, windowEnd, timezoneMetadata sql.NullString
+	if err := db.QueryRow(`SELECT
+		provider_name,
+		connection_id,
+		data_type,
+		rollup_kind,
+		window_start_utc,
+		window_end_utc,
+		civil_date,
+		timezone_metadata,
+		raw_json
+	FROM rollups`).Scan(
+		&providerName,
+		&connectionID,
+		&dataType,
+		&rollupKind,
+		&windowStart,
+		&windowEnd,
+		&civilDate,
+		&timezoneMetadata,
+		&rawJSON,
+	); err != nil {
+		t.Fatalf("query Rollup: %v", err)
+	}
+	if providerName != "googlehealth" || connectionID != "googlehealth:111111256096816351" || dataType != "steps" || rollupKind != "dailyRollUp" {
+		t.Fatalf("Rollup identity = (%q, %q, %q, %q), want googlehealth steps dailyRollUp", providerName, connectionID, dataType, rollupKind)
+	}
+	if windowStart.Valid || windowEnd.Valid {
+		t.Fatalf("Rollup UTC window = (%v, %v), want NULL for civil daily Rollup", windowStart, windowEnd)
+	}
+	if civilDate != "2026-01-01" {
+		t.Fatalf("civil_date = %q, want 2026-01-01", civilDate)
+	}
+	if !timezoneMetadata.Valid || !strings.Contains(timezoneMetadata.String, "civil_start_time") || !strings.Contains(timezoneMetadata.String, "civil_end_time") {
+		t.Fatalf("timezone_metadata = %v(%q), want provider civil time metadata", timezoneMetadata.Valid, timezoneMetadata.String)
+	}
+	if !strings.Contains(rawJSON, `"countSum":"`+wantCount+`"`) {
+		t.Fatalf("raw_json = %s, want countSum %s", rawJSON, wantCount)
 	}
 }
 
