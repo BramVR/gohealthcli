@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -1641,7 +1640,7 @@ func TestConnectRejectsUnsupportedOSNativeStoreBeforeOAuth(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	originalOS := currentOS
-	currentOS = "linux"
+	currentOS = "plan9"
 	t.Cleanup(func() { currentOS = originalOS })
 	installConnectFakes(t, fakeConnectConfig{failIfCalled: true})
 
@@ -1794,6 +1793,74 @@ func TestOSNativeCredentialStoreDoesNotSendTokenAsArgument(t *testing.T) {
 	}
 }
 
+func TestLinuxOSNativeCredentialStoreUsesSecretToolContent(t *testing.T) {
+	originalOS := currentOS
+	originalSecretToolStore := runSecretToolStore
+	currentOS = "linux"
+	t.Cleanup(func() {
+		currentOS = originalOS
+		runSecretToolStore = originalSecretToolStore
+	})
+
+	var gotService string
+	var gotKey string
+	var gotContent []byte
+	runSecretToolStore = func(service, key string, content []byte) error {
+		gotService = service
+		gotKey = key
+		gotContent = append([]byte(nil), content...)
+		return nil
+	}
+
+	store, err := newCredentialStore(credentialStoreConfig{kind: "os_native", service: "gohealthcli"})
+	if err != nil {
+		t.Fatalf("new credential store: %v", err)
+	}
+	if err := store.Store("googlehealth:111", map[string]any{"access_token": "access-secret-value"}); err != nil {
+		t.Fatalf("store token: %v", err)
+	}
+	if gotService != "gohealthcli" || gotKey != "googlehealth:111" {
+		t.Fatalf("secret-tool target = (%q, %q), want service/key", gotService, gotKey)
+	}
+	if !bytes.Contains(gotContent, []byte("access-secret-value")) {
+		t.Fatalf("secret-tool content missing token material: %s", string(gotContent))
+	}
+}
+
+func TestWindowsOSNativeCredentialStoreUsesCredentialManagerContent(t *testing.T) {
+	originalOS := currentOS
+	originalWindowsCredentialWrite := runWindowsCredentialWrite
+	currentOS = "windows"
+	t.Cleanup(func() {
+		currentOS = originalOS
+		runWindowsCredentialWrite = originalWindowsCredentialWrite
+	})
+
+	var gotService string
+	var gotKey string
+	var gotContent []byte
+	runWindowsCredentialWrite = func(service, key string, content []byte) error {
+		gotService = service
+		gotKey = key
+		gotContent = append([]byte(nil), content...)
+		return nil
+	}
+
+	store, err := newCredentialStore(credentialStoreConfig{kind: "os_native", service: "gohealthcli"})
+	if err != nil {
+		t.Fatalf("new credential store: %v", err)
+	}
+	if err := store.Store("googlehealth:111", map[string]any{"access_token": "access-secret-value"}); err != nil {
+		t.Fatalf("store token: %v", err)
+	}
+	if gotService != "gohealthcli" || gotKey != "googlehealth:111" {
+		t.Fatalf("Windows Credential Manager target = (%q, %q), want service/key", gotService, gotKey)
+	}
+	if !bytes.Contains(gotContent, []byte("access-secret-value")) {
+		t.Fatalf("Windows Credential Manager content missing token material: %s", string(gotContent))
+	}
+}
+
 func TestInitStoresSecretProviderReference(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
@@ -1906,54 +1973,6 @@ func TestInitRejectsInvalidOAuthClientFileBeforeCreatingSetup(t *testing.T) {
 		t.Fatalf("archive stat err = %v, want not exist", err)
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
-}
-
-func TestInitUsesFileCredentialStoreDefaultWhenOSNativeUnavailable(t *testing.T) {
-	originalOS := currentOS
-	currentOS = "linux"
-	t.Cleanup(func() { currentOS = originalOS })
-
-	tempDir := t.TempDir()
-	configPath := filepath.Join(tempDir, "config", "config.toml")
-	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
-	oauthClientPath := filepath.Join(tempDir, "client_secret.json")
-	if err := os.WriteFile(oauthClientPath, []byte(`{"installed":{"client_id":"test-client","client_secret":"test-secret"}}`), 0o600); err != nil {
-		t.Fatalf("write OAuth client file: %v", err)
-	}
-
-	stdout := new(bytes.Buffer)
-	stderr := new(bytes.Buffer)
-	code := runInit(
-		[]string{
-			"--config", configPath,
-			"--db", archivePath,
-			"--oauth-client-file", oauthClientPath,
-		},
-		defaultConfigPath(),
-		defaultArchivePath(),
-		outputMode{},
-		stdout,
-		stderr,
-	)
-	if code != 0 {
-		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
-	}
-	configBytes, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("read config: %v", err)
-	}
-	config := string(configBytes)
-	for _, want := range []string{
-		`type = "file"`,
-		`path = "` + filepath.Join(filepath.Dir(configPath), "tokens.json") + `"`,
-	} {
-		if !strings.Contains(config, want) {
-			t.Fatalf("config missing %q:\n%s", want, config)
-		}
-	}
-	if strings.Contains(config, `type = "os_native"`) || strings.Contains(config, `service = "gohealthcli"`) {
-		t.Fatalf("config kept unsupported OS-native default:\n%s", config)
-	}
 }
 
 func TestInitIsIdempotentForExistingSetup(t *testing.T) {
@@ -2474,10 +2493,7 @@ func ensureTestOAuthClientFiles(t *testing.T, dir string, args []string) {
 }
 
 func expectedDefaultCredentialStoreKind() string {
-	if runtime.GOOS == "darwin" {
-		return "os_native"
-	}
-	return "file"
+	return "os_native"
 }
 
 func removeCredentialStoreSection(t *testing.T, config string) string {

@@ -148,6 +148,8 @@ var fetchIdentity = fetchGoogleIdentity
 var currentTime = func() time.Time { return time.Now().UTC() }
 var currentOS = runtime.GOOS
 var runSecurityAddGenericPassword = runSecurityAddGenericPasswordCommand
+var runSecretToolStore = runSecretToolStoreCommand
+var runWindowsCredentialWrite = runWindowsCredentialWriteCommand
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -553,7 +555,7 @@ func configContent(configPath, archivePath string, source oauthClientSource) str
 		builder.WriteString(strconv.Quote(source.item))
 		builder.WriteString("\n")
 	}
-	store := defaultCredentialStoreConfigForDir(filepath.Dir(configPath))
+	store := defaultCredentialStoreConfig()
 	builder.WriteString("\n[credential_store]\n")
 	builder.WriteString("type = ")
 	builder.WriteString(strconv.Quote(store.kind))
@@ -910,13 +912,6 @@ func validateOAuthClientFile(path string) error {
 }
 
 func defaultCredentialStoreConfig() credentialStoreConfig {
-	return defaultCredentialStoreConfigForDir(filepath.Dir(defaultConfigPath()))
-}
-
-func defaultCredentialStoreConfigForDir(configDir string) credentialStoreConfig {
-	if currentOS != "darwin" {
-		return credentialStoreConfig{kind: "file", path: filepath.Join(configDir, "tokens.json")}
-	}
 	return credentialStoreConfig{kind: "os_native", service: "gohealthcli"}
 }
 
@@ -1303,7 +1298,7 @@ func newCredentialStore(config credentialStoreConfig) (credentialStore, error) {
 	case "file":
 		return fileCredentialStore{path: config.path}, nil
 	case "os_native":
-		if currentOS != "darwin" {
+		if currentOS != "darwin" && currentOS != "linux" && currentOS != "windows" {
 			return nil, errors.New("OS-native Credential Store is not available on this platform; configure credential_store type \"file\"")
 		}
 		return osNativeCredentialStore{service: config.service}, nil
@@ -1355,6 +1350,10 @@ func (store osNativeCredentialStore) Store(key string, tokenMaterial map[string]
 	switch currentOS {
 	case "darwin":
 		return runSecurityAddGenericPassword(store.service, key, content)
+	case "linux":
+		return runSecretToolStore(store.service, key, content)
+	case "windows":
+		return runWindowsCredentialWrite(store.service, key, content)
 	default:
 		return errors.New("OS-native Credential Store is not available on this platform; configure credential_store type \"file\"")
 	}
@@ -1363,6 +1362,64 @@ func (store osNativeCredentialStore) Store(key string, tokenMaterial map[string]
 func runSecurityAddGenericPasswordCommand(service, key string, content []byte) error {
 	cmd := exec.Command("security", "add-generic-password", "-U", "-s", service, "-a", key, "-w")
 	cmd.Stdin = strings.NewReader(string(content) + "\n")
+	return cmd.Run()
+}
+
+func runSecretToolStoreCommand(service, key string, content []byte) error {
+	cmd := exec.Command("secret-tool", "store", "--label", service, "service", service, "account", key)
+	cmd.Stdin = strings.NewReader(string(content))
+	return cmd.Run()
+}
+
+func runWindowsCredentialWriteCommand(service, key string, content []byte) error {
+	target := service + ":" + key
+	script := `
+$secret = [Console]::In.ReadToEnd()
+$code = @"
+using System;
+using System.Runtime.InteropServices;
+public static class NativeCredential {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  public struct CREDENTIAL {
+    public UInt32 Flags;
+    public UInt32 Type;
+    public string TargetName;
+    public string Comment;
+    public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten;
+    public UInt32 CredentialBlobSize;
+    public IntPtr CredentialBlob;
+    public UInt32 Persist;
+    public UInt32 AttributeCount;
+    public IntPtr Attributes;
+    public string TargetAlias;
+    public string UserName;
+  }
+  [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  public static extern bool CredWrite(ref CREDENTIAL credential, UInt32 flags);
+}
+"@
+Add-Type $code
+$bytes = [Text.Encoding]::Unicode.GetBytes($secret)
+$blob = [Runtime.InteropServices.Marshal]::AllocHGlobal($bytes.Length)
+try {
+  [Runtime.InteropServices.Marshal]::Copy($bytes, 0, $blob, $bytes.Length)
+  $credential = New-Object NativeCredential+CREDENTIAL
+  $credential.Type = 1
+  $credential.TargetName = $env:GOHEALTHCLI_CREDENTIAL_TARGET
+  $credential.UserName = $env:GOHEALTHCLI_CREDENTIAL_ACCOUNT
+  $credential.CredentialBlobSize = $bytes.Length
+  $credential.CredentialBlob = $blob
+  $credential.Persist = 2
+  if (-not [NativeCredential]::CredWrite([ref]$credential, 0)) {
+    throw [ComponentModel.Win32Exception][Runtime.InteropServices.Marshal]::GetLastWin32Error()
+  }
+} finally {
+  [Runtime.InteropServices.Marshal]::FreeHGlobal($blob)
+}
+`
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+	cmd.Env = append(os.Environ(), "GOHEALTHCLI_CREDENTIAL_TARGET="+target, "GOHEALTHCLI_CREDENTIAL_ACCOUNT="+key)
+	cmd.Stdin = strings.NewReader(string(content))
 	return cmd.Run()
 }
 
