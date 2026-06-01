@@ -1365,7 +1365,7 @@ func TestDoctorOnlineRefreshesExpiredTokenAndChecksProvider(t *testing.T) {
 		t.Fatalf("read token store: %v", err)
 	}
 	if !strings.Contains(string(tokenStoreBytes), "refreshed-access-secret") || !strings.Contains(string(tokenStoreBytes), "refresh-secret-value") {
-		t.Fatalf("token store was not refreshed: %s", string(tokenStoreBytes))
+		t.Fatal("token store was not refreshed")
 	}
 	tokenMetadata := archivedConnectionTokenMetadata(t, archivePath)
 	if strings.Contains(tokenMetadata, "refreshed-access-secret") || strings.Contains(tokenMetadata, "refresh-secret-value") {
@@ -1501,7 +1501,7 @@ func TestDoctorOnlineReportsProviderFailureAsConnectionHealth(t *testing.T) {
 		t.Fatalf("read token store: %v", err)
 	}
 	if strings.Contains(string(tokenStoreBytes), "refreshed-access-secret") || !strings.Contains(string(tokenStoreBytes), "connect-access-secret") {
-		t.Fatalf("token store should keep old token material after provider failure: %s", string(tokenStoreBytes))
+		t.Fatal("token store should keep old token material after provider failure")
 	}
 }
 
@@ -1625,7 +1625,7 @@ func TestDoctorOnlineDoesNotPersistRefreshBeforeIdentityMatch(t *testing.T) {
 		t.Fatalf("read token store: %v", err)
 	}
 	if strings.Contains(string(tokenStoreBytes), "refreshed-access-secret") || !strings.Contains(string(tokenStoreBytes), "old-access-secret") {
-		t.Fatalf("token store should keep old token material after identity mismatch: %s", string(tokenStoreBytes))
+		t.Fatal("token store should keep old token material after identity mismatch")
 	}
 	tokenMetadata := archivedConnectionTokenMetadata(t, archivePath)
 	if strings.Contains(tokenMetadata, `"expires_at":"2026-05-31T23:00:00Z"`) || !strings.Contains(tokenMetadata, `"expires_at":"2026-05-31T21:00:00Z"`) {
@@ -1634,6 +1634,62 @@ func TestDoctorOnlineDoesNotPersistRefreshBeforeIdentityMatch(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 	if strings.Contains(stdout.String()+stderr.String(), "old-access-secret") || strings.Contains(stdout.String()+stderr.String(), "refreshed-access-secret") || strings.Contains(stdout.String()+stderr.String(), "refresh-secret-value") {
 		t.Fatalf("doctor --online output leaked token material:\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+}
+
+func TestPersistDoctorOnlineRefreshedTokenRollsBackOnMetadataFailure(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
+		accessToken:        "old-access-secret",
+		refreshToken:       "refresh-secret-value",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	store := fileCredentialStore{path: tokenStorePath}
+	previousTokenMaterial, err := store.Load("googlehealth:111111256096816351")
+	if err != nil {
+		t.Fatalf("load previous token material: %v", err)
+	}
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM connections WHERE id = ?`, "googlehealth:111111256096816351"); err != nil {
+		_ = db.Close()
+		t.Fatalf("delete connection: %v", err)
+	}
+	refreshedToken := oauthTokenResponse{
+		accessToken:  "refreshed-access-secret",
+		refreshToken: "refresh-secret-value",
+		tokenType:    "Bearer",
+		scopes:       []string{googleHealthActivityReadonlyScope},
+		expiresAt:    time.Date(2026, 5, 31, 23, 0, 0, 0, time.UTC),
+		rawTokenMaterialObject: map[string]any{
+			"access_token":  "refreshed-access-secret",
+			"refresh_token": "refresh-secret-value",
+			"expires_in":    float64(3600),
+			"scope":         googleHealthActivityReadonlyScope,
+			"token_type":    "Bearer",
+		},
+	}
+	err = persistDoctorOnlineRefreshedToken(db, credentialStoreConfig{kind: "file", path: tokenStorePath}, "googlehealth:111111256096816351", refreshedToken, previousTokenMaterial)
+	if closeErr := db.Close(); closeErr != nil {
+		t.Fatalf("close archive: %v", closeErr)
+	}
+	if err == nil {
+		t.Fatal("persist refreshed token succeeded after connection was removed")
+	}
+	tokenStoreBytes, err := os.ReadFile(tokenStorePath)
+	if err != nil {
+		t.Fatalf("read token store: %v", err)
+	}
+	if strings.Contains(string(tokenStoreBytes), "refreshed-access-secret") || !strings.Contains(string(tokenStoreBytes), "old-access-secret") {
+		t.Fatal("token store should roll back to previous token material")
 	}
 }
 

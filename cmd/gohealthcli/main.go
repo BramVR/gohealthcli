@@ -725,6 +725,7 @@ func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
 	}
 	db, err := openArchive(archivePath)
 	if err != nil {
+		result.Status = "setup_invalid"
 		result.TokenStatus = "archive_unavailable"
 		return result, err
 	}
@@ -762,7 +763,7 @@ func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
 		return result, errors.New("Provider returned a different Google Identity; use a new archive path")
 	}
 	if tokenCheck.refreshedToken != nil {
-		if err := persistDoctorOnlineRefreshedToken(db, config.credentialStore, connection.id, *tokenCheck.refreshedToken); err != nil {
+		if err := persistDoctorOnlineRefreshedToken(db, config.credentialStore, connection.id, *tokenCheck.refreshedToken, tokenCheck.previousTokenMaterial); err != nil {
 			result.TokenStatus = "refresh_failed"
 			return result, err
 		}
@@ -773,8 +774,9 @@ func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
 }
 
 type doctorOnlineTokenCheck struct {
-	accessToken    string
-	refreshedToken *oauthTokenResponse
+	accessToken           string
+	refreshedToken        *oauthTokenResponse
+	previousTokenMaterial map[string]any
 }
 
 func doctorOnlineAccessToken(config fullConfigCheck, connection archivedConnection, protectedPaths []string) (doctorOnlineTokenCheck, error) {
@@ -812,10 +814,10 @@ func doctorOnlineAccessToken(config fullConfigCheck, connection archivedConnecti
 	if err != nil {
 		return doctorOnlineTokenCheck{}, err
 	}
-	return doctorOnlineTokenCheck{accessToken: token.accessToken, refreshedToken: &token}, nil
+	return doctorOnlineTokenCheck{accessToken: token.accessToken, refreshedToken: &token, previousTokenMaterial: tokenMaterial}, nil
 }
 
-func persistDoctorOnlineRefreshedToken(db *sql.DB, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse) error {
+func persistDoctorOnlineRefreshedToken(db *sql.DB, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse, previousTokenMaterial map[string]any) error {
 	store, err := newCredentialStore(credentialStore)
 	if err != nil {
 		return err
@@ -823,7 +825,13 @@ func persistDoctorOnlineRefreshedToken(db *sql.DB, credentialStore credentialSto
 	if err := store.Store(connectionID, token.rawTokenMaterialObject); err != nil {
 		return err
 	}
-	return updateConnectionTokenMetadata(db, connectionID, token, currentTime())
+	if err := updateConnectionTokenMetadata(db, connectionID, token, currentTime()); err != nil {
+		if rollbackErr := store.Store(connectionID, previousTokenMaterial); rollbackErr != nil {
+			return fmt.Errorf("%w; rollback Credential Store token material: %v", err, rollbackErr)
+		}
+		return err
+	}
+	return nil
 }
 
 func rawSetup(configPath, archivePath string, request rawProviderRequest) ([]byte, error) {
@@ -2529,12 +2537,22 @@ func updateConnectionTokenMetadata(db *sql.DB, connectionID string, token oauthT
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`UPDATE connections SET token_metadata_json = ?, updated_at = ? WHERE id = ?`,
+	result, err := db.Exec(`UPDATE connections SET token_metadata_json = ?, updated_at = ? WHERE id = ?`,
 		string(metadataJSON),
 		now.UTC().Format(time.RFC3339),
 		connectionID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected != 1 {
+		return fmt.Errorf("Connection %s not found", connectionID)
+	}
+	return nil
 }
 
 func connectionTokenMetadataJSON(connectionID string, token oauthTokenResponse) ([]byte, error) {
