@@ -146,3 +146,14 @@ credential_store: file
 token_status: metadata_present
 message: Google Identity connected
 ```
+
+Identity plain mode:
+
+```text
+status: identity_refreshed
+connection_id: googlehealth:111111256096816351
+provider_name: googlehealth
+google_health_user_id: 111111256096816351
+legacy_fitbit_user_id: A1B2C3
+message: Google Identity refreshed
+```
