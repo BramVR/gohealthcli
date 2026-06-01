@@ -1528,6 +1528,183 @@ func TestConnectDoesNotResolveSecretProviderAtRuntime(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+connectStderr.String())
 }
 
+func TestIdentityRefreshesArchivedGoogleIdentity(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	installIdentityFetchFake(t, "connect-access-secret", googleIdentity{
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "Z9Y8X7",
+		rawJSON:            `{"healthUserId":"111111256096816351","legacyUserId":"Z9Y8X7","refreshed":true}`,
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"identity", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("identity exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "identity_refreshed")
+	assertJSONString(t, got, "connection_id", "googlehealth:111111256096816351")
+	assertJSONString(t, got, "provider_name", "googlehealth")
+	assertJSONString(t, got, "google_health_user_id", "111111256096816351")
+	assertJSONString(t, got, "legacy_fitbit_user_id", "Z9Y8X7")
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+	if strings.Contains(stdout.String()+stderr.String(), "connect-access-secret") || strings.Contains(stdout.String()+stderr.String(), "connect-refresh-secret") {
+		t.Fatalf("identity output leaked token material:\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	var legacyUserID, identityJSON string
+	if err := db.QueryRow(`SELECT legacy_fitbit_user_id, google_identity_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&legacyUserID, &identityJSON); err != nil {
+		t.Fatalf("query refreshed identity: %v", err)
+	}
+	if legacyUserID != "Z9Y8X7" {
+		t.Fatalf("legacy_fitbit_user_id = %q, want refreshed value", legacyUserID)
+	}
+	if !strings.Contains(identityJSON, `"refreshed":true`) {
+		t.Fatalf("google_identity_json = %s, want refreshed raw identity", identityJSON)
+	}
+}
+
+func TestIdentityPlainIncludesStableIdentityFields(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	installIdentityFetchFake(t, "connect-access-secret", googleIdentity{
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+		rawJSON:            `{"healthUserId":"111111256096816351","legacyUserId":"A1B2C3"}`,
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"identity", "--config", configPath, "--db", archivePath, "--plain"}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("identity exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	want := "status: identity_refreshed\nconnection_id: googlehealth:111111256096816351\nprovider_name: googlehealth\ngoogle_health_user_id: 111111256096816351\nlegacy_fitbit_user_id: A1B2C3\nmessage: Google Identity refreshed\n"
+	if stdout.String() != want {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestIdentityRequiresArchivedConnection(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{failIfCalled: true})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"identity", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("identity exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "identity_unavailable")
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "gohealthcli connect") {
+		t.Fatalf("message = %T(%v), want connect guidance", got["message"], got["message"])
+	}
+	if _, ok := got["connection_id"]; ok {
+		t.Fatalf("connection_id = %v, want omitted when no Connection exists", got["connection_id"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestIdentityRejectsDifferentGoogleIdentity(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	installIdentityFetchFake(t, "connect-access-secret", googleIdentity{
+		healthUserID:       "222222222222222222",
+		legacyFitbitUserID: "Z9Y8X7",
+		rawJSON:            `{"healthUserId":"222222222222222222","legacyUserId":"Z9Y8X7"}`,
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"identity", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("identity exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "identity_mismatch")
+	assertJSONString(t, got, "connection_id", "googlehealth:111111256096816351")
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "different Google Identity") {
+		t.Fatalf("message = %T(%v), want different identity refusal", got["message"], got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	var healthUserID, legacyUserID, identityJSON string
+	if err := db.QueryRow(`SELECT google_health_user_id, legacy_fitbit_user_id, google_identity_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&healthUserID, &legacyUserID, &identityJSON); err != nil {
+		t.Fatalf("query identity after mismatch: %v", err)
+	}
+	if healthUserID != "111111256096816351" || legacyUserID != "A1B2C3" {
+		t.Fatalf("archived identity = (%q, %q), want unchanged", healthUserID, legacyUserID)
+	}
+	if strings.Contains(identityJSON, "222222222222222222") {
+		t.Fatalf("different provider identity was archived: %s", identityJSON)
+	}
+}
+
 func TestConnectAcceptsGlobalNoInput(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -2557,6 +2734,21 @@ func installConnectFakes(t *testing.T, config fakeConnectConfig) {
 		runOAuthFlow = originalOAuthFlow
 		fetchIdentity = originalFetchIdentity
 		currentTime = originalCurrentTime
+	})
+}
+
+func installIdentityFetchFake(t *testing.T, wantAccessToken string, identity googleIdentity) {
+	t.Helper()
+
+	originalFetchIdentity := fetchIdentity
+	fetchIdentity = func(accessToken string) (googleIdentity, error) {
+		if accessToken != wantAccessToken {
+			t.Fatalf("identity access token = %q, want stored token", accessToken)
+		}
+		return identity, nil
+	}
+	t.Cleanup(func() {
+		fetchIdentity = originalFetchIdentity
 	})
 }
 

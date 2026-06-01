@@ -79,6 +79,24 @@ type connectResult struct {
 	Message            string `json:"message"`
 }
 
+type identityResult struct {
+	Status             string `json:"status"`
+	ConnectionID       string `json:"connection_id,omitempty"`
+	ProviderName       string `json:"provider_name,omitempty"`
+	GoogleHealthUserID string `json:"google_health_user_id,omitempty"`
+	LegacyFitbitUserID string `json:"legacy_fitbit_user_id,omitempty"`
+	Message            string `json:"message"`
+}
+
+type archivedConnection struct {
+	id                 string
+	providerName       string
+	googleHealthUserID string
+	legacyFitbitUserID string
+	tokenMetadataJSON  string
+	googleIdentityJSON string
+}
+
 type oauthClientSource struct {
 	kind     string
 	path     string
@@ -148,8 +166,11 @@ var fetchIdentity = fetchGoogleIdentity
 var currentTime = func() time.Time { return time.Now().UTC() }
 var currentOS = runtime.GOOS
 var runSecurityAddGenericPassword = runSecurityAddGenericPasswordCommand
+var runSecurityFindGenericPassword = runSecurityFindGenericPasswordCommand
 var runSecretToolStore = runSecretToolStoreCommand
+var runSecretToolLookup = runSecretToolLookupCommand
 var runWindowsCredentialWrite = runWindowsCredentialWriteCommand
+var runWindowsCredentialRead = runWindowsCredentialReadCommand
 var findExecutable = exec.LookPath
 
 func main() {
@@ -191,6 +212,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runInit(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	case "connect":
 		return runConnect(flags.Args()[1:], *configPath, *archivePath, *noInput, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
+	case "identity":
+		return runIdentity(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command: %s\n", flags.Arg(0))
 		return 1
@@ -421,6 +444,47 @@ func runConnect(args []string, configPath, archivePath string, globalNoInput boo
 	return 0
 }
 
+func runIdentity(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("identity", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+
+	identityConfigPath := flags.String("config", configPath, "config file path")
+	identityArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
+	identityJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
+	identityPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
+	flags.Bool("no-input", false, "never prompt, never wait for browser input")
+
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 1
+	}
+	if flags.NArg() != 0 {
+		fmt.Fprintf(stderr, "unexpected identity argument: %s\n", flags.Arg(0))
+		return 1
+	}
+
+	mode = outputMode{json: *identityJSONOutput, plain: *identityPlainOutput}
+	result, err := identitySetup(*identityConfigPath, *identityArchivePath)
+	if err != nil {
+		if result.Status == "" {
+			result.Status = "identity_failed"
+		}
+		result.Message = err.Error()
+		if writeErr := writeIdentityResult(result, mode, stdout); writeErr != nil {
+			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
+			return 1
+		}
+		return 1
+	}
+	if err := writeIdentityResult(result, mode, stdout); err != nil {
+		fmt.Fprintf(stderr, "write output: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 func connectSetup(configPath, archivePath string, noInput bool) (connectResult, error) {
 	config, err := inspectFullConfig(configPath, archivePath)
 	if err != nil {
@@ -480,6 +544,70 @@ func connectSetup(configPath, archivePath string, noInput bool) (connectResult, 
 		TokenStatus:        "metadata_present",
 		Message:            "Google Identity connected",
 	}, nil
+}
+
+func identitySetup(configPath, archivePath string) (identityResult, error) {
+	config, err := inspectIdentityConfig(configPath, archivePath)
+	if err != nil {
+		return identityResult{}, fmt.Errorf("config check failed: %w", err)
+	}
+	if err := migrateArchiveIfNeeded(archivePath); err != nil {
+		return identityResult{}, fmt.Errorf("Health Archive migration failed: %w", err)
+	}
+	if _, err := inspectArchive(archivePath, false); err != nil {
+		return identityResult{}, fmt.Errorf("Health Archive check failed: %w", err)
+	}
+	db, err := openArchive(archivePath)
+	if err != nil {
+		return identityResult{}, err
+	}
+	defer db.Close()
+	connection, err := readCurrentConnection(db)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return identityResult{Status: "identity_unavailable"}, errors.New("no Connection found; run `gohealthcli connect` first")
+		}
+		return identityResult{}, err
+	}
+	result := identityResult{
+		ConnectionID:       connection.id,
+		ProviderName:       connection.providerName,
+		GoogleHealthUserID: connection.googleHealthUserID,
+		LegacyFitbitUserID: connection.legacyFitbitUserID,
+	}
+	if err := validateCredentialStoreRuntime(config.credentialStore, []string{configPath, archivePath}); err != nil {
+		return result, err
+	}
+	store, err := newCredentialStore(config.credentialStore)
+	if err != nil {
+		return result, err
+	}
+	tokenMaterial, err := store.Load(connection.id)
+	if err != nil {
+		return result, err
+	}
+	accessToken, ok := tokenMaterial["access_token"].(string)
+	if !ok || accessToken == "" {
+		return result, errors.New("Credential Store token material is missing access token; run `gohealthcli connect` again")
+	}
+	identity, err := fetchIdentity(accessToken)
+	if err != nil {
+		return result, err
+	}
+	if identity.healthUserID != connection.googleHealthUserID {
+		result.Status = "identity_mismatch"
+		return result, errors.New("Provider returned a different Google Identity; use a new archive path")
+	}
+	if err := refreshConnectionIdentity(db, connection, identity, currentTime()); err != nil {
+		return result, err
+	}
+	result.Status = "identity_refreshed"
+	result.GoogleHealthUserID = identity.healthUserID
+	if identity.legacyFitbitUserID != "" {
+		result.LegacyFitbitUserID = identity.legacyFitbitUserID
+	}
+	result.Message = "Google Identity refreshed"
+	return result, nil
 }
 
 func parseOAuthClientSource(oauthClientFile, secretProvider, oauthClientItem string) (oauthClientSource, error) {
@@ -668,6 +796,52 @@ func inspectFullConfig(configPath, archivePath string) (fullConfigCheck, error) 
 		archivePath:      config.archivePath,
 		defaultDataTypes: config.defaultDataTypes,
 		oauthClient:      config.oauthClient,
+		credentialStore:  config.credentialStore,
+	}, nil
+}
+
+func inspectIdentityConfig(configPath, archivePath string) (fullConfigCheck, error) {
+	if err := validateOwnerOnlyDir(filepath.Dir(configPath)); err != nil {
+		return fullConfigCheck{}, err
+	}
+	info, err := os.Stat(configPath)
+	if err != nil {
+		return fullConfigCheck{}, err
+	}
+	if info.IsDir() {
+		return fullConfigCheck{}, fmt.Errorf("%s is a directory", configPath)
+	}
+	if usesPOSIXPermissions() && info.Mode().Perm() != 0o600 {
+		mode := info.Mode().Perm()
+		return fullConfigCheck{}, fmt.Errorf("%s is not owner-only: mode %04o, want 0600", configPath, mode)
+	}
+
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		return fullConfigCheck{}, err
+	}
+	config, err := parseConfig(string(configBytes))
+	if err != nil {
+		return fullConfigCheck{}, err
+	}
+	if config.archivePath == "" {
+		return fullConfigCheck{}, errors.New("missing archive_path")
+	}
+	if config.archivePath != archivePath {
+		return fullConfigCheck{}, fmt.Errorf("archive_path points to %s, want %s", config.archivePath, archivePath)
+	}
+	if err := validateDefaultDataTypes(config.defaultDataTypes); err != nil {
+		return fullConfigCheck{}, err
+	}
+	if !config.credentialStoreSeen && config.credentialStore.kind == "" {
+		config.credentialStore = defaultCredentialStoreConfig()
+	}
+	if err := validateCredentialStoreConfig(config.credentialStore); err != nil {
+		return fullConfigCheck{}, err
+	}
+	return fullConfigCheck{
+		archivePath:      config.archivePath,
+		defaultDataTypes: config.defaultDataTypes,
 		credentialStore:  config.credentialStore,
 	}, nil
 }
@@ -1351,6 +1525,7 @@ func openBrowser(target string) error {
 
 type credentialStore interface {
 	Store(key string, tokenMaterial map[string]any) error
+	Load(key string) (map[string]any, error)
 }
 
 func newCredentialStore(config credentialStoreConfig) (credentialStore, error) {
@@ -1398,6 +1573,29 @@ func (store fileCredentialStore) Store(key string, tokenMaterial map[string]any)
 	return os.Chmod(store.path, 0o600)
 }
 
+func (store fileCredentialStore) Load(key string) (map[string]any, error) {
+	content, err := os.ReadFile(store.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, errors.New("Credential Store token material not found; run `gohealthcli connect` first")
+		}
+		return nil, err
+	}
+	var existing map[string]json.RawMessage
+	if err := json.Unmarshal(content, &existing); err != nil {
+		return nil, errors.New("Credential Store file is not valid JSON")
+	}
+	raw, ok := existing[key]
+	if !ok {
+		return nil, errors.New("Credential Store token material not found; run `gohealthcli connect` first")
+	}
+	var tokenMaterial map[string]any
+	if err := json.Unmarshal(raw, &tokenMaterial); err != nil {
+		return nil, errors.New("Credential Store token material is not valid JSON")
+	}
+	return tokenMaterial, nil
+}
+
 type osNativeCredentialStore struct {
 	service string
 }
@@ -1419,6 +1617,29 @@ func (store osNativeCredentialStore) Store(key string, tokenMaterial map[string]
 	}
 }
 
+func (store osNativeCredentialStore) Load(key string) (map[string]any, error) {
+	var content []byte
+	var err error
+	switch currentOS {
+	case "darwin":
+		content, err = runSecurityFindGenericPassword(store.service, key)
+	case "linux":
+		content, err = runSecretToolLookup(store.service, key)
+	case "windows":
+		content, err = runWindowsCredentialRead(store.service, key)
+	default:
+		return nil, errors.New("OS-native Credential Store is not available on this platform; configure credential_store type \"file\"")
+	}
+	if err != nil {
+		return nil, err
+	}
+	var tokenMaterial map[string]any
+	if err := json.Unmarshal(content, &tokenMaterial); err != nil {
+		return nil, errors.New("Credential Store token material is not valid JSON")
+	}
+	return tokenMaterial, nil
+}
+
 func runSecurityAddGenericPasswordCommand(service, key string, content []byte) error {
 	cmd := exec.Command("security", "add-generic-password", "-U", "-s", service, "-a", key, "-w")
 	password := string(content)
@@ -1426,10 +1647,28 @@ func runSecurityAddGenericPasswordCommand(service, key string, content []byte) e
 	return cmd.Run()
 }
 
+func runSecurityFindGenericPasswordCommand(service, key string) ([]byte, error) {
+	cmd := exec.Command("security", "find-generic-password", "-s", service, "-a", key, "-w")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, errors.New("Credential Store token material not found; run `gohealthcli connect` first")
+	}
+	return []byte(strings.TrimSpace(string(output))), nil
+}
+
 func runSecretToolStoreCommand(service, key string, content []byte) error {
 	cmd := exec.Command("secret-tool", "store", "--label", service, "service", service, "account", key)
 	cmd.Stdin = strings.NewReader(string(content))
 	return cmd.Run()
+}
+
+func runSecretToolLookupCommand(service, key string) ([]byte, error) {
+	cmd := exec.Command("secret-tool", "lookup", "service", service, "account", key)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, errors.New("Credential Store token material not found; run `gohealthcli connect` first")
+	}
+	return []byte(strings.TrimSpace(string(output))), nil
 }
 
 func runWindowsCredentialWriteCommand(service, key string, content []byte) error {
@@ -1484,6 +1723,57 @@ try {
 	return cmd.Run()
 }
 
+func runWindowsCredentialReadCommand(service, key string) ([]byte, error) {
+	target := service + ":" + key
+	script := `
+$code = @"
+using System;
+using System.Runtime.InteropServices;
+public static class NativeCredential {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  public struct CREDENTIAL {
+    public UInt32 Flags;
+    public UInt32 Type;
+    public string TargetName;
+    public string Comment;
+    public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten;
+    public UInt32 CredentialBlobSize;
+    public IntPtr CredentialBlob;
+    public UInt32 Persist;
+    public UInt32 AttributeCount;
+    public IntPtr Attributes;
+    public string TargetAlias;
+    public string UserName;
+  }
+  [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  public static extern bool CredRead(string target, UInt32 type, UInt32 reservedFlag, out IntPtr credentialPtr);
+  [DllImport("advapi32.dll", SetLastError = true)]
+  public static extern void CredFree(IntPtr buffer);
+}
+"@
+Add-Type $code
+$credentialPtr = [IntPtr]::Zero
+if (-not [NativeCredential]::CredRead($env:GOHEALTHCLI_CREDENTIAL_TARGET, 1, 0, [ref]$credentialPtr)) {
+  throw [ComponentModel.Win32Exception][Runtime.InteropServices.Marshal]::GetLastWin32Error()
+}
+try {
+  $credential = [Runtime.InteropServices.Marshal]::PtrToStructure($credentialPtr, [type][NativeCredential+CREDENTIAL])
+  $bytes = New-Object byte[] $credential.CredentialBlobSize
+  [Runtime.InteropServices.Marshal]::Copy($credential.CredentialBlob, $bytes, 0, $credential.CredentialBlobSize)
+  [Text.Encoding]::Unicode.GetString($bytes)
+} finally {
+  [NativeCredential]::CredFree($credentialPtr)
+}
+`
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+	cmd.Env = append(os.Environ(), "GOHEALTHCLI_CREDENTIAL_TARGET="+target)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, errors.New("Credential Store token material not found; run `gohealthcli connect` first")
+	}
+	return []byte(strings.TrimSpace(string(output))), nil
+}
+
 func ensureSameArchiveIdentity(db *sql.DB, healthUserID string) error {
 	rows, err := db.Query(`SELECT DISTINCT google_health_user_id FROM connections`)
 	if err != nil {
@@ -1500,6 +1790,51 @@ func ensureSameArchiveIdentity(db *sql.DB, healthUserID string) error {
 		}
 	}
 	return rows.Err()
+}
+
+func readCurrentConnection(db *sql.DB) (archivedConnection, error) {
+	rows, err := db.Query(`SELECT
+		id,
+		provider_name,
+		google_health_user_id,
+		legacy_fitbit_user_id,
+		token_metadata_json,
+		google_identity_json
+	FROM connections ORDER BY created_at, id LIMIT 2`)
+	if err != nil {
+		return archivedConnection{}, err
+	}
+	defer rows.Close()
+
+	var connections []archivedConnection
+	for rows.Next() {
+		var connection archivedConnection
+		var legacyFitbitUserID sql.NullString
+		if err := rows.Scan(
+			&connection.id,
+			&connection.providerName,
+			&connection.googleHealthUserID,
+			&legacyFitbitUserID,
+			&connection.tokenMetadataJSON,
+			&connection.googleIdentityJSON,
+		); err != nil {
+			return archivedConnection{}, err
+		}
+		if legacyFitbitUserID.Valid {
+			connection.legacyFitbitUserID = legacyFitbitUserID.String
+		}
+		connections = append(connections, connection)
+	}
+	if err := rows.Err(); err != nil {
+		return archivedConnection{}, err
+	}
+	if len(connections) == 0 {
+		return archivedConnection{}, sql.ErrNoRows
+	}
+	if len(connections) > 1 {
+		return archivedConnection{}, errors.New("multiple Connections found; use a separate Health Archive for each Google Identity")
+	}
+	return connections[0], nil
 }
 
 func upsertConnection(db *sql.DB, connectionID string, identity googleIdentity, token oauthTokenResponse, now time.Time) error {
@@ -1540,6 +1875,26 @@ func upsertConnection(db *sql.DB, connectionID string, identity googleIdentity, 
 		identity.rawJSON,
 		nowText,
 		nowText,
+	)
+	return err
+}
+
+func refreshConnectionIdentity(db *sql.DB, connection archivedConnection, identity googleIdentity, now time.Time) error {
+	legacyFitbitUserID := connection.legacyFitbitUserID
+	if identity.legacyFitbitUserID != "" {
+		legacyFitbitUserID = identity.legacyFitbitUserID
+	}
+	_, err := db.Exec(`UPDATE connections SET
+		google_health_user_id = ?,
+		legacy_fitbit_user_id = ?,
+		google_identity_json = ?,
+		updated_at = ?
+	WHERE id = ?`,
+		identity.healthUserID,
+		legacyFitbitUserID,
+		identity.rawJSON,
+		now.UTC().Format(time.RFC3339),
+		connection.id,
 	)
 	return err
 }
@@ -2139,6 +2494,65 @@ func writeConnectResult(result connectResult, mode outputMode, stdout io.Writer)
 	}
 	if result.TokenStatus != "" {
 		if _, err := fmt.Fprintf(stdout, "Token status: %s\n", result.TokenStatus); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintf(stdout, "Message: %s\n", result.Message)
+	return err
+}
+
+func writeIdentityResult(result identityResult, mode outputMode, stdout io.Writer) error {
+	if mode.json {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+	if mode.plain {
+		if _, err := fmt.Fprintf(stdout, "status: %s\n", result.Status); err != nil {
+			return err
+		}
+		if result.ConnectionID != "" {
+			if _, err := fmt.Fprintf(stdout, "connection_id: %s\n", result.ConnectionID); err != nil {
+				return err
+			}
+		}
+		if result.ProviderName != "" {
+			if _, err := fmt.Fprintf(stdout, "provider_name: %s\n", result.ProviderName); err != nil {
+				return err
+			}
+		}
+		if result.GoogleHealthUserID != "" {
+			if _, err := fmt.Fprintf(stdout, "google_health_user_id: %s\n", result.GoogleHealthUserID); err != nil {
+				return err
+			}
+		}
+		if result.LegacyFitbitUserID != "" {
+			if _, err := fmt.Fprintf(stdout, "legacy_fitbit_user_id: %s\n", result.LegacyFitbitUserID); err != nil {
+				return err
+			}
+		}
+		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
+		return err
+	}
+	if result.Status == "identity_refreshed" {
+		if _, err := fmt.Fprintln(stdout, "Google Identity refreshed"); err != nil {
+			return err
+		}
+	} else if _, err := fmt.Fprintln(stdout, "Google Identity unavailable"); err != nil {
+		return err
+	}
+	if result.ConnectionID != "" {
+		if _, err := fmt.Fprintf(stdout, "Connection: %s\n", result.ConnectionID); err != nil {
+			return err
+		}
+	}
+	if result.GoogleHealthUserID != "" {
+		if _, err := fmt.Fprintf(stdout, "Google Health user ID: %s\n", result.GoogleHealthUserID); err != nil {
+			return err
+		}
+	}
+	if result.LegacyFitbitUserID != "" {
+		if _, err := fmt.Fprintf(stdout, "Legacy Fitbit user ID: %s\n", result.LegacyFitbitUserID); err != nil {
 			return err
 		}
 	}
