@@ -170,6 +170,25 @@ JSON mode:
 }
 ```
 
+Status plain mode:
+
+```text
+status: ok
+archive_path: /path/to/gohealthcli.sqlite
+schema_version: 3
+data_point_count: 12043
+rollup_count: 2
+profile_snapshot_count: 1
+sync_run_count: 4
+known_data_types: steps
+data_type.steps.data_point_count: 12043
+data_type.steps.rollup_count: 2
+data_type.steps.newest_data_point_timestamp: 2026-01-02T00:00:00Z
+latest_successful_sync_run_id: 4
+latest_successful_sync_run_status: sync_completed
+message: Health Archive status summarized
+```
+
 Connect plain mode:
 
 ```text

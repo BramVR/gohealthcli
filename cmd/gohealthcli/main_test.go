@@ -2450,6 +2450,142 @@ func TestProfileRejectsDifferentGoogleIdentityWithoutArchiving(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestStatusReportsHealthArchiveCountsAndSyncRunsReadOnly(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	originalFetchIdentity := fetchIdentity
+	originalFetchProfile := fetchProfile
+	originalFetchRawProvider := fetchRawProvider
+	originalRefreshOAuthToken := refreshOAuthToken
+	fetchIdentity = func(accessToken string) (googleIdentity, error) {
+		t.Fatal("status should not call Provider identity")
+		return googleIdentity{}, nil
+	}
+	fetchProfile = func(accessToken string) (googleProfile, error) {
+		t.Fatal("status should not call Provider profile")
+		return googleProfile{}, nil
+	}
+	fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		t.Fatal("status should not call Provider raw endpoints")
+		return nil, nil
+	}
+	refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
+		t.Fatal("status should not refresh tokens")
+		return oauthTokenResponse{}, nil
+	}
+	t.Cleanup(func() {
+		fetchIdentity = originalFetchIdentity
+		fetchProfile = originalFetchProfile
+		fetchRawProvider = originalFetchRawProvider
+		refreshOAuthToken = originalRefreshOAuthToken
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"status",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("status exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "ok")
+	assertJSONString(t, got, "archive_path", archivePath)
+	assertJSONNumber(t, got, "schema_version", 3)
+	assertJSONNumber(t, got, "data_point_count", 3)
+	assertJSONNumber(t, got, "rollup_count", 1)
+	assertJSONNumber(t, got, "profile_snapshot_count", 1)
+	assertJSONNumber(t, got, "sync_run_count", 3)
+
+	heartRateStatus := statusDataTypeFromJSON(t, got, "heart-rate")
+	assertJSONNumber(t, heartRateStatus, "data_point_count", 1)
+	assertJSONNumber(t, heartRateStatus, "rollup_count", 0)
+	assertJSONString(t, heartRateStatus, "newest_data_point_timestamp", "2026-01-03T09:00:00Z")
+	if _, ok := heartRateStatus["newest_rollup_timestamp"]; ok {
+		t.Fatalf("heart-rate newest_rollup_timestamp = %v, want omitted", heartRateStatus["newest_rollup_timestamp"])
+	}
+
+	stepsStatus := statusDataTypeFromJSON(t, got, "steps")
+	assertJSONNumber(t, stepsStatus, "data_point_count", 2)
+	assertJSONNumber(t, stepsStatus, "rollup_count", 1)
+	assertJSONString(t, stepsStatus, "newest_data_point_timestamp", "2026-01-02T08:15:00Z")
+	assertJSONString(t, stepsStatus, "newest_rollup_timestamp", "2026-01-04")
+
+	success, ok := got["latest_successful_sync_run"].(map[string]any)
+	if !ok {
+		t.Fatalf("latest_successful_sync_run = %T(%v), want object", got["latest_successful_sync_run"], got["latest_successful_sync_run"])
+	}
+	assertJSONNumber(t, success, "id", 2)
+	assertJSONString(t, success, "status", "sync_completed")
+	assertJSONString(t, success, "from", "2026-01-02")
+	assertJSONString(t, success, "to", "2026-01-03T00:00:00Z")
+	assertJSONString(t, success, "endpoint_family", "reconcile")
+	assertJSONString(t, success, "source_family_filter", "wearable")
+	assertJSONNumber(t, success, "seen_count", 2)
+
+	failed, ok := got["latest_failed_sync_run"].(map[string]any)
+	if !ok {
+		t.Fatalf("latest_failed_sync_run = %T(%v), want object", got["latest_failed_sync_run"], got["latest_failed_sync_run"])
+	}
+	assertJSONNumber(t, failed, "id", 3)
+	assertJSONString(t, failed, "status", "sync_failed")
+	assertJSONString(t, failed, "error_summary", "Provider timeout after 30s")
+	if strings.Contains(stdout.String(), "gap") || strings.Contains(stdout.String(), "completeness") {
+		t.Fatalf("status inferred completeness or gaps:\n%s", stdout.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestStatusPlainReportsEmptyHealthArchive(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"status",
+		"--config", configPath,
+		"--db", archivePath,
+		"--plain",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("status exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	wantLines := []string{
+		"status: ok\n",
+		"archive_path: " + archivePath + "\n",
+		"schema_version: 3\n",
+		"data_point_count: 0\n",
+		"rollup_count: 0\n",
+		"profile_snapshot_count: 0\n",
+		"sync_run_count: 0\n",
+		"message: Health Archive status summarized\n",
+	}
+	for _, want := range wantLines {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
+		}
+	}
+	if strings.Contains(stdout.String(), "latest_successful_sync_run") || strings.Contains(stdout.String(), "known_data_types") {
+		t.Fatalf("stdout reported absent archive details:\n%s", stdout.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestSyncRequiresFrom(t *testing.T) {
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
@@ -5084,6 +5220,161 @@ func assertArchiveTableCount(t *testing.T, archivePath, table string, want int) 
 	}
 }
 
+func insertStatusFixtureRows(t *testing.T, archivePath string) {
+	t.Helper()
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO connections (
+		id,
+		provider_name,
+		google_health_user_id,
+		legacy_fitbit_user_id,
+		token_metadata_json,
+		google_identity_json,
+		created_at,
+		updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"googlehealth:111111256096816351",
+		"googlehealth",
+		"111111256096816351",
+		"A1B2C3",
+		`{"scopes":["https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"]}`,
+		`{"healthUserId":"111111256096816351","legacyUserId":"A1B2C3"}`,
+		"2026-01-01T00:00:00Z",
+		"2026-01-01T00:00:00Z",
+	); err != nil {
+		t.Fatalf("insert status fixture connection: %v", err)
+	}
+	dataPoints := []struct {
+		dataType     string
+		resourceName string
+		recordKind   string
+		startUTC     any
+		endUTC       any
+		rawJSON      string
+	}{
+		{"steps", "users/me/dataTypes/steps/dataPoints/a", "interval", "2026-01-01T08:00:00Z", "2026-01-01T08:15:00Z", `{"steps":{"count":"512"}}`},
+		{"steps", "users/me/dataTypes/steps/dataPoints/b", "interval", "2026-01-02T08:00:00Z", "2026-01-02T08:15:00Z", `{"steps":{"count":"1024"}}`},
+		{"heart-rate", "users/me/dataTypes/heart-rate/dataPoints/a", "sample", "2026-01-03T09:00:00Z", nil, `{"heartRate":{"bpm":72}}`},
+	}
+	for _, point := range dataPoints {
+		if _, err := db.Exec(`INSERT INTO data_points (
+			provider_name,
+			connection_id,
+			data_type,
+			upstream_resource_name,
+			record_kind,
+			start_time_utc,
+			end_time_utc,
+			data_source_json,
+			raw_json,
+			inserted_at,
+			updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			"googlehealth",
+			"googlehealth:111111256096816351",
+			point.dataType,
+			point.resourceName,
+			point.recordKind,
+			point.startUTC,
+			point.endUTC,
+			"{}",
+			point.rawJSON,
+			"2026-01-04T00:00:00Z",
+			"2026-01-04T00:00:00Z",
+		); err != nil {
+			t.Fatalf("insert status fixture Data Point %s: %v", point.resourceName, err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO rollups (
+		provider_name,
+		connection_id,
+		data_type,
+		rollup_kind,
+		civil_date,
+		raw_json,
+		inserted_at,
+		updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"googlehealth",
+		"googlehealth:111111256096816351",
+		"steps",
+		"dailyRollUp",
+		"2026-01-04",
+		`{"steps":{"countSum":"2048"}}`,
+		"2026-01-05T00:00:00Z",
+		"2026-01-05T00:00:00Z",
+	); err != nil {
+		t.Fatalf("insert status fixture Rollup: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO profile_snapshots (
+		provider_name,
+		connection_id,
+		raw_json,
+		fetched_at
+	) VALUES (?, ?, ?, ?)`,
+		"googlehealth",
+		"googlehealth:111111256096816351",
+		`{"name":"users/111111256096816351/profile"}`,
+		"2026-01-05T00:00:00Z",
+	); err != nil {
+		t.Fatalf("insert status fixture Profile Snapshot: %v", err)
+	}
+	syncRuns := []struct {
+		status       string
+		rangeJSON    string
+		endpoint     string
+		sourceFamily any
+		seen         int
+		newCount     int
+		updated      int
+		startedAt    string
+		finishedAt   string
+		errorSummary any
+	}{
+		{"sync_completed", `{"from":"2026-01-01","to":"2026-01-02T00:00:00Z"}`, "list", nil, 1, 1, 0, "2026-01-02T00:00:00Z", "2026-01-02T00:00:10Z", nil},
+		{"sync_completed", `{"from":"2026-01-02","to":"2026-01-03T00:00:00Z"}`, "reconcile", "wearable", 2, 2, 0, "2026-01-03T00:00:00Z", "2026-01-03T00:00:10Z", nil},
+		{"sync_failed", `{"from":"2026-01-04","to":"2026-01-05T00:00:00Z"}`, "list", nil, 0, 0, 0, "2026-01-05T00:00:00Z", "2026-01-05T00:00:05Z", "Provider timeout after 30s\nretry later"},
+	}
+	for _, run := range syncRuns {
+		if _, err := db.Exec(`INSERT INTO sync_runs (
+			provider_name,
+			connection_id,
+			data_types_requested,
+			range_requested_json,
+			endpoint_family,
+			source_family_filter,
+			status,
+			seen_count,
+			new_count,
+			updated_count,
+			started_at,
+			finished_at,
+			error_summary
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			"googlehealth",
+			"googlehealth:111111256096816351",
+			`["steps"]`,
+			run.rangeJSON,
+			run.endpoint,
+			run.sourceFamily,
+			run.status,
+			run.seen,
+			run.newCount,
+			run.updated,
+			run.startedAt,
+			run.finishedAt,
+			run.errorSummary,
+		); err != nil {
+			t.Fatalf("insert status fixture Sync Run: %v", err)
+		}
+	}
+}
+
 func createLegacyV1Archive(t *testing.T, archivePath string) {
 	t.Helper()
 
@@ -5233,6 +5524,26 @@ func assertJSONNumber(t *testing.T, got map[string]any, key string, want float64
 	if value != want {
 		t.Fatalf("%s = %v, want %v", key, value, want)
 	}
+}
+
+func statusDataTypeFromJSON(t *testing.T, got map[string]any, dataType string) map[string]any {
+	t.Helper()
+
+	dataTypes, ok := got["data_types"].([]any)
+	if !ok {
+		t.Fatalf("data_types = %T(%v), want array", got["data_types"], got["data_types"])
+	}
+	for _, rawItem := range dataTypes {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			t.Fatalf("data type item = %T(%v), want object", rawItem, rawItem)
+		}
+		if item["data_type"] == dataType {
+			return item
+		}
+	}
+	t.Fatalf("data_types missing %q: %v", dataType, dataTypes)
+	return nil
 }
 
 func mustURLQuery(t *testing.T, rawURL string) url.Values {
