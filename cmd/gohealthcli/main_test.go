@@ -2817,6 +2817,26 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 	assertArchivedStepsDailyRollup(t, archivePath, "4321")
 	assertArchiveTableCount(t, archivePath, "data_point_revisions", 0)
 	assertSyncRunWithEndpointFamily(t, archivePath, 4, "sync_completed", "dailyRollUp", 1, 0, 1, "")
+
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--rollup", "daily",
+		"--from", "2026-01-01T12:00:00",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("timed rollup sync exit code = %d, want 1\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "--from: expected YYYY-MM-DD") {
+		t.Fatalf("timed rollup stdout = %q, want date-only error", stdout.String())
+	}
+	assertArchiveTableCount(t, archivePath, "rollups", 1)
+	assertSyncRunWithEndpointFamily(t, archivePath, 5, "sync_failed", "dailyRollUp", 0, 0, 0, "--from: expected YYYY-MM-DD")
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
@@ -5084,7 +5104,7 @@ func assertSyncRunWithEndpointFamily(t *testing.T, archivePath string, id int64,
 	if dataTypesJSON != `["steps"]` {
 		t.Fatalf("data_types_requested = %q, want steps", dataTypesJSON)
 	}
-	if !strings.Contains(rangeJSON, `"from":"2026-01-01"`) {
+	if !strings.Contains(rangeJSON, `"from":"2026-01-01`) {
 		t.Fatalf("range_requested_json = %q, want from", rangeJSON)
 	}
 	if seen != wantSeen || newCount != wantNew || updated != wantUpdated {

@@ -2626,10 +2626,7 @@ func googleHealthCivilDateTimeJSON(value string) (json.RawMessage, error) {
 	if parsed, err := time.Parse("2006-01-02", value); err == nil {
 		return googleHealthCivilDateJSON(parsed, nil)
 	}
-	if parsed, err := time.Parse("2006-01-02T15:04:05", value); err == nil {
-		return googleHealthCivilDateJSON(parsed, &parsed)
-	}
-	return nil, errors.New("expected YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
+	return nil, errors.New("expected YYYY-MM-DD")
 }
 
 func googleHealthCivilDateJSON(parsed time.Time, timeValue *time.Time) (json.RawMessage, error) {
