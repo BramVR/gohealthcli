@@ -995,6 +995,16 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 	if err != nil {
 		return fail(err)
 	}
+	identity, err := fetchIdentity(accessToken)
+	if err != nil {
+		if strings.Contains(err.Error(), "HTTP 401") {
+			return fail(errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again"))
+		}
+		return fail(err)
+	}
+	if identity.healthUserID != connection.googleHealthUserID {
+		return fail(errors.New("Provider returned a different Google Identity; use a new archive path"))
+	}
 	seenPageTokens := map[string]struct{}{}
 	for pageToken := ""; ; {
 		request, err := buildGoogleHealthDataTypeListRawRequest("steps", options.from, options.to, 0, pageToken)

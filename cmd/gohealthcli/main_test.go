@@ -2675,6 +2675,59 @@ func TestSyncProviderFailureRecordsFailedRun(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestSyncRefusesDifferentProviderIdentityBeforeArchiving(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	installIdentityFetchFake(t, "connect-access-secret", googleIdentity{
+		healthUserID:       "222222222222222222",
+		legacyFitbitUserID: "DIFFERENT",
+		rawJSON:            `{"healthUserId":"222222222222222222","legacyUserId":"DIFFERENT"}`,
+	})
+	originalFetchRawProvider := fetchRawProvider
+	fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		t.Fatal("sync provider fetch should not run after identity mismatch")
+		return nil, nil
+	}
+	t.Cleanup(func() { fetchRawProvider = originalFetchRawProvider })
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--from", "2026-01-01",
+		"--json",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("sync exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "sync_failed")
+	assertJSONNumber(t, got, "sync_run_id", 1)
+	if message := got["message"].(string); !strings.Contains(message, "different Google Identity") {
+		t.Fatalf("message = %q, want identity mismatch", message)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 0)
+	assertSyncRun(t, archivePath, 1, "sync_failed", 0, 0, 0, "different Google Identity")
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestSyncFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
