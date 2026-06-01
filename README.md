@@ -1,10 +1,7 @@
 # gohealthcli
 
-`gohealthcli` is a planned local-first, read-only health data archive for data
-available through the Google Health API.
-
-The project is intentionally docs-first. The current goal is to make the domain
-model, scope, risks, and early architecture explicit before writing the CLI.
+`gohealthcli` is a local-first, read-only health data archive for data available
+through the Google Health API.
 
 ## Current Direction
 
@@ -31,5 +28,5 @@ First CLI tracer in progress. `gohealthcli init` creates local config and an
 empty Health Archive, `gohealthcli doctor` validates local setup offline,
 `gohealthcli connect` anchors a Google Identity, `gohealthcli identity`
 refreshes it, `gohealthcli profile` archives Profile Snapshots, `gohealthcli
-raw` prints provider JSON for exploration, and `gohealthcli --version` is
-available.
+sync` archives steps Data Points idempotently, `gohealthcli raw` prints provider
+JSON for exploration, and `gohealthcli --version` is available.
