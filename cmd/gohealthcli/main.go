@@ -3168,7 +3168,30 @@ func upsertDataPoint(db *sql.DB, point archivedDataPoint, now string) (string, e
 	) VALUES (?, ?, ?, ?)`, existingID, existingRawJSON, now, "provider_correction"); err != nil {
 		return "", err
 	}
-	if _, err := tx.Exec(`UPDATE data_points SET raw_json = ?, updated_at = ? WHERE id = ?`, point.rawJSON, now, existingID); err != nil {
+	if _, err := tx.Exec(`UPDATE data_points SET
+		record_kind = ?,
+		start_time_utc = ?,
+		end_time_utc = ?,
+		start_civil_time = ?,
+		end_civil_time = ?,
+		provider_civil_date = ?,
+		timezone_metadata = ?,
+		data_source_json = ?,
+		raw_json = ?,
+		updated_at = ?
+	WHERE id = ?`,
+		point.recordKind,
+		nullString(point.startTimeUTC),
+		nullString(point.endTimeUTC),
+		nullString(point.startCivilTime),
+		nullString(point.endCivilTime),
+		nullString(point.providerCivilDate),
+		nullString(point.timezoneMetadataJSON),
+		point.dataSourceJSON,
+		point.rawJSON,
+		now,
+		existingID,
+	); err != nil {
 		return "", err
 	}
 	if err := tx.Commit(); err != nil {
@@ -3178,7 +3201,20 @@ func upsertDataPoint(db *sql.DB, point archivedDataPoint, now string) (string, e
 }
 
 func findExistingDataPoint(db *sql.DB, point archivedDataPoint) (int64, string, bool, error) {
-	rows, err := db.Query(`SELECT id, raw_json FROM data_points
+	if point.upstreamResourceName != "" {
+		return findExistingDataPointByQuery(db, `SELECT id, raw_json FROM data_points
+		WHERE provider_name = ?
+			AND connection_id = ?
+			AND data_type = ?
+			AND upstream_resource_name = ?
+		ORDER BY id LIMIT 2`,
+			point.providerName,
+			point.connectionID,
+			point.dataType,
+			point.upstreamResourceName,
+		)
+	}
+	return findExistingDataPointByQuery(db, `SELECT id, raw_json FROM data_points
 	WHERE provider_name = ?
 		AND connection_id = ?
 		AND data_type = ?
@@ -3205,6 +3241,10 @@ func findExistingDataPoint(db *sql.DB, point archivedDataPoint) (int64, string, 
 		point.timezoneMetadataJSON,
 		point.dataSourceJSON,
 	)
+}
+
+func findExistingDataPointByQuery(db *sql.DB, query string, args ...any) (int64, string, bool, error) {
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return 0, "", false, err
 	}

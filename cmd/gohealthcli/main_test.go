@@ -2591,6 +2591,8 @@ func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 	assertSyncRun(t, archivePath, 2, "sync_completed", 2, 0, 0, "")
 
 	correctedFirstPage := strings.Replace(firstPage, `"count": "512"`, `"count": "999"`, 1)
+	correctedFirstPage = strings.Replace(correctedFirstPage, `"startTime": "2026-01-01T08:00:00+01:00"`, `"startTime": "2026-01-01T08:01:00+01:00"`, 1)
+	correctedFirstPage = strings.Replace(correctedFirstPage, `"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}, "time": {"hours": 8}}`, `"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}, "time": {"hours": 8, "minutes": 1}}`, 1)
 	installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
 		"":       correctedFirstPage,
 		"page-2": secondPage,
@@ -4688,12 +4690,15 @@ func assertCorrectedStepRevision(t *testing.T, archivePath string) {
 		t.Fatalf("open archive: %v", err)
 	}
 	defer db.Close()
-	var rawJSON string
-	if err := db.QueryRow(`SELECT raw_json FROM data_points WHERE upstream_resource_name = ?`, "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a").Scan(&rawJSON); err != nil {
+	var rawJSON, startUTC, startCivil string
+	if err := db.QueryRow(`SELECT raw_json, start_time_utc, start_civil_time FROM data_points WHERE upstream_resource_name = ?`, "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a").Scan(&rawJSON, &startUTC, &startCivil); err != nil {
 		t.Fatalf("query corrected Data Point: %v", err)
 	}
 	if !strings.Contains(rawJSON, `"count":"999"`) {
 		t.Fatalf("canonical raw_json = %s, want corrected count", rawJSON)
+	}
+	if startUTC != "2026-01-01T07:01:00Z" || startCivil != "2026-01-01T08:01:00" {
+		t.Fatalf("corrected time = (%q, %q), want updated metadata", startUTC, startCivil)
 	}
 	var previousRawJSON, reason string
 	if err := db.QueryRow(`SELECT previous_raw_json, replacement_reason FROM data_point_revisions`).Scan(&previousRawJSON, &reason); err != nil {
