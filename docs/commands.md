@@ -42,9 +42,10 @@ OAuth client secrets.
 `connect`: run OAuth browser flow and create a Connection. It consumes resolved
 OAuth client config, does not search Secret Providers, stores runtime token
 material in the configured Credential Store, and immediately archives Google
-Identity metadata. Request scopes for configured Data Types. Re-authorizing the
-same Google Identity updates token metadata in place; a different Google
-Identity requires a separate Health Archive.
+Identity metadata. Request recognized readonly Google Health scopes; later
+`sync` surfaces may require reconnect as Google exposes narrower scopes.
+Re-authorizing the same Google Identity updates token metadata in place; a
+different Google Identity requires a separate Health Archive.
 
 `identity`: call Google Health API identity endpoint, print current identity
 metadata, and refresh the archived Google Identity.

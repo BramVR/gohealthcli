@@ -1606,6 +1606,20 @@ func TestConnectRejectsWebOAuthClient(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestOAuthScopesUseRecognizedGoogleHealthScopes(t *testing.T) {
+	scopes := oauthScopesForDataTypes(defaultDataTypes)
+	if len(scopes) != 1 || scopes[0] != googleHealthActivityReadonlyScope {
+		t.Fatalf("scopes = %v, want recognized Google Health readonly scope", scopes)
+	}
+	for _, scope := range scopes {
+		for _, invalid := range []string{"profile.readonly", "sleep.readonly", "health_metrics_and_measurements.readonly"} {
+			if strings.Contains(scope, invalid) {
+				t.Fatalf("scopes include unrecognized Google Health scope %q: %v", invalid, scopes)
+			}
+		}
+	}
+}
+
 func TestListenForOAuthRedirectPreservesEmptyLoopbackPath(t *testing.T) {
 	listener, redirectURI, err := listenForOAuthRedirect([]string{"http://localhost"})
 	if err != nil {

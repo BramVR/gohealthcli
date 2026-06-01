@@ -27,6 +27,7 @@ import (
 const setupMissingExitCode = 2
 const currentSchemaVersion = 2
 const version = "dev"
+const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 
 var defaultDataTypes = []string{
 	"steps",
@@ -1014,32 +1015,7 @@ func parseOAuthClientConfigContent(content []byte) (oauthClientConfig, error) {
 }
 
 func oauthScopesForDataTypes(dataTypes []string) []string {
-	scopes := map[string]struct{}{
-		"https://www.googleapis.com/auth/googlehealth.profile.readonly": {},
-	}
-	for _, dataType := range dataTypes {
-		switch dataType {
-		case "steps", "exercise", "distance", "total-calories":
-			scopes["https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"] = struct{}{}
-		case "sleep":
-			scopes["https://www.googleapis.com/auth/googlehealth.sleep.readonly"] = struct{}{}
-		default:
-			scopes["https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"] = struct{}{}
-		}
-	}
-	ordered := []string{
-		"https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
-		"https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
-		"https://www.googleapis.com/auth/googlehealth.profile.readonly",
-		"https://www.googleapis.com/auth/googlehealth.sleep.readonly",
-	}
-	var selected []string
-	for _, scope := range ordered {
-		if _, ok := scopes[scope]; ok {
-			selected = append(selected, scope)
-		}
-	}
-	return selected
+	return []string{googleHealthActivityReadonlyScope}
 }
 
 func runBrowserOAuthFlow(client oauthClientConfig, scopes []string, noInput bool) (oauthTokenResponse, error) {
