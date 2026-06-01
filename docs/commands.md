@@ -40,8 +40,12 @@ Connection count, and token metadata status without printing token values or
 OAuth client secrets.
 
 `connect`: run OAuth browser flow and create a Connection. It consumes resolved
-OAuth client config, does not search Secret Providers, and immediately archives
-Google Identity metadata. Request scopes for configured Data Types.
+OAuth client config, does not search Secret Providers, stores runtime token
+material in the configured Credential Store, and immediately archives Google
+Identity metadata. Request recognized readonly Google Health scopes; later
+`sync` surfaces may require reconnect as Google exposes narrower scopes.
+Re-authorizing the same Google Identity updates token metadata in place; a
+different Google Identity requires a separate Health Archive.
 
 `identity`: call Google Health API identity endpoint, print current identity
 metadata, and refresh the archived Google Identity.
@@ -128,4 +132,17 @@ JSON mode:
   "data_points_updated": 12,
   "rollups_seen": 144
 }
+```
+
+Connect plain mode:
+
+```text
+status: connected
+connection_id: googlehealth:111111256096816351
+provider_name: googlehealth
+google_health_user_id: 111111256096816351
+legacy_fitbit_user_id: A1B2C3
+credential_store: file
+token_status: metadata_present
+message: Google Identity connected
 ```

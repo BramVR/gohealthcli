@@ -5,14 +5,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 var testBinaryPath string
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "gohealthcli-test-*")
@@ -310,8 +321,8 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	assertJSONString(t, got, "config_path", configPath)
 	assertJSONString(t, got, "archive_path", archivePath)
 	assertJSONString(t, got, "oauth_client_source", "file")
-	if got["schema_version"] != float64(1) {
-		t.Fatalf("schema_version = %v, want 1", got["schema_version"])
+	if got["schema_version"] != float64(2) {
+		t.Fatalf("schema_version = %v, want 2", got["schema_version"])
 	}
 	dataTypes, ok := got["default_data_types"].([]any)
 	if !ok {
@@ -337,13 +348,24 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 		`source = "file"`,
 		`path = "` + oauthClientPath + `"`,
 		`[credential_store]`,
-		`type = "os_native"`,
-		`service = "gohealthcli"`,
 		`"steps"`,
 		`"weight"`,
 	} {
 		if !strings.Contains(config, want) {
 			t.Fatalf("config missing %q:\n%s", want, config)
+		}
+	}
+	if expectedDefaultCredentialStoreKind() == "os_native" {
+		for _, want := range []string{`type = "os_native"`, `service = "gohealthcli"`} {
+			if !strings.Contains(config, want) {
+				t.Fatalf("config missing %q:\n%s", want, config)
+			}
+		}
+	} else {
+		for _, want := range []string{`type = "file"`, `path = "` + filepath.Join(filepath.Dir(configPath), "tokens.json") + `"`} {
+			if !strings.Contains(config, want) {
+				t.Fatalf("config missing %q:\n%s", want, config)
+			}
 		}
 	}
 
@@ -361,13 +383,25 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 		t.Fatalf("foreign_keys = %d, want 1", foreignKeys)
 	}
 
-	var version int
-	var name string
-	if err := db.QueryRow(`SELECT version, name FROM schema_migrations`).Scan(&version, &name); err != nil {
-		t.Fatalf("query schema migration: %v", err)
+	rows, err := db.Query(`SELECT version, name FROM schema_migrations ORDER BY version`)
+	if err != nil {
+		t.Fatalf("query schema migrations: %v", err)
 	}
-	if version != 1 || name != "initial_archive_schema" {
-		t.Fatalf("migration = (%d, %q), want (1, initial_archive_schema)", version, name)
+	defer rows.Close()
+	var migrations []string
+	for rows.Next() {
+		var version int
+		var name string
+		if err := rows.Scan(&version, &name); err != nil {
+			t.Fatalf("scan schema migration: %v", err)
+		}
+		migrations = append(migrations, fmt.Sprintf("%d:%s", version, name))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("schema migration rows: %v", err)
+	}
+	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json" {
+		t.Fatalf("migrations = %v, want initial + identity", migrations)
 	}
 
 	for _, table := range []string{
@@ -464,10 +498,10 @@ func TestDoctorReportsInitializedSetup(t *testing.T) {
 	assertJSONString(t, got, "config_path", configPath)
 	assertJSONString(t, got, "archive_path", archivePath)
 	assertJSONString(t, got, "oauth_client_source", "file")
-	assertJSONString(t, got, "credential_store", "os_native")
+	assertJSONString(t, got, "credential_store", expectedDefaultCredentialStoreKind())
 	assertJSONString(t, got, "token_status", "not_connected")
-	if got["schema_version"] != float64(1) {
-		t.Fatalf("schema_version = %v, want 1", got["schema_version"])
+	if got["schema_version"] != float64(2) {
+		t.Fatalf("schema_version = %v, want 2", got["schema_version"])
 	}
 	if got["connection_count"] != float64(0) {
 		t.Fatalf("connection_count = %v, want 0", got["connection_count"])
@@ -503,7 +537,7 @@ func TestDoctorPlainReportsOfflineHealthCheck(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 
-	want := fmt.Sprintf("status: ok\nconfig_path: %s\narchive_path: %s\noauth_client_source: file\ncredential_store: os_native\nschema_version: 1\nconnection_count: 0\ntoken_status: not_connected\nmessage: local gohealthcli setup is initialized\n", configPath, archivePath)
+	want := fmt.Sprintf("status: ok\nconfig_path: %s\narchive_path: %s\noauth_client_source: file\ncredential_store: %s\nschema_version: 2\nconnection_count: 0\ntoken_status: not_connected\nmessage: local gohealthcli setup is initialized\n", configPath, archivePath, expectedDefaultCredentialStoreKind())
 	if stdout.String() != want {
 		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 	}
@@ -718,7 +752,7 @@ func TestDoctorDefaultsLegacyConfigWithoutCredentialStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	config := strings.Replace(string(configBytes), "\n[credential_store]\ntype = \"os_native\"\nservice = \"gohealthcli\"\n", "", 1)
+	config := removeCredentialStoreSection(t, string(configBytes))
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -736,7 +770,7 @@ func TestDoctorDefaultsLegacyConfigWithoutCredentialStore(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
 	}
-	assertJSONString(t, got, "credential_store", "os_native")
+	assertJSONString(t, got, "credential_store", expectedDefaultCredentialStoreKind())
 	if stderr.String() != "" {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
@@ -764,7 +798,8 @@ func TestDoctorAcceptsInlineConfigComments(t *testing.T) {
 	config := string(configBytes)
 	config = strings.Replace(config, `archive_path = "`+archivePath+`"`, `archive_path = "`+archivePath+`" # local Health Archive`, 1)
 	config = strings.Replace(config, `"steps",`, `"steps", # default Data Type`, 1)
-	config = strings.Replace(config, `type = "os_native"`, `type = "os_native" # default Credential Store`, 1)
+	storeType := `type = "` + expectedDefaultCredentialStoreKind() + `"`
+	config = strings.Replace(config, storeType, storeType+` # default Credential Store`, 1)
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -1070,7 +1105,7 @@ func TestDoctorReportsMalformedCredentialStoreConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	config := strings.Replace(string(configBytes), `type = "os_native"`, `type = "1password"`, 1)
+	config := strings.Replace(string(configBytes), `type = "`+expectedDefaultCredentialStoreKind()+`"`, `type = "1password"`, 1)
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -1284,6 +1319,730 @@ func TestDoctorDoesNotLeakTokenMetadataSecretMaterial(t *testing.T) {
 	assertNoSecretWords(t, combined)
 }
 
+func TestConnectStoresFileFallbackTokenAndAnchorsIdentity(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
+	connectNow := time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC)
+	refreshExpiresAt := connectNow.Add(24 * time.Hour)
+	installConnectFakes(t, fakeConnectConfig{
+		now:                connectNow,
+		accessToken:        "access-secret-value",
+		refreshToken:       "refresh-secret-value",
+		refreshExpiresAt:   &refreshExpiresAt,
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("connect exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "connected")
+	assertJSONString(t, got, "connection_id", "googlehealth:111111256096816351")
+	assertJSONString(t, got, "google_health_user_id", "111111256096816351")
+	assertJSONString(t, got, "legacy_fitbit_user_id", "A1B2C3")
+	assertJSONString(t, got, "credential_store", "file")
+	assertJSONString(t, got, "token_status", "metadata_present")
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+	if strings.Contains(stdout.String()+stderr.String(), "access-secret-value") || strings.Contains(stdout.String()+stderr.String(), "refresh-secret-value") {
+		t.Fatalf("connect output leaked token material:\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+
+	tokenStoreBytes, err := os.ReadFile(tokenStorePath)
+	if err != nil {
+		t.Fatalf("read token store: %v", err)
+	}
+	tokenStore := string(tokenStoreBytes)
+	if !strings.Contains(tokenStore, "access-secret-value") || !strings.Contains(tokenStore, "refresh-secret-value") {
+		t.Fatalf("token store missing token material: %s", tokenStore)
+	}
+	assertMode(t, tokenStorePath, 0o600)
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	var connectionID, providerName, healthUserID, legacyUserID, tokenMetadata, identityJSON string
+	if err := db.QueryRow(`SELECT id, provider_name, google_health_user_id, legacy_fitbit_user_id, token_metadata_json, google_identity_json FROM connections`).Scan(&connectionID, &providerName, &healthUserID, &legacyUserID, &tokenMetadata, &identityJSON); err != nil {
+		t.Fatalf("query connection: %v", err)
+	}
+	if connectionID != "googlehealth:111111256096816351" || providerName != "googlehealth" || healthUserID != "111111256096816351" || legacyUserID != "A1B2C3" {
+		t.Fatalf("connection = (%q, %q, %q, %q), want anchored identity", connectionID, providerName, healthUserID, legacyUserID)
+	}
+	if strings.Contains(tokenMetadata, "access-secret-value") || strings.Contains(tokenMetadata, "refresh-secret-value") || strings.Contains(tokenMetadata, "access_token") || strings.Contains(tokenMetadata, "refresh_token") {
+		t.Fatalf("token metadata leaked token material: %s", tokenMetadata)
+	}
+	for _, want := range []string{"credential_store_key", "expires_at", "scopes"} {
+		if !strings.Contains(tokenMetadata, want) {
+			t.Fatalf("token metadata missing %q: %s", want, tokenMetadata)
+		}
+	}
+	if strings.Contains(tokenMetadata, "refresh_token_expires_at") {
+		t.Fatalf("token metadata uses rejected refresh token key: %s", tokenMetadata)
+	}
+	if !strings.Contains(tokenMetadata, "refresh_expires_at") {
+		t.Fatalf("token metadata missing refresh expiry: %s", tokenMetadata)
+	}
+	if err := validateTokenMetadata(tokenMetadata); err != nil {
+		t.Fatalf("token metadata does not validate: %v", err)
+	}
+	if !strings.Contains(identityJSON, `"healthUserId":"111111256096816351"`) {
+		t.Fatalf("identity JSON not archived: %s", identityJSON)
+	}
+}
+
+func TestConnectReauthorizesSameIdentityWithoutSecondConnection(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		now:                time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
+		accessToken:        "first-access-secret",
+		refreshToken:       "first-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	code := runConnectCommand(t, configPath, archivePath)
+	if code != 0 {
+		t.Fatalf("first connect exit code = %d, want 0", code)
+	}
+
+	installConnectFakes(t, fakeConnectConfig{
+		now:                time.Date(2026, 5, 31, 23, 0, 0, 0, time.UTC),
+		accessToken:        "second-access-secret",
+		refreshToken:       "second-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	code = runConnectCommand(t, configPath, archivePath)
+	if code != 0 {
+		t.Fatalf("second connect exit code = %d, want 0", code)
+	}
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM connections`).Scan(&count); err != nil {
+		t.Fatalf("count connections: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("connection count = %d, want 1", count)
+	}
+	tokenStoreBytes, err := os.ReadFile(tokenStorePath)
+	if err != nil {
+		t.Fatalf("read token store: %v", err)
+	}
+	tokenStore := string(tokenStoreBytes)
+	if !strings.Contains(tokenStore, "second-access-secret") || strings.Contains(tokenStore, "first-access-secret") {
+		t.Fatalf("token store was not updated on reauth: %s", tokenStore)
+	}
+}
+
+func TestConnectRejectsDifferentGoogleIdentity(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		now:                time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
+		accessToken:        "first-access-secret",
+		refreshToken:       "first-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("first connect exit code = %d, want 0", code)
+	}
+
+	installConnectFakes(t, fakeConnectConfig{
+		now:                time.Date(2026, 5, 31, 23, 0, 0, 0, time.UTC),
+		accessToken:        "other-access-secret",
+		refreshToken:       "other-refresh-secret",
+		healthUserID:       "222222222222222222",
+		legacyFitbitUserID: "D4E5F6",
+	})
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("connect exit code = %d, want 1", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "different Google Identity") {
+		t.Fatalf("message = %T(%v), want different identity failure", got["message"], got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+
+	tokenStoreBytes, err := os.ReadFile(tokenStorePath)
+	if err != nil {
+		t.Fatalf("read token store: %v", err)
+	}
+	if strings.Contains(string(tokenStoreBytes), "other-access-secret") {
+		t.Fatalf("different identity token was stored: %s", string(tokenStoreBytes))
+	}
+}
+
+func TestConnectDoesNotResolveSecretProviderAtRuntime(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--secret-provider", "1password",
+		"--oauth-client-item", "Google Health OAuth",
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	installConnectFakes(t, fakeConnectConfig{failIfCalled: true})
+	stdout := new(bytes.Buffer)
+	connectStderr := new(bytes.Buffer)
+	code = run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, connectStderr)
+	if code != 1 {
+		t.Fatalf("connect exit code = %d, want 1", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "Secret Provider") {
+		t.Fatalf("message = %T(%v), want Secret Provider runtime refusal", got["message"], got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+connectStderr.String())
+}
+
+func TestConnectAcceptsGlobalNoInput(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	wantNoInput := true
+	installConnectFakes(t, fakeConnectConfig{wantNoInput: &wantNoInput})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"--no-input", "connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("connect exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+}
+
+func TestConnectMigratesLegacyV1ArchiveBeforeStoringIdentity(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	if err := os.Remove(archivePath); err != nil {
+		t.Fatalf("remove current archive: %v", err)
+	}
+	createLegacyV1Archive(t, archivePath)
+	installConnectFakes(t, fakeConnectConfig{})
+
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	var userVersion int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+		t.Fatalf("query user_version: %v", err)
+	}
+	if userVersion != 2 {
+		t.Fatalf("user_version = %d, want 2", userVersion)
+	}
+	var identityJSON string
+	if err := db.QueryRow(`SELECT google_identity_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&identityJSON); err != nil {
+		t.Fatalf("query migrated connection: %v", err)
+	}
+	if !strings.Contains(identityJSON, `"healthUserId":"111111256096816351"`) {
+		t.Fatalf("identity JSON = %s, want archived identity", identityJSON)
+	}
+}
+
+func TestDoctorMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	if err := os.Remove(archivePath); err != nil {
+		t.Fatalf("remove current archive: %v", err)
+	}
+	createLegacyV1Archive(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"doctor", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("doctor exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	if got["schema_version"] != float64(2) {
+		t.Fatalf("schema_version = %v, want 2", got["schema_version"])
+	}
+	assertArchiveUserVersion(t, archivePath, 2)
+}
+
+func TestInitMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	if err := os.Remove(archivePath); err != nil {
+		t.Fatalf("remove current archive: %v", err)
+	}
+	createLegacyV1Archive(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	if got["schema_version"] != float64(2) {
+		t.Fatalf("schema_version = %v, want 2", got["schema_version"])
+	}
+	assertArchiveUserVersion(t, archivePath, 2)
+}
+
+func TestConnectRejectsUnsupportedOSNativeStoreBeforeOAuth(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	config := removeCredentialStoreSection(t, string(configBytes)) + "\n[credential_store]\ntype = \"os_native\"\nservice = \"gohealthcli\"\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	originalOS := currentOS
+	currentOS = "plan9"
+	t.Cleanup(func() { currentOS = originalOS })
+	installConnectFakes(t, fakeConnectConfig{failIfCalled: true})
+
+	stdout := new(bytes.Buffer)
+	connectStderr := new(bytes.Buffer)
+	code = run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, connectStderr)
+	if code != 1 {
+		t.Fatalf("connect exit code = %d, want 1", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "OS-native Credential Store") {
+		t.Fatalf("message = %T(%v), want OS-native preflight failure", got["message"], got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+connectStderr.String())
+}
+
+func TestConnectRejectsFileCredentialStoreCollisionsBeforeOAuth(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		path func(tempDir, configPath, archivePath string) string
+	}{
+		{
+			name: "config",
+			path: func(_ string, configPath, _ string) string {
+				return configPath
+			},
+		},
+		{
+			name: "archive",
+			path: func(_ string, _, archivePath string) string {
+				return archivePath
+			},
+		},
+		{
+			name: "oauth-client",
+			path: func(tempDir, _, _ string) string {
+				return filepath.Join(tempDir, "client_secret.json")
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			if err := os.Chmod(tempDir, 0o700); err != nil {
+				t.Fatalf("chmod temp dir: %v", err)
+			}
+			configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+			collisionPath := test.path(tempDir, configPath, archivePath)
+			originalContent, err := os.ReadFile(collisionPath)
+			if err != nil {
+				t.Fatalf("read protected file: %v", err)
+			}
+			configBytes, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatalf("read config: %v", err)
+			}
+			config := removeCredentialStoreSection(t, string(configBytes)) + "\n[credential_store]\ntype = \"file\"\npath = \"" + collisionPath + "\"\n"
+			if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			if collisionPath == configPath {
+				originalContent = []byte(config)
+			}
+			installConnectFakes(t, fakeConnectConfig{failIfCalled: true})
+
+			stdout := new(bytes.Buffer)
+			stderr := new(bytes.Buffer)
+			code := run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+			if code != 1 {
+				t.Fatalf("connect exit code = %d, want 1", code)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+				t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+			}
+			message, ok := got["message"].(string)
+			if !ok || !strings.Contains(message, "must not match") {
+				t.Fatalf("message = %T(%v), want credential collision rejection", got["message"], got["message"])
+			}
+			afterContent, err := os.ReadFile(collisionPath)
+			if err != nil {
+				t.Fatalf("read protected file after connect: %v", err)
+			}
+			if !bytes.Equal(afterContent, originalContent) {
+				t.Fatalf("protected file was modified")
+			}
+			assertNoSecretWords(t, stdout.String()+stderr.String())
+		})
+	}
+}
+
+func TestConnectRejectsMissingLinuxCredentialHelperBeforeOAuth(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	config := removeCredentialStoreSection(t, string(configBytes)) + "\n[credential_store]\ntype = \"os_native\"\nservice = \"gohealthcli\"\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	originalOS := currentOS
+	originalFindExecutable := findExecutable
+	currentOS = "linux"
+	findExecutable = func(name string) (string, error) {
+		if name != "secret-tool" {
+			t.Fatalf("find executable = %q, want secret-tool", name)
+		}
+		return "", exec.ErrNotFound
+	}
+	t.Cleanup(func() {
+		currentOS = originalOS
+		findExecutable = originalFindExecutable
+	})
+	installConnectFakes(t, fakeConnectConfig{failIfCalled: true})
+
+	stdout := new(bytes.Buffer)
+	connectStderr := new(bytes.Buffer)
+	code = run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, connectStderr)
+	if code != 1 {
+		t.Fatalf("connect exit code = %d, want 1", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "secret-tool") || !strings.Contains(message, "type \"file\"") {
+		t.Fatalf("message = %T(%v), want secret-tool file fallback guidance", got["message"], got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+connectStderr.String())
+}
+
+func TestConnectRejectsWebOAuthClient(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	clientPath := filepath.Join(tempDir, "client_secret.json")
+	content := []byte(`{"web":{"client_id":"test-client","client_secret":"test-secret","redirect_uris":["http://127.0.0.1:8080/oauth2callback"]}}`)
+	if err := os.WriteFile(clientPath, content, 0o600); err != nil {
+		t.Fatalf("write web OAuth client file: %v", err)
+	}
+	installConnectFakes(t, fakeConnectConfig{failIfCalled: true})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("connect exit code = %d, want 1", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "installed desktop client") {
+		t.Fatalf("message = %T(%v), want web client rejection", got["message"], got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestOAuthScopesUseRecognizedGoogleHealthScopes(t *testing.T) {
+	scopes := oauthScopesForDataTypes(defaultDataTypes)
+	if len(scopes) != 1 || scopes[0] != googleHealthActivityReadonlyScope {
+		t.Fatalf("scopes = %v, want recognized Google Health readonly scope", scopes)
+	}
+	for _, scope := range scopes {
+		for _, invalid := range []string{"profile.readonly", "sleep.readonly", "health_metrics_and_measurements.readonly"} {
+			if strings.Contains(scope, invalid) {
+				t.Fatalf("scopes include unrecognized Google Health scope %q: %v", invalid, scopes)
+			}
+		}
+	}
+}
+
+func TestListenForOAuthRedirectPreservesEmptyLoopbackPath(t *testing.T) {
+	listener, redirectURI, err := listenForOAuthRedirect([]string{"http://localhost"})
+	if err != nil {
+		t.Fatalf("listen for OAuth redirect: %v", err)
+	}
+	defer listener.Close()
+
+	parsed, err := url.Parse(redirectURI)
+	if err != nil {
+		t.Fatalf("parse redirect URI: %v", err)
+	}
+	if parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Path != "" {
+		t.Fatalf("redirect URI = %s, want dynamic loopback with empty path", redirectURI)
+	}
+}
+
+func TestParseOAuthTokenResponseRequiresRefreshToken(t *testing.T) {
+	_, err := parseOAuthTokenResponse([]byte(`{
+		"access_token": "access-secret-value",
+		"expires_in": 3600,
+		"scope": "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
+		"token_type": "Bearer"
+	}`), time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC))
+	if err == nil || !strings.Contains(err.Error(), "refresh token") {
+		t.Fatalf("parse token response error = %v, want missing refresh token", err)
+	}
+}
+
+func TestFetchGoogleIdentityUsesGetIdentityEndpoint(t *testing.T) {
+	originalClient := http.DefaultClient
+	t.Cleanup(func() { http.DefaultClient = originalClient })
+
+	var gotURL string
+	http.DefaultClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		gotURL = request.URL.String()
+		if request.Header.Get("Authorization") != "Bearer access-secret-value" {
+			t.Fatalf("Authorization = %q, want bearer token", request.Header.Get("Authorization"))
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"healthUserId":"111111256096816351","legacyUserId":"A1B2C3"}`)),
+		}, nil
+	})}
+
+	identity, err := fetchGoogleIdentity("access-secret-value")
+	if err != nil {
+		t.Fatalf("fetch identity: %v", err)
+	}
+	if gotURL != googleHealthIdentityURL {
+		t.Fatalf("identity URL = %q, want %q", gotURL, googleHealthIdentityURL)
+	}
+	if identity.healthUserID != "111111256096816351" || identity.legacyFitbitUserID != "A1B2C3" {
+		t.Fatalf("identity = (%q, %q), want response identity", identity.healthUserID, identity.legacyFitbitUserID)
+	}
+}
+
+func TestOSNativeCredentialStoreDoesNotSendTokenAsArgument(t *testing.T) {
+	originalOS := currentOS
+	originalSecurityCommand := runSecurityAddGenericPassword
+	currentOS = "darwin"
+	t.Cleanup(func() {
+		currentOS = originalOS
+		runSecurityAddGenericPassword = originalSecurityCommand
+	})
+
+	var gotService string
+	var gotKey string
+	var gotContent []byte
+	runSecurityAddGenericPassword = func(service, key string, content []byte) error {
+		gotService = service
+		gotKey = key
+		gotContent = append([]byte(nil), content...)
+		return nil
+	}
+
+	store, err := newCredentialStore(credentialStoreConfig{kind: "os_native", service: "gohealthcli"})
+	if err != nil {
+		t.Fatalf("new credential store: %v", err)
+	}
+	if err := store.Store("googlehealth:111", map[string]any{"access_token": "access-secret-value"}); err != nil {
+		t.Fatalf("store token: %v", err)
+	}
+	if gotService != "gohealthcli" || gotKey != "googlehealth:111" {
+		t.Fatalf("security command target = (%q, %q), want service/key", gotService, gotKey)
+	}
+	if !bytes.Contains(gotContent, []byte("access-secret-value")) {
+		t.Fatalf("security command content missing token material: %s", string(gotContent))
+	}
+}
+
+func TestSecurityCredentialStoreFeedsPromptWithoutTokenArgument(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake security executable uses POSIX shell")
+	}
+
+	tempDir := t.TempDir()
+	argvPath := filepath.Join(tempDir, "argv.txt")
+	stdinPath := filepath.Join(tempDir, "stdin.txt")
+	securityPath := filepath.Join(tempDir, "security")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$GOHEALTHCLI_TEST_SECURITY_ARGV\"\ncat > \"$GOHEALTHCLI_TEST_SECURITY_STDIN\"\n"
+	if err := os.WriteFile(securityPath, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake security: %v", err)
+	}
+	t.Setenv("GOHEALTHCLI_TEST_SECURITY_ARGV", argvPath)
+	t.Setenv("GOHEALTHCLI_TEST_SECURITY_STDIN", stdinPath)
+	t.Setenv("PATH", tempDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	content := []byte(`{"access_token":"access-secret-value"}`)
+	if err := runSecurityAddGenericPasswordCommand("gohealthcli", "googlehealth:111", content); err != nil {
+		t.Fatalf("security command: %v", err)
+	}
+
+	argv, err := os.ReadFile(argvPath)
+	if err != nil {
+		t.Fatalf("read argv: %v", err)
+	}
+	if bytes.Contains(argv, []byte("access-secret-value")) {
+		t.Fatalf("security argv contains token material: %s", string(argv))
+	}
+	if !bytes.Contains(argv, []byte("-w")) {
+		t.Fatalf("security argv missing prompt flag: %s", string(argv))
+	}
+
+	stdin, err := os.ReadFile(stdinPath)
+	if err != nil {
+		t.Fatalf("read stdin: %v", err)
+	}
+	wantStdin := string(content) + "\n" + string(content) + "\n"
+	if string(stdin) != wantStdin {
+		t.Fatalf("security stdin = %q, want password and confirmation", string(stdin))
+	}
+}
+
+func TestLinuxOSNativeCredentialStoreUsesSecretToolContent(t *testing.T) {
+	originalOS := currentOS
+	originalSecretToolStore := runSecretToolStore
+	currentOS = "linux"
+	t.Cleanup(func() {
+		currentOS = originalOS
+		runSecretToolStore = originalSecretToolStore
+	})
+
+	var gotService string
+	var gotKey string
+	var gotContent []byte
+	runSecretToolStore = func(service, key string, content []byte) error {
+		gotService = service
+		gotKey = key
+		gotContent = append([]byte(nil), content...)
+		return nil
+	}
+
+	store, err := newCredentialStore(credentialStoreConfig{kind: "os_native", service: "gohealthcli"})
+	if err != nil {
+		t.Fatalf("new credential store: %v", err)
+	}
+	if err := store.Store("googlehealth:111", map[string]any{"access_token": "access-secret-value"}); err != nil {
+		t.Fatalf("store token: %v", err)
+	}
+	if gotService != "gohealthcli" || gotKey != "googlehealth:111" {
+		t.Fatalf("secret-tool target = (%q, %q), want service/key", gotService, gotKey)
+	}
+	if !bytes.Contains(gotContent, []byte("access-secret-value")) {
+		t.Fatalf("secret-tool content missing token material: %s", string(gotContent))
+	}
+}
+
+func TestWindowsOSNativeCredentialStoreUsesCredentialManagerContent(t *testing.T) {
+	originalOS := currentOS
+	originalWindowsCredentialWrite := runWindowsCredentialWrite
+	currentOS = "windows"
+	t.Cleanup(func() {
+		currentOS = originalOS
+		runWindowsCredentialWrite = originalWindowsCredentialWrite
+	})
+
+	var gotService string
+	var gotKey string
+	var gotContent []byte
+	runWindowsCredentialWrite = func(service, key string, content []byte) error {
+		gotService = service
+		gotKey = key
+		gotContent = append([]byte(nil), content...)
+		return nil
+	}
+
+	store, err := newCredentialStore(credentialStoreConfig{kind: "os_native", service: "gohealthcli"})
+	if err != nil {
+		t.Fatalf("new credential store: %v", err)
+	}
+	if err := store.Store("googlehealth:111", map[string]any{"access_token": "access-secret-value"}); err != nil {
+		t.Fatalf("store token: %v", err)
+	}
+	if gotService != "gohealthcli" || gotKey != "googlehealth:111" {
+		t.Fatalf("Windows Credential Manager target = (%q, %q), want service/key", gotService, gotKey)
+	}
+	if !bytes.Contains(gotContent, []byte("access-secret-value")) {
+		t.Fatalf("Windows Credential Manager content missing token material: %s", string(gotContent))
+	}
+}
+
 func TestInitStoresSecretProviderReference(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
@@ -1305,7 +2064,7 @@ func TestInitStoresSecretProviderReference(t *testing.T) {
 	for _, want := range []string{
 		"status: initialized\n",
 		"oauth_client_source: secret_provider\n",
-		"schema_version: 1\n",
+		"schema_version: 2\n",
 	} {
 		if !strings.Contains(outText, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, outText)
@@ -1620,7 +2379,7 @@ func TestInitRejectsExistingUnsafeDirectory(t *testing.T) {
 func TestInitJSONReportsWriteFailure(t *testing.T) {
 	tempDir := t.TempDir()
 	oauthClientPath := filepath.Join(tempDir, "client_secret.json")
-	if err := os.WriteFile(oauthClientPath, []byte(`{"installed":{"client_id":"test-client"}}`), 0o600); err != nil {
+	if err := os.WriteFile(oauthClientPath, []byte(`{"installed":{"client_id":"test-client","client_secret":"test-secret"}}`), 0o600); err != nil {
 		t.Fatalf("write OAuth client file: %v", err)
 	}
 	stderr := new(bytes.Buffer)
@@ -1722,6 +2481,175 @@ func runCommandInDirWithEnv(t *testing.T, dir string, env []string, args ...stri
 	return 1, stdout, stderr
 }
 
+type fakeConnectConfig struct {
+	now                time.Time
+	accessToken        string
+	refreshToken       string
+	refreshExpiresAt   *time.Time
+	healthUserID       string
+	legacyFitbitUserID string
+	wantNoInput        *bool
+	failIfCalled       bool
+}
+
+func installConnectFakes(t *testing.T, config fakeConnectConfig) {
+	t.Helper()
+
+	originalOAuthFlow := runOAuthFlow
+	originalFetchIdentity := fetchIdentity
+	originalCurrentTime := currentTime
+	if config.now.IsZero() {
+		config.now = time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC)
+	}
+	if config.accessToken == "" {
+		config.accessToken = "access-secret-value"
+	}
+	if config.refreshToken == "" {
+		config.refreshToken = "refresh-secret-value"
+	}
+	if config.healthUserID == "" {
+		config.healthUserID = "111111256096816351"
+	}
+	runOAuthFlow = func(client oauthClientConfig, scopes []string, noInput bool) (oauthTokenResponse, error) {
+		if config.failIfCalled {
+			t.Fatalf("OAuth flow should not be called")
+		}
+		if client.clientID != "test-client" || client.clientSecret != "test-secret" {
+			t.Fatalf("OAuth client = (%q, %q), want test client", client.clientID, client.clientSecret)
+		}
+		if len(scopes) == 0 {
+			t.Fatal("OAuth scopes empty")
+		}
+		if config.wantNoInput != nil && noInput != *config.wantNoInput {
+			t.Fatalf("noInput = %v, want %v", noInput, *config.wantNoInput)
+		}
+		return oauthTokenResponse{
+			accessToken:           config.accessToken,
+			refreshToken:          config.refreshToken,
+			tokenType:             "Bearer",
+			scopes:                scopes,
+			expiresAt:             config.now.Add(time.Hour),
+			refreshTokenExpiresAt: config.refreshExpiresAt,
+			rawTokenMaterialObject: map[string]any{
+				"access_token":  config.accessToken,
+				"refresh_token": config.refreshToken,
+				"expires_in":    float64(3600),
+				"scope":         strings.Join(scopes, " "),
+				"token_type":    "Bearer",
+			},
+		}, nil
+	}
+	fetchIdentity = func(accessToken string) (googleIdentity, error) {
+		if config.failIfCalled {
+			t.Fatalf("identity fetch should not be called")
+		}
+		if accessToken != config.accessToken {
+			t.Fatalf("identity access token = %q, want fake token", accessToken)
+		}
+		return googleIdentity{
+			healthUserID:       config.healthUserID,
+			legacyFitbitUserID: config.legacyFitbitUserID,
+			rawJSON:            fmt.Sprintf(`{"healthUserId":%q,"legacyUserId":%q}`, config.healthUserID, config.legacyFitbitUserID),
+		}, nil
+	}
+	currentTime = func() time.Time { return config.now }
+	t.Cleanup(func() {
+		runOAuthFlow = originalOAuthFlow
+		fetchIdentity = originalFetchIdentity
+		currentTime = originalCurrentTime
+	})
+}
+
+func initializeFileCredentialSetup(t *testing.T, tempDir string) (string, string, string) {
+	t.Helper()
+
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	tokenStorePath := filepath.Join(tempDir, "credential-store", "tokens.json")
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	config := removeCredentialStoreSection(t, string(configBytes)) + "\n[credential_store]\ntype = \"file\"\npath = \"" + tokenStorePath + "\"\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath, archivePath, tokenStorePath
+}
+
+func createLegacyV1Archive(t *testing.T, archivePath string) {
+	t.Helper()
+
+	if err := ensureOwnerOnlyDir(filepath.Dir(archivePath)); err != nil {
+		t.Fatalf("create archive parent: %v", err)
+	}
+	file, err := os.OpenFile(archivePath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		t.Fatalf("create legacy archive file: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close legacy archive file: %v", err)
+	}
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open legacy archive: %v", err)
+	}
+	defer db.Close()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("begin legacy migration: %v", err)
+	}
+	for _, statement := range initialMigrationStatements() {
+		if _, err := tx.Exec(statement); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("apply legacy migration statement: %v", err)
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (1, 'initial_archive_schema', ?)`, time.Date(2026, 5, 31, 21, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("record legacy migration: %v", err)
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 1`); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("set legacy user_version: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit legacy migration: %v", err)
+	}
+	if usesPOSIXPermissions() {
+		if err := os.Chmod(archivePath, 0o600); err != nil {
+			t.Fatalf("chmod legacy archive: %v", err)
+		}
+	}
+}
+
+func runConnectCommand(t *testing.T, configPath, archivePath string) int {
+	t.Helper()
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if stdout.String() != "" {
+		var got map[string]any
+		if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+			t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+		}
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	return code
+}
+
 func ensureTestOAuthClientFiles(t *testing.T, dir string, args []string) {
 	t.Helper()
 
@@ -1745,6 +2673,43 @@ func ensureTestOAuthClientFiles(t *testing.T, dir string, args []string) {
 		if err := os.WriteFile(path, content, 0o600); err != nil {
 			t.Fatalf("write OAuth client file: %v", err)
 		}
+	}
+}
+
+func expectedDefaultCredentialStoreKind() string {
+	return "os_native"
+}
+
+func removeCredentialStoreSection(t *testing.T, config string) string {
+	t.Helper()
+
+	start := strings.Index(config, "\n[credential_store]\n")
+	if start < 0 {
+		t.Fatalf("config missing credential_store section:\n%s", config)
+	}
+	searchFrom := start + len("\n[credential_store]\n")
+	end := strings.Index(config[searchFrom:], "\n[")
+	if end < 0 {
+		return strings.TrimRight(config[:start], "\n") + "\n"
+	}
+	end += searchFrom
+	return strings.TrimRight(config[:start], "\n") + "\n" + config[end+1:]
+}
+
+func assertArchiveUserVersion(t *testing.T, archivePath string, want int) {
+	t.Helper()
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	var got int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&got); err != nil {
+		t.Fatalf("query user_version: %v", err)
+	}
+	if got != want {
+		t.Fatalf("user_version = %d, want %d", got, want)
 	}
 }
 
