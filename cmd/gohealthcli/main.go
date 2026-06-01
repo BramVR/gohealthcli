@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -16,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -105,6 +107,21 @@ type profileResult struct {
 	Message            string `json:"message"`
 }
 
+type syncResult struct {
+	Status            string   `json:"status"`
+	SyncRunID         int64    `json:"sync_run_id,omitempty"`
+	ConnectionID      string   `json:"connection_id,omitempty"`
+	ProviderName      string   `json:"provider_name,omitempty"`
+	DataTypes         []string `json:"data_types,omitempty"`
+	From              string   `json:"from,omitempty"`
+	To                string   `json:"to,omitempty"`
+	EndpointFamily    string   `json:"endpoint_family,omitempty"`
+	DataPointsSeen    int      `json:"data_points_seen"`
+	DataPointsNew     int      `json:"data_points_new"`
+	DataPointsUpdated int      `json:"data_points_updated"`
+	Message           string   `json:"message"`
+}
+
 type archivedConnection struct {
 	id                 string
 	providerName       string
@@ -128,6 +145,14 @@ type rawCommandOptions struct {
 	pageSize    int64
 	pageToken   string
 	target      []string
+}
+
+type syncCommandOptions struct {
+	configPath  string
+	archivePath string
+	dataTypes   []string
+	from        string
+	to          string
 }
 
 type oauthClientSource struct {
@@ -200,11 +225,33 @@ type googleProfile struct {
 	rawJSON      string
 }
 
+type googleHealthDataPointList struct {
+	dataPoints    []json.RawMessage
+	nextPageToken string
+}
+
+type archivedDataPoint struct {
+	providerName         string
+	connectionID         string
+	dataType             string
+	upstreamResourceName string
+	recordKind           string
+	startTimeUTC         string
+	endTimeUTC           string
+	startCivilTime       string
+	endCivilTime         string
+	providerCivilDate    string
+	timezoneMetadataJSON string
+	dataSourceJSON       string
+	rawJSON              string
+}
+
 var runOAuthFlow = runBrowserOAuthFlow
 var refreshOAuthToken = refreshGoogleOAuthToken
 var fetchIdentity = fetchGoogleIdentity
 var fetchProfile = fetchGoogleProfile
 var fetchRawProvider = fetchGoogleHealthRaw
+var finishSyncRunRecord = finishSyncRun
 var currentTime = func() time.Time { return time.Now().UTC() }
 var currentOS = runtime.GOOS
 var runSecurityAddGenericPassword = runSecurityAddGenericPasswordCommand
@@ -258,6 +305,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runIdentity(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	case "profile":
 		return runProfile(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
+	case "sync":
+		return runSync(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	case "raw":
 		return runRaw(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	default:
@@ -596,6 +645,56 @@ func runProfile(args []string, configPath, archivePath string, mode outputMode, 
 	return 0
 }
 
+func runSync(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("sync", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+
+	syncConfigPath := flags.String("config", configPath, "config file path")
+	syncArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
+	syncJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
+	syncPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
+	syncTypes := flags.String("types", "steps", "comma-separated Data Types")
+	syncFrom := flags.String("from", "", "inclusive sync range start")
+	syncTo := flags.String("to", "", "exclusive sync range end")
+	flags.Bool("no-input", false, "never prompt, never wait for browser input")
+
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 1
+	}
+	if flags.NArg() != 0 {
+		fmt.Fprintf(stderr, "unexpected sync argument: %s\n", flags.Arg(0))
+		return 1
+	}
+
+	mode = outputMode{json: *syncJSONOutput, plain: *syncPlainOutput}
+	result, err := syncSetup(syncCommandOptions{
+		configPath:  *syncConfigPath,
+		archivePath: *syncArchivePath,
+		dataTypes:   parseCommaList(*syncTypes),
+		from:        *syncFrom,
+		to:          *syncTo,
+	})
+	if err != nil {
+		if result.Status == "" {
+			result.Status = "sync_failed"
+		}
+		result.Message = err.Error()
+		if writeErr := writeSyncResult(result, mode, stdout); writeErr != nil {
+			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
+			return 1
+		}
+		return 1
+	}
+	if err := writeSyncResult(result, mode, stdout); err != nil {
+		fmt.Fprintf(stderr, "write output: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 func runRaw(args []string, configPath, archivePath string, _ outputMode, stdout, stderr io.Writer) int {
 	options, err := parseRawCommandOptions(args, configPath, archivePath)
 	if err != nil {
@@ -826,6 +925,138 @@ func profileSetup(configPath, archivePath string) (profileResult, error) {
 	result.SnapshotID = snapshotID
 	result.FetchedAt = fetchedAt
 	result.Message = "Profile Snapshot archived"
+	return result, nil
+}
+
+func syncSetup(options syncCommandOptions) (syncResult, error) {
+	if len(options.dataTypes) == 0 {
+		return syncResult{Status: "sync_failed"}, errors.New("sync requires at least one Data Type")
+	}
+	if len(options.dataTypes) != 1 || options.dataTypes[0] != "steps" {
+		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync currently supports only Data Type steps")
+	}
+	if options.from == "" {
+		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync requires --from")
+	}
+	if options.to == "" {
+		options.to = currentTime().UTC().Format(time.RFC3339)
+	}
+
+	config, err := inspectIdentityConfig(options.configPath, options.archivePath)
+	if err != nil {
+		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, fmt.Errorf("config check failed: %w", err)
+	}
+	if err := migrateArchiveIfNeeded(options.archivePath); err != nil {
+		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, fmt.Errorf("Health Archive migration failed: %w", err)
+	}
+	if _, err := inspectArchive(options.archivePath, false); err != nil {
+		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, fmt.Errorf("Health Archive check failed: %w", err)
+	}
+	db, err := openArchive(options.archivePath)
+	if err != nil {
+		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, err
+	}
+	defer db.Close()
+	connection, err := readCurrentConnection(db)
+	if err != nil {
+		result := syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}
+		if errors.Is(err, sql.ErrNoRows) {
+			return result, errors.New("no Connection found; run `gohealthcli connect` first")
+		}
+		return result, err
+	}
+	result := syncResult{
+		ConnectionID:   connection.id,
+		ProviderName:   connection.providerName,
+		DataTypes:      options.dataTypes,
+		From:           options.from,
+		To:             options.to,
+		EndpointFamily: "list",
+	}
+	startedAt := currentTime().UTC().Format(time.RFC3339)
+	syncRunID, err := insertSyncRun(db, connection, options.dataTypes, options.from, options.to, result.EndpointFamily, startedAt)
+	if err != nil {
+		return result, err
+	}
+	result.SyncRunID = syncRunID
+	fail := func(cause error) (syncResult, error) {
+		result.Status = "sync_failed"
+		result.Message = cause.Error()
+		if updateErr := finishSyncRunRecord(db, syncRunID, result.Status, result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated, currentTime().UTC().Format(time.RFC3339), result.Message); updateErr != nil {
+			return result, fmt.Errorf("%w; record failed Sync Run: %v", cause, updateErr)
+		}
+		return result, cause
+	}
+	if err := requireUsableConnectionAccessToken(connection.tokenMetadataJSON, currentTime()); err != nil {
+		return fail(err)
+	}
+	if err := requireConnectionScopes(connection.tokenMetadataJSON, googleHealthScopesForDataType("steps")); err != nil {
+		return fail(err)
+	}
+	accessToken, err := loadAccessTokenForConnection(config.credentialStore, connection, []string{options.configPath, options.archivePath})
+	if err != nil {
+		return fail(err)
+	}
+	identity, err := fetchIdentity(accessToken)
+	if err != nil {
+		if strings.Contains(err.Error(), "HTTP 401") {
+			return fail(errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again"))
+		}
+		return fail(err)
+	}
+	if identity.healthUserID != connection.googleHealthUserID {
+		return fail(errors.New("Provider returned a different Google Identity; use a new archive path"))
+	}
+	seenPageTokens := map[string]struct{}{}
+	for pageToken := ""; ; {
+		request, err := buildGoogleHealthDataTypeListRawRequest("steps", options.from, options.to, 0, pageToken)
+		if err != nil {
+			return fail(err)
+		}
+		body, err := fetchRawProvider(request, accessToken)
+		if err != nil {
+			if strings.Contains(err.Error(), "HTTP 401") {
+				return fail(errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again"))
+			}
+			return fail(err)
+		}
+		page, err := parseGoogleHealthDataPointList(body)
+		if err != nil {
+			return fail(err)
+		}
+		for _, rawPoint := range page.dataPoints {
+			point, err := parseGoogleHealthStepsDataPoint(connection, rawPoint)
+			if err != nil {
+				return fail(err)
+			}
+			status, err := upsertDataPoint(db, point, currentTime().UTC().Format(time.RFC3339))
+			if err != nil {
+				return fail(err)
+			}
+			result.DataPointsSeen++
+			switch status {
+			case "new":
+				result.DataPointsNew++
+			case "updated":
+				result.DataPointsUpdated++
+			}
+		}
+		if page.nextPageToken == "" {
+			break
+		}
+		if _, ok := seenPageTokens[page.nextPageToken]; ok {
+			return fail(errors.New("Google Health steps list returned a repeated page token"))
+		}
+		seenPageTokens[page.nextPageToken] = struct{}{}
+		pageToken = page.nextPageToken
+	}
+	if err := finishSyncRunRecord(db, syncRunID, "sync_completed", result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated, currentTime().UTC().Format(time.RFC3339), ""); err != nil {
+		result.Status = "sync_failed"
+		result.Message = err.Error()
+		return result, err
+	}
+	result.Status = "sync_completed"
+	result.Message = "Sync Run archived steps Data Points"
 	return result, nil
 }
 
@@ -2344,6 +2575,156 @@ func readLimitedBody(reader io.Reader, limit int64) ([]byte, bool, error) {
 	return body, false, nil
 }
 
+func parseGoogleHealthDataPointList(body []byte) (googleHealthDataPointList, error) {
+	var raw struct {
+		DataPoints    []json.RawMessage `json:"dataPoints"`
+		NextPageToken string            `json:"nextPageToken"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return googleHealthDataPointList{}, errors.New("Google Health Data Point list response is not valid JSON")
+	}
+	return googleHealthDataPointList{dataPoints: raw.DataPoints, nextPageToken: raw.NextPageToken}, nil
+}
+
+func parseGoogleHealthStepsDataPoint(connection archivedConnection, rawPoint json.RawMessage) (archivedDataPoint, error) {
+	canonicalRaw, err := compactJSONString(rawPoint)
+	if err != nil {
+		return archivedDataPoint{}, errors.New("Google Health steps Data Point is not valid JSON")
+	}
+	var raw struct {
+		Name       string          `json:"name"`
+		DataSource json.RawMessage `json:"dataSource"`
+		Steps      struct {
+			Interval struct {
+				StartTime      string          `json:"startTime"`
+				StartUTCOffset string          `json:"startUtcOffset"`
+				EndTime        string          `json:"endTime"`
+				EndUTCOffset   string          `json:"endUtcOffset"`
+				CivilStartTime json.RawMessage `json:"civilStartTime"`
+				CivilEndTime   json.RawMessage `json:"civilEndTime"`
+			} `json:"interval"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal(rawPoint, &raw); err != nil {
+		return archivedDataPoint{}, errors.New("Google Health steps Data Point is not valid JSON")
+	}
+	if len(raw.Steps.Interval.StartTime) == 0 || len(raw.Steps.Interval.EndTime) == 0 {
+		return archivedDataPoint{}, errors.New("Google Health steps Data Point missing interval startTime or endTime")
+	}
+	startTimeUTC, err := normalizeGoogleTimestamp(raw.Steps.Interval.StartTime)
+	if err != nil {
+		return archivedDataPoint{}, fmt.Errorf("Google Health steps Data Point startTime: %w", err)
+	}
+	endTimeUTC, err := normalizeGoogleTimestamp(raw.Steps.Interval.EndTime)
+	if err != nil {
+		return archivedDataPoint{}, fmt.Errorf("Google Health steps Data Point endTime: %w", err)
+	}
+	dataSourceJSON := "{}"
+	if len(raw.DataSource) != 0 && string(raw.DataSource) != "null" {
+		dataSourceJSON, err = compactJSONString(raw.DataSource)
+		if err != nil {
+			return archivedDataPoint{}, errors.New("Google Health steps Data Point dataSource is not valid JSON")
+		}
+	}
+	startCivilTime, providerCivilDate, err := googleCivilDateTimeText(raw.Steps.Interval.CivilStartTime)
+	if err != nil {
+		return archivedDataPoint{}, fmt.Errorf("Google Health steps Data Point civilStartTime: %w", err)
+	}
+	endCivilTime, _, err := googleCivilDateTimeText(raw.Steps.Interval.CivilEndTime)
+	if err != nil {
+		return archivedDataPoint{}, fmt.Errorf("Google Health steps Data Point civilEndTime: %w", err)
+	}
+	timezoneMetadata, err := googleIntervalTimezoneMetadataJSON(raw.Steps.Interval.StartUTCOffset, raw.Steps.Interval.EndUTCOffset)
+	if err != nil {
+		return archivedDataPoint{}, err
+	}
+	return archivedDataPoint{
+		providerName:         connection.providerName,
+		connectionID:         connection.id,
+		dataType:             "steps",
+		upstreamResourceName: raw.Name,
+		recordKind:           "interval",
+		startTimeUTC:         startTimeUTC,
+		endTimeUTC:           endTimeUTC,
+		startCivilTime:       startCivilTime,
+		endCivilTime:         endCivilTime,
+		providerCivilDate:    providerCivilDate,
+		timezoneMetadataJSON: timezoneMetadata,
+		dataSourceJSON:       dataSourceJSON,
+		rawJSON:              canonicalRaw,
+	}, nil
+}
+
+func compactJSONString(raw json.RawMessage) (string, error) {
+	var out bytes.Buffer
+	if err := json.Compact(&out, raw); err != nil {
+		return "", err
+	}
+	return out.String(), nil
+}
+
+func normalizeGoogleTimestamp(value string) (string, error) {
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return "", errors.New("expected RFC3339 timestamp")
+	}
+	return parsed.UTC().Format(time.RFC3339Nano), nil
+}
+
+func googleCivilDateTimeText(raw json.RawMessage) (string, string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", "", nil
+	}
+	var value struct {
+		Date struct {
+			Year  int `json:"year"`
+			Month int `json:"month"`
+			Day   int `json:"day"`
+		} `json:"date"`
+		Time *struct {
+			Hours   int `json:"hours"`
+			Minutes int `json:"minutes"`
+			Seconds int `json:"seconds"`
+			Nanos   int `json:"nanos"`
+		} `json:"time"`
+	}
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", "", errors.New("not valid JSON")
+	}
+	if value.Date.Year == 0 || value.Date.Month == 0 || value.Date.Day == 0 {
+		return "", "", errors.New("missing date")
+	}
+	date := fmt.Sprintf("%04d-%02d-%02d", value.Date.Year, value.Date.Month, value.Date.Day)
+	if value.Time == nil {
+		return date, date, nil
+	}
+	text := fmt.Sprintf("%sT%02d:%02d:%02d", date, value.Time.Hours, value.Time.Minutes, value.Time.Seconds)
+	if value.Time.Nanos != 0 {
+		fraction := fmt.Sprintf("%09d", value.Time.Nanos)
+		fraction = strings.TrimRight(fraction, "0")
+		text += "." + fraction
+	}
+	return text, date, nil
+}
+
+func googleIntervalTimezoneMetadataJSON(startUTCOffset, endUTCOffset string) (string, error) {
+	metadata := map[string]string{}
+	if startUTCOffset != "" {
+		metadata["start_utc_offset"] = startUTCOffset
+	}
+	if endUTCOffset != "" {
+		metadata["end_utc_offset"] = endUTCOffset
+	}
+	if len(metadata) == 0 {
+		return "", nil
+	}
+	content, err := json.Marshal(metadata)
+	if err != nil {
+		return "", err
+	}
+	return string(content), nil
+}
+
 func randomURLToken(byteCount int) (string, error) {
 	buffer := make([]byte, byteCount)
 	if _, err := rand.Read(buffer); err != nil {
@@ -2697,6 +3078,237 @@ func insertProfileSnapshot(db *sql.DB, connection archivedConnection, rawJSON, f
 	return result.LastInsertId()
 }
 
+func insertSyncRun(db *sql.DB, connection archivedConnection, dataTypes []string, from, to, endpointFamily, startedAt string) (int64, error) {
+	dataTypesJSON, err := json.Marshal(dataTypes)
+	if err != nil {
+		return 0, err
+	}
+	rangeJSON, err := json.Marshal(map[string]string{"from": from, "to": to})
+	if err != nil {
+		return 0, err
+	}
+	result, err := db.Exec(`INSERT INTO sync_runs (
+		provider_name,
+		connection_id,
+		data_types_requested,
+		range_requested_json,
+		endpoint_family,
+		status,
+		started_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		connection.providerName,
+		connection.id,
+		string(dataTypesJSON),
+		string(rangeJSON),
+		endpointFamily,
+		"sync_running",
+		startedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func finishSyncRun(db *sql.DB, syncRunID int64, status string, seen, newCount, updated int, finishedAt, errorSummary string) error {
+	_, err := db.Exec(`UPDATE sync_runs SET
+		status = ?,
+		seen_count = ?,
+		new_count = ?,
+		updated_count = ?,
+		finished_at = ?,
+		error_summary = ?
+	WHERE id = ?`, status, seen, newCount, updated, finishedAt, nullString(errorSummary), syncRunID)
+	return err
+}
+
+func upsertDataPoint(db *sql.DB, point archivedDataPoint, now string) (string, error) {
+	existingID, existingRawJSON, found, err := findExistingDataPoint(db, point)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		_, err := db.Exec(`INSERT INTO data_points (
+			provider_name,
+			connection_id,
+			data_type,
+			upstream_resource_name,
+			record_kind,
+			start_time_utc,
+			end_time_utc,
+			start_civil_time,
+			end_civil_time,
+			provider_civil_date,
+			timezone_metadata,
+			data_source_json,
+			raw_json,
+			inserted_at,
+			updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			point.providerName,
+			point.connectionID,
+			point.dataType,
+			nullString(point.upstreamResourceName),
+			point.recordKind,
+			nullString(point.startTimeUTC),
+			nullString(point.endTimeUTC),
+			nullString(point.startCivilTime),
+			nullString(point.endCivilTime),
+			nullString(point.providerCivilDate),
+			nullString(point.timezoneMetadataJSON),
+			point.dataSourceJSON,
+			point.rawJSON,
+			now,
+			now,
+		)
+		if err != nil {
+			return "", err
+		}
+		return "new", nil
+	}
+	if sameJSONValue(existingRawJSON, point.rawJSON) {
+		return "unchanged", nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO data_point_revisions (
+		data_point_id,
+		previous_raw_json,
+		replaced_at,
+		replacement_reason
+	) VALUES (?, ?, ?, ?)`, existingID, existingRawJSON, now, "provider_correction"); err != nil {
+		return "", err
+	}
+	if _, err := tx.Exec(`UPDATE data_points SET
+		record_kind = ?,
+		start_time_utc = ?,
+		end_time_utc = ?,
+		start_civil_time = ?,
+		end_civil_time = ?,
+		provider_civil_date = ?,
+		timezone_metadata = ?,
+		data_source_json = ?,
+		raw_json = ?,
+		updated_at = ?
+	WHERE id = ?`,
+		point.recordKind,
+		nullString(point.startTimeUTC),
+		nullString(point.endTimeUTC),
+		nullString(point.startCivilTime),
+		nullString(point.endCivilTime),
+		nullString(point.providerCivilDate),
+		nullString(point.timezoneMetadataJSON),
+		point.dataSourceJSON,
+		point.rawJSON,
+		now,
+		existingID,
+	); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return "updated", nil
+}
+
+func findExistingDataPoint(db *sql.DB, point archivedDataPoint) (int64, string, bool, error) {
+	if point.upstreamResourceName != "" {
+		return findExistingDataPointByQuery(db, `SELECT id, raw_json FROM data_points
+		WHERE provider_name = ?
+			AND connection_id = ?
+			AND data_type = ?
+			AND upstream_resource_name = ?
+		ORDER BY id LIMIT 2`,
+			point.providerName,
+			point.connectionID,
+			point.dataType,
+			point.upstreamResourceName,
+		)
+	}
+	return findExistingDataPointByQuery(db, `SELECT id, raw_json FROM data_points
+	WHERE provider_name = ?
+		AND connection_id = ?
+		AND data_type = ?
+		AND IFNULL(upstream_resource_name, '') = ?
+		AND record_kind = ?
+		AND IFNULL(start_time_utc, '') = ?
+		AND IFNULL(end_time_utc, '') = ?
+		AND IFNULL(start_civil_time, '') = ?
+		AND IFNULL(end_civil_time, '') = ?
+		AND IFNULL(provider_civil_date, '') = ?
+		AND IFNULL(timezone_metadata, '') = ?
+		AND data_source_json = ?
+	ORDER BY id LIMIT 2`,
+		point.providerName,
+		point.connectionID,
+		point.dataType,
+		point.upstreamResourceName,
+		point.recordKind,
+		point.startTimeUTC,
+		point.endTimeUTC,
+		point.startCivilTime,
+		point.endCivilTime,
+		point.providerCivilDate,
+		point.timezoneMetadataJSON,
+		point.dataSourceJSON,
+	)
+}
+
+func sameJSONValue(left, right string) bool {
+	if left == right {
+		return true
+	}
+	var leftValue any
+	var rightValue any
+	if err := json.Unmarshal([]byte(left), &leftValue); err != nil {
+		return false
+	}
+	if err := json.Unmarshal([]byte(right), &rightValue); err != nil {
+		return false
+	}
+	return reflect.DeepEqual(leftValue, rightValue)
+}
+
+func findExistingDataPointByQuery(db *sql.DB, query string, args ...any) (int64, string, bool, error) {
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return 0, "", false, err
+	}
+	defer rows.Close()
+	type match struct {
+		id      int64
+		rawJSON string
+	}
+	var matches []match
+	for rows.Next() {
+		var item match
+		if err := rows.Scan(&item.id, &item.rawJSON); err != nil {
+			return 0, "", false, err
+		}
+		matches = append(matches, item)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, "", false, err
+	}
+	if len(matches) == 0 {
+		return 0, "", false, nil
+	}
+	if len(matches) > 1 {
+		return 0, "", false, errors.New("multiple archived Data Points match provider identity and time metadata")
+	}
+	return matches[0].id, matches[0].rawJSON, true, nil
+}
+
+func nullString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
 func upsertConnection(db *sql.DB, connectionID string, identity googleIdentity, token oauthTokenResponse, now time.Time) error {
 	metadataJSON, err := connectionTokenMetadataJSON(connectionID, token)
 	if err != nil {
@@ -2897,6 +3509,17 @@ func validateTokenMetadata(metadata string) error {
 		return err
 	}
 	return nil
+}
+
+func parseCommaList(value string) []string {
+	var out []string
+	for _, part := range strings.Split(value, ",") {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func requireUsableConnectionAccessToken(metadata string, now time.Time) error {
@@ -3582,6 +4205,100 @@ func writeProfileResult(result profileResult, mode outputMode, stdout io.Writer)
 		if _, err := fmt.Fprintf(stdout, "Fetched at: %s\n", result.FetchedAt); err != nil {
 			return err
 		}
+	}
+	_, err := fmt.Fprintf(stdout, "Message: %s\n", result.Message)
+	return err
+}
+
+func writeSyncResult(result syncResult, mode outputMode, stdout io.Writer) error {
+	if mode.json {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+	if mode.plain {
+		if _, err := fmt.Fprintf(stdout, "status: %s\n", result.Status); err != nil {
+			return err
+		}
+		if result.SyncRunID != 0 {
+			if _, err := fmt.Fprintf(stdout, "sync_run_id: %d\n", result.SyncRunID); err != nil {
+				return err
+			}
+		}
+		if result.ConnectionID != "" {
+			if _, err := fmt.Fprintf(stdout, "connection_id: %s\n", result.ConnectionID); err != nil {
+				return err
+			}
+		}
+		if result.ProviderName != "" {
+			if _, err := fmt.Fprintf(stdout, "provider_name: %s\n", result.ProviderName); err != nil {
+				return err
+			}
+		}
+		if len(result.DataTypes) != 0 {
+			if _, err := fmt.Fprintf(stdout, "data_types: %s\n", strings.Join(result.DataTypes, ",")); err != nil {
+				return err
+			}
+		}
+		if result.From != "" {
+			if _, err := fmt.Fprintf(stdout, "from: %s\n", result.From); err != nil {
+				return err
+			}
+		}
+		if result.To != "" {
+			if _, err := fmt.Fprintf(stdout, "to: %s\n", result.To); err != nil {
+				return err
+			}
+		}
+		if result.EndpointFamily != "" {
+			if _, err := fmt.Fprintf(stdout, "endpoint_family: %s\n", result.EndpointFamily); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintf(stdout, "data_points_seen: %d\n", result.DataPointsSeen); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(stdout, "data_points_new: %d\n", result.DataPointsNew); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(stdout, "data_points_updated: %d\n", result.DataPointsUpdated); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
+		return err
+	}
+	switch result.Status {
+	case "sync_completed":
+		if _, err := fmt.Fprintln(stdout, "Sync Run completed"); err != nil {
+			return err
+		}
+	default:
+		if _, err := fmt.Fprintln(stdout, "Sync Run failed"); err != nil {
+			return err
+		}
+	}
+	if result.SyncRunID != 0 {
+		if _, err := fmt.Fprintf(stdout, "Sync Run: %d\n", result.SyncRunID); err != nil {
+			return err
+		}
+	}
+	if result.ConnectionID != "" {
+		if _, err := fmt.Fprintf(stdout, "Connection: %s\n", result.ConnectionID); err != nil {
+			return err
+		}
+	}
+	if len(result.DataTypes) != 0 {
+		if _, err := fmt.Fprintf(stdout, "Data Types: %s\n", strings.Join(result.DataTypes, ",")); err != nil {
+			return err
+		}
+	}
+	if result.From != "" || result.To != "" {
+		if _, err := fmt.Fprintf(stdout, "Range: %s to %s\n", result.From, result.To); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(stdout, "Data Points: seen %d, new %d, updated %d\n", result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated); err != nil {
+		return err
 	}
 	_, err := fmt.Fprintf(stdout, "Message: %s\n", result.Message)
 	return err

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -2448,6 +2449,439 @@ func TestProfileRejectsDifferentGoogleIdentityWithoutArchiving(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestSyncRequiresFrom(t *testing.T) {
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"sync", "--json"}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("sync exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "sync_failed")
+	if !strings.Contains(got["message"].(string), "--from") {
+		t.Fatalf("message = %v, want --from hint", got["message"])
+	}
+	if _, ok := got["sync_run_id"]; ok {
+		t.Fatalf("sync_run_id = %v, want omitted before setup", got["sync_run_id"])
+	}
+}
+
+func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	originalCurrentTime := currentTime
+	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { currentTime = originalCurrentTime })
+	firstPage := `{
+		"dataPoints": [{
+			"name": "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a",
+			"dataSource": {"platform": "FITBIT", "device": {"manufacturer": "Google", "model": "Pixel Watch"}},
+			"steps": {
+				"interval": {
+					"startTime": "2026-01-01T08:00:00+01:00",
+					"startUtcOffset": "3600s",
+					"endTime": "2026-01-01T08:15:00+01:00",
+					"endUtcOffset": "3600s",
+					"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}, "time": {"hours": 8}},
+					"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 1}, "time": {"hours": 8, "minutes": 15}}
+				},
+				"count": "512"
+			}
+		}],
+		"nextPageToken": "page-2"
+	}`
+	secondPage := `{
+		"dataPoints": [{
+			"name": "users/me/dataTypes/steps/dataPoints/step-2026-01-01-b",
+			"dataSource": {"platform": "FITBIT"},
+			"steps": {
+				"interval": {
+					"startTime": "2026-01-01T09:00:00Z",
+					"endTime": "2026-01-01T09:05:00Z"
+				},
+				"count": "200"
+			}
+		}]
+	}`
+	requests := installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+		"":       firstPage,
+		"page-2": secondPage,
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--from", "2026-01-01",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "sync_completed")
+	assertJSONString(t, got, "connection_id", "googlehealth:111111256096816351")
+	assertJSONString(t, got, "provider_name", "googlehealth")
+	assertJSONString(t, got, "from", "2026-01-01")
+	assertJSONString(t, got, "to", "2026-01-02T00:00:00Z")
+	assertJSONNumber(t, got, "data_points_seen", 2)
+	assertJSONNumber(t, got, "data_points_new", 2)
+	assertJSONNumber(t, got, "data_points_updated", 0)
+	if len(*requests) != 2 {
+		t.Fatalf("request count = %d, want 2", len(*requests))
+	}
+	if (*requests)[0].endpointName != "dataTypes.steps.list" || (*requests)[0].dataType != "steps" {
+		t.Fatalf("request target = (%q, %q), want steps list", (*requests)[0].endpointName, (*requests)[0].dataType)
+	}
+	if strings.Contains((*requests)[0].url, "source") {
+		t.Fatalf("sync URL unexpectedly includes source filtering: %s", (*requests)[0].url)
+	}
+	if pageToken := mustURLQuery(t, (*requests)[1].url).Get("pageToken"); pageToken != "page-2" {
+		t.Fatalf("second pageToken = %q, want page-2", pageToken)
+	}
+	assertArchivedStepDataPoint(t, archivePath)
+	assertArchiveTableCount(t, archivePath, "data_points", 2)
+	assertArchiveTableCount(t, archivePath, "rollups", 0)
+	assertArchiveTableCount(t, archivePath, "data_point_revisions", 0)
+	assertSyncRun(t, archivePath, 1, "sync_completed", 2, 2, 0, "")
+
+	requests = installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+		"":       firstPage,
+		"page-2": secondPage,
+	})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--from", "2026-01-01",
+		"--plain",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("second sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	wantPlain := "status: sync_completed\nsync_run_id: 2\nconnection_id: googlehealth:111111256096816351\nprovider_name: googlehealth\ndata_types: steps\nfrom: 2026-01-01\nto: 2026-01-02T00:00:00Z\nendpoint_family: list\ndata_points_seen: 2\ndata_points_new: 0\ndata_points_updated: 0\nmessage: Sync Run archived steps Data Points\n"
+	if stdout.String() != wantPlain {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), wantPlain)
+	}
+	if len(*requests) != 2 {
+		t.Fatalf("second request count = %d, want 2", len(*requests))
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 2)
+	assertArchiveTableCount(t, archivePath, "data_point_revisions", 0)
+	assertSyncRun(t, archivePath, 2, "sync_completed", 2, 0, 0, "")
+
+	semanticallySameFirstPage := `{
+		"nextPageToken": "page-2",
+		"dataPoints": [{
+			"steps": {
+				"count": "512",
+				"interval": {
+					"civilEndTime": {"time": {"minutes": 15, "hours": 8}, "date": {"day": 1, "month": 1, "year": 2026}},
+					"civilStartTime": {"time": {"hours": 8}, "date": {"day": 1, "month": 1, "year": 2026}},
+					"endUtcOffset": "3600s",
+					"endTime": "2026-01-01T08:15:00+01:00",
+					"startUtcOffset": "3600s",
+					"startTime": "2026-01-01T08:00:00+01:00"
+				}
+			},
+			"dataSource": {"device": {"model": "Pixel Watch", "manufacturer": "Google"}, "platform": "FITBIT"},
+			"name": "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a"
+		}]
+	}`
+	installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+		"":       semanticallySameFirstPage,
+		"page-2": secondPage,
+	})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--from", "2026-01-01",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("semantic sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("semantic stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 2)
+	assertJSONNumber(t, got, "data_points_new", 0)
+	assertJSONNumber(t, got, "data_points_updated", 0)
+	assertArchiveTableCount(t, archivePath, "data_points", 2)
+	assertArchiveTableCount(t, archivePath, "data_point_revisions", 0)
+	assertSyncRun(t, archivePath, 3, "sync_completed", 2, 0, 0, "")
+
+	correctedFirstPage := strings.Replace(firstPage, `"count": "512"`, `"count": "999"`, 1)
+	correctedFirstPage = strings.Replace(correctedFirstPage, `"startTime": "2026-01-01T08:00:00+01:00"`, `"startTime": "2026-01-01T08:01:00+01:00"`, 1)
+	correctedFirstPage = strings.Replace(correctedFirstPage, `"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}, "time": {"hours": 8}}`, `"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}, "time": {"hours": 8, "minutes": 1}}`, 1)
+	installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+		"":       correctedFirstPage,
+		"page-2": secondPage,
+	})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--from", "2026-01-01",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("corrected sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("corrected stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 2)
+	assertJSONNumber(t, got, "data_points_new", 0)
+	assertJSONNumber(t, got, "data_points_updated", 1)
+	assertArchiveTableCount(t, archivePath, "data_points", 2)
+	assertArchiveTableCount(t, archivePath, "data_point_revisions", 1)
+	assertSyncRun(t, archivePath, 4, "sync_completed", 2, 0, 1, "")
+	assertCorrectedStepRevision(t, archivePath)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestSyncProviderFailureRecordsFailedRun(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	originalFetchRawProvider := fetchRawProvider
+	fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		if accessToken != "connect-access-secret" {
+			t.Fatalf("sync access token = %q, want stored token", accessToken)
+		}
+		return nil, errors.New("Google Health raw request failed with HTTP 503")
+	}
+	t.Cleanup(func() { fetchRawProvider = originalFetchRawProvider })
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "steps",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("sync exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "sync_failed")
+	assertJSONNumber(t, got, "sync_run_id", 1)
+	message := got["message"].(string)
+	if !strings.Contains(message, "HTTP 503") {
+		t.Fatalf("message = %q, want provider status", message)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 0)
+	assertSyncRun(t, archivePath, 1, "sync_failed", 0, 0, 0, "HTTP 503")
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestSyncRefusesDifferentProviderIdentityBeforeArchiving(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	installIdentityFetchFake(t, "connect-access-secret", googleIdentity{
+		healthUserID:       "222222222222222222",
+		legacyFitbitUserID: "DIFFERENT",
+		rawJSON:            `{"healthUserId":"222222222222222222","legacyUserId":"DIFFERENT"}`,
+	})
+	originalFetchRawProvider := fetchRawProvider
+	fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		t.Fatal("sync provider fetch should not run after identity mismatch")
+		return nil, nil
+	}
+	t.Cleanup(func() { fetchRawProvider = originalFetchRawProvider })
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--from", "2026-01-01",
+		"--json",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("sync exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "sync_failed")
+	assertJSONNumber(t, got, "sync_run_id", 1)
+	if message := got["message"].(string); !strings.Contains(message, "different Google Identity") {
+		t.Fatalf("message = %q, want identity mismatch", message)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 0)
+	assertSyncRun(t, archivePath, 1, "sync_failed", 0, 0, 0, "different Google Identity")
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestSyncReportsFailedWhenCompletionRecordFails(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+		"": `{
+			"dataPoints": [{
+				"name": "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a",
+				"dataSource": {"platform": "FITBIT"},
+				"steps": {
+					"interval": {
+						"startTime": "2026-01-01T08:00:00Z",
+						"endTime": "2026-01-01T08:15:00Z"
+					},
+					"count": "512"
+				}
+			}]
+		}`,
+	})
+	originalFinishSyncRunRecord := finishSyncRunRecord
+	finishSyncRunRecord = func(db *sql.DB, syncRunID int64, status string, seen, newCount, updated int, finishedAt, errorSummary string) error {
+		if status == "sync_completed" {
+			return errors.New("archive finalization failed")
+		}
+		return originalFinishSyncRunRecord(db, syncRunID, status, seen, newCount, updated, finishedAt, errorSummary)
+	}
+	t.Cleanup(func() { finishSyncRunRecord = originalFinishSyncRunRecord })
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--from", "2026-01-01",
+		"--json",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("sync exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "sync_failed")
+	assertJSONNumber(t, got, "sync_run_id", 1)
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	if message := got["message"].(string); !strings.Contains(message, "archive finalization failed") {
+		t.Fatalf("message = %q, want finalization error", message)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 1)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestSyncFailsBeforeProviderWhenScopeMissing(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	setConnectionTokenScopes(t, archivePath, []string{googleHealthProfileReadonlyScope})
+	originalFetchRawProvider := fetchRawProvider
+	fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		t.Fatal("sync provider fetch should not run with missing scope")
+		return nil, nil
+	}
+	t.Cleanup(func() { fetchRawProvider = originalFetchRawProvider })
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--from", "2026-01-01",
+		"--json",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("sync exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), googleHealthActivityReadonlyScope) || !strings.Contains(stdout.String(), "connect") {
+		t.Fatalf("stdout = %q, want missing scope reconnect hint", stdout.String())
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 0)
+	assertSyncRun(t, archivePath, 1, "sync_failed", 0, 0, 0, googleHealthActivityReadonlyScope)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestRawEndpointIdentityPrintsProviderJSONWithoutArchiving(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -3979,6 +4413,32 @@ func installRawFetchFake(t *testing.T, wantAccessToken string, response func(raw
 	})
 }
 
+func installStepSyncFetchFake(t *testing.T, wantAccessToken string, pages map[string]string) *[]rawProviderRequest {
+	t.Helper()
+
+	originalFetchRawProvider := fetchRawProvider
+	var requests []rawProviderRequest
+	fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		if accessToken != wantAccessToken {
+			t.Fatalf("sync access token = %q, want stored token", accessToken)
+		}
+		if request.endpointName != "dataTypes.steps.list" || request.dataType != "steps" {
+			t.Fatalf("sync request = (%q, %q), want steps list", request.endpointName, request.dataType)
+		}
+		requests = append(requests, request)
+		pageToken := mustURLQuery(t, request.url).Get("pageToken")
+		body, ok := pages[pageToken]
+		if !ok {
+			t.Fatalf("no fake page for pageToken %q", pageToken)
+		}
+		return []byte(body), nil
+	}
+	t.Cleanup(func() {
+		fetchRawProvider = originalFetchRawProvider
+	})
+	return &requests
+}
+
 func initializeFileCredentialSetup(t *testing.T, tempDir string) (string, string, string) {
 	t.Helper()
 
@@ -4248,6 +4708,168 @@ func assertJSONString(t *testing.T, got map[string]any, key, want string) {
 	}
 	if value != want {
 		t.Fatalf("%s = %q, want %q", key, value, want)
+	}
+}
+
+func assertJSONNumber(t *testing.T, got map[string]any, key string, want float64) {
+	t.Helper()
+
+	value, ok := got[key].(float64)
+	if !ok {
+		t.Fatalf("%s = %T(%v), want number %v", key, got[key], got[key], want)
+	}
+	if value != want {
+		t.Fatalf("%s = %v, want %v", key, value, want)
+	}
+}
+
+func mustURLQuery(t *testing.T, rawURL string) url.Values {
+	t.Helper()
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parse URL %q: %v", rawURL, err)
+	}
+	return parsed.Query()
+}
+
+func assertArchivedStepDataPoint(t *testing.T, archivePath string) {
+	t.Helper()
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	var dataType, resourceName, recordKind, startUTC, endUTC, startCivil, endCivil, civilDate, timezoneMetadata, dataSourceJSON, rawJSON string
+	if err := db.QueryRow(`SELECT
+		data_type,
+		upstream_resource_name,
+		record_kind,
+		start_time_utc,
+		end_time_utc,
+		start_civil_time,
+		end_civil_time,
+		provider_civil_date,
+		timezone_metadata,
+		data_source_json,
+		raw_json
+	FROM data_points
+	WHERE upstream_resource_name = ?
+	ORDER BY id`, "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a").Scan(
+		&dataType,
+		&resourceName,
+		&recordKind,
+		&startUTC,
+		&endUTC,
+		&startCivil,
+		&endCivil,
+		&civilDate,
+		&timezoneMetadata,
+		&dataSourceJSON,
+		&rawJSON,
+	); err != nil {
+		t.Fatalf("query archived step Data Point: %v", err)
+	}
+	if dataType != "steps" || resourceName != "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a" || recordKind != "interval" {
+		t.Fatalf("Data Point identity = (%q, %q, %q), want steps interval resource", dataType, resourceName, recordKind)
+	}
+	if startUTC != "2026-01-01T07:00:00Z" || endUTC != "2026-01-01T07:15:00Z" {
+		t.Fatalf("physical time = (%q, %q), want UTC interval", startUTC, endUTC)
+	}
+	if startCivil != "2026-01-01T08:00:00" || endCivil != "2026-01-01T08:15:00" || civilDate != "2026-01-01" {
+		t.Fatalf("civil time = (%q, %q, %q), want provider civil time", startCivil, endCivil, civilDate)
+	}
+	if timezoneMetadata != `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}` {
+		t.Fatalf("timezone_metadata = %q, want offsets", timezoneMetadata)
+	}
+	if dataSourceJSON != `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}` {
+		t.Fatalf("data_source_json = %q, want compact Data Source", dataSourceJSON)
+	}
+	if !strings.Contains(rawJSON, `"count":"512"`) {
+		t.Fatalf("raw_json = %s, want original steps count", rawJSON)
+	}
+}
+
+func assertSyncRun(t *testing.T, archivePath string, id int64, wantStatus string, wantSeen, wantNew, wantUpdated int, wantErrorContains string) {
+	t.Helper()
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	var status, dataTypesJSON, rangeJSON, endpointFamily string
+	var seen, newCount, updated int
+	var errorSummary sql.NullString
+	if err := db.QueryRow(`SELECT
+		status,
+		data_types_requested,
+		range_requested_json,
+		endpoint_family,
+		seen_count,
+		new_count,
+		updated_count,
+		error_summary
+	FROM sync_runs WHERE id = ?`, id).Scan(
+		&status,
+		&dataTypesJSON,
+		&rangeJSON,
+		&endpointFamily,
+		&seen,
+		&newCount,
+		&updated,
+		&errorSummary,
+	); err != nil {
+		t.Fatalf("query Sync Run %d: %v", id, err)
+	}
+	if status != wantStatus || endpointFamily != "list" {
+		t.Fatalf("Sync Run status/family = (%q, %q), want (%q, list)", status, endpointFamily, wantStatus)
+	}
+	if dataTypesJSON != `["steps"]` {
+		t.Fatalf("data_types_requested = %q, want steps", dataTypesJSON)
+	}
+	if !strings.Contains(rangeJSON, `"from":"2026-01-01"`) {
+		t.Fatalf("range_requested_json = %q, want from", rangeJSON)
+	}
+	if seen != wantSeen || newCount != wantNew || updated != wantUpdated {
+		t.Fatalf("Sync Run counts = (%d, %d, %d), want (%d, %d, %d)", seen, newCount, updated, wantSeen, wantNew, wantUpdated)
+	}
+	if wantErrorContains == "" {
+		if errorSummary.Valid {
+			t.Fatalf("error_summary = %q, want NULL", errorSummary.String)
+		}
+		return
+	}
+	if !errorSummary.Valid || !strings.Contains(errorSummary.String, wantErrorContains) {
+		t.Fatalf("error_summary = %v(%q), want %q", errorSummary.Valid, errorSummary.String, wantErrorContains)
+	}
+}
+
+func assertCorrectedStepRevision(t *testing.T, archivePath string) {
+	t.Helper()
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	var rawJSON, startUTC, startCivil string
+	if err := db.QueryRow(`SELECT raw_json, start_time_utc, start_civil_time FROM data_points WHERE upstream_resource_name = ?`, "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a").Scan(&rawJSON, &startUTC, &startCivil); err != nil {
+		t.Fatalf("query corrected Data Point: %v", err)
+	}
+	if !strings.Contains(rawJSON, `"count":"999"`) {
+		t.Fatalf("canonical raw_json = %s, want corrected count", rawJSON)
+	}
+	if startUTC != "2026-01-01T07:01:00Z" || startCivil != "2026-01-01T08:01:00" {
+		t.Fatalf("corrected time = (%q, %q), want updated metadata", startUTC, startCivil)
+	}
+	var previousRawJSON, reason string
+	if err := db.QueryRow(`SELECT previous_raw_json, replacement_reason FROM data_point_revisions`).Scan(&previousRawJSON, &reason); err != nil {
+		t.Fatalf("query Data Point Revision: %v", err)
+	}
+	if !strings.Contains(previousRawJSON, `"count":"512"`) || reason != "provider_correction" {
+		t.Fatalf("revision = (%s, %q), want previous count and reason", previousRawJSON, reason)
 	}
 }
 

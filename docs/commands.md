@@ -60,13 +60,14 @@ archive the raw Profile Snapshot with `fetched_at`, and print stable summary
 fields including `snapshot_id`. Profile Snapshots stay separate from Data Points
 and Rollups.
 
-`sync`: fetch Data Points or Rollups for selected or configured Data Types and
-date ranges. By default, sync raw Data Points from all Data Sources exposed by
-the Provider. Fetch Rollups only when `--rollup` is provided. Sync is idempotent
-and reports seen, new, and updated counts. If required scopes are missing, fail
-with a clear re-connect instruction instead of starting browser consent. Require
-`--from`; `--to` defaults to now when omitted. Date-only inputs are civil dates
-in the user's current local timezone unless a timezone is supplied.
+`sync`: currently archives raw `steps` Data Points from the provider list path.
+By default, sync raw Data Points from all Data Sources exposed by the Provider.
+Sync is idempotent and reports seen, new, and updated counts. If required scopes
+are missing, fail with a clear re-connect instruction instead of starting
+browser consent. Require `--from`; `--to` defaults to now when omitted.
+Preserve physical UTC interval times, provider civil time metadata, Data Source
+JSON, and raw provider JSON. Corrected upstream raw JSON updates the canonical
+Data Point and stores the previous raw JSON as a Data Point Revision.
 
 `status`: show archive counts, known Data Types, newest archived timestamps,
 latest successful Sync Run, and latest failed Sync Run with a short error
@@ -123,24 +124,36 @@ gohealthcli raw data-type steps --from 2026-01-01
 Plain mode:
 
 ```text
+status: sync_completed
+sync_run_id: 1
 connection_id: googlehealth:111111256096816351
-data_types: 4
+provider_name: googlehealth
+data_types: steps
+from: 2026-01-01
+to: 2026-01-02T00:00:00Z
+endpoint_family: list
 data_points_seen: 12043
 data_points_new: 11880
 data_points_updated: 12
-rollups_seen: 144
+message: Sync Run archived steps Data Points
 ```
 
 JSON mode:
 
 ```json
 {
+  "status": "sync_completed",
+  "sync_run_id": 1,
   "connection_id": "googlehealth:111111256096816351",
-  "data_types": 4,
+  "provider_name": "googlehealth",
+  "data_types": ["steps"],
+  "from": "2026-01-01",
+  "to": "2026-01-02T00:00:00Z",
+  "endpoint_family": "list",
   "data_points_seen": 12043,
   "data_points_new": 11880,
   "data_points_updated": 12,
-  "rollups_seen": 144
+  "message": "Sync Run archived steps Data Points"
 }
 ```
 
