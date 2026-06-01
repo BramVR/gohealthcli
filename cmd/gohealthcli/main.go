@@ -27,7 +27,7 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 2
+const currentSchemaVersion = 3
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
@@ -116,6 +116,7 @@ type syncResult struct {
 	From              string   `json:"from,omitempty"`
 	To                string   `json:"to,omitempty"`
 	EndpointFamily    string   `json:"endpoint_family,omitempty"`
+	SourceFamily      string   `json:"source_family,omitempty"`
 	DataPointsSeen    int      `json:"data_points_seen"`
 	DataPointsNew     int      `json:"data_points_new"`
 	DataPointsUpdated int      `json:"data_points_updated"`
@@ -134,12 +135,13 @@ type archivedConnection struct {
 }
 
 type rawProviderRequest struct {
-	endpointName   string
-	dataType       string
-	method         string
-	url            string
-	body           []byte
-	requiredScopes []string
+	endpointName       string
+	dataType           string
+	method             string
+	url                string
+	body               []byte
+	requiredScopes     []string
+	sourceFamilyFilter string
 }
 
 type rawCommandOptions struct {
@@ -153,12 +155,13 @@ type rawCommandOptions struct {
 }
 
 type syncCommandOptions struct {
-	configPath  string
-	archivePath string
-	dataTypes   []string
-	from        string
-	to          string
-	rollup      string
+	configPath   string
+	archivePath  string
+	dataTypes    []string
+	from         string
+	to           string
+	rollup       string
+	sourceFamily string
 }
 
 type oauthClientSource struct {
@@ -259,6 +262,7 @@ type archivedDataPoint struct {
 	providerCivilDate    string
 	timezoneMetadataJSON string
 	dataSourceJSON       string
+	sourceFamilyFilter   string
 	rawJSON              string
 }
 
@@ -685,6 +689,7 @@ func runSync(args []string, configPath, archivePath string, mode outputMode, std
 	syncFrom := flags.String("from", "", "inclusive sync range start")
 	syncTo := flags.String("to", "", "exclusive sync range end")
 	syncRollup := flags.String("rollup", "", "rollup kind to sync; supported: daily")
+	syncSourceFamily := flags.String("source-family", "", "source family filter; supported: wearable")
 	flags.Bool("no-input", false, "never prompt, never wait for browser input")
 
 	if err := flags.Parse(args); err != nil {
@@ -700,12 +705,13 @@ func runSync(args []string, configPath, archivePath string, mode outputMode, std
 
 	mode = outputMode{json: *syncJSONOutput, plain: *syncPlainOutput}
 	result, err := syncSetup(syncCommandOptions{
-		configPath:  *syncConfigPath,
-		archivePath: *syncArchivePath,
-		dataTypes:   parseCommaList(*syncTypes),
-		from:        *syncFrom,
-		to:          *syncTo,
-		rollup:      *syncRollup,
+		configPath:   *syncConfigPath,
+		archivePath:  *syncArchivePath,
+		dataTypes:    parseCommaList(*syncTypes),
+		from:         *syncFrom,
+		to:           *syncTo,
+		rollup:       *syncRollup,
+		sourceFamily: *syncSourceFamily,
 	})
 	if err != nil {
 		if result.Status == "" {
@@ -968,6 +974,12 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 	if options.rollup != "" && options.rollup != "daily" {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync --rollup currently supports only daily")
 	}
+	if options.sourceFamily != "" && options.sourceFamily != "wearable" {
+		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync --source-family currently supports only wearable")
+	}
+	if options.rollup != "" && options.sourceFamily != "" {
+		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync --source-family cannot be combined with --rollup")
+	}
 	if options.from == "" {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync requires --from")
 	}
@@ -1005,6 +1017,8 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 	endpointFamily := "list"
 	if options.rollup == "daily" {
 		endpointFamily = "dailyRollUp"
+	} else if options.sourceFamily != "" {
+		endpointFamily = "reconcile"
 	}
 	result := syncResult{
 		ConnectionID:   connection.id,
@@ -1013,9 +1027,10 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 		From:           options.from,
 		To:             options.to,
 		EndpointFamily: endpointFamily,
+		SourceFamily:   options.sourceFamily,
 	}
 	startedAt := currentTime().UTC().Format(time.RFC3339)
-	syncRunID, err := insertSyncRun(db, connection, options.dataTypes, options.from, options.to, result.EndpointFamily, startedAt)
+	syncRunID, err := insertSyncRun(db, connection, options.dataTypes, options.from, options.to, result.EndpointFamily, result.SourceFamily, startedAt)
 	if err != nil {
 		return result, err
 	}
@@ -1102,7 +1117,7 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 	} else {
 		seenPageTokens := map[string]struct{}{}
 		for pageToken := ""; ; {
-			request, err := buildGoogleHealthDataTypeListRawRequest("steps", options.from, options.to, 0, pageToken)
+			request, err := buildGoogleHealthSyncDataPointRawRequest("steps", options.from, options.to, options.sourceFamily, 0, pageToken)
 			if err != nil {
 				return fail(err)
 			}
@@ -1118,7 +1133,7 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 				return fail(err)
 			}
 			for _, rawPoint := range page.dataPoints {
-				point, err := parseGoogleHealthStepsDataPoint(connection, rawPoint)
+				point, err := parseGoogleHealthStepsDataPoint(connection, rawPoint, options.sourceFamily)
 				if err != nil {
 					return fail(err)
 				}
@@ -1138,7 +1153,7 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 				break
 			}
 			if _, ok := seenPageTokens[page.nextPageToken]; ok {
-				return fail(errors.New("Google Health steps list returned a repeated page token"))
+				return fail(fmt.Errorf("Google Health steps %s returned a repeated page token", endpointFamily))
 			}
 			seenPageTokens[page.nextPageToken] = struct{}{}
 			pageToken = page.nextPageToken
@@ -1153,6 +1168,8 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 	result.Status = "sync_completed"
 	if options.rollup == "daily" {
 		result.Message = "Sync Run archived steps daily Rollups"
+	} else if options.sourceFamily != "" {
+		result.Message = "Sync Run archived steps Data Points with source-family filter"
 	} else {
 		result.Message = "Sync Run archived steps Data Points"
 	}
@@ -2569,6 +2586,60 @@ func buildGoogleHealthDataTypeListRawRequest(dataType, from, to string, pageSize
 	}, nil
 }
 
+func buildGoogleHealthSyncDataPointRawRequest(dataType, from, to, sourceFamily string, pageSize int64, pageToken string) (rawProviderRequest, error) {
+	if sourceFamily == "" {
+		return buildGoogleHealthDataTypeListRawRequest(dataType, from, to, pageSize, pageToken)
+	}
+	return buildGoogleHealthDataTypeReconcileRawRequest(dataType, from, to, sourceFamily, pageSize, pageToken)
+}
+
+func buildGoogleHealthDataTypeReconcileRawRequest(dataType, from, to, sourceFamily string, pageSize int64, pageToken string) (rawProviderRequest, error) {
+	if err := validateRawGoogleHealthDataType(dataType); err != nil {
+		return rawProviderRequest{}, err
+	}
+	if from == "" {
+		return rawProviderRequest{}, errors.New("Data Type reconcile raw calls require --from")
+	}
+	dataSourceFamily, err := googleHealthDataSourceFamilyName(sourceFamily)
+	if err != nil {
+		return rawProviderRequest{}, err
+	}
+	query := url.Values{}
+	filter, err := googleHealthDataTypeListFilter(dataType, from, to)
+	if err != nil {
+		return rawProviderRequest{}, err
+	}
+	query.Set("filter", filter)
+	query.Set("dataSourceFamily", dataSourceFamily)
+	if pageSize > 0 {
+		query.Set("pageSize", strconv.FormatInt(pageSize, 10))
+	}
+	if pageToken != "" {
+		query.Set("pageToken", pageToken)
+	}
+	requestURL := googleHealthBaseURL + "/users/me/dataTypes/" + url.PathEscape(dataType) + "/dataPoints:reconcile"
+	if encoded := query.Encode(); encoded != "" {
+		requestURL += "?" + encoded
+	}
+	return rawProviderRequest{
+		endpointName:       "dataTypes." + dataType + ".reconcile",
+		dataType:           dataType,
+		method:             http.MethodGet,
+		url:                requestURL,
+		requiredScopes:     googleHealthScopesForDataType(dataType),
+		sourceFamilyFilter: sourceFamily,
+	}, nil
+}
+
+func googleHealthDataSourceFamilyName(sourceFamily string) (string, error) {
+	switch sourceFamily {
+	case "wearable":
+		return "users/me/dataSourceFamilies/google-wearables", nil
+	default:
+		return "", fmt.Errorf("unsupported source-family %q", sourceFamily)
+	}
+}
+
 func buildGoogleHealthDailyRollupRawRequest(dataType, from, to string, pageSize int64, pageToken string) (rawProviderRequest, error) {
 	if err := validateRawGoogleHealthDataType(dataType); err != nil {
 		return rawProviderRequest{}, err
@@ -2823,15 +2894,16 @@ func parseGoogleHealthRollupList(body []byte) (googleHealthRollupList, error) {
 	return googleHealthRollupList{rollups: raw.Rollups, nextPageToken: raw.NextPageToken}, nil
 }
 
-func parseGoogleHealthStepsDataPoint(connection archivedConnection, rawPoint json.RawMessage) (archivedDataPoint, error) {
+func parseGoogleHealthStepsDataPoint(connection archivedConnection, rawPoint json.RawMessage, sourceFamilyFilter string) (archivedDataPoint, error) {
 	canonicalRaw, err := compactJSONString(rawPoint)
 	if err != nil {
 		return archivedDataPoint{}, errors.New("Google Health steps Data Point is not valid JSON")
 	}
 	var raw struct {
-		Name       string          `json:"name"`
-		DataSource json.RawMessage `json:"dataSource"`
-		Steps      struct {
+		Name          string          `json:"name"`
+		DataPointName string          `json:"dataPointName"`
+		DataSource    json.RawMessage `json:"dataSource"`
+		Steps         struct {
 			Interval struct {
 				StartTime      string          `json:"startTime"`
 				StartUTCOffset string          `json:"startUtcOffset"`
@@ -2875,11 +2947,15 @@ func parseGoogleHealthStepsDataPoint(connection archivedConnection, rawPoint jso
 	if err != nil {
 		return archivedDataPoint{}, err
 	}
+	upstreamResourceName := raw.Name
+	if upstreamResourceName == "" {
+		upstreamResourceName = raw.DataPointName
+	}
 	return archivedDataPoint{
 		providerName:         connection.providerName,
 		connectionID:         connection.id,
 		dataType:             "steps",
-		upstreamResourceName: raw.Name,
+		upstreamResourceName: upstreamResourceName,
 		recordKind:           "interval",
 		startTimeUTC:         startTimeUTC,
 		endTimeUTC:           endTimeUTC,
@@ -2888,6 +2964,7 @@ func parseGoogleHealthStepsDataPoint(connection archivedConnection, rawPoint jso
 		providerCivilDate:    providerCivilDate,
 		timezoneMetadataJSON: timezoneMetadata,
 		dataSourceJSON:       dataSourceJSON,
+		sourceFamilyFilter:   sourceFamilyFilter,
 		rawJSON:              canonicalRaw,
 	}, nil
 }
@@ -3384,7 +3461,7 @@ func insertProfileSnapshot(db *sql.DB, connection archivedConnection, rawJSON, f
 	return result.LastInsertId()
 }
 
-func insertSyncRun(db *sql.DB, connection archivedConnection, dataTypes []string, from, to, endpointFamily, startedAt string) (int64, error) {
+func insertSyncRun(db *sql.DB, connection archivedConnection, dataTypes []string, from, to, endpointFamily, sourceFamilyFilter, startedAt string) (int64, error) {
 	dataTypesJSON, err := json.Marshal(dataTypes)
 	if err != nil {
 		return 0, err
@@ -3399,14 +3476,16 @@ func insertSyncRun(db *sql.DB, connection archivedConnection, dataTypes []string
 		data_types_requested,
 		range_requested_json,
 		endpoint_family,
+		source_family_filter,
 		status,
 		started_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		connection.providerName,
 		connection.id,
 		string(dataTypesJSON),
 		string(rangeJSON),
 		endpointFamily,
+		nullString(sourceFamilyFilter),
 		"sync_running",
 		startedAt,
 	)
@@ -3447,10 +3526,11 @@ func upsertDataPoint(db *sql.DB, point archivedDataPoint, now string) (string, e
 			provider_civil_date,
 			timezone_metadata,
 			data_source_json,
+			source_family_filter,
 			raw_json,
 			inserted_at,
 			updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			point.providerName,
 			point.connectionID,
 			point.dataType,
@@ -3463,6 +3543,7 @@ func upsertDataPoint(db *sql.DB, point archivedDataPoint, now string) (string, e
 			nullString(point.providerCivilDate),
 			nullString(point.timezoneMetadataJSON),
 			point.dataSourceJSON,
+			nullString(point.sourceFamilyFilter),
 			point.rawJSON,
 			now,
 			now,
@@ -3497,6 +3578,7 @@ func upsertDataPoint(db *sql.DB, point archivedDataPoint, now string) (string, e
 		provider_civil_date = ?,
 		timezone_metadata = ?,
 		data_source_json = ?,
+		source_family_filter = ?,
 		raw_json = ?,
 		updated_at = ?
 	WHERE id = ?`,
@@ -3508,6 +3590,7 @@ func upsertDataPoint(db *sql.DB, point archivedDataPoint, now string) (string, e
 		nullString(point.providerCivilDate),
 		nullString(point.timezoneMetadataJSON),
 		point.dataSourceJSON,
+		nullString(point.sourceFamilyFilter),
 		point.rawJSON,
 		now,
 		existingID,
@@ -3628,11 +3711,13 @@ func findExistingDataPoint(db *sql.DB, point archivedDataPoint) (int64, string, 
 			AND connection_id = ?
 			AND data_type = ?
 			AND upstream_resource_name = ?
+			AND IFNULL(source_family_filter, '') = ?
 		ORDER BY id LIMIT 2`,
 			point.providerName,
 			point.connectionID,
 			point.dataType,
 			point.upstreamResourceName,
+			point.sourceFamilyFilter,
 		)
 	}
 	return findExistingDataPointByQuery(db, `SELECT id, raw_json FROM data_points
@@ -3648,6 +3733,7 @@ func findExistingDataPoint(db *sql.DB, point archivedDataPoint) (int64, string, 
 		AND IFNULL(provider_civil_date, '') = ?
 		AND IFNULL(timezone_metadata, '') = ?
 		AND data_source_json = ?
+		AND IFNULL(source_family_filter, '') = ?
 	ORDER BY id LIMIT 2`,
 		point.providerName,
 		point.connectionID,
@@ -3661,6 +3747,7 @@ func findExistingDataPoint(db *sql.DB, point archivedDataPoint) (int64, string, 
 		point.providerCivilDate,
 		point.timezoneMetadataJSON,
 		point.dataSourceJSON,
+		point.sourceFamilyFilter,
 	)
 }
 
@@ -4134,7 +4221,10 @@ func applyMigrations(db *sql.DB) error {
 	if err := applyGoogleIdentityArchiveMigration(tx, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 2`); err != nil {
+	if err := applySourceFamilyArchiveMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 3`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -4171,17 +4261,22 @@ func applyPendingMigrations(db *sql.DB) error {
 	switch userVersion {
 	case currentSchemaVersion:
 		return nil
-	case 1:
+	case 1, 2:
 		tx, err := db.Begin()
 		if err != nil {
 			return err
 		}
 		defer tx.Rollback()
 		now := time.Now().UTC().Format(time.RFC3339)
-		if err := applyGoogleIdentityArchiveMigration(tx, now); err != nil {
+		if userVersion == 1 {
+			if err := applyGoogleIdentityArchiveMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if err := applySourceFamilyArchiveMigration(tx, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`PRAGMA user_version = 2`); err != nil {
+		if _, err := tx.Exec(`PRAGMA user_version = 3`); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -4198,10 +4293,24 @@ func applyGoogleIdentityArchiveMigration(tx *sql.Tx, appliedAt string) error {
 	return err
 }
 
+func applySourceFamilyArchiveMigration(tx *sql.Tx, appliedAt string) error {
+	for _, statement := range []string{
+		`ALTER TABLE data_points ADD COLUMN source_family_filter TEXT`,
+		`ALTER TABLE sync_runs ADD COLUMN source_family_filter TEXT`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (3, 'add_source_family_filter', ?)`, appliedAt)
+	return err
+}
+
 func expectedSchemaMigrations() map[int]string {
 	return map[int]string{
 		1: "initial_archive_schema",
 		2: "add_google_identity_json",
+		3: "add_source_family_filter",
 	}
 }
 
@@ -4662,6 +4771,11 @@ func writeSyncResult(result syncResult, mode outputMode, stdout io.Writer) error
 				return err
 			}
 		}
+		if result.SourceFamily != "" {
+			if _, err := fmt.Fprintf(stdout, "source_family: %s\n", result.SourceFamily); err != nil {
+				return err
+			}
+		}
 		if _, err := fmt.Fprintf(stdout, "data_points_seen: %d\n", result.DataPointsSeen); err != nil {
 			return err
 		}
@@ -4710,6 +4824,11 @@ func writeSyncResult(result syncResult, mode outputMode, stdout io.Writer) error
 	}
 	if result.From != "" || result.To != "" {
 		if _, err := fmt.Fprintf(stdout, "Range: %s to %s\n", result.From, result.To); err != nil {
+			return err
+		}
+	}
+	if result.SourceFamily != "" {
+		if _, err := fmt.Fprintf(stdout, "Source family: %s\n", result.SourceFamily); err != nil {
 			return err
 		}
 	}
