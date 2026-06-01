@@ -1368,11 +1368,22 @@ func statusSetup(archivePath string) (statusResult, error) {
 }
 
 func countArchiveRows(db *sql.DB, table string) (int, error) {
+	query, ok := archiveCountQueryByTable[table]
+	if !ok {
+		return 0, fmt.Errorf("unsupported Health Archive table: %s", table)
+	}
 	var count int
-	if err := db.QueryRow(`SELECT count(*) FROM ` + table).Scan(&count); err != nil {
+	if err := db.QueryRow(query).Scan(&count); err != nil {
 		return 0, err
 	}
 	return count, nil
+}
+
+var archiveCountQueryByTable = map[string]string{
+	"data_points":       `SELECT count(*) FROM data_points`,
+	"rollups":           `SELECT count(*) FROM rollups`,
+	"profile_snapshots": `SELECT count(*) FROM profile_snapshots`,
+	"sync_runs":         `SELECT count(*) FROM sync_runs`,
 }
 
 func readStatusDataTypes(db *sql.DB) ([]statusDataType, error) {

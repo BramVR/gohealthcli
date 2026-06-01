@@ -2651,6 +2651,22 @@ func TestStatusReportsSchemaVersionOnArchiveValidationFailure(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestCountArchiveRowsRejectsUnknownTable(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open memory archive: %v", err)
+	}
+	defer db.Close()
+
+	_, err = countArchiveRows(db, "data_points; DROP TABLE data_points")
+	if err == nil {
+		t.Fatal("countArchiveRows error = nil, want unsupported table")
+	}
+	if !strings.Contains(err.Error(), "unsupported Health Archive table") {
+		t.Fatalf("countArchiveRows error = %v, want unsupported table", err)
+	}
+}
+
 func TestSyncRequiresFrom(t *testing.T) {
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
