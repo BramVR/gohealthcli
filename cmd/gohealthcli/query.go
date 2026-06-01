@@ -455,5 +455,10 @@ func queryPlainValue(value any) string {
 	if value == nil {
 		return "null"
 	}
-	return fmt.Sprint(value)
+	return strings.NewReplacer(
+		`\`, `\\`,
+		"\r", `\r`,
+		"\n", `\n`,
+		"\t", `\t`,
+	).Replace(fmt.Sprint(value))
 }

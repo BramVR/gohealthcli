@@ -91,6 +91,34 @@ func TestQueryPlainOutputIsStable(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestQueryPlainOutputEscapesControlCharacters(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"query",
+		"--config", configPath,
+		"--plain",
+		`SELECT 'a' || char(10) || 'b' || char(9) || '\c' AS note`,
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("query exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	want := `row.1.1: a\nb\t\\c` + "\n"
+	if !strings.Contains(stdout.String(), want) {
+		t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
+	}
+	if strings.Contains(stdout.String(), "row.1.1: a\nb") {
+		t.Fatalf("stdout contains an unescaped row newline:\n%s", stdout.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestQueryDefaultOutputIncludesRows(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
