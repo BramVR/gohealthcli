@@ -28,7 +28,11 @@ const setupMissingExitCode = 2
 const currentSchemaVersion = 2
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
+const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
+const googleHealthSleepReadonlyScope = "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
+const googleHealthBaseURL = "https://health.googleapis.com/v4"
 const googleHealthIdentityURL = "https://health.googleapis.com/v4/users/me/identity"
+const googleHealthRawResponseLimit = 10 << 20
 
 var defaultDataTypes = []string{
 	"steps",
@@ -94,6 +98,23 @@ type archivedConnection struct {
 	googleHealthUserID string
 	legacyFitbitUserID string
 	tokenMetadataJSON  string
+}
+
+type rawProviderRequest struct {
+	endpointName   string
+	dataType       string
+	url            string
+	requiredScopes []string
+}
+
+type rawCommandOptions struct {
+	configPath  string
+	archivePath string
+	from        string
+	to          string
+	pageSize    int64
+	pageToken   string
+	target      []string
 }
 
 type oauthClientSource struct {
@@ -162,6 +183,7 @@ type googleIdentity struct {
 
 var runOAuthFlow = runBrowserOAuthFlow
 var fetchIdentity = fetchGoogleIdentity
+var fetchRawProvider = fetchGoogleHealthRaw
 var currentTime = func() time.Time { return time.Now().UTC() }
 var currentOS = runtime.GOOS
 var runSecurityAddGenericPassword = runSecurityAddGenericPasswordCommand
@@ -213,6 +235,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runConnect(flags.Args()[1:], *configPath, *archivePath, *noInput, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	case "identity":
 		return runIdentity(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
+	case "raw":
+		return runRaw(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command: %s\n", flags.Arg(0))
 		return 1
@@ -484,6 +508,35 @@ func runIdentity(args []string, configPath, archivePath string, mode outputMode,
 	return 0
 }
 
+func runRaw(args []string, configPath, archivePath string, _ outputMode, stdout, stderr io.Writer) int {
+	options, err := parseRawCommandOptions(args, configPath, archivePath)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintln(stdout, "usage: gohealthcli raw endpoint getIdentity")
+			fmt.Fprintln(stdout, "usage: gohealthcli raw endpoint dataTypes.<data-type>.list --from YYYY-MM-DD [--to YYYY-MM-DD]")
+			fmt.Fprintln(stdout, "usage: gohealthcli raw data-type <data-type> --from YYYY-MM-DD [--to YYYY-MM-DD]")
+			return 0
+		}
+		fmt.Fprintf(stderr, "raw: %v\n", err)
+		return 1
+	}
+	request, err := buildGoogleHealthRawRequest(options.target, options.from, options.to, options.pageSize, options.pageToken)
+	if err != nil {
+		fmt.Fprintf(stderr, "raw: %v\n", err)
+		return 1
+	}
+	body, err := rawSetup(options.configPath, options.archivePath, request)
+	if err != nil {
+		fmt.Fprintf(stderr, "raw: %v\n", err)
+		return 1
+	}
+	if _, err := stdout.Write(body); err != nil {
+		fmt.Fprintf(stderr, "write output: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 func connectSetup(configPath, archivePath string, noInput bool) (connectResult, error) {
 	config, err := inspectFullConfig(configPath, archivePath)
 	if err != nil {
@@ -613,6 +666,167 @@ func identitySetup(configPath, archivePath string) (identityResult, error) {
 	}
 	result.Message = "Google Identity refreshed"
 	return result, nil
+}
+
+func rawSetup(configPath, archivePath string, request rawProviderRequest) ([]byte, error) {
+	config, err := inspectIdentityConfig(configPath, archivePath)
+	if err != nil {
+		return nil, fmt.Errorf("config check failed: %w", err)
+	}
+	if err := migrateArchiveIfNeeded(archivePath); err != nil {
+		return nil, fmt.Errorf("Health Archive migration failed: %w", err)
+	}
+	if _, err := inspectArchive(archivePath, false); err != nil {
+		return nil, fmt.Errorf("Health Archive check failed: %w", err)
+	}
+	db, err := openArchiveReadOnly(archivePath)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	connection, err := readCurrentConnection(db)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errors.New("no Connection found; run `gohealthcli connect` first")
+		}
+		return nil, err
+	}
+	if err := requireUsableConnectionAccessToken(connection.tokenMetadataJSON, currentTime()); err != nil {
+		return nil, err
+	}
+	if err := requireConnectionScopes(connection.tokenMetadataJSON, request.requiredScopes); err != nil {
+		return nil, err
+	}
+	accessToken, err := loadAccessTokenForConnection(config.credentialStore, connection, []string{configPath, archivePath})
+	if err != nil {
+		return nil, err
+	}
+	body, err := fetchRawProvider(request, accessToken)
+	if err != nil {
+		if strings.Contains(err.Error(), "HTTP 401") {
+			return nil, errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again")
+		}
+		return nil, err
+	}
+	return body, nil
+}
+
+func loadAccessTokenForConnection(config credentialStoreConfig, connection archivedConnection, protectedPaths []string) (string, error) {
+	if err := validateCredentialStoreRuntime(config, protectedPaths); err != nil {
+		return "", err
+	}
+	store, err := newCredentialStore(config)
+	if err != nil {
+		return "", err
+	}
+	tokenMaterial, err := store.Load(connection.id)
+	if err != nil {
+		return "", err
+	}
+	accessToken, ok := tokenMaterial["access_token"].(string)
+	if !ok || accessToken == "" {
+		return "", errors.New("Credential Store token material is missing access token; run `gohealthcli connect` again")
+	}
+	return accessToken, nil
+}
+
+func requireConnectionScopes(metadata string, requiredScopes []string) error {
+	if len(requiredScopes) == 0 {
+		return nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(metadata), &raw); err != nil {
+		return errors.New("Connection token metadata is not valid JSON; run `gohealthcli connect` again")
+	}
+	value, ok := raw["scopes"]
+	if !ok {
+		return errors.New("Connection token metadata is missing scopes; run `gohealthcli connect` again")
+	}
+	var grantedScopes []string
+	if err := json.Unmarshal(value, &grantedScopes); err != nil {
+		return errors.New("Connection token metadata scopes are invalid; run `gohealthcli connect` again")
+	}
+	granted := make(map[string]struct{}, len(grantedScopes))
+	for _, scope := range grantedScopes {
+		granted[scope] = struct{}{}
+	}
+	for _, requiredScope := range requiredScopes {
+		if _, ok := granted[requiredScope]; !ok {
+			return fmt.Errorf("Connection token is missing required Google Health scope %s; run `gohealthcli connect` again", requiredScope)
+		}
+	}
+	return nil
+}
+
+func parseRawCommandOptions(args []string, configPath, archivePath string) (rawCommandOptions, error) {
+	options := rawCommandOptions{configPath: configPath, archivePath: archivePath}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "-h" || arg == "--help":
+			return rawCommandOptions{}, flag.ErrHelp
+		case arg == "--json" || arg == "--plain" || arg == "--no-input":
+		case arg == "--config" || arg == "--db" || arg == "--from" || arg == "--to" || arg == "--page-size" || arg == "--page-token":
+			index++
+			if index >= len(args) {
+				return rawCommandOptions{}, fmt.Errorf("%s requires a value", arg)
+			}
+			if err := setRawCommandOption(&options, arg, args[index]); err != nil {
+				return rawCommandOptions{}, err
+			}
+		case strings.HasPrefix(arg, "--config="):
+			if err := setRawCommandOption(&options, "--config", strings.TrimPrefix(arg, "--config=")); err != nil {
+				return rawCommandOptions{}, err
+			}
+		case strings.HasPrefix(arg, "--db="):
+			if err := setRawCommandOption(&options, "--db", strings.TrimPrefix(arg, "--db=")); err != nil {
+				return rawCommandOptions{}, err
+			}
+		case strings.HasPrefix(arg, "--from="):
+			if err := setRawCommandOption(&options, "--from", strings.TrimPrefix(arg, "--from=")); err != nil {
+				return rawCommandOptions{}, err
+			}
+		case strings.HasPrefix(arg, "--to="):
+			if err := setRawCommandOption(&options, "--to", strings.TrimPrefix(arg, "--to=")); err != nil {
+				return rawCommandOptions{}, err
+			}
+		case strings.HasPrefix(arg, "--page-size="):
+			if err := setRawCommandOption(&options, "--page-size", strings.TrimPrefix(arg, "--page-size=")); err != nil {
+				return rawCommandOptions{}, err
+			}
+		case strings.HasPrefix(arg, "--page-token="):
+			if err := setRawCommandOption(&options, "--page-token", strings.TrimPrefix(arg, "--page-token=")); err != nil {
+				return rawCommandOptions{}, err
+			}
+		case strings.HasPrefix(arg, "-"):
+			return rawCommandOptions{}, fmt.Errorf("unknown flag %s", arg)
+		default:
+			options.target = append(options.target, arg)
+		}
+	}
+	return options, nil
+}
+
+func setRawCommandOption(options *rawCommandOptions, name, value string) error {
+	switch name {
+	case "--config":
+		options.configPath = value
+	case "--db":
+		options.archivePath = value
+	case "--from":
+		options.from = value
+	case "--to":
+		options.to = value
+	case "--page-size":
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed <= 0 {
+			return errors.New("--page-size must be a positive integer")
+		}
+		options.pageSize = parsed
+	case "--page-token":
+		options.pageToken = value
+	}
+	return nil
 }
 
 func parseOAuthClientSource(oauthClientFile, secretProvider, oauthClientItem string) (oauthClientSource, error) {
@@ -1270,7 +1484,40 @@ func parseOAuthClientConfigContent(content []byte) (oauthClientConfig, error) {
 }
 
 func oauthScopesForDataTypes(dataTypes []string) []string {
-	return []string{googleHealthActivityReadonlyScope}
+	needed := make(map[string]struct{})
+	for _, dataType := range dataTypes {
+		for _, scope := range googleHealthScopesForDataType(dataType) {
+			needed[scope] = struct{}{}
+		}
+	}
+	if len(needed) == 0 {
+		needed[googleHealthActivityReadonlyScope] = struct{}{}
+	}
+	ordered := []string{
+		googleHealthActivityReadonlyScope,
+		googleHealthHealthMetricsReadonlyScope,
+		googleHealthSleepReadonlyScope,
+	}
+	scopes := make([]string, 0, len(needed))
+	for _, scope := range ordered {
+		if _, ok := needed[scope]; ok {
+			scopes = append(scopes, scope)
+		}
+	}
+	return scopes
+}
+
+func googleHealthScopesForDataType(dataType string) []string {
+	switch dataType {
+	case "steps", "distance", "exercise", "total-calories":
+		return []string{googleHealthActivityReadonlyScope}
+	case "heart-rate", "heart-rate-variability", "daily-heart-rate-variability", "daily-resting-heart-rate", "oxygen-saturation", "daily-oxygen-saturation", "daily-respiratory-rate", "weight":
+		return []string{googleHealthHealthMetricsReadonlyScope}
+	case "sleep":
+		return []string{googleHealthSleepReadonlyScope}
+	default:
+		return nil
+	}
 }
 
 func runBrowserOAuthFlow(client oauthClientConfig, scopes []string, noInput bool) (oauthTokenResponse, error) {
@@ -1502,6 +1749,176 @@ func parseGoogleIdentity(body []byte) (googleIdentity, error) {
 		legacyFitbitUserID: raw.LegacyUserID,
 		rawJSON:            string(body),
 	}, nil
+}
+
+func buildGoogleHealthRawRequest(target []string, from, to string, pageSize int64, pageToken string) (rawProviderRequest, error) {
+	if len(target) < 2 {
+		return rawProviderRequest{}, errors.New("requires `endpoint <name>` or `data-type <name>`")
+	}
+	switch target[0] {
+	case "endpoint":
+		if len(target) != 2 {
+			return rawProviderRequest{}, errors.New("endpoint mode requires exactly one endpoint name")
+		}
+		if target[1] == "getIdentity" {
+			return rawProviderRequest{endpointName: "getIdentity", url: googleHealthIdentityURL}, nil
+		}
+		if strings.HasPrefix(target[1], "dataTypes.") && strings.HasSuffix(target[1], ".list") {
+			dataType := strings.TrimSuffix(strings.TrimPrefix(target[1], "dataTypes."), ".list")
+			return buildGoogleHealthDataTypeListRawRequest(dataType, from, to, pageSize, pageToken)
+		}
+		return rawProviderRequest{}, fmt.Errorf("unsupported raw endpoint %q", target[1])
+	case "data-type":
+		if len(target) != 2 {
+			return rawProviderRequest{}, errors.New("data-type mode requires exactly one Data Type")
+		}
+		return buildGoogleHealthDataTypeListRawRequest(target[1], from, to, pageSize, pageToken)
+	default:
+		return rawProviderRequest{}, fmt.Errorf("unsupported raw target %q", target[0])
+	}
+}
+
+func buildGoogleHealthDataTypeListRawRequest(dataType, from, to string, pageSize int64, pageToken string) (rawProviderRequest, error) {
+	if err := validateRawGoogleHealthDataType(dataType); err != nil {
+		return rawProviderRequest{}, err
+	}
+	if from == "" {
+		return rawProviderRequest{}, errors.New("Data Type list raw calls require --from")
+	}
+	query := url.Values{}
+	filter, err := googleHealthDataTypeListFilter(dataType, from, to)
+	if err != nil {
+		return rawProviderRequest{}, err
+	}
+	query.Set("filter", filter)
+	if pageSize > 0 {
+		query.Set("pageSize", strconv.FormatInt(pageSize, 10))
+	}
+	if pageToken != "" {
+		query.Set("pageToken", pageToken)
+	}
+	requestURL := googleHealthBaseURL + "/users/me/dataTypes/" + url.PathEscape(dataType) + "/dataPoints"
+	if encoded := query.Encode(); encoded != "" {
+		requestURL += "?" + encoded
+	}
+	return rawProviderRequest{
+		endpointName:   "dataTypes." + dataType + ".list",
+		dataType:       dataType,
+		url:            requestURL,
+		requiredScopes: googleHealthScopesForDataType(dataType),
+	}, nil
+}
+
+func validateRawGoogleHealthDataType(dataType string) error {
+	if dataType == "" {
+		return errors.New("Data Type must not be empty")
+	}
+	for _, char := range dataType {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-' {
+			continue
+		}
+		return fmt.Errorf("Data Type %q must use kebab-case provider names", dataType)
+	}
+	return nil
+}
+
+func googleHealthDataTypeListFilter(dataType, from, to string) (string, error) {
+	field, err := googleHealthDataTypeListFilterField(dataType)
+	if err != nil {
+		return "", err
+	}
+	filterFrom, err := googleHealthFilterValue(field, from)
+	if err != nil {
+		return "", fmt.Errorf("--from: %w", err)
+	}
+	clauses := []string{fmt.Sprintf("%s >= %s", field, filterFrom)}
+	if to != "" {
+		filterTo, err := googleHealthFilterValue(field, to)
+		if err != nil {
+			return "", fmt.Errorf("--to: %w", err)
+		}
+		clauses = append(clauses, fmt.Sprintf("%s < %s", field, filterTo))
+	}
+	return strings.Join(clauses, " AND "), nil
+}
+
+func googleHealthDataTypeListFilterField(dataType string) (string, error) {
+	filterDataType := strings.ReplaceAll(dataType, "-", "_")
+	switch dataType {
+	case "daily-resting-heart-rate", "daily-heart-rate-variability", "daily-oxygen-saturation", "daily-respiratory-rate":
+		return filterDataType + ".date", nil
+	case "steps", "distance":
+		return filterDataType + ".interval.start_time", nil
+	case "heart-rate", "heart-rate-variability", "oxygen-saturation", "weight":
+		return filterDataType + ".sample_time.physical_time", nil
+	case "exercise":
+		return filterDataType + ".interval.civil_start_time", nil
+	case "sleep":
+		return filterDataType + ".interval.end_time", nil
+	default:
+		return "", fmt.Errorf("raw Data Type %q is not supported by dataPoints.list", dataType)
+	}
+}
+
+func googleHealthFilterValue(field, value string) (string, error) {
+	if strings.HasSuffix(field, ".date") {
+		if _, err := time.Parse("2006-01-02", value); err != nil {
+			return "", errors.New("expected YYYY-MM-DD")
+		}
+		return strconv.Quote(value), nil
+	}
+	if strings.Contains(field, ".civil_") {
+		if _, err := time.Parse("2006-01-02", value); err == nil {
+			return strconv.Quote(value), nil
+		}
+		if _, err := time.Parse("2006-01-02T15:04:05", value); err == nil {
+			return strconv.Quote(value), nil
+		}
+		return "", errors.New("expected YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
+	}
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return strconv.Quote(parsed.UTC().Format(time.RFC3339Nano)), nil
+	}
+	if parsed, err := time.Parse("2006-01-02", value); err == nil {
+		return strconv.Quote(parsed.UTC().Format("2006-01-02T00:00:00Z")), nil
+	}
+	return "", errors.New("expected YYYY-MM-DD or RFC3339")
+}
+
+func fetchGoogleHealthRaw(request rawProviderRequest, accessToken string) ([]byte, error) {
+	httpRequest, err := http.NewRequest(http.MethodGet, request.url, nil)
+	if err != nil {
+		return nil, err
+	}
+	httpRequest.Header.Set("Authorization", "Bearer "+accessToken)
+	httpRequest.Header.Set("Accept", "application/json")
+	response, err := http.DefaultClient.Do(httpRequest)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	body, tooLarge, err := readLimitedBody(response.Body, googleHealthRawResponseLimit)
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("Google Health raw request failed with HTTP %d", response.StatusCode)
+	}
+	if tooLarge {
+		return nil, fmt.Errorf("Google Health raw response exceeds %d bytes; narrow the raw request", googleHealthRawResponseLimit)
+	}
+	return body, nil
+}
+
+func readLimitedBody(reader io.Reader, limit int64) ([]byte, bool, error) {
+	body, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(body)) > limit {
+		return nil, true, nil
+	}
+	return body, false, nil
 }
 
 func randomURLToken(byteCount int) (string, error) {
