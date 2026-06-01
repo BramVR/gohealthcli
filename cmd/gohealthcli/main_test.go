@@ -2728,7 +2728,7 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 		}]
 	}`
 	rollupRequests := installStepDailyRollupFetchFake(t, "connect-access-secret", map[string]string{
-		"": firstRollupPage,
+		"2026-01-01/2026-01-02/": firstRollupPage,
 	})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
@@ -2764,7 +2764,7 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 	assertSyncRunWithEndpointFamily(t, archivePath, 2, "sync_completed", "dailyRollUp", 1, 1, 0, "")
 
 	installStepDailyRollupFetchFake(t, "connect-access-secret", map[string]string{
-		"": firstRollupPage,
+		"2026-01-01/2026-01-02/": firstRollupPage,
 	})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
@@ -2791,7 +2791,7 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 
 	correctedRollupPage := strings.Replace(firstRollupPage, `"countSum": "1234"`, `"countSum": "4321"`, 1)
 	installStepDailyRollupFetchFake(t, "connect-access-secret", map[string]string{
-		"": correctedRollupPage,
+		"2026-01-01/2026-01-02/": correctedRollupPage,
 	})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
@@ -2837,6 +2837,43 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 	}
 	assertArchiveTableCount(t, archivePath, "rollups", 1)
 	assertSyncRunWithEndpointFamily(t, archivePath, 5, "sync_failed", "dailyRollUp", 0, 0, 0, "--from: expected YYYY-MM-DD")
+
+	longRangeRequests := installStepDailyRollupFetchFake(t, "connect-access-secret", map[string]string{
+		"2026-01-01/2026-04-01/": `{"rollupDataPoints": [{
+			"steps": {"countSum": "9000"},
+			"civilStartTime": {"date": {"year": 2026, "month": 4, "day": 1}},
+			"civilEndTime": {"date": {"year": 2026, "month": 4, "day": 2}}
+		}]}`,
+		"2026-04-01/2026-04-15/": `{"rollupDataPoints": [{
+			"steps": {"countSum": "1400"},
+			"civilStartTime": {"date": {"year": 2026, "month": 4, "day": 2}},
+			"civilEndTime": {"date": {"year": 2026, "month": 4, "day": 3}}
+		}]}`,
+	})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--rollup", "daily",
+		"--from", "2026-01-01",
+		"--to", "2026-04-15",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("long rollup sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if len(*longRangeRequests) != 2 {
+		t.Fatalf("long rollup request count = %d, want 2", len(*longRangeRequests))
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("long rollup stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "rollups_seen", 2)
+	assertJSONNumber(t, got, "rollups_new", 2)
+	assertArchiveTableCount(t, archivePath, "rollups", 3)
+	assertSyncRunWithEndpointFamily(t, archivePath, 6, "sync_completed", "dailyRollUp", 2, 2, 0, "")
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
@@ -4686,19 +4723,22 @@ func installStepDailyRollupFetchFake(t *testing.T, wantAccessToken string, pages
 		if err := json.Unmarshal(request.body, &body); err != nil {
 			t.Fatalf("rollup body is not valid JSON: %v\nbody: %s", err, string(request.body))
 		}
-		if body.Range.Start.Date.Year != 2026 || body.Range.Start.Date.Month != 1 || body.Range.Start.Date.Day != 1 {
-			t.Fatalf("rollup start date = %+v, want 2026-01-01", body.Range.Start.Date)
-		}
-		if body.Range.End.Date.Year != 2026 || body.Range.End.Date.Month != 1 || body.Range.End.Date.Day != 2 {
-			t.Fatalf("rollup end date = %+v, want 2026-01-02", body.Range.End.Date)
-		}
 		if body.WindowSizeDays != 1 {
 			t.Fatalf("windowSizeDays = %d, want 1", body.WindowSizeDays)
 		}
 		requests = append(requests, request)
-		response, ok := pages[body.PageToken]
+		key := fmt.Sprintf("%04d-%02d-%02d/%04d-%02d-%02d/%s",
+			body.Range.Start.Date.Year,
+			body.Range.Start.Date.Month,
+			body.Range.Start.Date.Day,
+			body.Range.End.Date.Year,
+			body.Range.End.Date.Month,
+			body.Range.End.Date.Day,
+			body.PageToken,
+		)
+		response, ok := pages[key]
 		if !ok {
-			t.Fatalf("no fake rollup page for pageToken %q", body.PageToken)
+			t.Fatalf("no fake rollup page for key %q", key)
 		}
 		return []byte(response), nil
 	}

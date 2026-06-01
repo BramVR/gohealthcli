@@ -241,6 +241,11 @@ type googleHealthRollupList struct {
 	nextPageToken string
 }
 
+type googleHealthDateRange struct {
+	from string
+	to   string
+}
+
 type archivedDataPoint struct {
 	providerName         string
 	connectionID         string
@@ -1045,48 +1050,54 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 		return fail(errors.New("Provider returned a different Google Identity; use a new archive path"))
 	}
 	if options.rollup == "daily" {
-		seenPageTokens := map[string]struct{}{}
-		for pageToken := ""; ; {
-			request, err := buildGoogleHealthDailyRollupRawRequest("steps", options.from, options.to, 0, pageToken)
-			if err != nil {
-				return fail(err)
-			}
-			body, err := fetchRawProvider(request, accessToken)
-			if err != nil {
-				if strings.Contains(err.Error(), "HTTP 401") {
-					return fail(errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again"))
-				}
-				return fail(err)
-			}
-			page, err := parseGoogleHealthRollupList(body)
-			if err != nil {
-				return fail(err)
-			}
-			for _, rawRollup := range page.rollups {
-				rollup, err := parseGoogleHealthStepsDailyRollup(connection, rawRollup)
+		windows, err := googleHealthDailyRollupDateWindows(options.from, options.to)
+		if err != nil {
+			return fail(err)
+		}
+		for _, window := range windows {
+			seenPageTokens := map[string]struct{}{}
+			for pageToken := ""; ; {
+				request, err := buildGoogleHealthDailyRollupRawRequest("steps", window.from, window.to, 0, pageToken)
 				if err != nil {
 					return fail(err)
 				}
-				status, err := upsertRollup(db, rollup, currentTime().UTC().Format(time.RFC3339))
+				body, err := fetchRawProvider(request, accessToken)
+				if err != nil {
+					if strings.Contains(err.Error(), "HTTP 401") {
+						return fail(errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again"))
+					}
+					return fail(err)
+				}
+				page, err := parseGoogleHealthRollupList(body)
 				if err != nil {
 					return fail(err)
 				}
-				result.RollupsSeen++
-				switch status {
-				case "new":
-					result.RollupsNew++
-				case "updated":
-					result.RollupsUpdated++
+				for _, rawRollup := range page.rollups {
+					rollup, err := parseGoogleHealthStepsDailyRollup(connection, rawRollup)
+					if err != nil {
+						return fail(err)
+					}
+					status, err := upsertRollup(db, rollup, currentTime().UTC().Format(time.RFC3339))
+					if err != nil {
+						return fail(err)
+					}
+					result.RollupsSeen++
+					switch status {
+					case "new":
+						result.RollupsNew++
+					case "updated":
+						result.RollupsUpdated++
+					}
 				}
+				if page.nextPageToken == "" {
+					break
+				}
+				if _, ok := seenPageTokens[page.nextPageToken]; ok {
+					return fail(errors.New("Google Health steps dailyRollUp returned a repeated page token"))
+				}
+				seenPageTokens[page.nextPageToken] = struct{}{}
+				pageToken = page.nextPageToken
 			}
-			if page.nextPageToken == "" {
-				break
-			}
-			if _, ok := seenPageTokens[page.nextPageToken]; ok {
-				return fail(errors.New("Google Health steps dailyRollUp returned a repeated page token"))
-			}
-			seenPageTokens[page.nextPageToken] = struct{}{}
-			pageToken = page.nextPageToken
 		}
 	} else {
 		seenPageTokens := map[string]struct{}{}
@@ -2620,6 +2631,33 @@ func googleHealthCivilTimeIntervalJSON(from, to string) (json.RawMessage, error)
 		return nil, err
 	}
 	return content, nil
+}
+
+func googleHealthDailyRollupDateWindows(from, to string) ([]googleHealthDateRange, error) {
+	start, err := time.Parse("2006-01-02", from)
+	if err != nil {
+		return nil, fmt.Errorf("--from: expected YYYY-MM-DD")
+	}
+	end, err := time.Parse("2006-01-02", to)
+	if err != nil {
+		return nil, fmt.Errorf("--to: expected YYYY-MM-DD")
+	}
+	if !end.After(start) {
+		return nil, errors.New("--to must be after --from for daily Rollup sync")
+	}
+	var windows []googleHealthDateRange
+	for current := start; current.Before(end); {
+		next := current.AddDate(0, 0, 90)
+		if next.After(end) {
+			next = end
+		}
+		windows = append(windows, googleHealthDateRange{
+			from: current.Format("2006-01-02"),
+			to:   next.Format("2006-01-02"),
+		})
+		current = next
+	}
+	return windows, nil
 }
 
 func googleHealthCivilDateJSON(value string) (json.RawMessage, error) {
