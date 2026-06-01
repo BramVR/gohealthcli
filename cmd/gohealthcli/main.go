@@ -30,6 +30,7 @@ const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthBaseURL = "https://health.googleapis.com/v4"
 const googleHealthIdentityURL = "https://health.googleapis.com/v4/users/me/identity"
+const googleHealthRawResponseLimit = 10 << 20
 
 var defaultDataTypes = []string{
 	"steps",
@@ -1759,7 +1760,10 @@ func validateRawGoogleHealthDataType(dataType string) error {
 }
 
 func googleHealthDataTypeListFilter(dataType, from, to string) (string, error) {
-	field := googleHealthDataTypeListFilterField(dataType)
+	field, err := googleHealthDataTypeListFilterField(dataType)
+	if err != nil {
+		return "", err
+	}
 	filterFrom, err := googleHealthFilterValue(field, from)
 	if err != nil {
 		return "", fmt.Errorf("--from: %w", err)
@@ -1775,15 +1779,21 @@ func googleHealthDataTypeListFilter(dataType, from, to string) (string, error) {
 	return strings.Join(clauses, " AND "), nil
 }
 
-func googleHealthDataTypeListFilterField(dataType string) string {
+func googleHealthDataTypeListFilterField(dataType string) (string, error) {
 	filterDataType := strings.ReplaceAll(dataType, "-", "_")
 	switch {
 	case strings.HasPrefix(dataType, "daily-"):
-		return filterDataType + ".date"
-	case dataType == "weight":
-		return filterDataType + ".sample_time.physical_time"
+		return filterDataType + ".date", nil
+	case dataType == "steps" || dataType == "distance" || dataType == "total-calories":
+		return filterDataType + ".interval.start_time", nil
+	case dataType == "heart-rate" || dataType == "heart-rate-variability" || dataType == "oxygen-saturation" || dataType == "weight":
+		return filterDataType + ".sample_time.physical_time", nil
+	case dataType == "exercise":
+		return filterDataType + ".interval.civil_start_time", nil
+	case dataType == "sleep":
+		return filterDataType + ".interval.end_time", nil
 	default:
-		return filterDataType + ".interval.start_time"
+		return "", fmt.Errorf("raw Data Type %q needs an explicit provider filter mapping", dataType)
 	}
 }
 
@@ -1793,6 +1803,15 @@ func googleHealthFilterValue(field, value string) (string, error) {
 			return "", errors.New("expected YYYY-MM-DD")
 		}
 		return strconv.Quote(value), nil
+	}
+	if strings.Contains(field, ".civil_") {
+		if _, err := time.Parse("2006-01-02", value); err == nil {
+			return strconv.Quote(value), nil
+		}
+		if _, err := time.Parse("2006-01-02T15:04:05", value); err == nil {
+			return strconv.Quote(value), nil
+		}
+		return "", errors.New("expected YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
 	}
 	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
 		return strconv.Quote(parsed.UTC().Format(time.RFC3339)), nil
@@ -1815,14 +1834,28 @@ func fetchGoogleHealthRaw(request rawProviderRequest, accessToken string) ([]byt
 		return nil, err
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 10<<20))
+	body, tooLarge, err := readLimitedBody(response.Body, googleHealthRawResponseLimit)
 	if err != nil {
 		return nil, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, fmt.Errorf("Google Health raw request failed with HTTP %d", response.StatusCode)
 	}
+	if tooLarge {
+		return nil, fmt.Errorf("Google Health raw response exceeds %d bytes; narrow the raw request", googleHealthRawResponseLimit)
+	}
 	return body, nil
+}
+
+func readLimitedBody(reader io.Reader, limit int64) ([]byte, bool, error) {
+	body, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(body)) > limit {
+		return nil, true, nil
+	}
+	return body, false, nil
 }
 
 func randomURLToken(byteCount int) (string, error) {

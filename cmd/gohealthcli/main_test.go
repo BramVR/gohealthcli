@@ -1923,9 +1923,53 @@ func TestBuildGoogleHealthRawRequestUsesProviderNamingConventions(t *testing.T) 
 	if parsedURL.Path != "/v4/users/me/dataTypes/heart-rate/dataPoints" {
 		t.Fatalf("path = %q, want kebab-case Data Type path", parsedURL.Path)
 	}
-	wantFilter := `heart_rate.interval.start_time >= "2026-01-01T00:00:00Z"`
+	wantFilter := `heart_rate.sample_time.physical_time >= "2026-01-01T00:00:00Z"`
 	if parsedURL.Query().Get("filter") != wantFilter {
 		t.Fatalf("filter = %q, want snake-case filter", parsedURL.Query().Get("filter"))
+	}
+}
+
+func TestGoogleHealthRawFilterFieldsCoverFirstReleaseDataTypes(t *testing.T) {
+	for _, test := range []struct {
+		dataType string
+		from     string
+		want     string
+	}{
+		{
+			dataType: "steps",
+			from:     "2026-01-01",
+			want:     `steps.interval.start_time >= "2026-01-01T00:00:00Z"`,
+		},
+		{
+			dataType: "oxygen-saturation",
+			from:     "2026-01-01",
+			want:     `oxygen_saturation.sample_time.physical_time >= "2026-01-01T00:00:00Z"`,
+		},
+		{
+			dataType: "daily-resting-heart-rate",
+			from:     "2026-01-01",
+			want:     `daily_resting_heart_rate.date >= "2026-01-01"`,
+		},
+		{
+			dataType: "exercise",
+			from:     "2026-01-01",
+			want:     `exercise.interval.civil_start_time >= "2026-01-01"`,
+		},
+		{
+			dataType: "sleep",
+			from:     "2026-01-01",
+			want:     `sleep.interval.end_time >= "2026-01-01T00:00:00Z"`,
+		},
+	} {
+		t.Run(test.dataType, func(t *testing.T) {
+			filter, err := googleHealthDataTypeListFilter(test.dataType, test.from, "")
+			if err != nil {
+				t.Fatalf("filter: %v", err)
+			}
+			if filter != test.want {
+				t.Fatalf("filter = %q, want %q", filter, test.want)
+			}
+		})
 	}
 }
 
@@ -2326,6 +2370,19 @@ func TestFetchGoogleHealthRawUsesBearerAndHidesErrorBody(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "access-secret-value") {
 		t.Fatalf("fetch raw error leaked token/body: %v", err)
+	}
+}
+
+func TestReadLimitedBodyReportsOversize(t *testing.T) {
+	body, tooLarge, err := readLimitedBody(strings.NewReader("abcdef"), 5)
+	if err != nil {
+		t.Fatalf("read limited body: %v", err)
+	}
+	if !tooLarge {
+		t.Fatal("tooLarge = false, want true")
+	}
+	if body != nil {
+		t.Fatalf("body = %q, want nil when oversized", string(body))
 	}
 }
 
