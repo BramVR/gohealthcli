@@ -2473,6 +2473,48 @@ func TestSyncRequiresFrom(t *testing.T) {
 	}
 }
 
+func TestSyncRejectsInvalidSourceFamilyOptionsBeforeSetup(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		args        []string
+		wantMessage string
+	}{
+		{
+			name:        "unsupported source family",
+			args:        []string{"sync", "--source-family", "phone", "--from", "2026-01-01", "--json"},
+			wantMessage: "supports only wearable",
+		},
+		{
+			name:        "source family with rollup",
+			args:        []string{"sync", "--source-family", "wearable", "--rollup", "daily", "--from", "2026-01-01", "--json"},
+			wantMessage: "cannot be combined with --rollup",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout := new(bytes.Buffer)
+			stderr := new(bytes.Buffer)
+			code := run(tc.args, stdout, stderr)
+			if code != 1 {
+				t.Fatalf("sync exit code = %d, want 1", code)
+			}
+			if stderr.String() != "" {
+				t.Fatalf("stderr = %q, want empty", stderr.String())
+			}
+			var got map[string]any
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+				t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+			}
+			assertJSONString(t, got, "status", "sync_failed")
+			if !strings.Contains(got["message"].(string), tc.wantMessage) {
+				t.Fatalf("message = %q, want %q", got["message"], tc.wantMessage)
+			}
+			if _, ok := got["sync_run_id"]; ok {
+				t.Fatalf("sync_run_id = %v, want omitted before setup", got["sync_run_id"])
+			}
+		})
+	}
+}
+
 func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
