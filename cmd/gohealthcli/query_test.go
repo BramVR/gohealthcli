@@ -128,6 +128,35 @@ func TestQueryAcceptsSelectCTE(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestQueryAcceptsCTEIdentifierDigits(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"query",
+		"--config", configPath,
+		"--json",
+		"WITH last_30_days AS (SELECT data_type FROM data_points WHERE data_type = 'steps') SELECT count(*) AS count FROM last_30_days",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("query exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "query_completed")
+	assertJSONNumber(t, got, "row_count", 1)
+	assertArchiveTableCount(t, archivePath, "data_points", 3)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestQueryAcceptsTrailingCommentsAfterTerminator(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)

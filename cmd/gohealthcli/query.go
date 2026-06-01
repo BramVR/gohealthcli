@@ -265,11 +265,22 @@ func queryStatementKind(statement string) (string, error) {
 func consumeSQLToken(statement string) (string, string) {
 	trimmed := trimSQLSpaceAndComments(statement)
 	for index, char := range trimmed {
-		if !(char == '_' || char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z') {
+		if index == 0 && !sqlIdentifierStart(char) {
+			return "", trimmed
+		}
+		if !sqlIdentifierPart(char) {
 			return strings.ToLower(trimmed[:index]), trimmed[index:]
 		}
 	}
 	return strings.ToLower(trimmed), ""
+}
+
+func sqlIdentifierStart(char rune) bool {
+	return char == '_' || char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z'
+}
+
+func sqlIdentifierPart(char rune) bool {
+	return sqlIdentifierStart(char) || char >= '0' && char <= '9'
 }
 
 func trimSQLSpaceAndComments(statement string) string {
