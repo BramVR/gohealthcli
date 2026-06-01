@@ -422,6 +422,28 @@ func writeQueryResult(result queryResult, mode outputMode, stdout io.Writer) err
 		if _, err := fmt.Fprintf(stdout, "Query completed: %d rows\n", result.RowCount); err != nil {
 			return err
 		}
+		if len(result.Columns) != 0 {
+			if _, err := fmt.Fprintf(stdout, "Columns: %s\n", strings.Join(result.Columns, ", ")); err != nil {
+				return err
+			}
+		}
+		for rowIndex, row := range result.Rows {
+			if _, err := fmt.Fprintf(stdout, "Row %d:", rowIndex+1); err != nil {
+				return err
+			}
+			for columnIndex, value := range row {
+				column := fmt.Sprintf("column_%d", columnIndex+1)
+				if columnIndex < len(result.Columns) {
+					column = result.Columns[columnIndex]
+				}
+				if _, err := fmt.Fprintf(stdout, " %s=%s", column, queryPlainValue(value)); err != nil {
+					return err
+				}
+			}
+			if _, err := fmt.Fprintln(stdout); err != nil {
+				return err
+			}
+		}
 	} else if _, err := fmt.Fprintln(stdout, "Query failed"); err != nil {
 		return err
 	}

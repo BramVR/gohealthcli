@@ -91,6 +91,38 @@ func TestQueryPlainOutputIsStable(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestQueryDefaultOutputIncludesRows(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"query",
+		"--config", configPath,
+		"SELECT data_type, end_time_utc FROM data_points WHERE data_type = 'steps' ORDER BY end_time_utc LIMIT 1",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("query exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	wantParts := []string{
+		"Query completed: 1 rows\n",
+		"Columns: data_type, end_time_utc\n",
+		"Row 1: data_type=steps end_time_utc=2026-01-01T08:15:00Z\n",
+		"Message: Query completed\n",
+	}
+	for _, want := range wantParts {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
+		}
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestQueryAcceptsSelectCTE(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
