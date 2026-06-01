@@ -507,7 +507,7 @@ func runStatus(args []string, configPath, archivePath string, mode outputMode, s
 	flags := flag.NewFlagSet("status", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
-	flags.String("config", configPath, "config file path")
+	statusConfigPath := flags.String("config", configPath, "config file path")
 	statusArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
 	statusJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
 	statusPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
@@ -525,7 +525,16 @@ func runStatus(args []string, configPath, archivePath string, mode outputMode, s
 	}
 
 	mode = outputMode{json: *statusJSONOutput, plain: *statusPlainOutput}
-	result, err := statusSetup(*statusArchivePath)
+	resolvedArchivePath, err := resolveStatusArchivePath(*statusConfigPath, *statusArchivePath)
+	if err != nil {
+		result := statusResult{Status: "status_failed", ArchivePath: *statusArchivePath, Message: err.Error()}
+		if writeErr := writeStatusResult(result, mode, stdout); writeErr != nil {
+			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
+			return 1
+		}
+		return 1
+	}
+	result, err := statusSetup(resolvedArchivePath)
 	if err != nil {
 		if result.Status == "" {
 			result.Status = "status_failed"
@@ -1261,6 +1270,55 @@ func syncResultTotalCounts(result syncResult) (int, int, int) {
 	return result.DataPointsSeen + result.RollupsSeen,
 		result.DataPointsNew + result.RollupsNew,
 		result.DataPointsUpdated + result.RollupsUpdated
+}
+
+func resolveStatusArchivePath(configPath, archivePath string) (string, error) {
+	configArchivePath, configExists, err := readStatusConfigArchivePath(configPath)
+	if err != nil {
+		return "", err
+	}
+	if !configExists {
+		return archivePath, nil
+	}
+	if archivePath == defaultArchivePath() {
+		return configArchivePath, nil
+	}
+	if configArchivePath != archivePath {
+		return "", fmt.Errorf("archive_path points to %s, want %s", configArchivePath, archivePath)
+	}
+	return archivePath, nil
+}
+
+func readStatusConfigArchivePath(configPath string) (string, bool, error) {
+	info, err := os.Stat(configPath)
+	if errors.Is(err, os.ErrNotExist) && configPath == defaultConfigPath() {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if err := validateOwnerOnlyDir(filepath.Dir(configPath)); err != nil {
+		return "", false, err
+	}
+	if info.IsDir() {
+		return "", false, fmt.Errorf("%s is a directory", configPath)
+	}
+	if usesPOSIXPermissions() && info.Mode().Perm() != 0o600 {
+		mode := info.Mode().Perm()
+		return "", false, fmt.Errorf("%s is not owner-only: mode %04o, want 0600", configPath, mode)
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", false, err
+	}
+	config, err := parseConfig(string(configBytes))
+	if err != nil {
+		return "", false, err
+	}
+	if config.archivePath == "" {
+		return "", false, errors.New("missing archive_path")
+	}
+	return config.archivePath, true, nil
 }
 
 func statusSetup(archivePath string) (statusResult, error) {

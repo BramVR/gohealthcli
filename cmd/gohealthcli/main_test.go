@@ -2556,7 +2556,6 @@ func TestStatusPlainReportsEmptyHealthArchive(t *testing.T) {
 	code := run([]string{
 		"status",
 		"--config", configPath,
-		"--db", archivePath,
 		"--plain",
 	}, stdout, stderr)
 	if code != 0 {
@@ -2582,6 +2581,39 @@ func TestStatusPlainReportsEmptyHealthArchive(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "latest_successful_sync_run") || strings.Contains(stdout.String(), "known_data_types") {
 		t.Fatalf("stdout reported absent archive details:\n%s", stdout.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestStatusRejectsConfigArchiveMismatch(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
+	otherArchivePath := filepath.Join(tempDir, "other-data", "other.sqlite")
+	if err := createArchive(otherArchivePath); err != nil {
+		t.Fatalf("create other archive: %v", err)
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"status",
+		"--config", configPath,
+		"--db", otherArchivePath,
+		"--json",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("status exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "status_failed")
+	if !strings.Contains(got["message"].(string), "archive_path points") {
+		t.Fatalf("message = %q, want config mismatch", got["message"])
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
