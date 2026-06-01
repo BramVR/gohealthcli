@@ -92,6 +92,17 @@ type identityResult struct {
 	Message            string `json:"message"`
 }
 
+type profileResult struct {
+	Status             string `json:"status"`
+	SnapshotID         int64  `json:"snapshot_id,omitempty"`
+	ConnectionID       string `json:"connection_id,omitempty"`
+	ProviderName       string `json:"provider_name,omitempty"`
+	GoogleHealthUserID string `json:"google_health_user_id,omitempty"`
+	LegacyFitbitUserID string `json:"legacy_fitbit_user_id,omitempty"`
+	FetchedAt          string `json:"fetched_at,omitempty"`
+	Message            string `json:"message"`
+}
+
 type archivedConnection struct {
 	id                 string
 	providerName       string
@@ -184,6 +195,7 @@ type googleIdentity struct {
 var runOAuthFlow = runBrowserOAuthFlow
 var refreshOAuthToken = refreshGoogleOAuthToken
 var fetchIdentity = fetchGoogleIdentity
+var fetchProfile = fetchGoogleProfile
 var fetchRawProvider = fetchGoogleHealthRaw
 var currentTime = func() time.Time { return time.Now().UTC() }
 var currentOS = runtime.GOOS
@@ -236,6 +248,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runConnect(flags.Args()[1:], *configPath, *archivePath, *noInput, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	case "identity":
 		return runIdentity(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
+	case "profile":
+		return runProfile(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	case "raw":
 		return runRaw(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	default:
@@ -533,6 +547,47 @@ func runIdentity(args []string, configPath, archivePath string, mode outputMode,
 	return 0
 }
 
+func runProfile(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("profile", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+
+	profileConfigPath := flags.String("config", configPath, "config file path")
+	profileArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
+	profileJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
+	profilePlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
+	flags.Bool("no-input", false, "never prompt, never wait for browser input")
+
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 1
+	}
+	if flags.NArg() != 0 {
+		fmt.Fprintf(stderr, "unexpected profile argument: %s\n", flags.Arg(0))
+		return 1
+	}
+
+	mode = outputMode{json: *profileJSONOutput, plain: *profilePlainOutput}
+	result, err := profileSetup(*profileConfigPath, *profileArchivePath)
+	if err != nil {
+		if result.Status == "" {
+			result.Status = "profile_failed"
+		}
+		result.Message = err.Error()
+		if writeErr := writeProfileResult(result, mode, stdout); writeErr != nil {
+			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
+			return 1
+		}
+		return 1
+	}
+	if err := writeProfileResult(result, mode, stdout); err != nil {
+		fmt.Fprintf(stderr, "write output: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 func runRaw(args []string, configPath, archivePath string, _ outputMode, stdout, stderr io.Writer) int {
 	options, err := parseRawCommandOptions(args, configPath, archivePath)
 	if err != nil {
@@ -690,6 +745,69 @@ func identitySetup(configPath, archivePath string) (identityResult, error) {
 		result.LegacyFitbitUserID = identity.legacyFitbitUserID
 	}
 	result.Message = "Google Identity refreshed"
+	return result, nil
+}
+
+func profileSetup(configPath, archivePath string) (profileResult, error) {
+	config, err := inspectIdentityConfig(configPath, archivePath)
+	if err != nil {
+		return profileResult{}, fmt.Errorf("config check failed: %w", err)
+	}
+	if err := migrateArchiveIfNeeded(archivePath); err != nil {
+		return profileResult{}, fmt.Errorf("Health Archive migration failed: %w", err)
+	}
+	if _, err := inspectArchive(archivePath, false); err != nil {
+		return profileResult{}, fmt.Errorf("Health Archive check failed: %w", err)
+	}
+	db, err := openArchive(archivePath)
+	if err != nil {
+		return profileResult{}, err
+	}
+	defer db.Close()
+	connection, err := readCurrentConnection(db)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return profileResult{Status: "profile_unavailable"}, errors.New("no Connection found; run `gohealthcli connect` first")
+		}
+		return profileResult{}, err
+	}
+	result := profileResult{
+		ConnectionID:       connection.id,
+		ProviderName:       connection.providerName,
+		GoogleHealthUserID: connection.googleHealthUserID,
+		LegacyFitbitUserID: connection.legacyFitbitUserID,
+	}
+	if err := requireUsableConnectionAccessToken(connection.tokenMetadataJSON, currentTime()); err != nil {
+		return result, err
+	}
+	accessToken, err := loadAccessTokenForConnection(config.credentialStore, connection, []string{configPath, archivePath})
+	if err != nil {
+		return result, err
+	}
+	profile, err := fetchProfile(accessToken)
+	if err != nil {
+		if strings.Contains(err.Error(), "HTTP 401") {
+			return result, errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again")
+		}
+		return result, err
+	}
+	if profile.healthUserID != connection.googleHealthUserID {
+		result.Status = "profile_mismatch"
+		return result, errors.New("Provider returned a different Google Identity; use a new archive path")
+	}
+	fetchedAt := currentTime().UTC().Format(time.RFC3339)
+	snapshotID, err := insertProfileSnapshot(db, connection, profile.rawJSON, fetchedAt)
+	if err != nil {
+		return result, err
+	}
+	result.Status = "profile_archived"
+	result.SnapshotID = snapshotID
+	result.GoogleHealthUserID = profile.healthUserID
+	if profile.legacyFitbitUserID != "" {
+		result.LegacyFitbitUserID = profile.legacyFitbitUserID
+	}
+	result.FetchedAt = fetchedAt
+	result.Message = "Profile Snapshot archived"
 	return result, nil
 }
 
@@ -1971,6 +2089,10 @@ func fetchGoogleIdentity(accessToken string) (googleIdentity, error) {
 	return parseGoogleIdentity(body)
 }
 
+func fetchGoogleProfile(accessToken string) (googleIdentity, error) {
+	return fetchGoogleIdentity(accessToken)
+}
+
 func parseGoogleIdentity(body []byte) (googleIdentity, error) {
 	var raw struct {
 		HealthUserID string `json:"healthUserId"`
@@ -2497,6 +2619,19 @@ func readCurrentConnection(db *sql.DB) (archivedConnection, error) {
 		return archivedConnection{}, errors.New("multiple Connections found; use a separate Health Archive for each Google Identity")
 	}
 	return connections[0], nil
+}
+
+func insertProfileSnapshot(db *sql.DB, connection archivedConnection, rawJSON, fetchedAt string) (int64, error) {
+	result, err := db.Exec(`INSERT INTO profile_snapshots (
+		provider_name,
+		connection_id,
+		raw_json,
+		fetched_at
+	) VALUES (?, ?, ?, ?)`, connection.providerName, connection.id, rawJSON, fetchedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
 }
 
 func upsertConnection(db *sql.DB, connectionID string, identity googleIdentity, token oauthTokenResponse, now time.Time) error {
@@ -3297,6 +3432,91 @@ func writeIdentityResult(result identityResult, mode outputMode, stdout io.Write
 	}
 	if result.LegacyFitbitUserID != "" {
 		if _, err := fmt.Fprintf(stdout, "Legacy Fitbit user ID: %s\n", result.LegacyFitbitUserID); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintf(stdout, "Message: %s\n", result.Message)
+	return err
+}
+
+func writeProfileResult(result profileResult, mode outputMode, stdout io.Writer) error {
+	if mode.json {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+	if mode.plain {
+		if _, err := fmt.Fprintf(stdout, "status: %s\n", result.Status); err != nil {
+			return err
+		}
+		if result.SnapshotID != 0 {
+			if _, err := fmt.Fprintf(stdout, "snapshot_id: %d\n", result.SnapshotID); err != nil {
+				return err
+			}
+		}
+		if result.ConnectionID != "" {
+			if _, err := fmt.Fprintf(stdout, "connection_id: %s\n", result.ConnectionID); err != nil {
+				return err
+			}
+		}
+		if result.ProviderName != "" {
+			if _, err := fmt.Fprintf(stdout, "provider_name: %s\n", result.ProviderName); err != nil {
+				return err
+			}
+		}
+		if result.GoogleHealthUserID != "" {
+			if _, err := fmt.Fprintf(stdout, "google_health_user_id: %s\n", result.GoogleHealthUserID); err != nil {
+				return err
+			}
+		}
+		if result.LegacyFitbitUserID != "" {
+			if _, err := fmt.Fprintf(stdout, "legacy_fitbit_user_id: %s\n", result.LegacyFitbitUserID); err != nil {
+				return err
+			}
+		}
+		if result.FetchedAt != "" {
+			if _, err := fmt.Fprintf(stdout, "fetched_at: %s\n", result.FetchedAt); err != nil {
+				return err
+			}
+		}
+		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
+		return err
+	}
+	switch result.Status {
+	case "profile_archived":
+		if _, err := fmt.Fprintln(stdout, "Profile Snapshot archived"); err != nil {
+			return err
+		}
+	case "profile_mismatch":
+		if _, err := fmt.Fprintln(stdout, "Profile Snapshot mismatch"); err != nil {
+			return err
+		}
+	case "profile_unavailable":
+		if _, err := fmt.Fprintln(stdout, "Profile Snapshot unavailable"); err != nil {
+			return err
+		}
+	default:
+		if _, err := fmt.Fprintln(stdout, "Profile Snapshot failed"); err != nil {
+			return err
+		}
+	}
+	if result.SnapshotID != 0 {
+		if _, err := fmt.Fprintf(stdout, "Snapshot: %d\n", result.SnapshotID); err != nil {
+			return err
+		}
+	}
+	if result.ConnectionID != "" {
+		if _, err := fmt.Fprintf(stdout, "Connection: %s\n", result.ConnectionID); err != nil {
+			return err
+		}
+	}
+	if result.GoogleHealthUserID != "" {
+		if _, err := fmt.Fprintf(stdout, "Google Health user ID: %s\n", result.GoogleHealthUserID); err != nil {
+			return err
+		}
+	}
+	if result.FetchedAt != "" {
+		if _, err := fmt.Fprintf(stdout, "Fetched at: %s\n", result.FetchedAt); err != nil {
 			return err
 		}
 	}
