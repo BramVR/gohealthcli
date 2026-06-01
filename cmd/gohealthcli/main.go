@@ -797,12 +797,9 @@ func doctorOnlineAccessToken(config fullConfigCheck, connection archivedConnecti
 	if !ok || refreshToken == "" {
 		return doctorOnlineTokenCheck{}, errors.New("Credential Store token material is missing refresh token; run `gohealthcli connect` again")
 	}
-	expiresAt, scopes, err := connectionTokenExpiryAndScopes(connection.tokenMetadataJSON)
+	_, scopes, err := connectionTokenExpiryAndScopes(connection.tokenMetadataJSON)
 	if err != nil {
 		return doctorOnlineTokenCheck{}, err
-	}
-	if expiresAt.After(currentTime().UTC()) {
-		return doctorOnlineTokenCheck{accessToken: accessToken}, nil
 	}
 	if config.oauthClient.kind != "file" {
 		return doctorOnlineTokenCheck{}, errors.New("doctor --online requires an OAuth client file source to refresh tokens; run `gohealthcli connect` again")

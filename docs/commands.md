@@ -39,8 +39,8 @@ reports OAuth client source kind, Credential Store kind, schema version,
 Connection count, and token metadata status without printing token values or
 OAuth client secrets.
 
-With `--online`, `doctor` requires a current Connection, refreshes an expired
-access token when possible, calls Google Health `getIdentity`, and reports
+With `--online`, `doctor` requires a current Connection, validates token refresh,
+calls Google Health `getIdentity` with the refreshed access token, and reports
 Connection health failures as `connection_unhealthy` instead of archive setup
 failures.
 
