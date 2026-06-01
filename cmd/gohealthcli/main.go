@@ -150,6 +150,7 @@ var currentOS = runtime.GOOS
 var runSecurityAddGenericPassword = runSecurityAddGenericPasswordCommand
 var runSecretToolStore = runSecretToolStoreCommand
 var runWindowsCredentialWrite = runWindowsCredentialWriteCommand
+var findExecutable = exec.LookPath
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -436,6 +437,9 @@ func connectSetup(configPath, archivePath string, noInput bool) (connectResult, 
 	}
 	store, err := newCredentialStore(config.credentialStore)
 	if err != nil {
+		return connectResult{CredentialStore: config.credentialStore.kind}, err
+	}
+	if err := validateCredentialStoreRuntime(config.credentialStore, []string{configPath, archivePath, config.oauthClient.path}); err != nil {
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
 	client, err := loadOAuthClientConfig(config.oauthClient.path)
@@ -949,6 +953,62 @@ func validateCredentialStoreConfig(store credentialStoreConfig) error {
 		return errors.New("unsupported Credential Store type")
 	}
 	return nil
+}
+
+func validateCredentialStoreRuntime(store credentialStoreConfig, protectedPaths []string) error {
+	switch store.kind {
+	case "file":
+		storePath, err := canonicalCredentialPath(store.path)
+		if err != nil {
+			return err
+		}
+		for _, protectedPath := range protectedPaths {
+			if protectedPath == "" {
+				continue
+			}
+			checkedPath, err := canonicalCredentialPath(protectedPath)
+			if err != nil {
+				return err
+			}
+			if storePath == checkedPath {
+				return errors.New("Credential Store file path must not match config, archive, or OAuth client files")
+			}
+		}
+	case "os_native":
+		switch currentOS {
+		case "darwin":
+			if _, err := findExecutable("security"); err != nil {
+				return errors.New("OS-native Credential Store requires the security command; configure credential_store type \"file\"")
+			}
+		case "linux":
+			if _, err := findExecutable("secret-tool"); err != nil {
+				return errors.New("OS-native Credential Store requires secret-tool; install libsecret tooling or configure credential_store type \"file\"")
+			}
+		case "windows":
+			if _, err := findExecutable("powershell"); err != nil {
+				if _, err := findExecutable("powershell.exe"); err != nil {
+					return errors.New("OS-native Credential Store requires PowerShell; configure credential_store type \"file\"")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func canonicalCredentialPath(path string) (string, error) {
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if resolvedPath, err := filepath.EvalSymlinks(absolutePath); err == nil {
+		return filepath.Clean(resolvedPath), nil
+	}
+	parent := filepath.Dir(absolutePath)
+	resolvedParent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		resolvedParent = parent
+	}
+	return filepath.Clean(filepath.Join(resolvedParent, filepath.Base(absolutePath))), nil
 }
 
 func validateDefaultDataTypes(dataTypes []string) error {

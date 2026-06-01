@@ -1673,6 +1673,133 @@ func TestConnectRejectsUnsupportedOSNativeStoreBeforeOAuth(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+connectStderr.String())
 }
 
+func TestConnectRejectsFileCredentialStoreCollisionsBeforeOAuth(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		path func(tempDir, configPath, archivePath string) string
+	}{
+		{
+			name: "config",
+			path: func(_ string, configPath, _ string) string {
+				return configPath
+			},
+		},
+		{
+			name: "archive",
+			path: func(_ string, _, archivePath string) string {
+				return archivePath
+			},
+		},
+		{
+			name: "oauth-client",
+			path: func(tempDir, _, _ string) string {
+				return filepath.Join(tempDir, "client_secret.json")
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			if err := os.Chmod(tempDir, 0o700); err != nil {
+				t.Fatalf("chmod temp dir: %v", err)
+			}
+			configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+			collisionPath := test.path(tempDir, configPath, archivePath)
+			originalContent, err := os.ReadFile(collisionPath)
+			if err != nil {
+				t.Fatalf("read protected file: %v", err)
+			}
+			configBytes, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatalf("read config: %v", err)
+			}
+			config := removeCredentialStoreSection(t, string(configBytes)) + "\n[credential_store]\ntype = \"file\"\npath = \"" + collisionPath + "\"\n"
+			if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			if collisionPath == configPath {
+				originalContent = []byte(config)
+			}
+			installConnectFakes(t, fakeConnectConfig{failIfCalled: true})
+
+			stdout := new(bytes.Buffer)
+			stderr := new(bytes.Buffer)
+			code := run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+			if code != 1 {
+				t.Fatalf("connect exit code = %d, want 1", code)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+				t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+			}
+			message, ok := got["message"].(string)
+			if !ok || !strings.Contains(message, "must not match") {
+				t.Fatalf("message = %T(%v), want credential collision rejection", got["message"], got["message"])
+			}
+			afterContent, err := os.ReadFile(collisionPath)
+			if err != nil {
+				t.Fatalf("read protected file after connect: %v", err)
+			}
+			if !bytes.Equal(afterContent, originalContent) {
+				t.Fatalf("protected file was modified")
+			}
+			assertNoSecretWords(t, stdout.String()+stderr.String())
+		})
+	}
+}
+
+func TestConnectRejectsMissingLinuxCredentialHelperBeforeOAuth(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	config := removeCredentialStoreSection(t, string(configBytes)) + "\n[credential_store]\ntype = \"os_native\"\nservice = \"gohealthcli\"\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	originalOS := currentOS
+	originalFindExecutable := findExecutable
+	currentOS = "linux"
+	findExecutable = func(name string) (string, error) {
+		if name != "secret-tool" {
+			t.Fatalf("find executable = %q, want secret-tool", name)
+		}
+		return "", exec.ErrNotFound
+	}
+	t.Cleanup(func() {
+		currentOS = originalOS
+		findExecutable = originalFindExecutable
+	})
+	installConnectFakes(t, fakeConnectConfig{failIfCalled: true})
+
+	stdout := new(bytes.Buffer)
+	connectStderr := new(bytes.Buffer)
+	code = run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, connectStderr)
+	if code != 1 {
+		t.Fatalf("connect exit code = %d, want 1", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "secret-tool") || !strings.Contains(message, "type \"file\"") {
+		t.Fatalf("message = %T(%v), want secret-tool file fallback guidance", got["message"], got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+connectStderr.String())
+}
+
 func TestConnectRejectsWebOAuthClient(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
