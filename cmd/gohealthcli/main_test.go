@@ -2728,6 +2728,71 @@ func TestSyncRefusesDifferentProviderIdentityBeforeArchiving(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestSyncReportsFailedWhenCompletionRecordFails(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+		"": `{
+			"dataPoints": [{
+				"name": "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a",
+				"dataSource": {"platform": "FITBIT"},
+				"steps": {
+					"interval": {
+						"startTime": "2026-01-01T08:00:00Z",
+						"endTime": "2026-01-01T08:15:00Z"
+					},
+					"count": "512"
+				}
+			}]
+		}`,
+	})
+	originalFinishSyncRunRecord := finishSyncRunRecord
+	finishSyncRunRecord = func(db *sql.DB, syncRunID int64, status string, seen, newCount, updated int, finishedAt, errorSummary string) error {
+		if status == "sync_completed" {
+			return errors.New("archive finalization failed")
+		}
+		return originalFinishSyncRunRecord(db, syncRunID, status, seen, newCount, updated, finishedAt, errorSummary)
+	}
+	t.Cleanup(func() { finishSyncRunRecord = originalFinishSyncRunRecord })
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--from", "2026-01-01",
+		"--json",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("sync exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "sync_failed")
+	assertJSONNumber(t, got, "sync_run_id", 1)
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	if message := got["message"].(string); !strings.Contains(message, "archive finalization failed") {
+		t.Fatalf("message = %q, want finalization error", message)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 1)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestSyncFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)

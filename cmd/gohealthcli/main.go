@@ -250,6 +250,7 @@ var refreshOAuthToken = refreshGoogleOAuthToken
 var fetchIdentity = fetchGoogleIdentity
 var fetchProfile = fetchGoogleProfile
 var fetchRawProvider = fetchGoogleHealthRaw
+var finishSyncRunRecord = finishSyncRun
 var currentTime = func() time.Time { return time.Now().UTC() }
 var currentOS = runtime.GOOS
 var runSecurityAddGenericPassword = runSecurityAddGenericPasswordCommand
@@ -980,7 +981,7 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 	fail := func(cause error) (syncResult, error) {
 		result.Status = "sync_failed"
 		result.Message = cause.Error()
-		if updateErr := finishSyncRun(db, syncRunID, result.Status, result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated, currentTime().UTC().Format(time.RFC3339), result.Message); updateErr != nil {
+		if updateErr := finishSyncRunRecord(db, syncRunID, result.Status, result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated, currentTime().UTC().Format(time.RFC3339), result.Message); updateErr != nil {
 			return result, fmt.Errorf("%w; record failed Sync Run: %v", cause, updateErr)
 		}
 		return result, cause
@@ -1048,11 +1049,13 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 		seenPageTokens[page.nextPageToken] = struct{}{}
 		pageToken = page.nextPageToken
 	}
-	result.Status = "sync_completed"
-	result.Message = "Sync Run archived steps Data Points"
-	if err := finishSyncRun(db, syncRunID, result.Status, result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated, currentTime().UTC().Format(time.RFC3339), ""); err != nil {
+	if err := finishSyncRunRecord(db, syncRunID, "sync_completed", result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated, currentTime().UTC().Format(time.RFC3339), ""); err != nil {
+		result.Status = "sync_failed"
+		result.Message = err.Error()
 		return result, err
 	}
+	result.Status = "sync_completed"
+	result.Message = "Sync Run archived steps Data Points"
 	return result, nil
 }
 
