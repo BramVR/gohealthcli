@@ -1327,10 +1327,10 @@ func statusSetup(archivePath string) (statusResult, error) {
 		ArchivePath: archivePath,
 	}
 	archive, err := inspectArchive(archivePath, false)
+	result.SchemaVersion = archive.schemaVersion
 	if err != nil {
 		return result, fmt.Errorf("Health Archive check failed: %w", err)
 	}
-	result.SchemaVersion = archive.schemaVersion
 
 	db, err := openArchiveReadOnly(archivePath)
 	if err != nil {
@@ -4244,7 +4244,7 @@ func inspectArchive(archivePath string, validateTokens bool) (archiveCheck, erro
 		return archiveCheck{}, err
 	}
 	if userVersion != currentSchemaVersion {
-		return archiveCheck{}, fmt.Errorf("schema version %d, want %d", userVersion, currentSchemaVersion)
+		return archiveCheck{schemaVersion: userVersion}, fmt.Errorf("schema version %d, want %d", userVersion, currentSchemaVersion)
 	}
 
 	for version, name := range expectedSchemaMigrations() {

@@ -2618,6 +2618,39 @@ func TestStatusRejectsConfigArchiveMismatch(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestStatusReportsSchemaVersionOnArchiveValidationFailure(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	if err := os.Remove(archivePath); err != nil {
+		t.Fatalf("remove initialized archive: %v", err)
+	}
+	createLegacyV1Archive(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"status",
+		"--config", configPath,
+		"--json",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("status exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "status_failed")
+	assertJSONNumber(t, got, "schema_version", 1)
+	if !strings.Contains(got["message"].(string), "schema version 1") {
+		t.Fatalf("message = %q, want schema version", got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestSyncRequiresFrom(t *testing.T) {
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
