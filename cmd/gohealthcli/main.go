@@ -28,7 +28,7 @@ const setupMissingExitCode = 2
 const currentSchemaVersion = 2
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
-const googleHealthIdentityURL = "https://health.googleapis.com/v4/users/me:getIdentity"
+const googleHealthIdentityURL = "https://health.googleapis.com/v4/users/me/identity"
 
 var defaultDataTypes = []string{
 	"steps",
