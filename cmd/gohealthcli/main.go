@@ -575,6 +575,9 @@ func identitySetup(configPath, archivePath string) (identityResult, error) {
 		GoogleHealthUserID: connection.googleHealthUserID,
 		LegacyFitbitUserID: connection.legacyFitbitUserID,
 	}
+	if err := requireUsableConnectionAccessToken(connection.tokenMetadataJSON, currentTime()); err != nil {
+		return result, err
+	}
 	if err := validateCredentialStoreRuntime(config.credentialStore, []string{configPath, archivePath}); err != nil {
 		return result, err
 	}
@@ -592,6 +595,9 @@ func identitySetup(configPath, archivePath string) (identityResult, error) {
 	}
 	identity, err := fetchIdentity(accessToken)
 	if err != nil {
+		if strings.Contains(err.Error(), "HTTP 401") {
+			return result, errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again")
+		}
 		return result, err
 	}
 	if identity.healthUserID != connection.googleHealthUserID {
@@ -2008,6 +2014,25 @@ func validateTokenMetadata(metadata string) error {
 	}
 	if err := requireJSONStringArray(raw, "scopes"); err != nil {
 		return err
+	}
+	return nil
+}
+
+func requireUsableConnectionAccessToken(metadata string, now time.Time) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(metadata), &raw); err != nil {
+		return errors.New("Connection token metadata is not valid JSON; run `gohealthcli connect` again")
+	}
+	expiresAtText, err := requireJSONString(raw, "expires_at")
+	if err != nil {
+		return errors.New("Connection token metadata is incomplete; run `gohealthcli connect` again")
+	}
+	expiresAt, err := time.Parse(time.RFC3339, expiresAtText)
+	if err != nil {
+		return errors.New("Connection token expiry is invalid; run `gohealthcli connect` again")
+	}
+	if !expiresAt.After(now.UTC()) {
+		return errors.New("Connection token has expired; run `gohealthcli connect` again")
 	}
 	return nil
 }

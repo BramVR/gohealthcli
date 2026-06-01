@@ -1649,6 +1649,47 @@ func TestIdentityRequiresArchivedConnection(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestIdentityReportsExpiredConnectionTokenBeforeProviderFetch(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		now:                time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	fetchIdentity = func(accessToken string) (googleIdentity, error) {
+		t.Fatalf("identity fetch should not be called for expired token")
+		return googleIdentity{}, nil
+	}
+	currentTime = func() time.Time {
+		return time.Date(2026, 5, 31, 23, 1, 0, 0, time.UTC)
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"identity", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("identity exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "expired") || !strings.Contains(message, "gohealthcli connect") {
+		t.Fatalf("message = %T(%v), want expired-token reconnect guidance", got["message"], got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestIdentityRejectsDifferentGoogleIdentity(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
