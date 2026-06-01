@@ -802,7 +802,18 @@ func profileSetup(configPath, archivePath string) (profileResult, error) {
 		}
 		return result, err
 	}
-	if profile.healthUserID != "" && profile.healthUserID != connection.googleHealthUserID {
+	profileHealthUserID := profile.healthUserID
+	if profileHealthUserID == "" {
+		identity, err := fetchIdentity(accessToken)
+		if err != nil {
+			if strings.Contains(err.Error(), "HTTP 401") {
+				return result, errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again")
+			}
+			return result, err
+		}
+		profileHealthUserID = identity.healthUserID
+	}
+	if profileHealthUserID != connection.googleHealthUserID {
 		result.Status = "profile_mismatch"
 		return result, errors.New("Provider returned a different Google Identity; use a new archive path")
 	}

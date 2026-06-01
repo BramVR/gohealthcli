@@ -2367,6 +2367,48 @@ func TestProfileFailsBeforeProviderWhenProfileScopeMissing(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestProfileRejectsAliasProfileWhenIdentityVerificationDiffers(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	installProfileFetchFake(t, "connect-access-secret", googleProfile{
+		rawJSON: `{"name":"users/me/profile","profile":{"unit":"metric"}}`,
+	}, nil)
+	installIdentityFetchFake(t, "connect-access-secret", googleIdentity{
+		healthUserID:       "222222222222222222",
+		legacyFitbitUserID: "Z9Y8X7",
+		rawJSON:            `{"healthUserId":"222222222222222222","legacyUserId":"Z9Y8X7"}`,
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("profile exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "profile_mismatch")
+	if _, ok := got["snapshot_id"]; ok {
+		t.Fatalf("snapshot_id = %v, want omitted on mismatch", got["snapshot_id"])
+	}
+	assertArchiveTableCount(t, archivePath, "profile_snapshots", 0)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestProfileRejectsDifferentGoogleIdentityWithoutArchiving(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
