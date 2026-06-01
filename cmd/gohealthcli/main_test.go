@@ -1620,6 +1620,28 @@ func TestIdentityPlainIncludesStableIdentityFields(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestIdentityHumanOutputDistinguishesFailureStatuses(t *testing.T) {
+	for _, test := range []struct {
+		status string
+		want   string
+	}{
+		{status: "identity_mismatch", want: "Google Identity mismatch\n"},
+		{status: "identity_unavailable", want: "Google Identity unavailable\n"},
+		{status: "identity_failed", want: "Google Identity failed\n"},
+	} {
+		t.Run(test.status, func(t *testing.T) {
+			stdout := new(bytes.Buffer)
+			err := writeIdentityResult(identityResult{Status: test.status, Message: "message"}, outputMode{}, stdout)
+			if err != nil {
+				t.Fatalf("write identity result: %v", err)
+			}
+			if !strings.HasPrefix(stdout.String(), test.want) {
+				t.Fatalf("stdout = %q, want prefix %q", stdout.String(), test.want)
+			}
+		})
+	}
+}
+
 func TestIdentityRequiresArchivedConnection(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)

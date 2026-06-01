@@ -94,7 +94,6 @@ type archivedConnection struct {
 	googleHealthUserID string
 	legacyFitbitUserID string
 	tokenMetadataJSON  string
-	googleIdentityJSON string
 }
 
 type oauthClientSource struct {
@@ -1758,6 +1757,7 @@ public static class NativeCredential {
 }
 "@
 Add-Type $code
+$utf8 = [Text.UTF8Encoding]::new($false)
 $credentialPtr = [IntPtr]::Zero
 if (-not [NativeCredential]::CredRead($env:GOHEALTHCLI_CREDENTIAL_TARGET, 1, 0, [ref]$credentialPtr)) {
   throw [ComponentModel.Win32Exception][Runtime.InteropServices.Marshal]::GetLastWin32Error()
@@ -1766,7 +1766,10 @@ try {
   $credential = [Runtime.InteropServices.Marshal]::PtrToStructure($credentialPtr, [type][NativeCredential+CREDENTIAL])
   $bytes = New-Object byte[] $credential.CredentialBlobSize
   [Runtime.InteropServices.Marshal]::Copy($credential.CredentialBlob, $bytes, 0, $credential.CredentialBlobSize)
-  [Text.Encoding]::Unicode.GetString($bytes)
+  $credentialJson = [Text.Encoding]::Unicode.GetString($bytes)
+  $stdout = [Console]::OpenStandardOutput()
+  $outputBytes = $utf8.GetBytes($credentialJson)
+  $stdout.Write($outputBytes, 0, $outputBytes.Length)
 } finally {
   [NativeCredential]::CredFree($credentialPtr)
 }
@@ -1804,8 +1807,7 @@ func readCurrentConnection(db *sql.DB) (archivedConnection, error) {
 		provider_name,
 		google_health_user_id,
 		legacy_fitbit_user_id,
-		token_metadata_json,
-		google_identity_json
+		token_metadata_json
 	FROM connections ORDER BY created_at, id LIMIT 2`)
 	if err != nil {
 		return archivedConnection{}, err
@@ -1822,7 +1824,6 @@ func readCurrentConnection(db *sql.DB) (archivedConnection, error) {
 			&connection.googleHealthUserID,
 			&legacyFitbitUserID,
 			&connection.tokenMetadataJSON,
-			&connection.googleIdentityJSON,
 		); err != nil {
 			return archivedConnection{}, err
 		}
@@ -2559,12 +2560,23 @@ func writeIdentityResult(result identityResult, mode outputMode, stdout io.Write
 		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
 		return err
 	}
-	if result.Status == "identity_refreshed" {
+	switch result.Status {
+	case "identity_refreshed":
 		if _, err := fmt.Fprintln(stdout, "Google Identity refreshed"); err != nil {
 			return err
 		}
-	} else if _, err := fmt.Fprintln(stdout, "Google Identity unavailable"); err != nil {
-		return err
+	case "identity_mismatch":
+		if _, err := fmt.Fprintln(stdout, "Google Identity mismatch"); err != nil {
+			return err
+		}
+	case "identity_unavailable":
+		if _, err := fmt.Fprintln(stdout, "Google Identity unavailable"); err != nil {
+			return err
+		}
+	default:
+		if _, err := fmt.Fprintln(stdout, "Google Identity failed"); err != nil {
+			return err
+		}
 	}
 	if result.ConnectionID != "" {
 		if _, err := fmt.Fprintf(stdout, "Connection: %s\n", result.ConnectionID); err != nil {
