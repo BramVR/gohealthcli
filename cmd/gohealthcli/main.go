@@ -28,6 +28,8 @@ const setupMissingExitCode = 2
 const currentSchemaVersion = 2
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
+const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
+const googleHealthSleepReadonlyScope = "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
 const googleHealthBaseURL = "https://health.googleapis.com/v4"
 const googleHealthIdentityURL = "https://health.googleapis.com/v4/users/me/identity"
 const googleHealthRawResponseLimit = 10 << 20
@@ -99,9 +101,10 @@ type archivedConnection struct {
 }
 
 type rawProviderRequest struct {
-	endpointName string
-	dataType     string
-	url          string
+	endpointName   string
+	dataType       string
+	url            string
+	requiredScopes []string
 }
 
 type rawCommandOptions struct {
@@ -691,6 +694,9 @@ func rawSetup(configPath, archivePath string, request rawProviderRequest) ([]byt
 	if err := requireUsableConnectionAccessToken(connection.tokenMetadataJSON, currentTime()); err != nil {
 		return nil, err
 	}
+	if err := requireConnectionScopes(connection.tokenMetadataJSON, request.requiredScopes); err != nil {
+		return nil, err
+	}
 	accessToken, err := loadAccessTokenForConnection(config.credentialStore, connection, []string{configPath, archivePath})
 	if err != nil {
 		return nil, err
@@ -722,6 +728,34 @@ func loadAccessTokenForConnection(config credentialStoreConfig, connection archi
 		return "", errors.New("Credential Store token material is missing access token; run `gohealthcli connect` again")
 	}
 	return accessToken, nil
+}
+
+func requireConnectionScopes(metadata string, requiredScopes []string) error {
+	if len(requiredScopes) == 0 {
+		return nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(metadata), &raw); err != nil {
+		return errors.New("Connection token metadata is not valid JSON; run `gohealthcli connect` again")
+	}
+	value, ok := raw["scopes"]
+	if !ok {
+		return errors.New("Connection token metadata is missing scopes; run `gohealthcli connect` again")
+	}
+	var grantedScopes []string
+	if err := json.Unmarshal(value, &grantedScopes); err != nil {
+		return errors.New("Connection token metadata scopes are invalid; run `gohealthcli connect` again")
+	}
+	granted := make(map[string]struct{}, len(grantedScopes))
+	for _, scope := range grantedScopes {
+		granted[scope] = struct{}{}
+	}
+	for _, requiredScope := range requiredScopes {
+		if _, ok := granted[requiredScope]; !ok {
+			return fmt.Errorf("Connection token is missing required Google Health scope %s; run `gohealthcli connect` again", requiredScope)
+		}
+	}
+	return nil
 }
 
 func parseRawCommandOptions(args []string, configPath, archivePath string) (rawCommandOptions, error) {
@@ -1450,7 +1484,40 @@ func parseOAuthClientConfigContent(content []byte) (oauthClientConfig, error) {
 }
 
 func oauthScopesForDataTypes(dataTypes []string) []string {
-	return []string{googleHealthActivityReadonlyScope}
+	needed := make(map[string]struct{})
+	for _, dataType := range dataTypes {
+		for _, scope := range googleHealthScopesForDataType(dataType) {
+			needed[scope] = struct{}{}
+		}
+	}
+	if len(needed) == 0 {
+		needed[googleHealthActivityReadonlyScope] = struct{}{}
+	}
+	ordered := []string{
+		googleHealthActivityReadonlyScope,
+		googleHealthHealthMetricsReadonlyScope,
+		googleHealthSleepReadonlyScope,
+	}
+	scopes := make([]string, 0, len(needed))
+	for _, scope := range ordered {
+		if _, ok := needed[scope]; ok {
+			scopes = append(scopes, scope)
+		}
+	}
+	return scopes
+}
+
+func googleHealthScopesForDataType(dataType string) []string {
+	switch dataType {
+	case "steps", "distance", "exercise", "total-calories":
+		return []string{googleHealthActivityReadonlyScope}
+	case "heart-rate", "heart-rate-variability", "daily-heart-rate-variability", "daily-resting-heart-rate", "oxygen-saturation", "daily-oxygen-saturation", "daily-respiratory-rate", "weight":
+		return []string{googleHealthHealthMetricsReadonlyScope}
+	case "sleep":
+		return []string{googleHealthSleepReadonlyScope}
+	default:
+		return nil
+	}
 }
 
 func runBrowserOAuthFlow(client oauthClientConfig, scopes []string, noInput bool) (oauthTokenResponse, error) {
@@ -1735,9 +1802,10 @@ func buildGoogleHealthDataTypeListRawRequest(dataType, from, to string, pageSize
 		requestURL += "?" + encoded
 	}
 	return rawProviderRequest{
-		endpointName: "dataTypes." + dataType + ".list",
-		dataType:     dataType,
-		url:          requestURL,
+		endpointName:   "dataTypes." + dataType + ".list",
+		dataType:       dataType,
+		url:            requestURL,
+		requiredScopes: googleHealthScopesForDataType(dataType),
 	}, nil
 }
 
@@ -1776,19 +1844,19 @@ func googleHealthDataTypeListFilter(dataType, from, to string) (string, error) {
 
 func googleHealthDataTypeListFilterField(dataType string) (string, error) {
 	filterDataType := strings.ReplaceAll(dataType, "-", "_")
-	switch {
-	case strings.HasPrefix(dataType, "daily-"):
+	switch dataType {
+	case "daily-resting-heart-rate", "daily-heart-rate-variability", "daily-oxygen-saturation", "daily-respiratory-rate":
 		return filterDataType + ".date", nil
-	case dataType == "steps" || dataType == "distance" || dataType == "total-calories":
+	case "steps", "distance":
 		return filterDataType + ".interval.start_time", nil
-	case dataType == "heart-rate" || dataType == "heart-rate-variability" || dataType == "oxygen-saturation" || dataType == "weight":
+	case "heart-rate", "heart-rate-variability", "oxygen-saturation", "weight":
 		return filterDataType + ".sample_time.physical_time", nil
-	case dataType == "exercise":
+	case "exercise":
 		return filterDataType + ".interval.civil_start_time", nil
-	case dataType == "sleep":
+	case "sleep":
 		return filterDataType + ".interval.end_time", nil
 	default:
-		return "", fmt.Errorf("raw Data Type %q needs an explicit provider filter mapping", dataType)
+		return "", fmt.Errorf("raw Data Type %q is not supported by dataPoints.list", dataType)
 	}
 }
 

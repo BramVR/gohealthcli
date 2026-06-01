@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1911,6 +1912,64 @@ func TestRawProviderErrorDoesNotLeakToken(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestRawDataTypeFailsBeforeProviderWhenScopeMissing(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	var metadata map[string]any
+	var metadataJSON string
+	if err := db.QueryRow(`SELECT token_metadata_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&metadataJSON); err != nil {
+		t.Fatalf("query token metadata: %v", err)
+	}
+	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
+		t.Fatalf("unmarshal token metadata: %v", err)
+	}
+	metadata["scopes"] = []string{googleHealthActivityReadonlyScope}
+	updatedMetadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("marshal token metadata: %v", err)
+	}
+	_, err = db.Exec(`UPDATE connections SET token_metadata_json = ? WHERE id = ?`, string(updatedMetadataJSON), "googlehealth:111111256096816351")
+	if closeErr := db.Close(); closeErr != nil {
+		t.Fatalf("close archive: %v", closeErr)
+	}
+	if err != nil {
+		t.Fatalf("update token scopes: %v", err)
+	}
+	originalFetchRawProvider := fetchRawProvider
+	fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		t.Fatal("raw provider fetch should not run with missing scope")
+		return nil, nil
+	}
+	t.Cleanup(func() { fetchRawProvider = originalFetchRawProvider })
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"raw", "data-type", "heart-rate", "--from", "2026-01-01", "--config", configPath, "--db", archivePath}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("raw exit code = %d, want 1", code)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), googleHealthHealthMetricsReadonlyScope) || !strings.Contains(stderr.String(), "connect") {
+		t.Fatalf("stderr = %q, want missing scope reconnect hint", stderr.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestBuildGoogleHealthRawRequestUsesProviderNamingConventions(t *testing.T) {
 	request, err := buildGoogleHealthRawRequest([]string{"endpoint", "dataTypes.heart-rate.list"}, "2026-01-01", "", 0, "")
 	if err != nil {
@@ -1926,6 +1985,16 @@ func TestBuildGoogleHealthRawRequestUsesProviderNamingConventions(t *testing.T) 
 	wantFilter := `heart_rate.sample_time.physical_time >= "2026-01-01T00:00:00Z"`
 	if parsedURL.Query().Get("filter") != wantFilter {
 		t.Fatalf("filter = %q, want snake-case filter", parsedURL.Query().Get("filter"))
+	}
+}
+
+func TestBuildGoogleHealthRawRequestRejectsNonListableDataTypes(t *testing.T) {
+	_, err := buildGoogleHealthRawRequest([]string{"data-type", "total-calories"}, "2026-01-01", "", 0, "")
+	if err == nil {
+		t.Fatal("build raw request error = nil, want unsupported Data Type")
+	}
+	if !strings.Contains(err.Error(), "not supported by dataPoints.list") {
+		t.Fatalf("error = %v, want unsupported dataPoints.list", err)
 	}
 }
 
@@ -2285,11 +2354,16 @@ func TestConnectRejectsWebOAuthClient(t *testing.T) {
 
 func TestOAuthScopesUseRecognizedGoogleHealthScopes(t *testing.T) {
 	scopes := oauthScopesForDataTypes(defaultDataTypes)
-	if len(scopes) != 1 || scopes[0] != googleHealthActivityReadonlyScope {
-		t.Fatalf("scopes = %v, want recognized Google Health readonly scope", scopes)
+	wantScopes := []string{
+		googleHealthActivityReadonlyScope,
+		googleHealthHealthMetricsReadonlyScope,
+		googleHealthSleepReadonlyScope,
+	}
+	if !slices.Equal(scopes, wantScopes) {
+		t.Fatalf("scopes = %v, want configured Google Health readonly scopes %v", scopes, wantScopes)
 	}
 	for _, scope := range scopes {
-		for _, invalid := range []string{"profile.readonly", "sleep.readonly", "health_metrics_and_measurements.readonly"} {
+		for _, invalid := range []string{"profile.readonly", "settings.readonly"} {
 			if strings.Contains(scope, invalid) {
 				t.Fatalf("scopes include unrecognized Google Health scope %q: %v", invalid, scopes)
 			}
