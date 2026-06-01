@@ -226,6 +226,9 @@ func runDoctor(args []string, configPath, archivePath string, mode outputMode, s
 		if err != nil {
 			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, fmt.Sprintf("config check failed: %v", err), mode, stdout, stderr)
 		}
+		if err := migrateArchiveIfNeeded(*doctorArchivePath); err != nil {
+			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, fmt.Sprintf("Health Archive migration failed: %v", err), mode, stdout, stderr)
+		}
 		archive, err := inspectArchive(*doctorArchivePath, true)
 		if err != nil {
 			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, fmt.Sprintf("Health Archive check failed: %v", err), mode, stdout, stderr)
@@ -311,6 +314,10 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 	if fileExists(*initConfigPath) && fileExists(*initArchivePath) {
 		if err := validateConfig(*initConfigPath, *initArchivePath); err != nil {
 			fmt.Fprintf(stderr, "existing config is not initialized: %v\n", err)
+			return 1
+		}
+		if err := migrateArchiveIfNeeded(*initArchivePath); err != nil {
+			fmt.Fprintf(stderr, "existing Health Archive is not initialized: %v\n", err)
 			return 1
 		}
 		if err := validateArchive(*initArchivePath); err != nil {
@@ -504,7 +511,7 @@ func createConfigFile(configPath, archivePath string, source oauthClientSource) 
 		}
 	}()
 
-	if _, err := fmt.Fprint(file, configContent(archivePath, source)); err != nil {
+	if _, err := fmt.Fprint(file, configContent(configPath, archivePath, source)); err != nil {
 		_ = file.Close()
 		return err
 	}
@@ -517,7 +524,7 @@ func createConfigFile(configPath, archivePath string, source oauthClientSource) 
 	return os.Chmod(configPath, 0o600)
 }
 
-func configContent(archivePath string, source oauthClientSource) string {
+func configContent(configPath, archivePath string, source oauthClientSource) string {
 	var builder strings.Builder
 	builder.WriteString("# gohealthcli config\n\n")
 	builder.WriteString("archive_path = ")
@@ -546,12 +553,18 @@ func configContent(archivePath string, source oauthClientSource) string {
 		builder.WriteString(strconv.Quote(source.item))
 		builder.WriteString("\n")
 	}
-	store := defaultCredentialStoreConfig()
+	store := defaultCredentialStoreConfigForDir(filepath.Dir(configPath))
 	builder.WriteString("\n[credential_store]\n")
 	builder.WriteString("type = ")
 	builder.WriteString(strconv.Quote(store.kind))
-	builder.WriteString("\nservice = ")
-	builder.WriteString(strconv.Quote(store.service))
+	switch store.kind {
+	case "os_native":
+		builder.WriteString("\nservice = ")
+		builder.WriteString(strconv.Quote(store.service))
+	case "file":
+		builder.WriteString("\npath = ")
+		builder.WriteString(strconv.Quote(store.path))
+	}
 	builder.WriteString("\n")
 	return builder.String()
 }
@@ -897,6 +910,13 @@ func validateOAuthClientFile(path string) error {
 }
 
 func defaultCredentialStoreConfig() credentialStoreConfig {
+	return defaultCredentialStoreConfigForDir(filepath.Dir(defaultConfigPath()))
+}
+
+func defaultCredentialStoreConfigForDir(configDir string) credentialStoreConfig {
+	if currentOS != "darwin" {
+		return credentialStoreConfig{kind: "file", path: filepath.Join(configDir, "tokens.json")}
+	}
 	return credentialStoreConfig{kind: "os_native", service: "gohealthcli"}
 }
 

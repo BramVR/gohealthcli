@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -347,13 +348,24 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 		`source = "file"`,
 		`path = "` + oauthClientPath + `"`,
 		`[credential_store]`,
-		`type = "os_native"`,
-		`service = "gohealthcli"`,
 		`"steps"`,
 		`"weight"`,
 	} {
 		if !strings.Contains(config, want) {
 			t.Fatalf("config missing %q:\n%s", want, config)
+		}
+	}
+	if expectedDefaultCredentialStoreKind() == "os_native" {
+		for _, want := range []string{`type = "os_native"`, `service = "gohealthcli"`} {
+			if !strings.Contains(config, want) {
+				t.Fatalf("config missing %q:\n%s", want, config)
+			}
+		}
+	} else {
+		for _, want := range []string{`type = "file"`, `path = "` + filepath.Join(filepath.Dir(configPath), "tokens.json") + `"`} {
+			if !strings.Contains(config, want) {
+				t.Fatalf("config missing %q:\n%s", want, config)
+			}
 		}
 	}
 
@@ -486,7 +498,7 @@ func TestDoctorReportsInitializedSetup(t *testing.T) {
 	assertJSONString(t, got, "config_path", configPath)
 	assertJSONString(t, got, "archive_path", archivePath)
 	assertJSONString(t, got, "oauth_client_source", "file")
-	assertJSONString(t, got, "credential_store", "os_native")
+	assertJSONString(t, got, "credential_store", expectedDefaultCredentialStoreKind())
 	assertJSONString(t, got, "token_status", "not_connected")
 	if got["schema_version"] != float64(2) {
 		t.Fatalf("schema_version = %v, want 2", got["schema_version"])
@@ -525,7 +537,7 @@ func TestDoctorPlainReportsOfflineHealthCheck(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 
-	want := fmt.Sprintf("status: ok\nconfig_path: %s\narchive_path: %s\noauth_client_source: file\ncredential_store: os_native\nschema_version: 2\nconnection_count: 0\ntoken_status: not_connected\nmessage: local gohealthcli setup is initialized\n", configPath, archivePath)
+	want := fmt.Sprintf("status: ok\nconfig_path: %s\narchive_path: %s\noauth_client_source: file\ncredential_store: %s\nschema_version: 2\nconnection_count: 0\ntoken_status: not_connected\nmessage: local gohealthcli setup is initialized\n", configPath, archivePath, expectedDefaultCredentialStoreKind())
 	if stdout.String() != want {
 		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 	}
@@ -740,7 +752,7 @@ func TestDoctorDefaultsLegacyConfigWithoutCredentialStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	config := strings.Replace(string(configBytes), "\n[credential_store]\ntype = \"os_native\"\nservice = \"gohealthcli\"\n", "", 1)
+	config := removeCredentialStoreSection(t, string(configBytes))
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -758,7 +770,7 @@ func TestDoctorDefaultsLegacyConfigWithoutCredentialStore(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
 	}
-	assertJSONString(t, got, "credential_store", "os_native")
+	assertJSONString(t, got, "credential_store", expectedDefaultCredentialStoreKind())
 	if stderr.String() != "" {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
@@ -786,7 +798,8 @@ func TestDoctorAcceptsInlineConfigComments(t *testing.T) {
 	config := string(configBytes)
 	config = strings.Replace(config, `archive_path = "`+archivePath+`"`, `archive_path = "`+archivePath+`" # local Health Archive`, 1)
 	config = strings.Replace(config, `"steps",`, `"steps", # default Data Type`, 1)
-	config = strings.Replace(config, `type = "os_native"`, `type = "os_native" # default Credential Store`, 1)
+	storeType := `type = "` + expectedDefaultCredentialStoreKind() + `"`
+	config = strings.Replace(config, storeType, storeType+` # default Credential Store`, 1)
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -1092,7 +1105,7 @@ func TestDoctorReportsMalformedCredentialStoreConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	config := strings.Replace(string(configBytes), `type = "os_native"`, `type = "1password"`, 1)
+	config := strings.Replace(string(configBytes), `type = "`+expectedDefaultCredentialStoreKind()+`"`, `type = "1password"`, 1)
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -1552,6 +1565,60 @@ func TestConnectMigratesLegacyV1ArchiveBeforeStoringIdentity(t *testing.T) {
 	}
 }
 
+func TestDoctorMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	if err := os.Remove(archivePath); err != nil {
+		t.Fatalf("remove current archive: %v", err)
+	}
+	createLegacyV1Archive(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"doctor", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("doctor exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	if got["schema_version"] != float64(2) {
+		t.Fatalf("schema_version = %v, want 2", got["schema_version"])
+	}
+	assertArchiveUserVersion(t, archivePath, 2)
+}
+
+func TestInitMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	if err := os.Remove(archivePath); err != nil {
+		t.Fatalf("remove current archive: %v", err)
+	}
+	createLegacyV1Archive(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+		"--oauth-client-file", filepath.Join(tempDir, "client_secret.json"),
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	if got["schema_version"] != float64(2) {
+		t.Fatalf("schema_version = %v, want 2", got["schema_version"])
+	}
+	assertArchiveUserVersion(t, archivePath, 2)
+}
+
 func TestConnectRejectsUnsupportedOSNativeStoreBeforeOAuth(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
@@ -1564,6 +1631,14 @@ func TestConnectRejectsUnsupportedOSNativeStoreBeforeOAuth(t *testing.T) {
 	)
 	if code != 0 {
 		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	config := removeCredentialStoreSection(t, string(configBytes)) + "\n[credential_store]\ntype = \"os_native\"\nservice = \"gohealthcli\"\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
 	}
 	originalOS := currentOS
 	currentOS = "linux"
@@ -1831,6 +1906,54 @@ func TestInitRejectsInvalidOAuthClientFileBeforeCreatingSetup(t *testing.T) {
 		t.Fatalf("archive stat err = %v, want not exist", err)
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestInitUsesFileCredentialStoreDefaultWhenOSNativeUnavailable(t *testing.T) {
+	originalOS := currentOS
+	currentOS = "linux"
+	t.Cleanup(func() { currentOS = originalOS })
+
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	oauthClientPath := filepath.Join(tempDir, "client_secret.json")
+	if err := os.WriteFile(oauthClientPath, []byte(`{"installed":{"client_id":"test-client","client_secret":"test-secret"}}`), 0o600); err != nil {
+		t.Fatalf("write OAuth client file: %v", err)
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runInit(
+		[]string{
+			"--config", configPath,
+			"--db", archivePath,
+			"--oauth-client-file", oauthClientPath,
+		},
+		defaultConfigPath(),
+		defaultArchivePath(),
+		outputMode{},
+		stdout,
+		stderr,
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	config := string(configBytes)
+	for _, want := range []string{
+		`type = "file"`,
+		`path = "` + filepath.Join(filepath.Dir(configPath), "tokens.json") + `"`,
+	} {
+		if !strings.Contains(config, want) {
+			t.Fatalf("config missing %q:\n%s", want, config)
+		}
+	}
+	if strings.Contains(config, `type = "os_native"`) || strings.Contains(config, `service = "gohealthcli"`) {
+		t.Fatalf("config kept unsupported OS-native default:\n%s", config)
+	}
 }
 
 func TestInitIsIdempotentForExistingSetup(t *testing.T) {
@@ -2253,10 +2376,7 @@ func initializeFileCredentialSetup(t *testing.T, tempDir string) (string, string
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	config := strings.Replace(string(configBytes), "type = \"os_native\"\nservice = \"gohealthcli\"\n", "type = \"file\"\npath = \""+tokenStorePath+"\"\n", 1)
-	if config == string(configBytes) {
-		t.Fatalf("credential store replacement failed:\n%s", string(configBytes))
-	}
+	config := removeCredentialStoreSection(t, string(configBytes)) + "\n[credential_store]\ntype = \"file\"\npath = \"" + tokenStorePath + "\"\n"
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -2350,6 +2470,46 @@ func ensureTestOAuthClientFiles(t *testing.T, dir string, args []string) {
 		if err := os.WriteFile(path, content, 0o600); err != nil {
 			t.Fatalf("write OAuth client file: %v", err)
 		}
+	}
+}
+
+func expectedDefaultCredentialStoreKind() string {
+	if runtime.GOOS == "darwin" {
+		return "os_native"
+	}
+	return "file"
+}
+
+func removeCredentialStoreSection(t *testing.T, config string) string {
+	t.Helper()
+
+	start := strings.Index(config, "\n[credential_store]\n")
+	if start < 0 {
+		t.Fatalf("config missing credential_store section:\n%s", config)
+	}
+	searchFrom := start + len("\n[credential_store]\n")
+	end := strings.Index(config[searchFrom:], "\n[")
+	if end < 0 {
+		return strings.TrimRight(config[:start], "\n") + "\n"
+	}
+	end += searchFrom
+	return strings.TrimRight(config[:start], "\n") + "\n" + config[end+1:]
+}
+
+func assertArchiveUserVersion(t *testing.T, archivePath string, want int) {
+	t.Helper()
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	var got int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&got); err != nil {
+		t.Fatalf("query user_version: %v", err)
+	}
+	if got != want {
+		t.Fatalf("user_version = %d, want %d", got, want)
 	}
 }
 
