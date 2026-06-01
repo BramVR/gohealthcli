@@ -2190,10 +2190,9 @@ func TestProfileArchivesSnapshotAndPrintsSummary(t *testing.T) {
 	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	installProfileFetchFake(t, "connect-access-secret", googleIdentity{
-		healthUserID:       "111111256096816351",
-		legacyFitbitUserID: "A1B2C3",
-		rawJSON:            `{"healthUserId":"111111256096816351","legacyUserId":"A1B2C3","profile":{"unit":"metric"}}`,
+	installProfileFetchFake(t, "connect-access-secret", googleProfile{
+		healthUserID: "111111256096816351",
+		rawJSON:      `{"name":"users/111111256096816351/profile","profile":{"unit":"metric"}}`,
 	}, nil)
 	currentTime = func() time.Time {
 		return time.Date(2026, 6, 1, 10, 30, 0, 0, time.UTC)
@@ -2236,7 +2235,7 @@ func TestProfileArchivesSnapshotAndPrintsSummary(t *testing.T) {
 	if providerName != "googlehealth" || connectionID != "googlehealth:111111256096816351" {
 		t.Fatalf("snapshot owner = (%q, %q), want archived Connection", providerName, connectionID)
 	}
-	if rawJSON != `{"healthUserId":"111111256096816351","legacyUserId":"A1B2C3","profile":{"unit":"metric"}}` {
+	if rawJSON != `{"name":"users/111111256096816351/profile","profile":{"unit":"metric"}}` {
 		t.Fatalf("raw_json = %s, want provider profile JSON", rawJSON)
 	}
 	if fetchedAt != "2026-06-01T10:30:00Z" {
@@ -2259,10 +2258,9 @@ func TestProfilePlainIncludesStableSnapshotFields(t *testing.T) {
 	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	installProfileFetchFake(t, "connect-access-secret", googleIdentity{
-		healthUserID:       "111111256096816351",
-		legacyFitbitUserID: "A1B2C3",
-		rawJSON:            `{"healthUserId":"111111256096816351","legacyUserId":"A1B2C3"}`,
+	installProfileFetchFake(t, "connect-access-secret", googleProfile{
+		healthUserID: "111111256096816351",
+		rawJSON:      `{"name":"users/111111256096816351/profile"}`,
 	}, nil)
 	currentTime = func() time.Time {
 		return time.Date(2026, 6, 1, 10, 30, 0, 0, time.UTC)
@@ -2296,7 +2294,7 @@ func TestProfileProviderFailureDoesNotArchiveSnapshot(t *testing.T) {
 	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	installProfileFetchFake(t, "connect-access-secret", googleIdentity{}, errors.New("Google Health profile request failed with HTTP 503"))
+	installProfileFetchFake(t, "connect-access-secret", googleProfile{}, errors.New("Google Health profile request failed with HTTP 503"))
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
@@ -2340,10 +2338,9 @@ func TestProfileRejectsDifferentGoogleIdentityWithoutArchiving(t *testing.T) {
 	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	installProfileFetchFake(t, "connect-access-secret", googleIdentity{
-		healthUserID:       "222222222222222222",
-		legacyFitbitUserID: "Z9Y8X7",
-		rawJSON:            `{"healthUserId":"222222222222222222","legacyUserId":"Z9Y8X7"}`,
+	installProfileFetchFake(t, "connect-access-secret", googleProfile{
+		healthUserID: "222222222222222222",
+		rawJSON:      `{"name":"users/222222222222222222/profile"}`,
 	}, nil)
 
 	stdout := new(bytes.Buffer)
@@ -3024,6 +3021,38 @@ func TestFetchGoogleIdentityUsesGetIdentityEndpoint(t *testing.T) {
 	}
 	if identity.healthUserID != "111111256096816351" || identity.legacyFitbitUserID != "A1B2C3" {
 		t.Fatalf("identity = (%q, %q), want response identity", identity.healthUserID, identity.legacyFitbitUserID)
+	}
+}
+
+func TestFetchGoogleProfileUsesProfileEndpoint(t *testing.T) {
+	originalClient := http.DefaultClient
+	t.Cleanup(func() { http.DefaultClient = originalClient })
+
+	var gotURL string
+	http.DefaultClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		gotURL = request.URL.String()
+		if request.Header.Get("Authorization") != "Bearer access-secret-value" {
+			t.Fatalf("Authorization = %q, want bearer token", request.Header.Get("Authorization"))
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"name":"users/111111256096816351/profile","userConfiguredWalkingStrideLengthMm":720}`)),
+		}, nil
+	})}
+
+	profile, err := fetchGoogleProfile("access-secret-value")
+	if err != nil {
+		t.Fatalf("fetch profile: %v", err)
+	}
+	if gotURL != googleHealthProfileURL {
+		t.Fatalf("profile URL = %q, want %q", gotURL, googleHealthProfileURL)
+	}
+	if profile.healthUserID != "111111256096816351" || profile.resourceName != "users/111111256096816351/profile" {
+		t.Fatalf("profile = (%q, %q), want response profile", profile.healthUserID, profile.resourceName)
+	}
+	if !strings.Contains(profile.rawJSON, "userConfiguredWalkingStrideLengthMm") {
+		t.Fatalf("profile raw JSON = %s, want profile payload", profile.rawJSON)
 	}
 }
 
@@ -3833,18 +3862,18 @@ func installIdentityFetchFake(t *testing.T, wantAccessToken string, identity goo
 	})
 }
 
-func installProfileFetchFake(t *testing.T, wantAccessToken string, identity googleIdentity, providerErr error) {
+func installProfileFetchFake(t *testing.T, wantAccessToken string, profile googleProfile, providerErr error) {
 	t.Helper()
 
 	originalFetchProfile := fetchProfile
-	fetchProfile = func(accessToken string) (googleIdentity, error) {
+	fetchProfile = func(accessToken string) (googleProfile, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("profile access token = %q, want stored token", accessToken)
 		}
 		if providerErr != nil {
-			return googleIdentity{}, providerErr
+			return googleProfile{}, providerErr
 		}
-		return identity, nil
+		return profile, nil
 	}
 	t.Cleanup(func() {
 		fetchProfile = originalFetchProfile

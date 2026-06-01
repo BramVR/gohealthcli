@@ -32,6 +32,7 @@ const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/
 const googleHealthSleepReadonlyScope = "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
 const googleHealthBaseURL = "https://health.googleapis.com/v4"
 const googleHealthIdentityURL = "https://health.googleapis.com/v4/users/me/identity"
+const googleHealthProfileURL = "https://health.googleapis.com/v4/users/me/profile"
 const googleHealthRawResponseLimit = 10 << 20
 
 var defaultDataTypes = []string{
@@ -190,6 +191,12 @@ type googleIdentity struct {
 	healthUserID       string
 	legacyFitbitUserID string
 	rawJSON            string
+}
+
+type googleProfile struct {
+	healthUserID string
+	resourceName string
+	rawJSON      string
 }
 
 var runOAuthFlow = runBrowserOAuthFlow
@@ -791,7 +798,7 @@ func profileSetup(configPath, archivePath string) (profileResult, error) {
 		}
 		return result, err
 	}
-	if profile.healthUserID != connection.googleHealthUserID {
+	if profile.healthUserID != "" && profile.healthUserID != connection.googleHealthUserID {
 		result.Status = "profile_mismatch"
 		return result, errors.New("Provider returned a different Google Identity; use a new archive path")
 	}
@@ -802,10 +809,6 @@ func profileSetup(configPath, archivePath string) (profileResult, error) {
 	}
 	result.Status = "profile_archived"
 	result.SnapshotID = snapshotID
-	result.GoogleHealthUserID = profile.healthUserID
-	if profile.legacyFitbitUserID != "" {
-		result.LegacyFitbitUserID = profile.legacyFitbitUserID
-	}
 	result.FetchedAt = fetchedAt
 	result.Message = "Profile Snapshot archived"
 	return result, nil
@@ -2089,8 +2092,51 @@ func fetchGoogleIdentity(accessToken string) (googleIdentity, error) {
 	return parseGoogleIdentity(body)
 }
 
-func fetchGoogleProfile(accessToken string) (googleIdentity, error) {
-	return fetchGoogleIdentity(accessToken)
+func fetchGoogleProfile(accessToken string) (googleProfile, error) {
+	request, err := http.NewRequest(http.MethodGet, googleHealthProfileURL, nil)
+	if err != nil {
+		return googleProfile{}, err
+	}
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	request.Header.Set("Accept", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return googleProfile{}, err
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return googleProfile{}, err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return googleProfile{}, fmt.Errorf("Google Health profile request failed with HTTP %d", response.StatusCode)
+	}
+	return parseGoogleProfile(body)
+}
+
+func parseGoogleProfile(body []byte) (googleProfile, error) {
+	var raw struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return googleProfile{}, errors.New("Google Health profile response is not valid JSON")
+	}
+	if raw.Name == "" {
+		return googleProfile{}, errors.New("Google Health profile response missing name")
+	}
+	return googleProfile{
+		healthUserID: googleHealthUserIDFromProfileName(raw.Name),
+		resourceName: raw.Name,
+		rawJSON:      string(body),
+	}, nil
+}
+
+func googleHealthUserIDFromProfileName(name string) string {
+	parts := strings.Split(name, "/")
+	if len(parts) != 3 || parts[0] != "users" || parts[2] != "profile" || parts[1] == "me" {
+		return ""
+	}
+	return parts[1]
 }
 
 func parseGoogleIdentity(body []byte) (googleIdentity, error) {

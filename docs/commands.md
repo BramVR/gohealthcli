@@ -55,10 +55,10 @@ different Google Identity requires a separate Health Archive.
 `identity`: call Google Health API identity endpoint, print current identity
 metadata, and refresh the archived Google Identity.
 
-`profile`: call the provider profile/identity metadata endpoint for the current
-Connection, archive the raw Profile Snapshot with `fetched_at`, and print stable
-summary fields including `snapshot_id`. Profile Snapshots stay separate from Data
-Points and Rollups.
+`profile`: call the provider profile endpoint for the current Connection,
+archive the raw Profile Snapshot with `fetched_at`, and print stable summary
+fields including `snapshot_id`. Profile Snapshots stay separate from Data Points
+and Rollups.
 
 `sync`: fetch Data Points or Rollups for selected or configured Data Types and
 date ranges. By default, sync raw Data Points from all Data Sources exposed by
