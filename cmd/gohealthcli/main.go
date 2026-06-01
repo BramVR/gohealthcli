@@ -1361,7 +1361,8 @@ func (store osNativeCredentialStore) Store(key string, tokenMaterial map[string]
 
 func runSecurityAddGenericPasswordCommand(service, key string, content []byte) error {
 	cmd := exec.Command("security", "add-generic-password", "-U", "-s", service, "-a", key, "-w")
-	cmd.Stdin = strings.NewReader(string(content) + "\n")
+	password := string(content)
+	cmd.Stdin = strings.NewReader(password + "\n" + password + "\n")
 	return cmd.Run()
 }
 
