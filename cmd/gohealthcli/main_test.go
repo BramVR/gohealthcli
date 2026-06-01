@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -15,6 +17,12 @@ import (
 )
 
 var testBinaryPath string
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "gohealthcli-test-*")
@@ -1633,6 +1641,47 @@ func TestListenForOAuthRedirectPreservesEmptyLoopbackPath(t *testing.T) {
 	}
 	if parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Path != "" {
 		t.Fatalf("redirect URI = %s, want dynamic loopback with empty path", redirectURI)
+	}
+}
+
+func TestParseOAuthTokenResponseRequiresRefreshToken(t *testing.T) {
+	_, err := parseOAuthTokenResponse([]byte(`{
+		"access_token": "access-secret-value",
+		"expires_in": 3600,
+		"scope": "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
+		"token_type": "Bearer"
+	}`), time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC))
+	if err == nil || !strings.Contains(err.Error(), "refresh token") {
+		t.Fatalf("parse token response error = %v, want missing refresh token", err)
+	}
+}
+
+func TestFetchGoogleIdentityUsesGetIdentityEndpoint(t *testing.T) {
+	originalClient := http.DefaultClient
+	t.Cleanup(func() { http.DefaultClient = originalClient })
+
+	var gotURL string
+	http.DefaultClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		gotURL = request.URL.String()
+		if request.Header.Get("Authorization") != "Bearer access-secret-value" {
+			t.Fatalf("Authorization = %q, want bearer token", request.Header.Get("Authorization"))
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"healthUserId":"111111256096816351","legacyUserId":"A1B2C3"}`)),
+		}, nil
+	})}
+
+	identity, err := fetchGoogleIdentity("access-secret-value")
+	if err != nil {
+		t.Fatalf("fetch identity: %v", err)
+	}
+	if gotURL != googleHealthIdentityURL {
+		t.Fatalf("identity URL = %q, want %q", gotURL, googleHealthIdentityURL)
+	}
+	if identity.healthUserID != "111111256096816351" || identity.legacyFitbitUserID != "A1B2C3" {
+		t.Fatalf("identity = (%q, %q), want response identity", identity.healthUserID, identity.legacyFitbitUserID)
 	}
 }
 

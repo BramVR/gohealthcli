@@ -28,6 +28,7 @@ const setupMissingExitCode = 2
 const currentSchemaVersion = 2
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
+const googleHealthIdentityURL = "https://health.googleapis.com/v4/users/me:getIdentity"
 
 var defaultDataTypes = []string{
 	"steps",
@@ -1177,6 +1178,9 @@ func parseOAuthTokenResponse(body []byte, now time.Time) (oauthTokenResponse, er
 		return oauthTokenResponse{}, errors.New("OAuth token response missing access token")
 	}
 	refreshToken, _ := raw["refresh_token"].(string)
+	if refreshToken == "" {
+		return oauthTokenResponse{}, errors.New("OAuth token response missing refresh token; rerun connect and grant offline access")
+	}
 	tokenType, _ := raw["token_type"].(string)
 	if tokenType == "" {
 		tokenType = "Bearer"
@@ -1207,7 +1211,7 @@ func parseOAuthTokenResponse(body []byte, now time.Time) (oauthTokenResponse, er
 }
 
 func fetchGoogleIdentity(accessToken string) (googleIdentity, error) {
-	request, err := http.NewRequest(http.MethodGet, "https://health.googleapis.com/v4/users/me/identity", nil)
+	request, err := http.NewRequest(http.MethodGet, googleHealthIdentityURL, nil)
 	if err != nil {
 		return googleIdentity{}, err
 	}
