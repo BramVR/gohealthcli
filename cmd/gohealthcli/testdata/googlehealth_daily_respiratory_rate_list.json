@@ -1,0 +1,18 @@
+{
+  "dataPoints": [
+    {
+      "name": "users/me/dataTypes/daily-respiratory-rate/dataPoints/resp-daily-2026-01-01",
+      "dataSource": {
+        "platform": "FITBIT"
+      },
+      "dailyRespiratoryRate": {
+        "date": {
+          "year": 2026,
+          "month": 1,
+          "day": 1
+        },
+        "breathsPerMinute": 14.2
+      }
+    }
+  ]
+}

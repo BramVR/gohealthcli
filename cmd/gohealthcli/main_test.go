@@ -3129,6 +3129,189 @@ func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	originalCurrentTime := currentTime
+	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { currentTime = originalCurrentTime })
+
+	restingHeartRatePage := string(readTestFixture(t, "googlehealth_daily_resting_heart_rate_list.json"))
+	requests := installDataPointSyncFetchFake(t, "connect-access-secret", "daily-resting-heart-rate", map[string]string{"": restingHeartRatePage})
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "daily-resting-heart-rate",
+		"--from", "2026-01-01",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("daily resting heart-rate sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("daily resting heart-rate stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "endpoint_family", "list")
+	assertJSONString(t, got, "to", "2026-01-02")
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 1)
+	if (*requests)[0].endpointName != "dataTypes.daily-resting-heart-rate.list" {
+		t.Fatalf("endpoint = %q, want daily Data Type list", (*requests)[0].endpointName)
+	}
+	if strings.Contains((*requests)[0].url, "dailyRollUp") {
+		t.Fatalf("daily Data Point sync used Rollup URL: %s", (*requests)[0].url)
+	}
+	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `daily_resting_heart_rate.date >= "2026-01-01" AND daily_resting_heart_rate.date < "2026-01-02"` {
+		t.Fatalf("daily resting heart-rate filter = %q", gotFilter)
+	}
+	assertArchivedDailyDataPoint(t, archivePath, "users/me/dataTypes/daily-resting-heart-rate/dataPoints/rhr-2026-01-01", "daily-resting-heart-rate", "2026-01-01", `"beatsPerMinute":"61"`)
+	assertArchiveTableCount(t, archivePath, "rollups", 0)
+	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "daily-resting-heart-rate", "list", 1, 1, 0, "")
+
+	installDataPointSyncFetchFake(t, "connect-access-secret", "daily-resting-heart-rate", map[string]string{"": restingHeartRatePage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "daily-resting-heart-rate",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("idempotent daily sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("idempotent daily stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 0)
+	assertJSONNumber(t, got, "data_points_updated", 0)
+	assertArchiveTableCount(t, archivePath, "data_point_revisions", 0)
+	assertArchiveTableCount(t, archivePath, "rollups", 0)
+	assertSyncRunForDataType(t, archivePath, 2, "sync_completed", "daily-resting-heart-rate", "list", 1, 0, 0, "")
+
+	correctedRestingHeartRatePage := strings.Replace(restingHeartRatePage, `"beatsPerMinute": "61"`, `"beatsPerMinute": "63"`, 1)
+	installDataPointSyncFetchFake(t, "connect-access-secret", "daily-resting-heart-rate", map[string]string{"": correctedRestingHeartRatePage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "daily-resting-heart-rate",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("corrected daily sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("corrected daily stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 0)
+	assertJSONNumber(t, got, "data_points_updated", 1)
+	assertArchiveTableCount(t, archivePath, "data_point_revisions", 1)
+	assertArchivedDailyDataPoint(t, archivePath, "users/me/dataTypes/daily-resting-heart-rate/dataPoints/rhr-2026-01-01", "daily-resting-heart-rate", "2026-01-01", `"beatsPerMinute":"63"`)
+	assertSyncRunForDataType(t, archivePath, 3, "sync_completed", "daily-resting-heart-rate", "list", 1, 0, 1, "")
+
+	dailyOxygenPage := string(readTestFixture(t, "googlehealth_daily_oxygen_saturation_list.json"))
+	installDataPointSyncFetchFake(t, "connect-access-secret", "daily-oxygen-saturation", map[string]string{"": dailyOxygenPage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "daily-oxygen-saturation",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("daily oxygen sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("daily oxygen stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 1)
+	assertArchivedDailyDataPoint(t, archivePath, "users/me/dataTypes/daily-oxygen-saturation/dataPoints/spo2-daily-2026-01-01", "daily-oxygen-saturation", "2026-01-01", `"averagePercentage":96.8`)
+	assertArchiveTableCount(t, archivePath, "data_points", 2)
+	assertArchiveTableCount(t, archivePath, "rollups", 0)
+	assertSyncRunForDataType(t, archivePath, 4, "sync_completed", "daily-oxygen-saturation", "list", 1, 1, 0, "")
+
+	dailyHeartRateVariabilityPage := string(readTestFixture(t, "googlehealth_daily_heart_rate_variability_list.json"))
+	installDataPointSyncFetchFake(t, "connect-access-secret", "daily-heart-rate-variability", map[string]string{"": dailyHeartRateVariabilityPage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "daily-heart-rate-variability",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("daily heart-rate variability sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("daily heart-rate variability stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 1)
+	assertArchivedDailyDataPoint(t, archivePath, "users/me/dataTypes/daily-heart-rate-variability/dataPoints/hrv-daily-2026-01-01", "daily-heart-rate-variability", "2026-01-01", `"averageHeartRateVariabilityMilliseconds":45.7`)
+	assertArchiveTableCount(t, archivePath, "data_points", 3)
+	assertArchiveTableCount(t, archivePath, "rollups", 0)
+	assertSyncRunForDataType(t, archivePath, 5, "sync_completed", "daily-heart-rate-variability", "list", 1, 1, 0, "")
+
+	dailyRespiratoryRatePage := string(readTestFixture(t, "googlehealth_daily_respiratory_rate_list.json"))
+	installDataPointSyncFetchFake(t, "connect-access-secret", "daily-respiratory-rate", map[string]string{"": dailyRespiratoryRatePage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "daily-respiratory-rate",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("daily respiratory-rate sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("daily respiratory-rate stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 1)
+	assertArchivedDailyDataPoint(t, archivePath, "users/me/dataTypes/daily-respiratory-rate/dataPoints/resp-daily-2026-01-01", "daily-respiratory-rate", "2026-01-01", `"breathsPerMinute":14.2`)
+	assertArchiveTableCount(t, archivePath, "data_points", 4)
+	assertArchiveTableCount(t, archivePath, "rollups", 0)
+	assertSyncRunForDataType(t, archivePath, 6, "sync_completed", "daily-respiratory-rate", "list", 1, 1, 0, "")
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestSyncArchivesWearableStepsViaReconcile(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -3996,6 +4179,21 @@ func TestGoogleHealthRawFilterFieldsCoverFirstReleaseDataTypes(t *testing.T) {
 			dataType: "daily-resting-heart-rate",
 			from:     "2026-01-01",
 			want:     `daily_resting_heart_rate.date >= "2026-01-01"`,
+		},
+		{
+			dataType: "daily-heart-rate-variability",
+			from:     "2026-01-01",
+			want:     `daily_heart_rate_variability.date >= "2026-01-01"`,
+		},
+		{
+			dataType: "daily-oxygen-saturation",
+			from:     "2026-01-01",
+			want:     `daily_oxygen_saturation.date >= "2026-01-01"`,
+		},
+		{
+			dataType: "daily-respiratory-rate",
+			from:     "2026-01-01",
+			want:     `daily_respiratory_rate.date >= "2026-01-01"`,
 		},
 		{
 			dataType: "exercise",
@@ -6056,6 +6254,63 @@ func assertArchivedSampleDataPoint(t *testing.T, archivePath, resourceName, want
 	}
 	if timezoneMetadata.String != wantTimezoneMetadata || timezoneMetadata.Valid != (wantTimezoneMetadata != "") {
 		t.Fatalf("timezone_metadata = %v(%q), want %q", timezoneMetadata.Valid, timezoneMetadata.String, wantTimezoneMetadata)
+	}
+	if dataSourceJSON == "" {
+		t.Fatal("data_source_json is empty")
+	}
+	if !strings.Contains(rawJSON, wantRawContains) {
+		t.Fatalf("raw_json = %s, want %s", rawJSON, wantRawContains)
+	}
+}
+
+func assertArchivedDailyDataPoint(t *testing.T, archivePath, resourceName, wantDataType, wantCivilDate, wantRawContains string) {
+	t.Helper()
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	var dataType, recordKind, dataSourceJSON, rawJSON string
+	var startUTC, endUTC, startCivil, endCivil, civilDate, timezoneMetadata sql.NullString
+	if err := db.QueryRow(`SELECT
+		data_type,
+		record_kind,
+		start_time_utc,
+		end_time_utc,
+		start_civil_time,
+		end_civil_time,
+		provider_civil_date,
+		timezone_metadata,
+		data_source_json,
+		raw_json
+	FROM data_points
+	WHERE upstream_resource_name = ?
+	ORDER BY id`, resourceName).Scan(
+		&dataType,
+		&recordKind,
+		&startUTC,
+		&endUTC,
+		&startCivil,
+		&endCivil,
+		&civilDate,
+		&timezoneMetadata,
+		&dataSourceJSON,
+		&rawJSON,
+	); err != nil {
+		t.Fatalf("query archived daily Data Point: %v", err)
+	}
+	if dataType != wantDataType || recordKind != "daily" {
+		t.Fatalf("Data Point identity = (%q, %q), want (%q, daily)", dataType, recordKind, wantDataType)
+	}
+	if startUTC.Valid || endUTC.Valid || startCivil.Valid || endCivil.Valid {
+		t.Fatalf("daily physical/civil times = (%v, %v, %v, %v), want only provider civil date", startUTC.Valid, endUTC.Valid, startCivil.Valid, endCivil.Valid)
+	}
+	if civilDate.String != wantCivilDate || !civilDate.Valid {
+		t.Fatalf("provider_civil_date = %v(%q), want %q", civilDate.Valid, civilDate.String, wantCivilDate)
+	}
+	if timezoneMetadata.Valid {
+		t.Fatalf("timezone_metadata = %q, want omitted for date-only daily Data Point", timezoneMetadata.String)
 	}
 	if dataSourceJSON == "" {
 		t.Fatal("data_source_json is empty")

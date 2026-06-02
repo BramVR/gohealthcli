@@ -1,0 +1,21 @@
+{
+  "dataPoints": [
+    {
+      "name": "users/me/dataTypes/daily-oxygen-saturation/dataPoints/spo2-daily-2026-01-01",
+      "dataSource": {
+        "platform": "FITBIT"
+      },
+      "dailyOxygenSaturation": {
+        "date": {
+          "year": 2026,
+          "month": 1,
+          "day": 1
+        },
+        "averagePercentage": 96.8,
+        "lowerBoundPercentage": 95.1,
+        "upperBoundPercentage": 98.2,
+        "standardDeviationPercentage": 0.9
+      }
+    }
+  ]
+}
