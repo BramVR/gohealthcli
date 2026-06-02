@@ -324,8 +324,8 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	assertJSONString(t, got, "config_path", configPath)
 	assertJSONString(t, got, "archive_path", archivePath)
 	assertJSONString(t, got, "oauth_client_source", "file")
-	if got["schema_version"] != float64(3) {
-		t.Fatalf("schema_version = %v, want 3", got["schema_version"])
+	if got["schema_version"] != float64(currentSchemaVersion) {
+		t.Fatalf("schema_version = %v, want %d", got["schema_version"], currentSchemaVersion)
 	}
 	dataTypes, ok := got["default_data_types"].([]any)
 	if !ok {
@@ -403,8 +403,8 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("schema migration rows: %v", err)
 	}
-	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter" {
-		t.Fatalf("migrations = %v, want initial + identity + source family", migrations)
+	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter,4:add_daily_steps_view" {
+		t.Fatalf("migrations = %v, want initial + identity + source family + daily steps view", migrations)
 	}
 
 	for _, table := range []string{
@@ -503,8 +503,8 @@ func TestDoctorReportsInitializedSetup(t *testing.T) {
 	assertJSONString(t, got, "oauth_client_source", "file")
 	assertJSONString(t, got, "credential_store", expectedDefaultCredentialStoreKind())
 	assertJSONString(t, got, "token_status", "not_connected")
-	if got["schema_version"] != float64(3) {
-		t.Fatalf("schema_version = %v, want 3", got["schema_version"])
+	if got["schema_version"] != float64(currentSchemaVersion) {
+		t.Fatalf("schema_version = %v, want %d", got["schema_version"], currentSchemaVersion)
 	}
 	if got["connection_count"] != float64(0) {
 		t.Fatalf("connection_count = %v, want 0", got["connection_count"])
@@ -540,7 +540,7 @@ func TestDoctorPlainReportsOfflineHealthCheck(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 
-	want := fmt.Sprintf("status: ok\nconfig_path: %s\narchive_path: %s\noauth_client_source: file\ncredential_store: %s\nschema_version: 3\nconnection_count: 0\ntoken_status: not_connected\nmessage: local gohealthcli setup is initialized\n", configPath, archivePath, expectedDefaultCredentialStoreKind())
+	want := fmt.Sprintf("status: ok\nconfig_path: %s\narchive_path: %s\noauth_client_source: file\ncredential_store: %s\nschema_version: %d\nconnection_count: 0\ntoken_status: not_connected\nmessage: local gohealthcli setup is initialized\n", configPath, archivePath, expectedDefaultCredentialStoreKind(), currentSchemaVersion)
 	if stdout.String() != want {
 		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 	}
@@ -2502,7 +2502,7 @@ func TestStatusReportsHealthArchiveCountsAndSyncRunsReadOnly(t *testing.T) {
 	}
 	assertJSONString(t, got, "status", "ok")
 	assertJSONString(t, got, "archive_path", archivePath)
-	assertJSONNumber(t, got, "schema_version", 3)
+	assertJSONNumber(t, got, "schema_version", currentSchemaVersion)
 	assertJSONNumber(t, got, "data_point_count", 3)
 	assertJSONNumber(t, got, "rollup_count", 1)
 	assertJSONNumber(t, got, "profile_snapshot_count", 1)
@@ -2567,7 +2567,7 @@ func TestStatusPlainReportsEmptyHealthArchive(t *testing.T) {
 	wantLines := []string{
 		"status: ok\n",
 		"archive_path: " + archivePath + "\n",
-		"schema_version: 3\n",
+		fmt.Sprintf("schema_version: %d\n", currentSchemaVersion),
 		"data_point_count: 0\n",
 		"rollup_count: 0\n",
 		"profile_snapshot_count: 0\n",
@@ -2583,6 +2583,32 @@ func TestStatusPlainReportsEmptyHealthArchive(t *testing.T) {
 		t.Fatalf("stdout reported absent archive details:\n%s", stdout.String())
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestStatusMigratesLegacyV3ArchiveBeforeValidation(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	if err := os.Remove(archivePath); err != nil {
+		t.Fatalf("remove current archive: %v", err)
+	}
+	createLegacyV3Archive(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"status", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("status exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "ok")
+	assertJSONNumber(t, got, "schema_version", currentSchemaVersion)
+	assertArchiveUserVersion(t, archivePath, currentSchemaVersion)
 }
 
 func TestStatusRejectsConfigArchiveMismatch(t *testing.T) {
@@ -2667,13 +2693,10 @@ func TestStatusRejectsExplicitDefaultArchiveMismatch(t *testing.T) {
 	}
 }
 
-func TestStatusReportsSchemaVersionOnArchiveValidationFailure(t *testing.T) {
+func TestStatusReportsMigrationFailureForUnsupportedSchema(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	if err := os.Remove(archivePath); err != nil {
-		t.Fatalf("remove initialized archive: %v", err)
-	}
-	createLegacyV1Archive(t, archivePath)
+	setArchiveUserVersion(t, archivePath, currentSchemaVersion+1)
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
@@ -2693,8 +2716,10 @@ func TestStatusReportsSchemaVersionOnArchiveValidationFailure(t *testing.T) {
 		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
 	}
 	assertJSONString(t, got, "status", "status_failed")
-	assertJSONNumber(t, got, "schema_version", 1)
-	if !strings.Contains(got["message"].(string), "schema version 1") {
+	if _, ok := got["schema_version"]; ok {
+		t.Fatalf("schema_version = %v, want omitted before migration succeeds", got["schema_version"])
+	}
+	if !strings.Contains(got["message"].(string), fmt.Sprintf("schema version %d", currentSchemaVersion+1)) {
 		t.Fatalf("message = %q, want schema version", got["message"])
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
@@ -3874,8 +3899,8 @@ func TestConnectMigratesLegacyV1ArchiveBeforeStoringIdentity(t *testing.T) {
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
 		t.Fatalf("query user_version: %v", err)
 	}
-	if userVersion != 3 {
-		t.Fatalf("user_version = %d, want 3", userVersion)
+	if userVersion != currentSchemaVersion {
+		t.Fatalf("user_version = %d, want %d", userVersion, currentSchemaVersion)
 	}
 	var identityJSON string
 	if err := db.QueryRow(`SELECT google_identity_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&identityJSON); err != nil {
@@ -3904,10 +3929,10 @@ func TestDoctorMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
 	}
-	if got["schema_version"] != float64(3) {
-		t.Fatalf("schema_version = %v, want 3", got["schema_version"])
+	if got["schema_version"] != float64(currentSchemaVersion) {
+		t.Fatalf("schema_version = %v, want %d", got["schema_version"], currentSchemaVersion)
 	}
-	assertArchiveUserVersion(t, archivePath, 3)
+	assertArchiveUserVersion(t, archivePath, currentSchemaVersion)
 }
 
 func TestInitMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
@@ -3934,10 +3959,10 @@ func TestInitMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
 	}
-	if got["schema_version"] != float64(3) {
-		t.Fatalf("schema_version = %v, want 3", got["schema_version"])
+	if got["schema_version"] != float64(currentSchemaVersion) {
+		t.Fatalf("schema_version = %v, want %d", got["schema_version"], currentSchemaVersion)
 	}
-	assertArchiveUserVersion(t, archivePath, 3)
+	assertArchiveUserVersion(t, archivePath, currentSchemaVersion)
 }
 
 func TestConnectRejectsUnsupportedOSNativeStoreBeforeOAuth(t *testing.T) {
@@ -4455,7 +4480,7 @@ func TestInitStoresSecretProviderReference(t *testing.T) {
 	for _, want := range []string{
 		"status: initialized\n",
 		"oauth_client_source: secret_provider\n",
-		"schema_version: 3\n",
+		fmt.Sprintf("schema_version: %d\n", currentSchemaVersion),
 	} {
 		if !strings.Contains(outText, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, outText)
@@ -5508,6 +5533,18 @@ func insertStatusFixtureRows(t *testing.T, archivePath string) {
 func createLegacyV1Archive(t *testing.T, archivePath string) {
 	t.Helper()
 
+	createLegacyArchive(t, archivePath, 1)
+}
+
+func createLegacyV3Archive(t *testing.T, archivePath string) {
+	t.Helper()
+
+	createLegacyArchive(t, archivePath, 3)
+}
+
+func createLegacyArchive(t *testing.T, archivePath string, schemaVersion int) {
+	t.Helper()
+
 	if err := ensureOwnerOnlyDir(filepath.Dir(archivePath)); err != nil {
 		t.Fatalf("create archive parent: %v", err)
 	}
@@ -5537,9 +5574,21 @@ func createLegacyV1Archive(t *testing.T, archivePath string) {
 		_ = tx.Rollback()
 		t.Fatalf("record legacy migration: %v", err)
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 1`); err != nil {
+	if schemaVersion >= 2 {
+		if err := applyGoogleIdentityArchiveMigration(tx, time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("apply legacy identity migration: %v", err)
+		}
+	}
+	if schemaVersion >= 3 {
+		if err := applySourceFamilyArchiveMigration(tx, time.Date(2026, 5, 31, 23, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("apply legacy source family migration: %v", err)
+		}
+	}
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 		_ = tx.Rollback()
-		t.Fatalf("set legacy user_version: %v", err)
+		t.Fatalf("set legacy user_version %d: %v", schemaVersion, err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit legacy migration: %v", err)
@@ -5548,6 +5597,19 @@ func createLegacyV1Archive(t *testing.T, archivePath string) {
 		if err := os.Chmod(archivePath, 0o600); err != nil {
 			t.Fatalf("chmod legacy archive: %v", err)
 		}
+	}
+}
+
+func setArchiveUserVersion(t *testing.T, archivePath string, version int) {
+	t.Helper()
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
+		t.Fatalf("set archive user_version %d: %v", version, err)
 	}
 }
 

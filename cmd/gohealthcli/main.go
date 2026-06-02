@@ -27,7 +27,7 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
@@ -382,6 +382,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runStatus(flags.Args()[1:], *configPath, *archivePath, globalArchivePathExplicit, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	case "query":
 		return runQuery(flags.Args()[1:], *configPath, *archivePath, globalArchivePathExplicit, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
+	case "export":
+		return runExport(flags.Args()[1:], *configPath, *archivePath, globalArchivePathExplicit, stdout, stderr)
 	case "raw":
 		return runRaw(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	default:
@@ -1338,6 +1340,9 @@ func statusSetup(archivePath string) (statusResult, error) {
 	result := statusResult{
 		Status:      "status_failed",
 		ArchivePath: archivePath,
+	}
+	if err := migrateArchiveIfNeeded(archivePath); err != nil {
+		return result, fmt.Errorf("Health Archive migration failed: %w", err)
 	}
 	archive, err := inspectArchive(archivePath, false)
 	result.SchemaVersion = archive.schemaVersion
@@ -4568,7 +4573,10 @@ func applyMigrations(db *sql.DB) error {
 	if err := applySourceFamilyArchiveMigration(tx, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 3`); err != nil {
+	if err := applyDailyStepsViewMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 4`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -4605,7 +4613,7 @@ func applyPendingMigrations(db *sql.DB) error {
 	switch userVersion {
 	case currentSchemaVersion:
 		return nil
-	case 1, 2:
+	case 1, 2, 3:
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -4617,10 +4625,15 @@ func applyPendingMigrations(db *sql.DB) error {
 				return err
 			}
 		}
-		if err := applySourceFamilyArchiveMigration(tx, now); err != nil {
+		if userVersion <= 2 {
+			if err := applySourceFamilyArchiveMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if err := applyDailyStepsViewMigration(tx, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`PRAGMA user_version = 3`); err != nil {
+		if _, err := tx.Exec(`PRAGMA user_version = 4`); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -4650,11 +4663,22 @@ func applySourceFamilyArchiveMigration(tx *sql.Tx, appliedAt string) error {
 	return err
 }
 
+func applyDailyStepsViewMigration(tx *sql.Tx, appliedAt string) error {
+	for _, statement := range dailyStepsViewMigrationStatements() {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (4, 'add_daily_steps_view', ?)`, appliedAt)
+	return err
+}
+
 func expectedSchemaMigrations() map[int]string {
 	return map[int]string{
 		1: "initial_archive_schema",
 		2: "add_google_identity_json",
 		3: "add_source_family_filter",
+		4: "add_daily_steps_view",
 	}
 }
 
@@ -4740,6 +4764,71 @@ func initialMigrationStatements() []string {
 			error_summary TEXT,
 			FOREIGN KEY (connection_id) REFERENCES connections(id)
 		)`,
+	}
+}
+
+func dailyStepsViewMigrationStatements() []string {
+	return []string{
+		`CREATE VIEW daily_steps AS
+		WITH data_point_days AS (
+			SELECT
+				provider_name,
+				connection_id,
+				COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(end_civil_time, 1, 10), substr(start_time_utc, 1, 10), substr(end_time_utc, 1, 10)) AS civil_date,
+				IFNULL(source_family_filter, '') AS source_family_filter,
+				SUM(CAST(json_extract(raw_json, '$.steps.count') AS INTEGER)) AS step_count,
+				COUNT(*) AS source_record_count,
+				MAX(COALESCE(end_time_utc, start_time_utc, updated_at, '')) AS latest_source_timestamp
+			FROM data_points
+			WHERE data_type = 'steps'
+				AND json_extract(raw_json, '$.steps.count') IS NOT NULL
+				AND COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(end_civil_time, 1, 10), substr(start_time_utc, 1, 10), substr(end_time_utc, 1, 10)) IS NOT NULL
+			GROUP BY provider_name, connection_id, civil_date, source_family_filter
+		),
+		rollup_days AS (
+			SELECT
+				provider_name,
+				connection_id,
+				civil_date,
+				'' AS source_family_filter,
+				CAST(json_extract(raw_json, '$.steps.countSum') AS INTEGER) AS step_count,
+				1 AS source_record_count,
+				COALESCE(window_end_utc, window_start_utc, civil_date, updated_at, '') AS latest_source_timestamp
+			FROM rollups
+			WHERE data_type = 'steps'
+				AND rollup_kind = 'dailyRollUp'
+				AND civil_date IS NOT NULL
+				AND json_extract(raw_json, '$.steps.countSum') IS NOT NULL
+		)
+		SELECT
+			provider_name,
+			connection_id,
+			civil_date,
+			source_family_filter,
+			step_count,
+			'dailyRollUp' AS source_kind,
+			source_record_count,
+			latest_source_timestamp
+		FROM rollup_days
+		UNION ALL
+		SELECT
+			provider_name,
+			connection_id,
+			civil_date,
+			source_family_filter,
+			step_count,
+			'dataPoints' AS source_kind,
+			source_record_count,
+			latest_source_timestamp
+		FROM data_point_days
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM rollup_days
+				WHERE rollup_days.provider_name = data_point_days.provider_name
+					AND rollup_days.connection_id = data_point_days.connection_id
+					AND rollup_days.civil_date = data_point_days.civil_date
+					AND rollup_days.source_family_filter = data_point_days.source_family_filter
+			)`,
 	}
 }
 
