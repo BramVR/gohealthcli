@@ -1,0 +1,104 @@
+package main
+
+import (
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestSyncRunExecutorArchivesDataPointList(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	originalCurrentTime := currentTime
+	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { currentTime = originalCurrentTime })
+
+	requests := installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+		"": `{
+			"dataPoints": [{
+				"name": "users/me/dataTypes/steps/dataPoints/step-2026-01-01-executor",
+				"dataSource": {"platform": "FITBIT"},
+				"steps": {
+					"interval": {
+						"startTime": "2026-01-01T08:00:00Z",
+						"endTime": "2026-01-01T08:15:00Z"
+					},
+					"count": "512"
+				}
+			}]
+		}`,
+	})
+
+	result, err := (syncRunExecutor{}).Execute(syncCommandOptions{
+		configPath:  configPath,
+		archivePath: archivePath,
+		dataTypes:   []string{"steps"},
+		from:        "2026-01-01",
+		to:          "2026-01-02T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("execute Sync Run: %v", err)
+	}
+
+	if result.Status != "sync_completed" || result.EndpointFamily != "list" {
+		t.Fatalf("Sync Run result = (%q, %q), want completed list", result.Status, result.EndpointFamily)
+	}
+	if result.DataPointsSeen != 1 || result.DataPointsNew != 1 || result.DataPointsUpdated != 0 {
+		t.Fatalf("Data Point counts = (%d, %d, %d), want (1, 1, 0)", result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated)
+	}
+	if len(*requests) != 1 || (*requests)[0].endpointName != "dataTypes.steps.list" {
+		t.Fatalf("requests = %#v, want one steps list request", *requests)
+	}
+	if strings.Contains((*requests)[0].url, "dataSourceFamily") {
+		t.Fatalf("list request unexpectedly used source-family filtering: %s", (*requests)[0].url)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 1)
+	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "steps", "list", 1, 1, 0, "")
+}
+
+func TestSyncRunExecutorRecordsFailedListRunForRepeatedPageToken(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	originalCurrentTime := currentTime
+	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { currentTime = originalCurrentTime })
+
+	installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+		"":           `{"dataPoints":[],"nextPageToken":"same-token"}`,
+		"same-token": `{"dataPoints":[],"nextPageToken":"same-token"}`,
+	})
+
+	result, err := (syncRunExecutor{}).Execute(syncCommandOptions{
+		configPath:  configPath,
+		archivePath: archivePath,
+		dataTypes:   []string{"steps"},
+		from:        "2026-01-01",
+		to:          "2026-01-02T00:00:00Z",
+	})
+	if err == nil {
+		t.Fatal("execute Sync Run error = nil, want repeated page token failure")
+	}
+	if result.Status != "sync_failed" || !strings.Contains(result.Message, "repeated page token") {
+		t.Fatalf("Sync Run result = (%q, %q), want repeated-token failure", result.Status, result.Message)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 0)
+	assertSyncRunForDataType(t, archivePath, 1, "sync_failed", "steps", "list", 0, 0, 0, "repeated page token")
+}
