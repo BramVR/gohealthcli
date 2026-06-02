@@ -248,16 +248,6 @@ func syncProviderRequestError(err error) error {
 	return err
 }
 
-func syncDataPointDataTypeSupported(dataType string) bool {
-	_, dailySupported := googleHealthDailyDataPointShapeForDataType(dataType)
-	return dataType == "steps" || googleHealthSampleDataPointJSONField(dataType) != "" || dailySupported
-}
-
-func syncDataPointUsesDateRange(dataType string) bool {
-	_, ok := googleHealthDailyDataPointShapeForDataType(dataType)
-	return ok
-}
-
 func syncResultTotalCounts(result syncResult) (int, int, int) {
 	return result.DataPointsSeen + result.RollupsSeen,
 		result.DataPointsNew + result.RollupsNew,
