@@ -38,22 +38,6 @@ const googleHealthIdentityURL = "https://health.googleapis.com/v4/users/me/ident
 const googleHealthProfileURL = "https://health.googleapis.com/v4/users/me/profile"
 const googleHealthRawResponseLimit = 10 << 20
 
-var defaultDataTypes = []string{
-	"steps",
-	"heart-rate",
-	"daily-resting-heart-rate",
-	"heart-rate-variability",
-	"daily-heart-rate-variability",
-	"oxygen-saturation",
-	"daily-oxygen-saturation",
-	"daily-respiratory-rate",
-	"sleep",
-	"exercise",
-	"distance",
-	"total-calories",
-	"weight",
-}
-
 type doctorResult struct {
 	Status            string `json:"status"`
 	ConfigPath        string `json:"config_path"`
@@ -2197,13 +2181,10 @@ func validateDefaultDataTypes(dataTypes []string) error {
 	if len(dataTypes) == 0 {
 		return errors.New("default Data Types must include at least one Data Type")
 	}
-	allowed := make(map[string]struct{}, len(defaultDataTypes))
-	for _, dataType := range defaultDataTypes {
-		allowed[dataType] = struct{}{}
-	}
 	seen := make(map[string]struct{}, len(dataTypes))
 	for _, dataType := range dataTypes {
-		if _, ok := allowed[dataType]; !ok {
+		entry, ok := googleHealthDataTypes.Lookup(dataType)
+		if !ok || !entry.DefaultConfigType {
 			return fmt.Errorf("unsupported default Data Type %s", dataType)
 		}
 		if _, ok := seen[dataType]; ok {
@@ -2293,19 +2274,6 @@ func oauthScopesForDataTypes(dataTypes []string) []string {
 		}
 	}
 	return scopes
-}
-
-func googleHealthScopesForDataType(dataType string) []string {
-	switch dataType {
-	case "steps", "distance", "exercise", "total-calories":
-		return []string{googleHealthActivityReadonlyScope}
-	case "heart-rate", "heart-rate-variability", "daily-heart-rate-variability", "daily-resting-heart-rate", "oxygen-saturation", "daily-oxygen-saturation", "daily-respiratory-rate", "weight":
-		return []string{googleHealthHealthMetricsReadonlyScope}
-	case "sleep":
-		return []string{googleHealthSleepReadonlyScope}
-	default:
-		return nil
-	}
 }
 
 func runBrowserOAuthFlow(client oauthClientConfig, scopes []string, noInput bool) (oauthTokenResponse, error) {
@@ -2775,7 +2743,7 @@ func buildGoogleHealthDailyRollupRawRequest(dataType, from, to string, pageSize 
 	if err := validateRawGoogleHealthDataType(dataType); err != nil {
 		return rawProviderRequest{}, err
 	}
-	if dataType != "steps" {
+	if !dailyRollupDataTypeSupported(dataType) {
 		return rawProviderRequest{}, errors.New("daily Rollup sync currently supports only Data Type steps")
 	}
 	if from == "" {
@@ -2911,25 +2879,6 @@ func googleHealthDataTypeListFilter(dataType, from, to string) (string, error) {
 		clauses = append(clauses, fmt.Sprintf("%s < %s", field, filterTo))
 	}
 	return strings.Join(clauses, " AND "), nil
-}
-
-func googleHealthDataTypeListFilterField(dataType string) (string, error) {
-	filterDataType := strings.ReplaceAll(dataType, "-", "_")
-	if shape, ok := googleHealthDailyDataPointShapeForDataType(dataType); ok {
-		return shape.filterField, nil
-	}
-	switch dataType {
-	case "steps", "distance":
-		return filterDataType + ".interval.start_time", nil
-	case "heart-rate", "heart-rate-variability", "oxygen-saturation", "weight":
-		return filterDataType + ".sample_time.physical_time", nil
-	case "exercise":
-		return filterDataType + ".interval.civil_start_time", nil
-	case "sleep":
-		return filterDataType + ".interval.end_time", nil
-	default:
-		return "", fmt.Errorf("raw Data Type %q is not supported by dataPoints.list", dataType)
-	}
 }
 
 func googleHealthFilterValue(field, value string) (string, error) {
@@ -3188,38 +3137,6 @@ func parseGoogleHealthSampleDataPoint(connection archivedConnection, dataType st
 	}, nil
 }
 
-func googleHealthSampleDataPointJSONField(dataType string) string {
-	switch dataType {
-	case "heart-rate":
-		return "heartRate"
-	case "oxygen-saturation":
-		return "oxygenSaturation"
-	default:
-		return ""
-	}
-}
-
-type googleHealthDailyDataPointShape struct {
-	jsonField   string
-	filterField string
-}
-
-func googleHealthDailyDataPointShapeForDataType(dataType string) (googleHealthDailyDataPointShape, bool) {
-	filterDataType := strings.ReplaceAll(dataType, "-", "_")
-	switch dataType {
-	case "daily-resting-heart-rate":
-		return googleHealthDailyDataPointShape{jsonField: "dailyRestingHeartRate", filterField: filterDataType + ".date"}, true
-	case "daily-heart-rate-variability":
-		return googleHealthDailyDataPointShape{jsonField: "dailyHeartRateVariability", filterField: filterDataType + ".date"}, true
-	case "daily-oxygen-saturation":
-		return googleHealthDailyDataPointShape{jsonField: "dailyOxygenSaturation", filterField: filterDataType + ".date"}, true
-	case "daily-respiratory-rate":
-		return googleHealthDailyDataPointShape{jsonField: "dailyRespiratoryRate", filterField: filterDataType + ".date"}, true
-	default:
-		return googleHealthDailyDataPointShape{}, false
-	}
-}
-
 func parseGoogleHealthDailyDataPoint(connection archivedConnection, dataType string, rawPoint json.RawMessage, sourceFamilyFilter string) (archivedDataPoint, error) {
 	canonicalRaw, err := compactJSONString(rawPoint)
 	if err != nil {
@@ -3277,13 +3194,6 @@ func parseGoogleHealthDailyDataPoint(connection archivedConnection, dataType str
 		sourceFamilyFilter:   sourceFamilyFilter,
 		rawJSON:              canonicalRaw,
 	}, nil
-}
-
-func googleHealthDailyDataPointJSONField(dataType string) string {
-	if shape, ok := googleHealthDailyDataPointShapeForDataType(dataType); ok {
-		return shape.jsonField
-	}
-	return ""
 }
 
 func parseGoogleHealthStepsDailyRollup(connection archivedConnection, rawRollup json.RawMessage) (archivedRollup, error) {

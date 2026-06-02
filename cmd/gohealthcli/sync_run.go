@@ -28,7 +28,7 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	if options.rollup != "" && options.rollup != "daily" {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync --rollup currently supports only daily")
 	}
-	if options.rollup != "" && dataType != "steps" {
+	if options.rollup != "" && !dailyRollupDataTypeSupported(dataType) {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync --rollup currently supports only Data Type steps")
 	}
 	if options.sourceFamily != "" && options.sourceFamily != "wearable" {
@@ -246,16 +246,6 @@ func syncProviderRequestError(err error) error {
 		return errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again")
 	}
 	return err
-}
-
-func syncDataPointDataTypeSupported(dataType string) bool {
-	_, dailySupported := googleHealthDailyDataPointShapeForDataType(dataType)
-	return dataType == "steps" || googleHealthSampleDataPointJSONField(dataType) != "" || dailySupported
-}
-
-func syncDataPointUsesDateRange(dataType string) bool {
-	_, ok := googleHealthDailyDataPointShapeForDataType(dataType)
-	return ok
 }
 
 func syncResultTotalCounts(result syncResult) (int, int, int) {
