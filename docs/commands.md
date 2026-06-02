@@ -60,9 +60,10 @@ archive the raw Profile Snapshot with `fetched_at`, and print stable summary
 fields including `snapshot_id`. Profile Snapshots stay separate from Data Points
 and Rollups.
 
-`sync`: currently archives raw `steps`, `heart-rate`, and `oxygen-saturation`
-Data Points from the provider list path, steps Data Points from the reconcile
-path when `--source-family wearable` is explicit, or steps daily Rollups when
+`sync`: currently accepts exactly one Data Type per run and archives raw
+`steps`, `heart-rate`, and `oxygen-saturation` Data Points from the provider
+list path, supported Data Point types from the reconcile path when
+`--source-family wearable` is explicit, or steps daily Rollups when
 `--rollup daily` is explicit. Default sync fetches Data Points from all Data
 Sources and never calls Rollup endpoints. Sync is idempotent and reports Data
 Point and Rollup seen, new, and updated counts separately. If required scopes
