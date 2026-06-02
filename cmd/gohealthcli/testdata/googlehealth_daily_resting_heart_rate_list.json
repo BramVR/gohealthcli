@@ -1,0 +1,21 @@
+{
+  "dataPoints": [
+    {
+      "name": "users/me/dataTypes/daily-resting-heart-rate/dataPoints/rhr-2026-01-01",
+      "dataSource": {
+        "platform": "FITBIT"
+      },
+      "dailyRestingHeartRate": {
+        "date": {
+          "year": 2026,
+          "month": 1,
+          "day": 1
+        },
+        "beatsPerMinute": "61",
+        "dailyRestingHeartRateMetadata": {
+          "calculationMethod": "METHOD_SLEEP"
+        }
+      }
+    }
+  ]
+}

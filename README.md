@@ -28,9 +28,10 @@ First CLI tracer in progress. `gohealthcli init` creates local config and an
 empty Health Archive, `gohealthcli doctor` validates local setup offline,
 `gohealthcli connect` anchors a Google Identity, `gohealthcli identity`
 refreshes it, and `gohealthcli profile` archives Profile Snapshots.
-`gohealthcli sync` archives steps, heart-rate, and oxygen-saturation Data
-Points, wearable-filtered steps, and explicit steps daily Rollups idempotently,
-`gohealthcli status` summarizes the local Health Archive, `gohealthcli query`
-runs guarded read-only SQL over the archive, `gohealthcli export daily-steps`
-writes CSV or JSONL from the normalized daily steps view, `gohealthcli raw`
-prints provider JSON for exploration, and `gohealthcli --version` is available.
+`gohealthcli sync` archives steps, heart-rate, oxygen-saturation, and
+daily-shaped Data Points, wearable-filtered Data Points, and explicit steps
+daily Rollups idempotently, `gohealthcli status` summarizes the local Health
+Archive, `gohealthcli query` runs guarded read-only SQL over the archive,
+`gohealthcli export daily-steps` writes CSV or JSONL from the normalized daily
+steps view, `gohealthcli raw` prints provider JSON for exploration, and
+`gohealthcli --version` is available.

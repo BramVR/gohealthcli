@@ -1289,7 +1289,7 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 }
 
 func syncDataPointDataTypeSupported(dataType string) bool {
-	return dataType == "steps" || googleHealthSampleDataPointJSONField(dataType) != ""
+	return dataType == "steps" || googleHealthSampleDataPointJSONField(dataType) != "" || googleHealthDailyDataPointJSONField(dataType) != ""
 }
 
 func syncResultTotalCounts(result syncResult) (int, int, int) {
@@ -3261,6 +3261,9 @@ func parseGoogleHealthDataPoint(connection archivedConnection, dataType string, 
 	if googleHealthSampleDataPointJSONField(dataType) != "" {
 		return parseGoogleHealthSampleDataPoint(connection, dataType, rawPoint, sourceFamilyFilter)
 	}
+	if googleHealthDailyDataPointJSONField(dataType) != "" {
+		return parseGoogleHealthDailyDataPoint(connection, dataType, rawPoint, sourceFamilyFilter)
+	}
 	return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not supported", dataType)
 }
 
@@ -3424,6 +3427,77 @@ func googleHealthSampleDataPointJSONField(dataType string) string {
 	}
 }
 
+func parseGoogleHealthDailyDataPoint(connection archivedConnection, dataType string, rawPoint json.RawMessage, sourceFamilyFilter string) (archivedDataPoint, error) {
+	canonicalRaw, err := compactJSONString(rawPoint)
+	if err != nil {
+		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not valid JSON", dataType)
+	}
+	var raw struct {
+		Name          string                     `json:"name"`
+		DataPointName string                     `json:"dataPointName"`
+		DataSource    json.RawMessage            `json:"dataSource"`
+		Fields        map[string]json.RawMessage `json:"-"`
+	}
+	if err := json.Unmarshal(rawPoint, &raw.Fields); err != nil {
+		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not valid JSON", dataType)
+	}
+	if err := json.Unmarshal(rawPoint, &raw); err != nil {
+		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not valid JSON", dataType)
+	}
+	jsonField := googleHealthDailyDataPointJSONField(dataType)
+	rawDaily, ok := raw.Fields[jsonField]
+	if !ok || len(rawDaily) == 0 || string(rawDaily) == "null" {
+		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point missing %s value", dataType, jsonField)
+	}
+	var daily struct {
+		Date json.RawMessage `json:"date"`
+	}
+	if err := json.Unmarshal(rawDaily, &daily); err != nil {
+		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point %s is not valid JSON", dataType, jsonField)
+	}
+	providerCivilDate, err := googleDateText(daily.Date)
+	if err != nil {
+		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point date: %w", dataType, err)
+	}
+	dataSourceJSON := "{}"
+	if len(raw.DataSource) != 0 && string(raw.DataSource) != "null" {
+		dataSourceJSON, err = compactJSONString(raw.DataSource)
+		if err != nil {
+			return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point dataSource is not valid JSON", dataType)
+		}
+	}
+	upstreamResourceName := raw.Name
+	if upstreamResourceName == "" {
+		upstreamResourceName = raw.DataPointName
+	}
+	return archivedDataPoint{
+		providerName:         connection.providerName,
+		connectionID:         connection.id,
+		dataType:             dataType,
+		upstreamResourceName: upstreamResourceName,
+		recordKind:           "daily",
+		providerCivilDate:    providerCivilDate,
+		dataSourceJSON:       dataSourceJSON,
+		sourceFamilyFilter:   sourceFamilyFilter,
+		rawJSON:              canonicalRaw,
+	}, nil
+}
+
+func googleHealthDailyDataPointJSONField(dataType string) string {
+	switch dataType {
+	case "daily-resting-heart-rate":
+		return "dailyRestingHeartRate"
+	case "daily-heart-rate-variability":
+		return "dailyHeartRateVariability"
+	case "daily-oxygen-saturation":
+		return "dailyOxygenSaturation"
+	case "daily-respiratory-rate":
+		return "dailyRespiratoryRate"
+	default:
+		return ""
+	}
+}
+
 func parseGoogleHealthStepsDailyRollup(connection archivedConnection, rawRollup json.RawMessage) (archivedRollup, error) {
 	canonicalRaw, err := compactJSONString(rawRollup)
 	if err != nil {
@@ -3517,6 +3591,24 @@ func googleCivilDateTimeText(raw json.RawMessage) (string, string, error) {
 		text += "." + fraction
 	}
 	return text, date, nil
+}
+
+func googleDateText(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", errors.New("missing date")
+	}
+	var value struct {
+		Year  int `json:"year"`
+		Month int `json:"month"`
+		Day   int `json:"day"`
+	}
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", errors.New("not valid JSON")
+	}
+	if value.Year == 0 || value.Month == 0 || value.Day == 0 {
+		return "", errors.New("missing date")
+	}
+	return fmt.Sprintf("%04d-%02d-%02d", value.Year, value.Month, value.Day), nil
 }
 
 func googleIntervalTimezoneMetadataJSON(startUTCOffset, endUTCOffset string) (string, error) {
