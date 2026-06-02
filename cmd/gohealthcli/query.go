@@ -74,6 +74,9 @@ func querySetup(archivePath, statement string) (queryResult, error) {
 	if err := validateQueryStatement(statement); err != nil {
 		return result, err
 	}
+	if err := migrateArchiveIfNeeded(archivePath); err != nil {
+		return result, fmt.Errorf("Health Archive migration failed: %w", err)
+	}
 	if _, err := inspectArchive(archivePath, false); err != nil {
 		return result, fmt.Errorf("Health Archive check failed: %w", err)
 	}

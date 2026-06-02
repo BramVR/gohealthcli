@@ -1341,6 +1341,9 @@ func statusSetup(archivePath string) (statusResult, error) {
 		Status:      "status_failed",
 		ArchivePath: archivePath,
 	}
+	if err := migrateArchiveIfNeeded(archivePath); err != nil {
+		return result, fmt.Errorf("Health Archive migration failed: %w", err)
+	}
 	archive, err := inspectArchive(archivePath, false)
 	result.SchemaVersion = archive.schemaVersion
 	if err != nil {

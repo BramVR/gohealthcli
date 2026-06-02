@@ -2585,6 +2585,32 @@ func TestStatusPlainReportsEmptyHealthArchive(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestStatusMigratesLegacyV3ArchiveBeforeValidation(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	if err := os.Remove(archivePath); err != nil {
+		t.Fatalf("remove current archive: %v", err)
+	}
+	createLegacyV3Archive(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"status", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("status exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "ok")
+	assertJSONNumber(t, got, "schema_version", currentSchemaVersion)
+	assertArchiveUserVersion(t, archivePath, currentSchemaVersion)
+}
+
 func TestStatusRejectsConfigArchiveMismatch(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
@@ -2667,13 +2693,10 @@ func TestStatusRejectsExplicitDefaultArchiveMismatch(t *testing.T) {
 	}
 }
 
-func TestStatusReportsSchemaVersionOnArchiveValidationFailure(t *testing.T) {
+func TestStatusReportsMigrationFailureForUnsupportedSchema(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	if err := os.Remove(archivePath); err != nil {
-		t.Fatalf("remove initialized archive: %v", err)
-	}
-	createLegacyV1Archive(t, archivePath)
+	setArchiveUserVersion(t, archivePath, currentSchemaVersion+1)
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
@@ -2693,8 +2716,10 @@ func TestStatusReportsSchemaVersionOnArchiveValidationFailure(t *testing.T) {
 		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
 	}
 	assertJSONString(t, got, "status", "status_failed")
-	assertJSONNumber(t, got, "schema_version", 1)
-	if !strings.Contains(got["message"].(string), "schema version 1") {
+	if _, ok := got["schema_version"]; ok {
+		t.Fatalf("schema_version = %v, want omitted before migration succeeds", got["schema_version"])
+	}
+	if !strings.Contains(got["message"].(string), fmt.Sprintf("schema version %d", currentSchemaVersion+1)) {
 		t.Fatalf("message = %q, want schema version", got["message"])
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
@@ -5508,6 +5533,18 @@ func insertStatusFixtureRows(t *testing.T, archivePath string) {
 func createLegacyV1Archive(t *testing.T, archivePath string) {
 	t.Helper()
 
+	createLegacyArchive(t, archivePath, 1)
+}
+
+func createLegacyV3Archive(t *testing.T, archivePath string) {
+	t.Helper()
+
+	createLegacyArchive(t, archivePath, 3)
+}
+
+func createLegacyArchive(t *testing.T, archivePath string, schemaVersion int) {
+	t.Helper()
+
 	if err := ensureOwnerOnlyDir(filepath.Dir(archivePath)); err != nil {
 		t.Fatalf("create archive parent: %v", err)
 	}
@@ -5537,9 +5574,21 @@ func createLegacyV1Archive(t *testing.T, archivePath string) {
 		_ = tx.Rollback()
 		t.Fatalf("record legacy migration: %v", err)
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 1`); err != nil {
+	if schemaVersion >= 2 {
+		if err := applyGoogleIdentityArchiveMigration(tx, time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("apply legacy identity migration: %v", err)
+		}
+	}
+	if schemaVersion >= 3 {
+		if err := applySourceFamilyArchiveMigration(tx, time.Date(2026, 5, 31, 23, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("apply legacy source family migration: %v", err)
+		}
+	}
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 		_ = tx.Rollback()
-		t.Fatalf("set legacy user_version: %v", err)
+		t.Fatalf("set legacy user_version %d: %v", schemaVersion, err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit legacy migration: %v", err)
@@ -5548,6 +5597,19 @@ func createLegacyV1Archive(t *testing.T, archivePath string) {
 		if err := os.Chmod(archivePath, 0o600); err != nil {
 			t.Fatalf("chmod legacy archive: %v", err)
 		}
+	}
+}
+
+func setArchiveUserVersion(t *testing.T, archivePath string, version int) {
+	t.Helper()
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
+		t.Fatalf("set archive user_version %d: %v", version, err)
 	}
 }
 
