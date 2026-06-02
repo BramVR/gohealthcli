@@ -3155,7 +3155,6 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 		"--db", archivePath,
 		"--types", "daily-resting-heart-rate",
 		"--from", "2026-01-01",
-		"--to", "2026-01-02",
 		"--json",
 	}, stdout, stderr)
 	if code != 0 {
@@ -3166,6 +3165,7 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 		t.Fatalf("daily resting heart-rate stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
 	}
 	assertJSONString(t, got, "endpoint_family", "list")
+	assertJSONString(t, got, "to", "2026-01-02")
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
 	if (*requests)[0].endpointName != "dataTypes.daily-resting-heart-rate.list" {

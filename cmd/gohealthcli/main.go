@@ -1096,7 +1096,7 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync requires --from")
 	}
 	if options.to == "" {
-		if options.rollup == "daily" {
+		if options.rollup == "daily" || syncDataPointUsesDateRange(dataType) {
 			options.to = currentTime().UTC().Format("2006-01-02")
 		} else {
 			options.to = currentTime().UTC().Format(time.RFC3339)
@@ -1291,6 +1291,11 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 func syncDataPointDataTypeSupported(dataType string) bool {
 	_, dailySupported := googleHealthDailyDataPointShapeForDataType(dataType)
 	return dataType == "steps" || googleHealthSampleDataPointJSONField(dataType) != "" || dailySupported
+}
+
+func syncDataPointUsesDateRange(dataType string) bool {
+	_, ok := googleHealthDailyDataPointShapeForDataType(dataType)
+	return ok
 }
 
 func syncResultTotalCounts(result syncResult) (int, int, int) {
