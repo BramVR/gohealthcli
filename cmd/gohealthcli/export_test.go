@@ -16,18 +16,20 @@ func TestDailyStepsNormalizedViewPrefersRollupsAndAggregatesDataPoints(t *testin
 	insertExportStepDataPoint(t, archivePath, "users/me/dataTypes/steps/dataPoints/c", "2026-01-01T12:00:00Z", "2026-01-01T12:10:00Z", `{"steps":{"count":"128"}}`)
 	insertExportStepDataPoint(t, archivePath, "users/me/dataTypes/steps/dataPoints/d", "2026-01-04T12:00:00Z", "2026-01-04T12:10:00Z", `{"steps":{"count":"1"}}`)
 	insertExportStepDataPointWithSourceFamily(t, archivePath, "users/me/dataTypes/steps/dataPoints/wearable", "2026-01-01T08:00:00Z", "2026-01-01T08:15:00Z", `{"steps":{"count":"256"}}`, "wearable")
+	insertExportStepDataPointWithSourceFamily(t, archivePath, "users/me/dataTypes/steps/dataPoints/wearable-rollup-day", "2026-01-04T08:00:00Z", "2026-01-04T08:15:00Z", `{"steps":{"count":"384"}}`, "wearable")
 
 	rows, err := dailyStepsExportRows(archivePath)
 	if err != nil {
 		t.Fatalf("daily steps rows: %v", err)
 	}
-	if len(rows) != 4 {
-		t.Fatalf("row count = %d, want 4: %+v", len(rows), rows)
+	if len(rows) != 5 {
+		t.Fatalf("row count = %d, want 5: %+v", len(rows), rows)
 	}
 	assertDailyStepsRow(t, rows[0], "2026-01-01", 640, "dataPoints", "", 2)
 	assertDailyStepsRow(t, rows[1], "2026-01-01", 256, "dataPoints", "wearable", 1)
 	assertDailyStepsRow(t, rows[2], "2026-01-02", 1024, "dataPoints", "", 1)
 	assertDailyStepsRow(t, rows[3], "2026-01-04", 2048, "dailyRollUp", "", 1)
+	assertDailyStepsRow(t, rows[4], "2026-01-04", 384, "dataPoints", "wearable", 1)
 }
 
 func TestExportDailyStepsCSVToFile(t *testing.T) {

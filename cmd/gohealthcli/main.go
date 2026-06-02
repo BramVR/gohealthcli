@@ -4821,10 +4821,11 @@ func dailyStepsViewMigrationStatements() []string {
 		WHERE NOT EXISTS (
 			SELECT 1
 			FROM rollup_days
-			WHERE rollup_days.provider_name = data_point_days.provider_name
-				AND rollup_days.connection_id = data_point_days.connection_id
-				AND rollup_days.civil_date = data_point_days.civil_date
-		)`,
+				WHERE rollup_days.provider_name = data_point_days.provider_name
+					AND rollup_days.connection_id = data_point_days.connection_id
+					AND rollup_days.civil_date = data_point_days.civil_date
+					AND rollup_days.source_family_filter = data_point_days.source_family_filter
+			)`,
 	}
 }
 
