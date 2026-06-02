@@ -14,7 +14,7 @@ func syncSetup(options syncCommandOptions) (syncResult, error) {
 	return (syncRunExecutor{}).Execute(options)
 }
 
-func (syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
+func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
 	if len(options.dataTypes) == 0 {
 		return syncResult{Status: "sync_failed"}, errors.New("sync requires at least one Data Type")
 	}
@@ -122,98 +122,12 @@ func (syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
 		return fail(errors.New("Provider returned a different Google Identity; use a new archive path"))
 	}
 	if options.rollup == "daily" {
-		windows, err := googleHealthDailyRollupDateWindows(options.from, options.to)
-		if err != nil {
+		if err := executor.executeDailyRollupPages(db, connection, dataType, options, accessToken, &result); err != nil {
 			return fail(err)
 		}
-		for _, window := range windows {
-			seenPageTokens := map[string]struct{}{}
-			for pageToken := ""; ; {
-				request, err := buildGoogleHealthDailyRollupRawRequest(dataType, window.from, window.to, 0, pageToken)
-				if err != nil {
-					return fail(err)
-				}
-				body, err := fetchRawProvider(request, accessToken)
-				if err != nil {
-					if strings.Contains(err.Error(), "HTTP 401") {
-						return fail(errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again"))
-					}
-					return fail(err)
-				}
-				page, err := parseGoogleHealthRollupList(body)
-				if err != nil {
-					return fail(err)
-				}
-				for _, rawRollup := range page.rollups {
-					rollup, err := parseGoogleHealthStepsDailyRollup(connection, rawRollup)
-					if err != nil {
-						return fail(err)
-					}
-					status, err := upsertRollup(db, rollup, currentTime().UTC().Format(time.RFC3339))
-					if err != nil {
-						return fail(err)
-					}
-					result.RollupsSeen++
-					switch status {
-					case "new":
-						result.RollupsNew++
-					case "updated":
-						result.RollupsUpdated++
-					}
-				}
-				if page.nextPageToken == "" {
-					break
-				}
-				if _, ok := seenPageTokens[page.nextPageToken]; ok {
-					return fail(errors.New("Google Health steps dailyRollUp returned a repeated page token"))
-				}
-				seenPageTokens[page.nextPageToken] = struct{}{}
-				pageToken = page.nextPageToken
-			}
-		}
 	} else {
-		seenPageTokens := map[string]struct{}{}
-		for pageToken := ""; ; {
-			request, err := buildGoogleHealthSyncDataPointRawRequest(dataType, options.from, options.to, options.sourceFamily, 0, pageToken)
-			if err != nil {
-				return fail(err)
-			}
-			body, err := fetchRawProvider(request, accessToken)
-			if err != nil {
-				if strings.Contains(err.Error(), "HTTP 401") {
-					return fail(errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again"))
-				}
-				return fail(err)
-			}
-			page, err := parseGoogleHealthDataPointList(body)
-			if err != nil {
-				return fail(err)
-			}
-			for _, rawPoint := range page.dataPoints {
-				point, err := parseGoogleHealthDataPoint(connection, dataType, rawPoint, options.sourceFamily)
-				if err != nil {
-					return fail(err)
-				}
-				status, err := upsertDataPoint(db, point, currentTime().UTC().Format(time.RFC3339))
-				if err != nil {
-					return fail(err)
-				}
-				result.DataPointsSeen++
-				switch status {
-				case "new":
-					result.DataPointsNew++
-				case "updated":
-					result.DataPointsUpdated++
-				}
-			}
-			if page.nextPageToken == "" {
-				break
-			}
-			if _, ok := seenPageTokens[page.nextPageToken]; ok {
-				return fail(fmt.Errorf("Google Health %s %s returned a repeated page token", dataType, endpointFamily))
-			}
-			seenPageTokens[page.nextPageToken] = struct{}{}
-			pageToken = page.nextPageToken
+		if err := executor.executeDataPointPages(db, connection, dataType, options, accessToken, &result); err != nil {
+			return fail(err)
 		}
 	}
 	seen, newCount, updated := syncResultTotalCounts(result)
@@ -231,6 +145,107 @@ func (syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
 		result.Message = fmt.Sprintf("Sync Run archived %s Data Points", dataType)
 	}
 	return result, nil
+}
+
+func (syncRunExecutor) executeDailyRollupPages(db *sql.DB, connection archivedConnection, dataType string, options syncCommandOptions, accessToken string, result *syncResult) error {
+	windows, err := googleHealthDailyRollupDateWindows(options.from, options.to)
+	if err != nil {
+		return err
+	}
+	for _, window := range windows {
+		seenPageTokens := map[string]struct{}{}
+		for pageToken := ""; ; {
+			request, err := buildGoogleHealthDailyRollupRawRequest(dataType, window.from, window.to, 0, pageToken)
+			if err != nil {
+				return err
+			}
+			body, err := fetchRawProvider(request, accessToken)
+			if err != nil {
+				return syncProviderRequestError(err)
+			}
+			page, err := parseGoogleHealthRollupList(body)
+			if err != nil {
+				return err
+			}
+			for _, rawRollup := range page.rollups {
+				rollup, err := parseGoogleHealthStepsDailyRollup(connection, rawRollup)
+				if err != nil {
+					return err
+				}
+				status, err := upsertRollup(db, rollup, currentTime().UTC().Format(time.RFC3339))
+				if err != nil {
+					return err
+				}
+				result.RollupsSeen++
+				switch status {
+				case "new":
+					result.RollupsNew++
+				case "updated":
+					result.RollupsUpdated++
+				}
+			}
+			if page.nextPageToken == "" {
+				break
+			}
+			if _, ok := seenPageTokens[page.nextPageToken]; ok {
+				return errors.New("Google Health steps dailyRollUp returned a repeated page token")
+			}
+			seenPageTokens[page.nextPageToken] = struct{}{}
+			pageToken = page.nextPageToken
+		}
+	}
+	return nil
+}
+
+func (syncRunExecutor) executeDataPointPages(db *sql.DB, connection archivedConnection, dataType string, options syncCommandOptions, accessToken string, result *syncResult) error {
+	seenPageTokens := map[string]struct{}{}
+	for pageToken := ""; ; {
+		request, err := buildGoogleHealthSyncDataPointRawRequest(dataType, options.from, options.to, options.sourceFamily, 0, pageToken)
+		if err != nil {
+			return err
+		}
+		body, err := fetchRawProvider(request, accessToken)
+		if err != nil {
+			return syncProviderRequestError(err)
+		}
+		page, err := parseGoogleHealthDataPointList(body)
+		if err != nil {
+			return err
+		}
+		for _, rawPoint := range page.dataPoints {
+			point, err := parseGoogleHealthDataPoint(connection, dataType, rawPoint, options.sourceFamily)
+			if err != nil {
+				return err
+			}
+			status, err := upsertDataPoint(db, point, currentTime().UTC().Format(time.RFC3339))
+			if err != nil {
+				return err
+			}
+			result.DataPointsSeen++
+			switch status {
+			case "new":
+				result.DataPointsNew++
+			case "updated":
+				result.DataPointsUpdated++
+			}
+		}
+		if page.nextPageToken == "" {
+			break
+		}
+		if _, ok := seenPageTokens[page.nextPageToken]; ok {
+			return fmt.Errorf("Google Health %s %s returned a repeated page token", dataType, result.EndpointFamily)
+		}
+		seenPageTokens[page.nextPageToken] = struct{}{}
+		pageToken = page.nextPageToken
+	}
+	return nil
+}
+
+func syncProviderRequestError(err error) error {
+	if strings.Contains(err.Error(), "HTTP 401") {
+		return errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again")
+	}
+	return err
 }
 
 func syncDataPointDataTypeSupported(dataType string) bool {
