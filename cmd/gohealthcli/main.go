@@ -4772,6 +4772,7 @@ func dailyStepsViewMigrationStatements() []string {
 				provider_name,
 				connection_id,
 				COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(end_civil_time, 1, 10), substr(start_time_utc, 1, 10), substr(end_time_utc, 1, 10)) AS civil_date,
+				IFNULL(source_family_filter, '') AS source_family_filter,
 				SUM(CAST(json_extract(raw_json, '$.steps.count') AS INTEGER)) AS step_count,
 				COUNT(*) AS source_record_count,
 				MAX(COALESCE(end_time_utc, start_time_utc, updated_at, '')) AS latest_source_timestamp
@@ -4779,13 +4780,14 @@ func dailyStepsViewMigrationStatements() []string {
 			WHERE data_type = 'steps'
 				AND json_extract(raw_json, '$.steps.count') IS NOT NULL
 				AND COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(end_civil_time, 1, 10), substr(start_time_utc, 1, 10), substr(end_time_utc, 1, 10)) IS NOT NULL
-			GROUP BY provider_name, connection_id, civil_date
+			GROUP BY provider_name, connection_id, civil_date, source_family_filter
 		),
 		rollup_days AS (
 			SELECT
 				provider_name,
 				connection_id,
 				civil_date,
+				'' AS source_family_filter,
 				CAST(json_extract(raw_json, '$.steps.countSum') AS INTEGER) AS step_count,
 				1 AS source_record_count,
 				COALESCE(window_end_utc, window_start_utc, civil_date, updated_at, '') AS latest_source_timestamp
@@ -4799,6 +4801,7 @@ func dailyStepsViewMigrationStatements() []string {
 			provider_name,
 			connection_id,
 			civil_date,
+			source_family_filter,
 			step_count,
 			'dailyRollUp' AS source_kind,
 			source_record_count,
@@ -4809,6 +4812,7 @@ func dailyStepsViewMigrationStatements() []string {
 			provider_name,
 			connection_id,
 			civil_date,
+			source_family_filter,
 			step_count,
 			'dataPoints' AS source_kind,
 			source_record_count,

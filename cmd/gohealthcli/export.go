@@ -19,6 +19,7 @@ type dailyStepsExportRow struct {
 	CivilDate             string `json:"civil_date"`
 	StepCount             int64  `json:"step_count"`
 	SourceKind            string `json:"source_kind"`
+	SourceFamilyFilter    string `json:"source_family_filter"`
 	SourceRecordCount     int64  `json:"source_record_count"`
 	LatestSourceTimestamp string `json:"latest_source_timestamp"`
 }
@@ -157,10 +158,11 @@ func dailyStepsExportRows(archivePath string) ([]dailyStepsExportRow, error) {
 		civil_date,
 		step_count,
 		source_kind,
+		source_family_filter,
 		source_record_count,
 		latest_source_timestamp
 	FROM daily_steps
-	ORDER BY civil_date, provider_name, connection_id, source_kind`)
+	ORDER BY civil_date, provider_name, connection_id, source_kind, source_family_filter`)
 	if err != nil {
 		return nil, err
 	}
@@ -176,6 +178,7 @@ func dailyStepsExportRows(archivePath string) ([]dailyStepsExportRow, error) {
 			&item.CivilDate,
 			&item.StepCount,
 			&item.SourceKind,
+			&item.SourceFamilyFilter,
 			&item.SourceRecordCount,
 			&latest,
 		); err != nil {
@@ -232,6 +235,7 @@ func writeDailyStepsCSV(rows []dailyStepsExportRow, writer io.Writer) error {
 			row.CivilDate,
 			strconv.FormatInt(row.StepCount, 10),
 			row.SourceKind,
+			row.SourceFamilyFilter,
 			strconv.FormatInt(row.SourceRecordCount, 10),
 			row.LatestSourceTimestamp,
 		}); err != nil {
@@ -265,6 +269,7 @@ func dailyStepsExportFields() []string {
 		"civil_date",
 		"step_count",
 		"source_kind",
+		"source_family_filter",
 		"source_record_count",
 		"latest_source_timestamp",
 	}

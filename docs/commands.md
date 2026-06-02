@@ -208,9 +208,9 @@ message: Query completed
 Daily steps CSV export:
 
 ```text
-provider_name,connection_id,civil_date,step_count,source_kind,source_record_count,latest_source_timestamp
-googlehealth,googlehealth:111111256096816351,2026-01-01,512,dataPoints,1,2026-01-01T08:15:00Z
-googlehealth,googlehealth:111111256096816351,2026-01-04,2048,dailyRollUp,1,2026-01-04
+provider_name,connection_id,civil_date,step_count,source_kind,source_family_filter,source_record_count,latest_source_timestamp
+googlehealth,googlehealth:111111256096816351,2026-01-01,512,dataPoints,,1,2026-01-01T08:15:00Z
+googlehealth,googlehealth:111111256096816351,2026-01-04,2048,dailyRollUp,,1,2026-01-04
 ```
 
 Connect plain mode:
