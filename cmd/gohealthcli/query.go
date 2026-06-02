@@ -66,60 +66,6 @@ func runQuery(args []string, configPath, archivePath string, archivePathExplicit
 	return 0
 }
 
-func querySetup(archivePath, statement string) (queryResult, error) {
-	result := queryResult{
-		Status:      "query_failed",
-		ArchivePath: archivePath,
-	}
-	if err := validateQueryStatement(statement); err != nil {
-		return result, err
-	}
-	if err := migrateArchiveIfNeeded(archivePath); err != nil {
-		return result, fmt.Errorf("Health Archive migration failed: %w", err)
-	}
-	if _, err := inspectArchive(archivePath, false); err != nil {
-		return result, fmt.Errorf("Health Archive check failed: %w", err)
-	}
-	db, err := openArchiveReadOnly(archivePath)
-	if err != nil {
-		return result, err
-	}
-	defer db.Close()
-
-	rows, err := db.Query(statement)
-	if err != nil {
-		return result, err
-	}
-	defer rows.Close()
-
-	columns, err := rows.Columns()
-	if err != nil {
-		return result, err
-	}
-	result.Columns = columns
-	for rows.Next() {
-		values := make([]any, len(columns))
-		destinations := make([]any, len(columns))
-		for index := range values {
-			destinations[index] = &values[index]
-		}
-		if err := rows.Scan(destinations...); err != nil {
-			return result, err
-		}
-		for index, value := range values {
-			values[index] = queryOutputValue(value)
-		}
-		result.Rows = append(result.Rows, values)
-	}
-	if err := rows.Err(); err != nil {
-		return result, err
-	}
-	result.Status = "query_completed"
-	result.RowCount = len(result.Rows)
-	result.Message = "Query completed"
-	return result, nil
-}
-
 func validateQueryStatement(statement string) error {
 	trimmed := strings.TrimSpace(statement)
 	if trimmed == "" {
