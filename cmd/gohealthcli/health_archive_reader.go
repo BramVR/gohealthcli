@@ -183,6 +183,9 @@ func querySetup(archivePath, statement string) (queryResult, error) {
 		Status:      "query_failed",
 		ArchivePath: archivePath,
 	}
+	if err := validateQueryStatement(statement); err != nil {
+		return result, err
+	}
 	reader, err := openHealthArchiveReader(archivePath)
 	if err != nil {
 		return result, err
