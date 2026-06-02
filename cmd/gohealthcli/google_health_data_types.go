@@ -142,9 +142,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 
 var defaultDataTypes = googleHealthDataTypes.DefaultDataTypes()
 
-var googleHealthSourceFamilyFilters = map[string]string{
-	"wearable": "users/me/dataSourceFamilies/google-wearables",
-}
+const googleHealthWearableSourceFamilyFilterName = "users/me/dataSourceFamilies/google-wearables"
 
 func newGoogleHealthDataTypeCatalog(entries []googleHealthDataTypeCatalogEntry) googleHealthDataTypeCatalog {
 	catalog := googleHealthDataTypeCatalog{
@@ -241,11 +239,12 @@ func googleHealthSourceFamilyFilterName(dataType, sourceFamily string) (string, 
 	if !reconcileDataTypeSupported(dataType) {
 		return "", fmt.Errorf("sync --source-family is not supported for Data Type %s", dataType)
 	}
-	filterName, ok := googleHealthSourceFamilyFilters[sourceFamily]
-	if !ok {
+	switch sourceFamily {
+	case "wearable":
+		return googleHealthWearableSourceFamilyFilterName, nil
+	default:
 		return "", fmt.Errorf("sync --source-family currently supports only wearable")
 	}
-	return filterName, nil
 }
 
 func dailyRollupDataTypeSupported(dataType string) bool {
