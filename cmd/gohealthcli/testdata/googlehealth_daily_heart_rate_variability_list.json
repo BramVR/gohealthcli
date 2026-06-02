@@ -1,0 +1,21 @@
+{
+  "dataPoints": [
+    {
+      "name": "users/me/dataTypes/daily-heart-rate-variability/dataPoints/hrv-daily-2026-01-01",
+      "dataSource": {
+        "platform": "FITBIT"
+      },
+      "dailyHeartRateVariability": {
+        "date": {
+          "year": 2026,
+          "month": 1,
+          "day": 1
+        },
+        "averageHeartRateVariabilityMilliseconds": 45.7,
+        "nonRemHeartRateBeatsPerMinute": "58",
+        "entropy": 0.84,
+        "deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds": 52.3
+      }
+    }
+  ]
+}

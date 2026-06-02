@@ -3257,6 +3257,58 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 	assertArchiveTableCount(t, archivePath, "data_points", 2)
 	assertArchiveTableCount(t, archivePath, "rollups", 0)
 	assertSyncRunForDataType(t, archivePath, 4, "sync_completed", "daily-oxygen-saturation", "list", 1, 1, 0, "")
+
+	dailyHeartRateVariabilityPage := string(readTestFixture(t, "googlehealth_daily_heart_rate_variability_list.json"))
+	installDataPointSyncFetchFake(t, "connect-access-secret", "daily-heart-rate-variability", map[string]string{"": dailyHeartRateVariabilityPage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "daily-heart-rate-variability",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("daily heart-rate variability sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("daily heart-rate variability stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 1)
+	assertArchivedDailyDataPoint(t, archivePath, "users/me/dataTypes/daily-heart-rate-variability/dataPoints/hrv-daily-2026-01-01", "daily-heart-rate-variability", "2026-01-01", `"averageHeartRateVariabilityMilliseconds":45.7`)
+	assertArchiveTableCount(t, archivePath, "data_points", 3)
+	assertArchiveTableCount(t, archivePath, "rollups", 0)
+	assertSyncRunForDataType(t, archivePath, 5, "sync_completed", "daily-heart-rate-variability", "list", 1, 1, 0, "")
+
+	dailyRespiratoryRatePage := string(readTestFixture(t, "googlehealth_daily_respiratory_rate_list.json"))
+	installDataPointSyncFetchFake(t, "connect-access-secret", "daily-respiratory-rate", map[string]string{"": dailyRespiratoryRatePage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "daily-respiratory-rate",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("daily respiratory-rate sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("daily respiratory-rate stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 1)
+	assertArchivedDailyDataPoint(t, archivePath, "users/me/dataTypes/daily-respiratory-rate/dataPoints/resp-daily-2026-01-01", "daily-respiratory-rate", "2026-01-01", `"breathsPerMinute":14.2`)
+	assertArchiveTableCount(t, archivePath, "data_points", 4)
+	assertArchiveTableCount(t, archivePath, "rollups", 0)
+	assertSyncRunForDataType(t, archivePath, 6, "sync_completed", "daily-respiratory-rate", "list", 1, 1, 0, "")
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
