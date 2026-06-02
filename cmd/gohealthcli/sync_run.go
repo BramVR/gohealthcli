@@ -4,6 +4,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -31,8 +34,10 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	if options.rollup != "" && !dailyRollupDataTypeSupported(dataType) {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync --rollup currently supports only Data Type steps")
 	}
-	if options.sourceFamily != "" && options.sourceFamily != "wearable" {
-		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync --source-family currently supports only wearable")
+	if options.sourceFamily != "" {
+		if _, err := googleHealthSourceFamilyFilterName(dataType, options.sourceFamily); err != nil {
+			return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, err
+		}
 	}
 	if options.rollup != "" && options.sourceFamily != "" {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync --source-family cannot be combined with --rollup")
@@ -239,6 +244,51 @@ func (syncRunExecutor) executeDataPointPages(db *sql.DB, connection archivedConn
 		pageToken = page.nextPageToken
 	}
 	return nil
+}
+
+func buildGoogleHealthSyncDataPointRawRequest(dataType, from, to, sourceFamily string, pageSize int64, pageToken string) (rawProviderRequest, error) {
+	if sourceFamily == "" {
+		return buildGoogleHealthDataTypeListRawRequest(dataType, from, to, pageSize, pageToken)
+	}
+	return buildGoogleHealthDataTypeReconcileRawRequest(dataType, from, to, sourceFamily, pageSize, pageToken)
+}
+
+func buildGoogleHealthDataTypeReconcileRawRequest(dataType, from, to, sourceFamily string, pageSize int64, pageToken string) (rawProviderRequest, error) {
+	if err := validateRawGoogleHealthDataType(dataType); err != nil {
+		return rawProviderRequest{}, err
+	}
+	if from == "" {
+		return rawProviderRequest{}, errors.New("Data Type reconcile raw calls require --from")
+	}
+	dataSourceFamily, err := googleHealthSourceFamilyFilterName(dataType, sourceFamily)
+	if err != nil {
+		return rawProviderRequest{}, err
+	}
+	query := url.Values{}
+	filter, err := googleHealthDataTypeListFilter(dataType, from, to)
+	if err != nil {
+		return rawProviderRequest{}, err
+	}
+	query.Set("filter", filter)
+	query.Set("dataSourceFamily", dataSourceFamily)
+	if pageSize > 0 {
+		query.Set("pageSize", strconv.FormatInt(pageSize, 10))
+	}
+	if pageToken != "" {
+		query.Set("pageToken", pageToken)
+	}
+	requestURL := googleHealthBaseURL + "/users/me/dataTypes/" + url.PathEscape(dataType) + "/dataPoints:reconcile"
+	if encoded := query.Encode(); encoded != "" {
+		requestURL += "?" + encoded
+	}
+	return rawProviderRequest{
+		endpointName:       "dataTypes." + dataType + ".reconcile",
+		dataType:           dataType,
+		method:             http.MethodGet,
+		url:                requestURL,
+		requiredScopes:     googleHealthScopesForDataType(dataType),
+		sourceFamilyFilter: sourceFamily,
+	}, nil
 }
 
 func syncProviderRequestError(err error) error {
