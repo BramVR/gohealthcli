@@ -2725,6 +2725,46 @@ func TestStatusReportsMigrationFailureForUnsupportedSchema(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestStatusReportsSchemaVersionForArchiveInspectionFailure(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version = ?`, currentSchemaVersion); err != nil {
+		_ = db.Close()
+		t.Fatalf("delete schema migration: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close archive: %v", err)
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"status",
+		"--config", configPath,
+		"--json",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("status exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "status_failed")
+	assertJSONNumber(t, got, "schema_version", currentSchemaVersion)
+	if !strings.Contains(got["message"].(string), "missing schema migration") {
+		t.Fatalf("message = %q, want missing migration", got["message"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestCountArchiveRowsRejectsUnknownTable(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {

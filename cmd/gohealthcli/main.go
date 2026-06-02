@@ -3470,10 +3470,10 @@ func inspectArchive(archivePath string, validateTokens bool) (archiveCheck, erro
 	for version, name := range expectedSchemaMigrations() {
 		var migrationCount int
 		if err := db.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version = ? AND name = ?`, version, name).Scan(&migrationCount); err != nil {
-			return archiveCheck{}, err
+			return archiveCheck{schemaVersion: userVersion}, err
 		}
 		if migrationCount != 1 {
-			return archiveCheck{}, fmt.Errorf("missing schema migration %d", version)
+			return archiveCheck{schemaVersion: userVersion}, fmt.Errorf("missing schema migration %d", version)
 		}
 	}
 	if !validateTokens {
