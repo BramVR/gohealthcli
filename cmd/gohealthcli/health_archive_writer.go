@@ -8,7 +8,7 @@ import (
 	"reflect"
 )
 
-type syncRunArchiveWriter interface {
+type healthArchiveWriter interface {
 	Close() error
 	CurrentConnection() (archivedConnection, error)
 	StartSyncRun(connection archivedConnection, dataTypes []string, from, to, endpointFamily, sourceFamilyFilter, startedAt string) (int64, error)
@@ -17,13 +17,13 @@ type syncRunArchiveWriter interface {
 	UpsertRollup(rollup archivedRollup, now string) (string, error)
 }
 
-type sqliteSyncRunArchiveWriter struct {
+type sqliteHealthArchiveWriter struct {
 	db *sql.DB
 }
 
 var finishSyncRunRecord = finishSyncRun
 
-func openSyncRunArchiveWriter(archivePath string) (syncRunArchiveWriter, error) {
+func openHealthArchiveWriter(archivePath string) (healthArchiveWriter, error) {
 	if err := migrateArchiveIfNeeded(archivePath); err != nil {
 		return nil, fmt.Errorf("Health Archive migration failed: %w", err)
 	}
@@ -34,14 +34,14 @@ func openSyncRunArchiveWriter(archivePath string) (syncRunArchiveWriter, error) 
 	if err != nil {
 		return nil, err
 	}
-	return &sqliteSyncRunArchiveWriter{db: db}, nil
+	return &sqliteHealthArchiveWriter{db: db}, nil
 }
 
-func (archive *sqliteSyncRunArchiveWriter) Close() error {
+func (archive *sqliteHealthArchiveWriter) Close() error {
 	return archive.db.Close()
 }
 
-func (archive *sqliteSyncRunArchiveWriter) CurrentConnection() (archivedConnection, error) {
+func (archive *sqliteHealthArchiveWriter) CurrentConnection() (archivedConnection, error) {
 	connection, err := readCurrentConnection(archive.db)
 	if errors.Is(err, sql.ErrNoRows) {
 		return archivedConnection{}, errors.New("no Connection found; run `gohealthcli connect` first")
@@ -49,19 +49,19 @@ func (archive *sqliteSyncRunArchiveWriter) CurrentConnection() (archivedConnecti
 	return connection, err
 }
 
-func (archive *sqliteSyncRunArchiveWriter) StartSyncRun(connection archivedConnection, dataTypes []string, from, to, endpointFamily, sourceFamilyFilter, startedAt string) (int64, error) {
+func (archive *sqliteHealthArchiveWriter) StartSyncRun(connection archivedConnection, dataTypes []string, from, to, endpointFamily, sourceFamilyFilter, startedAt string) (int64, error) {
 	return insertSyncRun(archive.db, connection, dataTypes, from, to, endpointFamily, sourceFamilyFilter, startedAt)
 }
 
-func (archive *sqliteSyncRunArchiveWriter) FinishSyncRun(id int64, status string, seenCount, newCount, updatedCount int, finishedAt, errorSummary string) error {
+func (archive *sqliteHealthArchiveWriter) FinishSyncRun(id int64, status string, seenCount, newCount, updatedCount int, finishedAt, errorSummary string) error {
 	return finishSyncRunRecord(archive.db, id, status, seenCount, newCount, updatedCount, finishedAt, errorSummary)
 }
 
-func (archive *sqliteSyncRunArchiveWriter) UpsertDataPoint(point archivedDataPoint, now string) (string, error) {
+func (archive *sqliteHealthArchiveWriter) UpsertDataPoint(point archivedDataPoint, now string) (string, error) {
 	return upsertDataPoint(archive.db, point, now)
 }
 
-func (archive *sqliteSyncRunArchiveWriter) UpsertRollup(rollup archivedRollup, now string) (string, error) {
+func (archive *sqliteHealthArchiveWriter) UpsertRollup(rollup archivedRollup, now string) (string, error) {
 	return upsertRollup(archive.db, rollup, now)
 }
 

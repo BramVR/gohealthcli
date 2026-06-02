@@ -67,7 +67,7 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	if err != nil {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, fmt.Errorf("config check failed: %w", err)
 	}
-	archive, err := openSyncRunArchiveWriter(options.archivePath)
+	archive, err := openHealthArchiveWriter(options.archivePath)
 	if err != nil {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, err
 	}
@@ -152,7 +152,7 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	return result, nil
 }
 
-func (syncRunExecutor) executeDailyRollupPages(archive syncRunArchiveWriter, connection archivedConnection, dataType string, options syncCommandOptions, accessToken string, result *syncResult) error {
+func (syncRunExecutor) executeDailyRollupPages(archive healthArchiveWriter, connection archivedConnection, dataType string, options syncCommandOptions, accessToken string, result *syncResult) error {
 	windows, err := googleHealthDailyRollupDateWindows(options.from, options.to)
 	if err != nil {
 		return err
@@ -322,7 +322,7 @@ func parseGoogleHealthRollupList(body []byte) (googleHealthRollupList, error) {
 	return googleHealthRollupList{rollups: raw.Rollups, nextPageToken: raw.NextPageToken}, nil
 }
 
-func (syncRunExecutor) executeDataPointPages(archive syncRunArchiveWriter, connection archivedConnection, dataType string, options syncCommandOptions, accessToken string, result *syncResult) error {
+func (syncRunExecutor) executeDataPointPages(archive healthArchiveWriter, connection archivedConnection, dataType string, options syncCommandOptions, accessToken string, result *syncResult) error {
 	seenPageTokens := map[string]struct{}{}
 	for pageToken := ""; ; {
 		request, err := buildGoogleHealthSyncDataPointRawRequest(dataType, options.from, options.to, options.sourceFamily, 0, pageToken)

@@ -5,13 +5,13 @@ import (
 	"testing"
 )
 
-func TestSyncRunArchiveWriterRequiresCurrentConnection(t *testing.T) {
+func TestHealthArchiveWriterRequiresCurrentConnection(t *testing.T) {
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
-	archive, err := openSyncRunArchiveWriter(archivePath)
+	archive, err := openHealthArchiveWriter(archivePath)
 	if err != nil {
-		t.Fatalf("open Sync Run archive writer: %v", err)
+		t.Fatalf("open Health Archive writer: %v", err)
 	}
 	defer archive.Close()
 
@@ -21,7 +21,7 @@ func TestSyncRunArchiveWriterRequiresCurrentConnection(t *testing.T) {
 	}
 }
 
-func TestSyncRunArchiveWriterRecordsDataPointRevisionsRollupsAndSyncRun(t *testing.T) {
+func TestHealthArchiveWriterRecordsDataPointRevisionsRollupsAndSyncRun(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	installConnectFakes(t, fakeConnectConfig{
@@ -34,9 +34,9 @@ func TestSyncRunArchiveWriterRecordsDataPointRevisionsRollupsAndSyncRun(t *testi
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 
-	archive, err := openSyncRunArchiveWriter(archivePath)
+	archive, err := openHealthArchiveWriter(archivePath)
 	if err != nil {
-		t.Fatalf("open Sync Run archive writer: %v", err)
+		t.Fatalf("open Health Archive writer: %v", err)
 	}
 	defer archive.Close()
 
