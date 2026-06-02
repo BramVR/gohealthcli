@@ -872,18 +872,18 @@ func connectSetup(configPath, archivePath string, noInput bool) (connectResult, 
 	}
 	connectionID := "googlehealth:" + identity.healthUserID
 
-	db, err := openArchive(archivePath)
+	archive, err := openHealthArchiveConnectionAPI(archivePath)
 	if err != nil {
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
-	defer db.Close()
-	if err := ensureSameArchiveIdentity(db, identity.healthUserID); err != nil {
+	defer archive.Close()
+	if err := archive.EnsureSameGoogleIdentity(identity.healthUserID); err != nil {
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
 	if err := store.Store(connectionID, token.rawTokenMaterialObject); err != nil {
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
-	if err := upsertConnection(db, connectionID, identity, token, currentTime()); err != nil {
+	if err := archive.UpsertConnection(connectionID, identity, token, currentTime()); err != nil {
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
 	return connectResult{
@@ -903,18 +903,12 @@ func identitySetup(configPath, archivePath string) (identityResult, error) {
 	if err != nil {
 		return identityResult{}, fmt.Errorf("config check failed: %w", err)
 	}
-	if err := migrateArchiveIfNeeded(archivePath); err != nil {
-		return identityResult{}, fmt.Errorf("Health Archive migration failed: %w", err)
-	}
-	if _, err := inspectArchive(archivePath, false); err != nil {
-		return identityResult{}, fmt.Errorf("Health Archive check failed: %w", err)
-	}
-	db, err := openArchive(archivePath)
+	archive, err := openHealthArchiveConnectionAPI(archivePath)
 	if err != nil {
 		return identityResult{}, err
 	}
-	defer db.Close()
-	connection, err := readCurrentConnection(db)
+	defer archive.Close()
+	connection, err := archive.CurrentConnection()
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return identityResult{Status: "identity_unavailable"}, errors.New("no Connection found; run `gohealthcli connect` first")
@@ -956,7 +950,7 @@ func identitySetup(configPath, archivePath string) (identityResult, error) {
 		result.Status = "identity_mismatch"
 		return result, errors.New("Provider returned a different Google Identity; use a new archive path")
 	}
-	if err := refreshConnectionIdentity(db, connection, identity, currentTime()); err != nil {
+	if err := archive.RefreshConnectionIdentity(connection, identity, currentTime()); err != nil {
 		return result, err
 	}
 	result.Status = "identity_refreshed"
@@ -973,18 +967,12 @@ func profileSetup(configPath, archivePath string) (profileResult, error) {
 	if err != nil {
 		return profileResult{}, fmt.Errorf("config check failed: %w", err)
 	}
-	if err := migrateArchiveIfNeeded(archivePath); err != nil {
-		return profileResult{}, fmt.Errorf("Health Archive migration failed: %w", err)
-	}
-	if _, err := inspectArchive(archivePath, false); err != nil {
-		return profileResult{}, fmt.Errorf("Health Archive check failed: %w", err)
-	}
-	db, err := openArchive(archivePath)
+	archive, err := openHealthArchiveConnectionAPI(archivePath)
 	if err != nil {
 		return profileResult{}, err
 	}
-	defer db.Close()
-	connection, err := readCurrentConnection(db)
+	defer archive.Close()
+	connection, err := archive.CurrentConnection()
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return profileResult{Status: "profile_unavailable"}, errors.New("no Connection found; run `gohealthcli connect` first")
@@ -1030,7 +1018,7 @@ func profileSetup(configPath, archivePath string) (profileResult, error) {
 		return result, errors.New("Provider returned a different Google Identity; use a new archive path")
 	}
 	fetchedAt := currentTime().UTC().Format(time.RFC3339)
-	snapshotID, err := insertProfileSnapshot(db, connection, profile.rawJSON, fetchedAt)
+	snapshotID, err := archive.InsertProfileSnapshot(connection, profile.rawJSON, fetchedAt)
 	if err != nil {
 		return result, err
 	}
@@ -1120,14 +1108,14 @@ func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
 		result.TokenStatus = "not_connected"
 		return result, errors.New("no Connection found; run `gohealthcli connect` first")
 	}
-	db, err := openArchive(archivePath)
+	archiveAPI, err := openHealthArchiveConnectionAPI(archivePath)
 	if err != nil {
 		result.Status = "setup_invalid"
 		result.TokenStatus = "archive_unavailable"
 		return result, err
 	}
-	defer db.Close()
-	connection, err := readCurrentConnection(db)
+	defer archiveAPI.Close()
+	connection, err := archiveAPI.CurrentConnection()
 	if err != nil {
 		result.TokenStatus = "connection_unavailable"
 		return result, err
@@ -1160,7 +1148,7 @@ func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
 		return result, errors.New("Provider returned a different Google Identity; use a new archive path")
 	}
 	if tokenCheck.refreshedToken != nil {
-		if err := persistDoctorOnlineRefreshedToken(db, config.credentialStore, connection.id, *tokenCheck.refreshedToken, tokenCheck.previousTokenMaterial); err != nil {
+		if err := persistDoctorOnlineRefreshedToken(archiveAPI, config.credentialStore, connection.id, *tokenCheck.refreshedToken, tokenCheck.previousTokenMaterial); err != nil {
 			result.TokenStatus = "refresh_failed"
 			return result, err
 		}
@@ -1214,7 +1202,7 @@ func doctorOnlineAccessToken(config fullConfigCheck, connection archivedConnecti
 	return doctorOnlineTokenCheck{accessToken: token.accessToken, refreshedToken: &token, previousTokenMaterial: tokenMaterial}, nil
 }
 
-func persistDoctorOnlineRefreshedToken(db *sql.DB, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse, previousTokenMaterial map[string]any) error {
+func persistDoctorOnlineRefreshedToken(archive healthArchiveConnectionAPI, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse, previousTokenMaterial map[string]any) error {
 	store, err := newCredentialStore(credentialStore)
 	if err != nil {
 		return err
@@ -1222,7 +1210,7 @@ func persistDoctorOnlineRefreshedToken(db *sql.DB, credentialStore credentialSto
 	if err := store.Store(connectionID, token.rawTokenMaterialObject); err != nil {
 		return err
 	}
-	if err := updateConnectionTokenMetadata(db, connectionID, token, currentTime()); err != nil {
+	if err := archive.UpdateConnectionTokenMetadata(connectionID, token, currentTime()); err != nil {
 		if rollbackErr := store.Store(connectionID, previousTokenMaterial); rollbackErr != nil {
 			return fmt.Errorf("%w; rollback Credential Store token material: %v", err, rollbackErr)
 		}
@@ -3262,174 +3250,11 @@ try {
 	return []byte(strings.TrimSpace(string(output))), nil
 }
 
-func ensureSameArchiveIdentity(db *sql.DB, healthUserID string) error {
-	rows, err := db.Query(`SELECT DISTINCT google_health_user_id FROM connections`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var existing string
-		if err := rows.Scan(&existing); err != nil {
-			return err
-		}
-		if existing != healthUserID {
-			return errors.New("Health Archive already belongs to a different Google Identity; use a new archive path")
-		}
-	}
-	return rows.Err()
-}
-
-func readCurrentConnection(db *sql.DB) (archivedConnection, error) {
-	rows, err := db.Query(`SELECT
-		id,
-		provider_name,
-		google_health_user_id,
-		legacy_fitbit_user_id,
-		token_metadata_json
-	FROM connections ORDER BY created_at, id LIMIT 2`)
-	if err != nil {
-		return archivedConnection{}, err
-	}
-	defer rows.Close()
-
-	var connections []archivedConnection
-	for rows.Next() {
-		var connection archivedConnection
-		var legacyFitbitUserID sql.NullString
-		if err := rows.Scan(
-			&connection.id,
-			&connection.providerName,
-			&connection.googleHealthUserID,
-			&legacyFitbitUserID,
-			&connection.tokenMetadataJSON,
-		); err != nil {
-			return archivedConnection{}, err
-		}
-		if legacyFitbitUserID.Valid {
-			connection.legacyFitbitUserID = legacyFitbitUserID.String
-		}
-		connections = append(connections, connection)
-	}
-	if err := rows.Err(); err != nil {
-		return archivedConnection{}, err
-	}
-	if len(connections) == 0 {
-		return archivedConnection{}, sql.ErrNoRows
-	}
-	if len(connections) > 1 {
-		return archivedConnection{}, errors.New("multiple Connections found; use a separate Health Archive for each Google Identity")
-	}
-	return connections[0], nil
-}
-
-func insertProfileSnapshot(db *sql.DB, connection archivedConnection, rawJSON, fetchedAt string) (int64, error) {
-	result, err := db.Exec(`INSERT INTO profile_snapshots (
-		provider_name,
-		connection_id,
-		raw_json,
-		fetched_at
-	) VALUES (?, ?, ?, ?)`, connection.providerName, connection.id, rawJSON, fetchedAt)
-	if err != nil {
-		return 0, err
-	}
-	return result.LastInsertId()
-}
-
 func nullString(value string) any {
 	if value == "" {
 		return nil
 	}
 	return value
-}
-
-func upsertConnection(db *sql.DB, connectionID string, identity googleIdentity, token oauthTokenResponse, now time.Time) error {
-	metadataJSON, err := connectionTokenMetadataJSON(connectionID, token)
-	if err != nil {
-		return err
-	}
-	nowText := now.UTC().Format(time.RFC3339)
-	_, err = db.Exec(`INSERT INTO connections (
-		id,
-		provider_name,
-		google_health_user_id,
-		legacy_fitbit_user_id,
-		token_metadata_json,
-		google_identity_json,
-		created_at,
-		updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	ON CONFLICT(id) DO UPDATE SET
-		legacy_fitbit_user_id = excluded.legacy_fitbit_user_id,
-		token_metadata_json = excluded.token_metadata_json,
-		google_identity_json = excluded.google_identity_json,
-		updated_at = excluded.updated_at`,
-		connectionID,
-		"googlehealth",
-		identity.healthUserID,
-		identity.legacyFitbitUserID,
-		string(metadataJSON),
-		identity.rawJSON,
-		nowText,
-		nowText,
-	)
-	return err
-}
-
-func updateConnectionTokenMetadata(db *sql.DB, connectionID string, token oauthTokenResponse, now time.Time) error {
-	metadataJSON, err := connectionTokenMetadataJSON(connectionID, token)
-	if err != nil {
-		return err
-	}
-	result, err := db.Exec(`UPDATE connections SET token_metadata_json = ?, updated_at = ? WHERE id = ?`,
-		string(metadataJSON),
-		now.UTC().Format(time.RFC3339),
-		connectionID,
-	)
-	if err != nil {
-		return err
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rowsAffected != 1 {
-		return fmt.Errorf("Connection %s not found", connectionID)
-	}
-	return nil
-}
-
-func connectionTokenMetadataJSON(connectionID string, token oauthTokenResponse) ([]byte, error) {
-	metadata := map[string]any{
-		"credential_store_key": connectionID,
-		"expires_at":           token.expiresAt.UTC().Format(time.RFC3339),
-		"scopes":               token.scopes,
-		"token_type":           token.tokenType,
-	}
-	if token.refreshTokenExpiresAt != nil {
-		metadata["refresh_expires_at"] = token.refreshTokenExpiresAt.UTC().Format(time.RFC3339)
-	}
-	return json.Marshal(metadata)
-}
-
-func refreshConnectionIdentity(db *sql.DB, connection archivedConnection, identity googleIdentity, now time.Time) error {
-	legacyFitbitUserID := connection.legacyFitbitUserID
-	if identity.legacyFitbitUserID != "" {
-		legacyFitbitUserID = identity.legacyFitbitUserID
-	}
-	_, err := db.Exec(`UPDATE connections SET
-		google_health_user_id = ?,
-		legacy_fitbit_user_id = ?,
-		google_identity_json = ?,
-		updated_at = ?
-	WHERE id = ?`,
-		identity.healthUserID,
-		legacyFitbitUserID,
-		identity.rawJSON,
-		now.UTC().Format(time.RFC3339),
-		connection.id,
-	)
-	return err
 }
 
 func validateArchive(archivePath string) error {
@@ -3488,34 +3313,6 @@ func inspectArchive(archivePath string, validateTokens bool) (archiveCheck, erro
 		connectionCount: count,
 		tokenStatus:     tokenStatus,
 	}, nil
-}
-
-func inspectConnectionTokenMetadata(db *sql.DB) (int, string, error) {
-	rows, err := db.Query(`SELECT id, token_metadata_json FROM connections ORDER BY id`)
-	if err != nil {
-		return 0, "", err
-	}
-	defer rows.Close()
-
-	count := 0
-	for rows.Next() {
-		var connectionID string
-		var metadata string
-		if err := rows.Scan(&connectionID, &metadata); err != nil {
-			return 0, "", err
-		}
-		count++
-		if err := validateTokenMetadata(metadata); err != nil {
-			return 0, "", fmt.Errorf("Connection %s: %w", connectionID, err)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return 0, "", err
-	}
-	if count == 0 {
-		return 0, "not_connected", nil
-	}
-	return count, "metadata_present", nil
 }
 
 func validateTokenMetadata(metadata string) error {

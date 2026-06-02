@@ -1665,6 +1665,9 @@ func TestPersistDoctorOnlineRefreshedTokenRollsBackOnMetadataFailure(t *testing.
 		_ = db.Close()
 		t.Fatalf("delete connection: %v", err)
 	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close archive after delete: %v", err)
+	}
 	refreshedToken := oauthTokenResponse{
 		accessToken:  "refreshed-access-secret",
 		refreshToken: "refresh-secret-value",
@@ -1679,10 +1682,12 @@ func TestPersistDoctorOnlineRefreshedTokenRollsBackOnMetadataFailure(t *testing.
 			"token_type":    "Bearer",
 		},
 	}
-	err = persistDoctorOnlineRefreshedToken(db, credentialStoreConfig{kind: "file", path: tokenStorePath}, "googlehealth:111111256096816351", refreshedToken, previousTokenMaterial)
-	if closeErr := db.Close(); closeErr != nil {
-		t.Fatalf("close archive: %v", closeErr)
+	archive, err := openHealthArchiveConnectionAPI(archivePath)
+	if err != nil {
+		t.Fatalf("open archive API: %v", err)
 	}
+	defer archive.Close()
+	err = persistDoctorOnlineRefreshedToken(archive, credentialStoreConfig{kind: "file", path: tokenStorePath}, "googlehealth:111111256096816351", refreshedToken, previousTokenMaterial)
 	if err == nil {
 		t.Fatal("persist refreshed token succeeded after connection was removed")
 	}
