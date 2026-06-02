@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -68,24 +67,14 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	if err != nil {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, fmt.Errorf("config check failed: %w", err)
 	}
-	if err := migrateArchiveIfNeeded(options.archivePath); err != nil {
-		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, fmt.Errorf("Health Archive migration failed: %w", err)
-	}
-	if _, err := inspectArchive(options.archivePath, false); err != nil {
-		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, fmt.Errorf("Health Archive check failed: %w", err)
-	}
-	db, err := openArchive(options.archivePath)
+	archive, err := openSyncRunArchiveWriter(options.archivePath)
 	if err != nil {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, err
 	}
-	defer db.Close()
-	connection, err := readCurrentConnection(db)
+	defer archive.Close()
+	connection, err := archive.CurrentConnection()
 	if err != nil {
-		result := syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}
-		if errors.Is(err, sql.ErrNoRows) {
-			return result, errors.New("no Connection found; run `gohealthcli connect` first")
-		}
-		return result, err
+		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, err
 	}
 	endpointFamily := "list"
 	if options.rollup == "daily" {
@@ -103,7 +92,7 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 		SourceFamily:   options.sourceFamily,
 	}
 	startedAt := currentTime().UTC().Format(time.RFC3339)
-	syncRunID, err := insertSyncRun(db, connection, options.dataTypes, options.from, options.to, result.EndpointFamily, result.SourceFamily, startedAt)
+	syncRunID, err := archive.StartSyncRun(connection, options.dataTypes, options.from, options.to, result.EndpointFamily, result.SourceFamily, startedAt)
 	if err != nil {
 		return result, err
 	}
@@ -112,7 +101,7 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 		result.Status = "sync_failed"
 		result.Message = cause.Error()
 		seen, newCount, updated := syncResultTotalCounts(result)
-		if updateErr := finishSyncRunRecord(db, syncRunID, result.Status, seen, newCount, updated, currentTime().UTC().Format(time.RFC3339), result.Message); updateErr != nil {
+		if updateErr := archive.FinishSyncRun(syncRunID, result.Status, seen, newCount, updated, currentTime().UTC().Format(time.RFC3339), result.Message); updateErr != nil {
 			return result, fmt.Errorf("%w; record failed Sync Run: %v", cause, updateErr)
 		}
 		return result, cause
@@ -138,16 +127,16 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 		return fail(errors.New("Provider returned a different Google Identity; use a new archive path"))
 	}
 	if options.rollup == "daily" {
-		if err := executor.executeDailyRollupPages(db, connection, dataType, options, accessToken, &result); err != nil {
+		if err := executor.executeDailyRollupPages(archive, connection, dataType, options, accessToken, &result); err != nil {
 			return fail(err)
 		}
 	} else {
-		if err := executor.executeDataPointPages(db, connection, dataType, options, accessToken, &result); err != nil {
+		if err := executor.executeDataPointPages(archive, connection, dataType, options, accessToken, &result); err != nil {
 			return fail(err)
 		}
 	}
 	seen, newCount, updated := syncResultTotalCounts(result)
-	if err := finishSyncRunRecord(db, syncRunID, "sync_completed", seen, newCount, updated, currentTime().UTC().Format(time.RFC3339), ""); err != nil {
+	if err := archive.FinishSyncRun(syncRunID, "sync_completed", seen, newCount, updated, currentTime().UTC().Format(time.RFC3339), ""); err != nil {
 		result.Status = "sync_failed"
 		result.Message = err.Error()
 		return result, err
@@ -163,7 +152,7 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	return result, nil
 }
 
-func (syncRunExecutor) executeDailyRollupPages(db *sql.DB, connection archivedConnection, dataType string, options syncCommandOptions, accessToken string, result *syncResult) error {
+func (syncRunExecutor) executeDailyRollupPages(archive syncRunArchiveWriter, connection archivedConnection, dataType string, options syncCommandOptions, accessToken string, result *syncResult) error {
 	windows, err := googleHealthDailyRollupDateWindows(options.from, options.to)
 	if err != nil {
 		return err
@@ -188,7 +177,7 @@ func (syncRunExecutor) executeDailyRollupPages(db *sql.DB, connection archivedCo
 				if err != nil {
 					return err
 				}
-				status, err := upsertRollup(db, rollup, currentTime().UTC().Format(time.RFC3339))
+				status, err := archive.UpsertRollup(rollup, currentTime().UTC().Format(time.RFC3339))
 				if err != nil {
 					return err
 				}
@@ -333,7 +322,7 @@ func parseGoogleHealthRollupList(body []byte) (googleHealthRollupList, error) {
 	return googleHealthRollupList{rollups: raw.Rollups, nextPageToken: raw.NextPageToken}, nil
 }
 
-func (syncRunExecutor) executeDataPointPages(db *sql.DB, connection archivedConnection, dataType string, options syncCommandOptions, accessToken string, result *syncResult) error {
+func (syncRunExecutor) executeDataPointPages(archive syncRunArchiveWriter, connection archivedConnection, dataType string, options syncCommandOptions, accessToken string, result *syncResult) error {
 	seenPageTokens := map[string]struct{}{}
 	for pageToken := ""; ; {
 		request, err := buildGoogleHealthSyncDataPointRawRequest(dataType, options.from, options.to, options.sourceFamily, 0, pageToken)
@@ -353,7 +342,7 @@ func (syncRunExecutor) executeDataPointPages(db *sql.DB, connection archivedConn
 			if err != nil {
 				return err
 			}
-			status, err := upsertDataPoint(db, point, currentTime().UTC().Format(time.RFC3339))
+			status, err := archive.UpsertDataPoint(point, currentTime().UTC().Format(time.RFC3339))
 			if err != nil {
 				return err
 			}
