@@ -123,6 +123,59 @@ func TestSyncRunExecutorArchivesDataPointReconcileForSourceFamily(t *testing.T) 
 	assertSyncRunWithEndpointFamilyAndSourceFamily(t, archivePath, 1, "sync_completed", "reconcile", "wearable", 1, 1, 0, "")
 }
 
+func TestSyncRunExecutorArchivesDailyRollups(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	originalCurrentTime := currentTime
+	currentTime = func() time.Time { return time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { currentTime = originalCurrentTime })
+
+	requests := installStepDailyRollupFetchFake(t, "connect-access-secret", map[string]string{
+		"2026-01-01/2026-01-02/": `{
+			"rollupDataPoints": [{
+				"steps": {"countSum": "1234"},
+				"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+				"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}
+			}]
+		}`,
+	})
+
+	result, err := (syncRunExecutor{}).Execute(syncCommandOptions{
+		configPath:  configPath,
+		archivePath: archivePath,
+		dataTypes:   []string{"steps"},
+		rollup:      "daily",
+		from:        "2026-01-01",
+		to:          "2026-01-02",
+	})
+	if err != nil {
+		t.Fatalf("execute Sync Run: %v", err)
+	}
+
+	if result.Status != "sync_completed" || result.EndpointFamily != "dailyRollUp" {
+		t.Fatalf("Sync Run result = (%q, %q), want completed dailyRollUp", result.Status, result.EndpointFamily)
+	}
+	if result.DataPointsSeen != 0 || result.RollupsSeen != 1 || result.RollupsNew != 1 || result.RollupsUpdated != 0 {
+		t.Fatalf("counts = dataPointsSeen:%d rollups:(%d, %d, %d), want dataPointsSeen:0 rollups:(1, 1, 0)", result.DataPointsSeen, result.RollupsSeen, result.RollupsNew, result.RollupsUpdated)
+	}
+	if len(*requests) != 1 || (*requests)[0].endpointName != "dataTypes.steps.dailyRollUp" {
+		t.Fatalf("requests = %#v, want one steps dailyRollUp request", *requests)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 0)
+	assertArchiveTableCount(t, archivePath, "rollups", 1)
+	assertArchivedStepsDailyRollup(t, archivePath, "1234")
+	assertSyncRunWithEndpointFamily(t, archivePath, 1, "sync_completed", "dailyRollUp", 1, 1, 0, "")
+}
+
 func TestSyncRunExecutorRecordsFailedListRunForRepeatedPageToken(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)

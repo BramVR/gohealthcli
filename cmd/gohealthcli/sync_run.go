@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,6 +13,11 @@ import (
 )
 
 type syncRunExecutor struct{}
+
+type googleHealthDateRange struct {
+	from string
+	to   string
+}
 
 func syncSetup(options syncCommandOptions) (syncResult, error) {
 	return (syncRunExecutor{}).Execute(options)
@@ -200,6 +206,115 @@ func (syncRunExecutor) executeDailyRollupPages(db *sql.DB, connection archivedCo
 		}
 	}
 	return nil
+}
+
+func buildGoogleHealthDailyRollupRawRequest(dataType, from, to string, pageSize int64, pageToken string) (rawProviderRequest, error) {
+	if err := validateRawGoogleHealthDataType(dataType); err != nil {
+		return rawProviderRequest{}, err
+	}
+	if !dailyRollupDataTypeSupported(dataType) {
+		return rawProviderRequest{}, errors.New("daily Rollup sync currently supports only Data Type steps")
+	}
+	if from == "" {
+		return rawProviderRequest{}, errors.New("daily Rollup calls require --from")
+	}
+	rangeJSON, err := googleHealthCivilTimeIntervalJSON(from, to)
+	if err != nil {
+		return rawProviderRequest{}, err
+	}
+	body := struct {
+		Range          json.RawMessage `json:"range"`
+		WindowSizeDays int             `json:"windowSizeDays"`
+		PageSize       int64           `json:"pageSize,omitempty"`
+		PageToken      string          `json:"pageToken,omitempty"`
+	}{
+		Range:          rangeJSON,
+		WindowSizeDays: 1,
+		PageSize:       pageSize,
+		PageToken:      pageToken,
+	}
+	bodyJSON, err := json.Marshal(body)
+	if err != nil {
+		return rawProviderRequest{}, err
+	}
+	return rawProviderRequest{
+		endpointName:   "dataTypes." + dataType + ".dailyRollUp",
+		dataType:       dataType,
+		method:         http.MethodPost,
+		url:            googleHealthBaseURL + "/users/me/dataTypes/" + url.PathEscape(dataType) + "/dataPoints:dailyRollUp",
+		body:           bodyJSON,
+		requiredScopes: googleHealthScopesForDataType(dataType),
+	}, nil
+}
+
+func googleHealthCivilTimeIntervalJSON(from, to string) (json.RawMessage, error) {
+	if to == "" {
+		return nil, errors.New("daily Rollup calls require --to")
+	}
+	start, err := googleHealthCivilDateJSON(from)
+	if err != nil {
+		return nil, fmt.Errorf("--from: %w", err)
+	}
+	end, err := googleHealthCivilDateJSON(to)
+	if err != nil {
+		return nil, fmt.Errorf("--to: %w", err)
+	}
+	content, err := json.Marshal(struct {
+		Start json.RawMessage `json:"start"`
+		End   json.RawMessage `json:"end"`
+	}{
+		Start: start,
+		End:   end,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return content, nil
+}
+
+func googleHealthDailyRollupDateWindows(from, to string) ([]googleHealthDateRange, error) {
+	start, err := time.Parse("2006-01-02", from)
+	if err != nil {
+		return nil, fmt.Errorf("--from: expected YYYY-MM-DD")
+	}
+	end, err := time.Parse("2006-01-02", to)
+	if err != nil {
+		return nil, fmt.Errorf("--to: expected YYYY-MM-DD")
+	}
+	if !end.After(start) {
+		return nil, errors.New("--to must be after --from for daily Rollup sync")
+	}
+	var windows []googleHealthDateRange
+	for current := start; current.Before(end); {
+		next := current.AddDate(0, 0, 90)
+		if next.After(end) {
+			next = end
+		}
+		windows = append(windows, googleHealthDateRange{
+			from: current.Format("2006-01-02"),
+			to:   next.Format("2006-01-02"),
+		})
+		current = next
+	}
+	return windows, nil
+}
+
+func googleHealthCivilDateJSON(value string) (json.RawMessage, error) {
+	if parsed, err := time.Parse("2006-01-02", value); err == nil {
+		date := struct {
+			Year  int `json:"year"`
+			Month int `json:"month"`
+			Day   int `json:"day"`
+		}{
+			Year:  parsed.Year(),
+			Month: int(parsed.Month()),
+			Day:   parsed.Day(),
+		}
+		return json.Marshal(struct {
+			Date any `json:"date"`
+		}{Date: date})
+	}
+	return nil, errors.New("expected YYYY-MM-DD")
 }
 
 func (syncRunExecutor) executeDataPointPages(db *sql.DB, connection archivedConnection, dataType string, options syncCommandOptions, accessToken string, result *syncResult) error {
