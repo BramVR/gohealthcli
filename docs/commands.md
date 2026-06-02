@@ -80,9 +80,9 @@ Revision; corrected Rollup JSON updates the Rollup in place.
 latest successful Sync Run, and latest failed Sync Run with a short error
 summary. Do not infer completeness gaps unless gap tracking exists.
 
-`query`: run read-only SQL against the local Health Archive. Open the archive
-read-only, reject non-SELECT statements and mutating pragmas, and return
-machine-readable stdout.
+`query`: run read-only SQL against the local Health Archive. Reject non-SELECT
+statements and mutating pragmas, apply pending Health Archive migrations, then
+execute through a read-only connection and return machine-readable stdout.
 
 `export`: export named normalized records as CSV or JSONL. `export daily-steps`
 reads the `daily_steps` normalized view and prefers requested daily Rollups for
