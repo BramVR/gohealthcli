@@ -261,11 +261,6 @@ type googleHealthDataPointList struct {
 	nextPageToken string
 }
 
-type googleHealthRollupList struct {
-	rollups       []json.RawMessage
-	nextPageToken string
-}
-
 type archivedDataPoint struct {
 	providerName         string
 	connectionID         string
@@ -2794,17 +2789,6 @@ func parseGoogleHealthDataPointList(body []byte) (googleHealthDataPointList, err
 		return googleHealthDataPointList{}, errors.New("Google Health Data Point list response is not valid JSON")
 	}
 	return googleHealthDataPointList{dataPoints: raw.DataPoints, nextPageToken: raw.NextPageToken}, nil
-}
-
-func parseGoogleHealthRollupList(body []byte) (googleHealthRollupList, error) {
-	var raw struct {
-		Rollups       []json.RawMessage `json:"rollupDataPoints"`
-		NextPageToken string            `json:"nextPageToken"`
-	}
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return googleHealthRollupList{}, errors.New("Google Health Rollup response is not valid JSON")
-	}
-	return googleHealthRollupList{rollups: raw.Rollups, nextPageToken: raw.NextPageToken}, nil
 }
 
 func parseGoogleHealthDataPoint(connection archivedConnection, dataType string, rawPoint json.RawMessage, sourceFamilyFilter string) (archivedDataPoint, error) {

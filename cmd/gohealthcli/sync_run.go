@@ -19,6 +19,11 @@ type googleHealthDateRange struct {
 	to   string
 }
 
+type googleHealthRollupList struct {
+	rollups       []json.RawMessage
+	nextPageToken string
+}
+
 func syncSetup(options syncCommandOptions) (syncResult, error) {
 	return (syncRunExecutor{}).Execute(options)
 }
@@ -315,6 +320,17 @@ func googleHealthCivilDateJSON(value string) (json.RawMessage, error) {
 		}{Date: date})
 	}
 	return nil, errors.New("expected YYYY-MM-DD")
+}
+
+func parseGoogleHealthRollupList(body []byte) (googleHealthRollupList, error) {
+	var raw struct {
+		Rollups       []json.RawMessage `json:"rollupDataPoints"`
+		NextPageToken string            `json:"nextPageToken"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return googleHealthRollupList{}, errors.New("Google Health Rollup response is not valid JSON")
+	}
+	return googleHealthRollupList{rollups: raw.Rollups, nextPageToken: raw.NextPageToken}, nil
 }
 
 func (syncRunExecutor) executeDataPointPages(db *sql.DB, connection archivedConnection, dataType string, options syncCommandOptions, accessToken string, result *syncResult) error {
