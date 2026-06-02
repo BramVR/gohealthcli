@@ -2743,7 +2743,7 @@ func buildGoogleHealthDailyRollupRawRequest(dataType, from, to string, pageSize 
 	if err := validateRawGoogleHealthDataType(dataType); err != nil {
 		return rawProviderRequest{}, err
 	}
-	if dataType != "steps" {
+	if !dailyRollupDataTypeSupported(dataType) {
 		return rawProviderRequest{}, errors.New("daily Rollup sync currently supports only Data Type steps")
 	}
 	if from == "" {

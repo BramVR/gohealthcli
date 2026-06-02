@@ -215,6 +215,11 @@ func syncDataPointDataTypeSupported(dataType string) bool {
 	return ok && entry.SupportsSyncDataPoint
 }
 
+func dailyRollupDataTypeSupported(dataType string) bool {
+	entry, ok := googleHealthDataTypes.Lookup(dataType)
+	return ok && entry.SupportsDailyRollup
+}
+
 func syncDataPointUsesDateRange(dataType string) bool {
 	entry, ok := googleHealthDataTypes.Lookup(dataType)
 	return ok && entry.UsesDateRangeDefault

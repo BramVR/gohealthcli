@@ -28,7 +28,7 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	if options.rollup != "" && options.rollup != "daily" {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync --rollup currently supports only daily")
 	}
-	if options.rollup != "" && dataType != "steps" {
+	if options.rollup != "" && !dailyRollupDataTypeSupported(dataType) {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync --rollup currently supports only Data Type steps")
 	}
 	if options.sourceFamily != "" && options.sourceFamily != "wearable" {
