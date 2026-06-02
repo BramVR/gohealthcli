@@ -79,6 +79,50 @@ func TestExportDailyStepsCSVToFile(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String()+string(content))
 }
 
+func TestExportDailyStepsRestrictsExistingOutputBeforeOverwrite(t *testing.T) {
+	if !usesPOSIXPermissions() {
+		t.Skip("POSIX mode assertions are not meaningful on this platform")
+	}
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+	outputPath := filepath.Join(tempDir, "daily-steps.csv")
+	if err := os.WriteFile(outputPath, []byte("old export"), 0o644); err != nil {
+		t.Fatalf("seed output: %v", err)
+	}
+	if err := os.Chmod(outputPath, 0o644); err != nil {
+		t.Fatalf("chmod seed output: %v", err)
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"export",
+		"--config", configPath,
+		"daily-steps",
+		"--format", "csv",
+		"--output", outputPath,
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("export exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	info, err := os.Stat(outputPath)
+	if err != nil {
+		t.Fatalf("stat export: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("export mode = %04o, want 0600", info.Mode().Perm())
+	}
+	content, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read export: %v", err)
+	}
+	if !strings.HasPrefix(string(content), "provider_name,connection_id,civil_date") {
+		t.Fatalf("export content = %q, want CSV header", string(content))
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String()+string(content))
+}
+
 func TestExportDailyStepsJSONLToStdout(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)

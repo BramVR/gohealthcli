@@ -194,6 +194,11 @@ func dailyStepsExportRows(archivePath string) ([]dailyStepsExportRow, error) {
 }
 
 func writeDailyStepsExportFile(rows []dailyStepsExportRow, format, path string) error {
+	if usesPOSIXPermissions() {
+		if err := restrictExistingExportOutput(path); err != nil {
+			return err
+		}
+	}
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
@@ -207,6 +212,23 @@ func writeDailyStepsExportFile(rows []dailyStepsExportRow, format, path string) 
 		return closeErr
 	}
 	if usesPOSIXPermissions() {
+		return os.Chmod(path, 0o600)
+	}
+	return nil
+}
+
+func restrictExistingExportOutput(path string) error {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return fmt.Errorf("%s is a directory", path)
+	}
+	if info.Mode().Perm() != 0o600 {
 		return os.Chmod(path, 0o600)
 	}
 	return nil
