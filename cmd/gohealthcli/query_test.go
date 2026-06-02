@@ -184,6 +184,41 @@ func TestQueryMigratesLegacyV3ArchiveBeforeValidation(t *testing.T) {
 	assertArchiveUserVersion(t, archivePath, currentSchemaVersion)
 }
 
+func TestQueryRejectsWriteAttemptsBeforeMigratingLegacyArchive(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	if err := os.Remove(archivePath); err != nil {
+		t.Fatalf("remove current archive: %v", err)
+	}
+	createLegacyV3Archive(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"query",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+		"DELETE FROM data_points",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("query exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "query_failed")
+	if !strings.Contains(got["message"].(string), "SELECT statements only") {
+		t.Fatalf("message = %q, want SELECT-only rejection", got["message"])
+	}
+	assertArchiveUserVersion(t, archivePath, 3)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestQueryAcceptsSelectCTE(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)

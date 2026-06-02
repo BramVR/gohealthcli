@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -137,60 +136,6 @@ func validateExportFormat(format string) error {
 	default:
 		return fmt.Errorf("unsupported export format %q", format)
 	}
-}
-
-func dailyStepsExportRows(archivePath string) ([]dailyStepsExportRow, error) {
-	if err := migrateArchiveIfNeeded(archivePath); err != nil {
-		return nil, fmt.Errorf("Health Archive migration failed: %w", err)
-	}
-	if _, err := inspectArchive(archivePath, false); err != nil {
-		return nil, fmt.Errorf("Health Archive check failed: %w", err)
-	}
-	db, err := openArchiveReadOnly(archivePath)
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
-
-	rows, err := db.Query(`SELECT
-		provider_name,
-		connection_id,
-		civil_date,
-		step_count,
-		source_kind,
-		source_family_filter,
-		source_record_count,
-		latest_source_timestamp
-	FROM daily_steps
-	ORDER BY civil_date, provider_name, connection_id, source_kind, source_family_filter`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var result []dailyStepsExportRow
-	for rows.Next() {
-		var item dailyStepsExportRow
-		var latest sql.NullString
-		if err := rows.Scan(
-			&item.ProviderName,
-			&item.ConnectionID,
-			&item.CivilDate,
-			&item.StepCount,
-			&item.SourceKind,
-			&item.SourceFamilyFilter,
-			&item.SourceRecordCount,
-			&latest,
-		); err != nil {
-			return nil, err
-		}
-		item.LatestSourceTimestamp = latest.String
-		result = append(result, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return result, nil
 }
 
 func writeDailyStepsExportFile(rows []dailyStepsExportRow, format, path string) error {
