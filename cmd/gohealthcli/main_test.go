@@ -4129,6 +4129,21 @@ func TestGoogleHealthRawFilterFieldsCoverFirstReleaseDataTypes(t *testing.T) {
 			want:     `daily_resting_heart_rate.date >= "2026-01-01"`,
 		},
 		{
+			dataType: "daily-heart-rate-variability",
+			from:     "2026-01-01",
+			want:     `daily_heart_rate_variability.date >= "2026-01-01"`,
+		},
+		{
+			dataType: "daily-oxygen-saturation",
+			from:     "2026-01-01",
+			want:     `daily_oxygen_saturation.date >= "2026-01-01"`,
+		},
+		{
+			dataType: "daily-respiratory-rate",
+			from:     "2026-01-01",
+			want:     `daily_respiratory_rate.date >= "2026-01-01"`,
+		},
+		{
 			dataType: "exercise",
 			from:     "2026-01-01",
 			want:     `exercise.interval.civil_start_time >= "2026-01-01"`,
