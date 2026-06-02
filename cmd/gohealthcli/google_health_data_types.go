@@ -140,6 +140,12 @@ func newGoogleHealthDataTypeCatalog(entries []googleHealthDataTypeCatalogEntry) 
 		order:   make([]string, 0, len(entries)),
 	}
 	for _, entry := range entries {
+		if entry.DataType == "" {
+			panic("Google Health Data Type catalog contains empty DataType")
+		}
+		if _, ok := catalog.entries[entry.DataType]; ok {
+			panic(fmt.Sprintf("Google Health Data Type catalog contains duplicate DataType %q", entry.DataType))
+		}
 		catalog.entries[entry.DataType] = entry
 		catalog.order = append(catalog.order, entry.DataType)
 	}
@@ -151,7 +157,6 @@ func (catalog googleHealthDataTypeCatalog) Lookup(dataType string) (googleHealth
 	if !ok {
 		return googleHealthDataTypeCatalogEntry{}, false
 	}
-	entry.RequiredScopes = append([]string(nil), entry.RequiredScopes...)
 	return entry, true
 }
 
@@ -171,7 +176,7 @@ func googleHealthScopesForDataType(dataType string) []string {
 	if !ok {
 		return nil
 	}
-	return entry.RequiredScopes
+	return append([]string(nil), entry.RequiredScopes...)
 }
 
 func googleHealthDataTypeListFilterField(dataType string) (string, error) {

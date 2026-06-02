@@ -161,8 +161,38 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 }
 
 func TestGoogleHealthDataTypeCatalogDefaultDataTypes(t *testing.T) {
-	if !slices.Equal(defaultDataTypes, googleHealthDataTypes.DefaultDataTypes()) {
-		t.Fatalf("defaultDataTypes = %v, want catalog defaults %v", defaultDataTypes, googleHealthDataTypes.DefaultDataTypes())
+	want := []string{
+		"steps",
+		"heart-rate",
+		"daily-resting-heart-rate",
+		"heart-rate-variability",
+		"daily-heart-rate-variability",
+		"oxygen-saturation",
+		"daily-oxygen-saturation",
+		"daily-respiratory-rate",
+		"sleep",
+		"exercise",
+		"distance",
+		"total-calories",
+		"weight",
+	}
+	if !slices.Equal(defaultDataTypes, want) {
+		t.Fatalf("defaultDataTypes = %v, want %v", defaultDataTypes, want)
+	}
+	if !slices.Equal(googleHealthDataTypes.DefaultDataTypes(), want) {
+		t.Fatalf("catalog defaults = %v, want %v", googleHealthDataTypes.DefaultDataTypes(), want)
+	}
+}
+
+func TestGoogleHealthScopesForDataTypeReturnsCopy(t *testing.T) {
+	scopes := googleHealthScopesForDataType("steps")
+	if len(scopes) != 1 {
+		t.Fatalf("scopes = %v, want one scope", scopes)
+	}
+	scopes[0] = "mutated"
+	got := googleHealthScopesForDataType("steps")
+	if !slices.Equal(got, []string{googleHealthActivityReadonlyScope}) {
+		t.Fatalf("scopes after mutation = %v, want original scope", got)
 	}
 }
 
@@ -170,4 +200,30 @@ func TestGoogleHealthDataTypeCatalogRejectsUnknownDataType(t *testing.T) {
 	if _, ok := googleHealthDataTypes.Lookup("bogus"); ok {
 		t.Fatal("catalog contains bogus Data Type")
 	}
+}
+
+func TestGoogleHealthDataTypeCatalogRejectsInvalidEntries(t *testing.T) {
+	assertPanic := func(t *testing.T, fn func()) {
+		t.Helper()
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected panic")
+			}
+		}()
+		fn()
+	}
+
+	t.Run("empty Data Type", func(t *testing.T) {
+		assertPanic(t, func() {
+			newGoogleHealthDataTypeCatalog([]googleHealthDataTypeCatalogEntry{{}})
+		})
+	})
+	t.Run("duplicate Data Type", func(t *testing.T) {
+		assertPanic(t, func() {
+			newGoogleHealthDataTypeCatalog([]googleHealthDataTypeCatalogEntry{
+				{DataType: "steps"},
+				{DataType: "steps"},
+			})
+		})
+	})
 }
