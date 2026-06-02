@@ -2685,60 +2685,6 @@ func buildGoogleHealthDataTypeListRawRequest(dataType, from, to string, pageSize
 	}, nil
 }
 
-func buildGoogleHealthSyncDataPointRawRequest(dataType, from, to, sourceFamily string, pageSize int64, pageToken string) (rawProviderRequest, error) {
-	if sourceFamily == "" {
-		return buildGoogleHealthDataTypeListRawRequest(dataType, from, to, pageSize, pageToken)
-	}
-	return buildGoogleHealthDataTypeReconcileRawRequest(dataType, from, to, sourceFamily, pageSize, pageToken)
-}
-
-func buildGoogleHealthDataTypeReconcileRawRequest(dataType, from, to, sourceFamily string, pageSize int64, pageToken string) (rawProviderRequest, error) {
-	if err := validateRawGoogleHealthDataType(dataType); err != nil {
-		return rawProviderRequest{}, err
-	}
-	if from == "" {
-		return rawProviderRequest{}, errors.New("Data Type reconcile raw calls require --from")
-	}
-	dataSourceFamily, err := googleHealthDataSourceFamilyName(sourceFamily)
-	if err != nil {
-		return rawProviderRequest{}, err
-	}
-	query := url.Values{}
-	filter, err := googleHealthDataTypeListFilter(dataType, from, to)
-	if err != nil {
-		return rawProviderRequest{}, err
-	}
-	query.Set("filter", filter)
-	query.Set("dataSourceFamily", dataSourceFamily)
-	if pageSize > 0 {
-		query.Set("pageSize", strconv.FormatInt(pageSize, 10))
-	}
-	if pageToken != "" {
-		query.Set("pageToken", pageToken)
-	}
-	requestURL := googleHealthBaseURL + "/users/me/dataTypes/" + url.PathEscape(dataType) + "/dataPoints:reconcile"
-	if encoded := query.Encode(); encoded != "" {
-		requestURL += "?" + encoded
-	}
-	return rawProviderRequest{
-		endpointName:       "dataTypes." + dataType + ".reconcile",
-		dataType:           dataType,
-		method:             http.MethodGet,
-		url:                requestURL,
-		requiredScopes:     googleHealthScopesForDataType(dataType),
-		sourceFamilyFilter: sourceFamily,
-	}, nil
-}
-
-func googleHealthDataSourceFamilyName(sourceFamily string) (string, error) {
-	switch sourceFamily {
-	case "wearable":
-		return "users/me/dataSourceFamilies/google-wearables", nil
-	default:
-		return "", fmt.Errorf("unsupported source-family %q", sourceFamily)
-	}
-}
-
 func buildGoogleHealthDailyRollupRawRequest(dataType, from, to string, pageSize int64, pageToken string) (rawProviderRequest, error) {
 	if err := validateRawGoogleHealthDataType(dataType); err != nil {
 		return rawProviderRequest{}, err

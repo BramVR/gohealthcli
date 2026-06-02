@@ -7,6 +7,7 @@ type googleHealthDataTypeCatalogEntry struct {
 	RequiredScopes        []string
 	ListFilterField       string
 	SupportsSyncDataPoint bool
+	SupportsReconcile     bool
 	SupportsDailyRollup   bool
 	Parser                string
 	JSONField             string
@@ -26,6 +27,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		RequiredScopes:        []string{googleHealthActivityReadonlyScope},
 		ListFilterField:       "steps.interval.start_time",
 		SupportsSyncDataPoint: true,
+		SupportsReconcile:     true,
 		SupportsDailyRollup:   true,
 		Parser:                "steps",
 		RecordKind:            "interval",
@@ -36,6 +38,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		RequiredScopes:        []string{googleHealthHealthMetricsReadonlyScope},
 		ListFilterField:       "heart_rate.sample_time.physical_time",
 		SupportsSyncDataPoint: true,
+		SupportsReconcile:     true,
 		Parser:                "sample",
 		JSONField:             "heartRate",
 		RecordKind:            "sample",
@@ -46,6 +49,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		RequiredScopes:        []string{googleHealthHealthMetricsReadonlyScope},
 		ListFilterField:       "daily_resting_heart_rate.date",
 		SupportsSyncDataPoint: true,
+		SupportsReconcile:     true,
 		Parser:                "daily",
 		JSONField:             "dailyRestingHeartRate",
 		RecordKind:            "daily",
@@ -63,6 +67,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		RequiredScopes:        []string{googleHealthHealthMetricsReadonlyScope},
 		ListFilterField:       "daily_heart_rate_variability.date",
 		SupportsSyncDataPoint: true,
+		SupportsReconcile:     true,
 		Parser:                "daily",
 		JSONField:             "dailyHeartRateVariability",
 		RecordKind:            "daily",
@@ -74,6 +79,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		RequiredScopes:        []string{googleHealthHealthMetricsReadonlyScope},
 		ListFilterField:       "oxygen_saturation.sample_time.physical_time",
 		SupportsSyncDataPoint: true,
+		SupportsReconcile:     true,
 		Parser:                "sample",
 		JSONField:             "oxygenSaturation",
 		RecordKind:            "sample",
@@ -84,6 +90,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		RequiredScopes:        []string{googleHealthHealthMetricsReadonlyScope},
 		ListFilterField:       "daily_oxygen_saturation.date",
 		SupportsSyncDataPoint: true,
+		SupportsReconcile:     true,
 		Parser:                "daily",
 		JSONField:             "dailyOxygenSaturation",
 		RecordKind:            "daily",
@@ -95,6 +102,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		RequiredScopes:        []string{googleHealthHealthMetricsReadonlyScope},
 		ListFilterField:       "daily_respiratory_rate.date",
 		SupportsSyncDataPoint: true,
+		SupportsReconcile:     true,
 		Parser:                "daily",
 		JSONField:             "dailyRespiratoryRate",
 		RecordKind:            "daily",
@@ -133,6 +141,10 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 })
 
 var defaultDataTypes = googleHealthDataTypes.DefaultDataTypes()
+
+var googleHealthSourceFamilyFilters = map[string]string{
+	"wearable": "users/me/dataSourceFamilies/google-wearables",
+}
 
 func newGoogleHealthDataTypeCatalog(entries []googleHealthDataTypeCatalogEntry) googleHealthDataTypeCatalog {
 	catalog := googleHealthDataTypeCatalog{
@@ -218,6 +230,22 @@ func googleHealthDailyDataPointJSONField(dataType string) string {
 func syncDataPointDataTypeSupported(dataType string) bool {
 	entry, ok := googleHealthDataTypes.Lookup(dataType)
 	return ok && entry.SupportsSyncDataPoint
+}
+
+func reconcileDataTypeSupported(dataType string) bool {
+	entry, ok := googleHealthDataTypes.Lookup(dataType)
+	return ok && entry.SupportsReconcile
+}
+
+func googleHealthSourceFamilyFilterName(dataType, sourceFamily string) (string, error) {
+	if !reconcileDataTypeSupported(dataType) {
+		return "", fmt.Errorf("sync --source-family is not supported for Data Type %s", dataType)
+	}
+	filterName, ok := googleHealthSourceFamilyFilters[sourceFamily]
+	if !ok {
+		return "", fmt.Errorf("sync --source-family currently supports only wearable")
+	}
+	return filterName, nil
 }
 
 func dailyRollupDataTypeSupported(dataType string) bool {

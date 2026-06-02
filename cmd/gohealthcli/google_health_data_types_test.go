@@ -11,6 +11,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		wantScopes            []string
 		wantListFilterField   string
 		wantSyncDataPoint     bool
+		wantReconcile         bool
 		wantDailyRollup       bool
 		wantParser            string
 		wantRecordKind        string
@@ -22,6 +23,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantScopes:            []string{googleHealthActivityReadonlyScope},
 			wantListFilterField:   "steps.interval.start_time",
 			wantSyncDataPoint:     true,
+			wantReconcile:         true,
 			wantDailyRollup:       true,
 			wantParser:            "steps",
 			wantRecordKind:        "interval",
@@ -32,6 +34,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantScopes:            []string{googleHealthHealthMetricsReadonlyScope},
 			wantListFilterField:   "heart_rate.sample_time.physical_time",
 			wantSyncDataPoint:     true,
+			wantReconcile:         true,
 			wantParser:            "sample",
 			wantRecordKind:        "sample",
 			wantDefaultConfigType: true,
@@ -41,6 +44,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantScopes:            []string{googleHealthHealthMetricsReadonlyScope},
 			wantListFilterField:   "daily_resting_heart_rate.date",
 			wantSyncDataPoint:     true,
+			wantReconcile:         true,
 			wantParser:            "daily",
 			wantRecordKind:        "daily",
 			wantDateRangeDefault:  true,
@@ -57,6 +61,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantScopes:            []string{googleHealthHealthMetricsReadonlyScope},
 			wantListFilterField:   "daily_heart_rate_variability.date",
 			wantSyncDataPoint:     true,
+			wantReconcile:         true,
 			wantParser:            "daily",
 			wantRecordKind:        "daily",
 			wantDateRangeDefault:  true,
@@ -67,6 +72,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantScopes:            []string{googleHealthHealthMetricsReadonlyScope},
 			wantListFilterField:   "oxygen_saturation.sample_time.physical_time",
 			wantSyncDataPoint:     true,
+			wantReconcile:         true,
 			wantParser:            "sample",
 			wantRecordKind:        "sample",
 			wantDefaultConfigType: true,
@@ -76,6 +82,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantScopes:            []string{googleHealthHealthMetricsReadonlyScope},
 			wantListFilterField:   "daily_oxygen_saturation.date",
 			wantSyncDataPoint:     true,
+			wantReconcile:         true,
 			wantParser:            "daily",
 			wantRecordKind:        "daily",
 			wantDateRangeDefault:  true,
@@ -86,6 +93,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantScopes:            []string{googleHealthHealthMetricsReadonlyScope},
 			wantListFilterField:   "daily_respiratory_rate.date",
 			wantSyncDataPoint:     true,
+			wantReconcile:         true,
 			wantParser:            "daily",
 			wantRecordKind:        "daily",
 			wantDateRangeDefault:  true,
@@ -141,6 +149,9 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			if entry.SupportsSyncDataPoint != tt.wantSyncDataPoint {
 				t.Fatalf("SupportsSyncDataPoint = %v, want %v", entry.SupportsSyncDataPoint, tt.wantSyncDataPoint)
 			}
+			if entry.SupportsReconcile != tt.wantReconcile {
+				t.Fatalf("SupportsReconcile = %v, want %v", entry.SupportsReconcile, tt.wantReconcile)
+			}
 			if entry.SupportsDailyRollup != tt.wantDailyRollup {
 				t.Fatalf("SupportsDailyRollup = %v, want %v", entry.SupportsDailyRollup, tt.wantDailyRollup)
 			}
@@ -157,6 +168,16 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 				t.Fatalf("DefaultConfigType = %v, want %v", entry.DefaultConfigType, tt.wantDefaultConfigType)
 			}
 		})
+	}
+}
+
+func TestGoogleHealthDataTypeCatalogDescribesSourceFamilyFilters(t *testing.T) {
+	filter, err := googleHealthSourceFamilyFilterName("steps", "wearable")
+	if err != nil {
+		t.Fatalf("source family filter: %v", err)
+	}
+	if filter != "users/me/dataSourceFamilies/google-wearables" {
+		t.Fatalf("source family filter = %q, want google-wearables", filter)
 	}
 }
 
