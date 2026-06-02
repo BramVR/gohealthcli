@@ -1,0 +1,32 @@
+{
+  "dataPoints": [
+    {
+      "name": "users/me/dataTypes/heart-rate/dataPoints/hr-2026-01-01-a",
+      "dataSource": {
+        "platform": "FITBIT",
+        "device": {
+          "manufacturer": "Google",
+          "model": "Pixel Watch"
+        }
+      },
+      "heartRate": {
+        "sampleTime": {
+          "physicalTime": "2026-01-01T08:30:00+01:00",
+          "utcOffset": "3600s",
+          "civilTime": {
+            "date": {
+              "year": 2026,
+              "month": 1,
+              "day": 1
+            },
+            "time": {
+              "hours": 8,
+              "minutes": 30
+            }
+          }
+        },
+        "beatsPerMinute": "72"
+      }
+    }
+  ]
+}

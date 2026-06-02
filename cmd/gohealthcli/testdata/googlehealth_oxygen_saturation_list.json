@@ -1,0 +1,27 @@
+{
+  "dataPoints": [
+    {
+      "name": "users/me/dataTypes/oxygen-saturation/dataPoints/spo2-2026-01-01-a",
+      "dataSource": {
+        "platform": "FITBIT"
+      },
+      "oxygenSaturation": {
+        "sampleTime": {
+          "physicalTime": "2026-01-01T22:10:00Z",
+          "civilTime": {
+            "date": {
+              "year": 2026,
+              "month": 1,
+              "day": 1
+            },
+            "time": {
+              "hours": 22,
+              "minutes": 10
+            }
+          }
+        },
+        "percentage": "97.5"
+      }
+    }
+  ]
+}

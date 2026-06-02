@@ -60,17 +60,17 @@ archive the raw Profile Snapshot with `fetched_at`, and print stable summary
 fields including `snapshot_id`. Profile Snapshots stay separate from Data Points
 and Rollups.
 
-`sync`: currently archives raw `steps` Data Points from the provider list path,
-steps Data Points from the reconcile path when `--source-family wearable` is
-explicit, or steps daily Rollups when `--rollup daily` is explicit. Default sync
-fetches Data Points from all Data Sources and never calls Rollup endpoints.
-Sync is idempotent and reports Data Point and Rollup seen, new, and updated
-counts separately. If required scopes are missing, fail with a clear re-connect
-instruction instead of starting browser consent. Require `--from`; Data Point
-sync `--to` defaults to current UTC time when omitted, while daily Rollup sync
-`--to` defaults to the current civil date and accepts date-only `YYYY-MM-DD`
-ranges.
-Preserve physical UTC interval times when available, provider civil time
+`sync`: currently archives raw `steps`, `heart-rate`, and `oxygen-saturation`
+Data Points from the provider list path, steps Data Points from the reconcile
+path when `--source-family wearable` is explicit, or steps daily Rollups when
+`--rollup daily` is explicit. Default sync fetches Data Points from all Data
+Sources and never calls Rollup endpoints. Sync is idempotent and reports Data
+Point and Rollup seen, new, and updated counts separately. If required scopes
+are missing, fail with a clear re-connect instruction instead of starting
+browser consent. Require `--from`; Data Point sync `--to` defaults to current
+UTC time when omitted, while daily Rollup sync `--to` defaults to the current
+civil date and accepts date-only `YYYY-MM-DD` ranges.
+Preserve physical UTC interval/sample times when available, provider civil time
 metadata, Data Source JSON, source-family filter, and raw provider JSON.
 Corrected upstream raw Data Point JSON updates the canonical Data Point for the
 same source-family filter and stores the previous raw JSON as a Data Point
@@ -107,8 +107,9 @@ gohealthcli init --secret-provider 1password --oauth-client-item "Google Health 
 ## Sync Sketch
 
 ```bash
-gohealthcli sync --types steps,heart-rate,sleep,exercise --from 2026-01-01
-gohealthcli sync --types daily-resting-heart-rate,daily-oxygen-saturation --from 2026-01-01
+gohealthcli sync --types steps --from 2026-01-01
+gohealthcli sync --types heart-rate --from 2026-01-01
+gohealthcli sync --types oxygen-saturation --from 2026-01-01
 gohealthcli sync --types steps --rollup daily --from 2026-01-01 --to 2026-05-24
 gohealthcli sync --types steps --source-family wearable --from 2026-01-01
 ```
