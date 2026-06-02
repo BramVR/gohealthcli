@@ -71,9 +71,9 @@ Default sync fetches Data Points from all Data Sources and never calls Rollup
 endpoints. Sync is idempotent and reports Data Point and Rollup seen, new, and
 updated counts separately. If required scopes are missing, fail with a clear
 re-connect instruction instead of starting browser consent. Require `--from`;
-Data Point sync `--to` defaults to current UTC time when omitted, while daily
-Rollup sync `--to` defaults to the current civil date and accepts date-only
-`YYYY-MM-DD` ranges.
+interval/sample Data Point sync `--to` defaults to current UTC time when
+omitted, while daily-shaped Data Point sync and daily Rollup sync `--to`
+default to the current civil date and accept date-only `YYYY-MM-DD` ranges.
 Preserve physical UTC interval/sample times when available, provider civil time
 metadata, Data Source JSON, source-family filter, and raw provider JSON.
 Corrected upstream raw Data Point JSON updates the canonical Data Point for the
