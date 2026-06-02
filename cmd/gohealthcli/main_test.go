@@ -324,8 +324,8 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	assertJSONString(t, got, "config_path", configPath)
 	assertJSONString(t, got, "archive_path", archivePath)
 	assertJSONString(t, got, "oauth_client_source", "file")
-	if got["schema_version"] != float64(3) {
-		t.Fatalf("schema_version = %v, want 3", got["schema_version"])
+	if got["schema_version"] != float64(currentSchemaVersion) {
+		t.Fatalf("schema_version = %v, want %d", got["schema_version"], currentSchemaVersion)
 	}
 	dataTypes, ok := got["default_data_types"].([]any)
 	if !ok {
@@ -403,8 +403,8 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("schema migration rows: %v", err)
 	}
-	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter" {
-		t.Fatalf("migrations = %v, want initial + identity + source family", migrations)
+	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter,4:add_daily_steps_view" {
+		t.Fatalf("migrations = %v, want initial + identity + source family + daily steps view", migrations)
 	}
 
 	for _, table := range []string{
@@ -503,8 +503,8 @@ func TestDoctorReportsInitializedSetup(t *testing.T) {
 	assertJSONString(t, got, "oauth_client_source", "file")
 	assertJSONString(t, got, "credential_store", expectedDefaultCredentialStoreKind())
 	assertJSONString(t, got, "token_status", "not_connected")
-	if got["schema_version"] != float64(3) {
-		t.Fatalf("schema_version = %v, want 3", got["schema_version"])
+	if got["schema_version"] != float64(currentSchemaVersion) {
+		t.Fatalf("schema_version = %v, want %d", got["schema_version"], currentSchemaVersion)
 	}
 	if got["connection_count"] != float64(0) {
 		t.Fatalf("connection_count = %v, want 0", got["connection_count"])
@@ -540,7 +540,7 @@ func TestDoctorPlainReportsOfflineHealthCheck(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 
-	want := fmt.Sprintf("status: ok\nconfig_path: %s\narchive_path: %s\noauth_client_source: file\ncredential_store: %s\nschema_version: 3\nconnection_count: 0\ntoken_status: not_connected\nmessage: local gohealthcli setup is initialized\n", configPath, archivePath, expectedDefaultCredentialStoreKind())
+	want := fmt.Sprintf("status: ok\nconfig_path: %s\narchive_path: %s\noauth_client_source: file\ncredential_store: %s\nschema_version: %d\nconnection_count: 0\ntoken_status: not_connected\nmessage: local gohealthcli setup is initialized\n", configPath, archivePath, expectedDefaultCredentialStoreKind(), currentSchemaVersion)
 	if stdout.String() != want {
 		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 	}
@@ -2502,7 +2502,7 @@ func TestStatusReportsHealthArchiveCountsAndSyncRunsReadOnly(t *testing.T) {
 	}
 	assertJSONString(t, got, "status", "ok")
 	assertJSONString(t, got, "archive_path", archivePath)
-	assertJSONNumber(t, got, "schema_version", 3)
+	assertJSONNumber(t, got, "schema_version", currentSchemaVersion)
 	assertJSONNumber(t, got, "data_point_count", 3)
 	assertJSONNumber(t, got, "rollup_count", 1)
 	assertJSONNumber(t, got, "profile_snapshot_count", 1)
@@ -2567,7 +2567,7 @@ func TestStatusPlainReportsEmptyHealthArchive(t *testing.T) {
 	wantLines := []string{
 		"status: ok\n",
 		"archive_path: " + archivePath + "\n",
-		"schema_version: 3\n",
+		fmt.Sprintf("schema_version: %d\n", currentSchemaVersion),
 		"data_point_count: 0\n",
 		"rollup_count: 0\n",
 		"profile_snapshot_count: 0\n",
@@ -3874,8 +3874,8 @@ func TestConnectMigratesLegacyV1ArchiveBeforeStoringIdentity(t *testing.T) {
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
 		t.Fatalf("query user_version: %v", err)
 	}
-	if userVersion != 3 {
-		t.Fatalf("user_version = %d, want 3", userVersion)
+	if userVersion != currentSchemaVersion {
+		t.Fatalf("user_version = %d, want %d", userVersion, currentSchemaVersion)
 	}
 	var identityJSON string
 	if err := db.QueryRow(`SELECT google_identity_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&identityJSON); err != nil {
@@ -3904,10 +3904,10 @@ func TestDoctorMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
 	}
-	if got["schema_version"] != float64(3) {
-		t.Fatalf("schema_version = %v, want 3", got["schema_version"])
+	if got["schema_version"] != float64(currentSchemaVersion) {
+		t.Fatalf("schema_version = %v, want %d", got["schema_version"], currentSchemaVersion)
 	}
-	assertArchiveUserVersion(t, archivePath, 3)
+	assertArchiveUserVersion(t, archivePath, currentSchemaVersion)
 }
 
 func TestInitMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
@@ -3934,10 +3934,10 @@ func TestInitMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
 	}
-	if got["schema_version"] != float64(3) {
-		t.Fatalf("schema_version = %v, want 3", got["schema_version"])
+	if got["schema_version"] != float64(currentSchemaVersion) {
+		t.Fatalf("schema_version = %v, want %d", got["schema_version"], currentSchemaVersion)
 	}
-	assertArchiveUserVersion(t, archivePath, 3)
+	assertArchiveUserVersion(t, archivePath, currentSchemaVersion)
 }
 
 func TestConnectRejectsUnsupportedOSNativeStoreBeforeOAuth(t *testing.T) {
@@ -4455,7 +4455,7 @@ func TestInitStoresSecretProviderReference(t *testing.T) {
 	for _, want := range []string{
 		"status: initialized\n",
 		"oauth_client_source: secret_provider\n",
-		"schema_version: 3\n",
+		fmt.Sprintf("schema_version: %d\n", currentSchemaVersion),
 	} {
 		if !strings.Contains(outText, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, outText)

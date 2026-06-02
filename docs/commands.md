@@ -84,8 +84,11 @@ summary. Do not infer completeness gaps unless gap tracking exists.
 read-only, reject non-SELECT statements and mutating pragmas, and return
 machine-readable stdout.
 
-`export`: export named normalized records as CSV or JSONL. Arbitrary SQL stays
-in `query`. Require either `--output PATH` or explicit `--stdout`.
+`export`: export named normalized records as CSV or JSONL. `export daily-steps`
+reads the `daily_steps` normalized view and prefers requested daily Rollups for
+a civil date, falling back to summed steps Data Points when no Rollup exists.
+Arbitrary SQL stays in `query`. Require either `--output PATH` or explicit
+`--stdout`.
 
 `raw`: fetch one provider endpoint or Data Type convenience path and print raw
 provider JSON for API exploration. Endpoint mode accepts supported provider
@@ -176,7 +179,7 @@ Status plain mode:
 ```text
 status: ok
 archive_path: /path/to/gohealthcli.sqlite
-schema_version: 3
+schema_version: 4
 data_point_count: 12043
 rollup_count: 2
 profile_snapshot_count: 1
@@ -200,6 +203,14 @@ row_count: 1
 row.1.1: steps
 row.1.2: 2026-01-02T00:00:00Z
 message: Query completed
+```
+
+Daily steps CSV export:
+
+```text
+provider_name,connection_id,civil_date,step_count,source_kind,source_record_count,latest_source_timestamp
+googlehealth,googlehealth:111111256096816351,2026-01-01,512,dataPoints,1,2026-01-01T08:15:00Z
+googlehealth,googlehealth:111111256096816351,2026-01-04,2048,dailyRollUp,1,2026-01-04
 ```
 
 Connect plain mode:
