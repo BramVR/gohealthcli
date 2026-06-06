@@ -1,0 +1,27 @@
+{
+  "dataPoints": [
+    {
+      "name": "users/me/dataTypes/heart-rate-variability/dataPoints/hrv-2026-01-01-a",
+      "dataSource": {
+        "platform": "FITBIT"
+      },
+      "heartRateVariability": {
+        "sampleTime": {
+          "physicalTime": "2026-01-01T05:20:00Z",
+          "civilTime": {
+            "date": {
+              "year": 2026,
+              "month": 1,
+              "day": 1
+            },
+            "time": {
+              "hours": 5,
+              "minutes": 20
+            }
+          }
+        },
+        "rootMeanSquareOfSuccessiveDifferencesMilliseconds": 42.125
+      }
+    }
+  ]
+}

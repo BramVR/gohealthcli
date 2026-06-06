@@ -61,13 +61,13 @@ fields including `snapshot_id`. Profile Snapshots stay separate from Data Points
 and Rollups.
 
 `sync`: currently accepts exactly one Data Type per run and archives raw
-`steps`, `heart-rate`, `oxygen-saturation`, `daily-resting-heart-rate`,
-`daily-heart-rate-variability`, `daily-oxygen-saturation`, and
-`daily-respiratory-rate`, `sleep`, and `exercise` Data Points from the provider
-list path, supported Data Point types from the reconcile path when
-`--source-family wearable` is explicit, or steps daily Rollups when
-`--rollup daily` is explicit. Daily-named Data Types are Data Points unless
-fetched from a Rollup endpoint family.
+`steps`, `heart-rate`, `heart-rate-variability`, `oxygen-saturation`,
+`daily-resting-heart-rate`, `daily-heart-rate-variability`,
+`daily-oxygen-saturation`, `daily-respiratory-rate`, `sleep`, `exercise`,
+`distance`, and `weight` Data Points from the provider list path, supported
+Data Point types from the reconcile path when `--source-family wearable` is
+explicit, or steps daily Rollups when `--rollup daily` is explicit. Daily-named
+Data Types are Data Points unless fetched from a Rollup endpoint family.
 Default sync fetches Data Points from all Data Sources and never calls Rollup
 endpoints. Sync is idempotent and reports Data Point and Rollup seen, new, and
 updated counts separately. If required scopes are missing, fail with a clear
@@ -81,6 +81,10 @@ source-family filter, and raw provider JSON.
 Corrected upstream raw Data Point JSON updates the canonical Data Point for the
 same source-family filter and stores the previous raw JSON as a Data Point
 Revision; corrected Rollup JSON updates the Rollup in place.
+`total-calories` is not a Data Point list type in the generated Google Health
+API discovery document; it is exposed as a Rollup value, so raw Data Point sync
+for that Data Type is explicitly blocked pending provider support or a separate
+Rollup implementation.
 
 `status`: show archive counts, known Data Types, newest archived timestamps,
 latest successful Sync Run, and latest failed Sync Run with a short error
@@ -115,11 +119,14 @@ gohealthcli init --secret-provider 1password --oauth-client-item "Google Health 
 ```bash
 gohealthcli sync --types steps --from 2026-01-01
 gohealthcli sync --types heart-rate --from 2026-01-01
+gohealthcli sync --types heart-rate-variability --from 2026-01-01
 gohealthcli sync --types oxygen-saturation --from 2026-01-01
 gohealthcli sync --types daily-resting-heart-rate --from 2026-01-01
 gohealthcli sync --types daily-oxygen-saturation --from 2026-01-01
 gohealthcli sync --types sleep --from 2026-01-01
 gohealthcli sync --types exercise --from 2026-01-01
+gohealthcli sync --types distance --from 2026-01-01
+gohealthcli sync --types weight --from 2026-01-01
 gohealthcli sync --types steps --rollup daily --from 2026-01-01 --to 2026-05-24
 gohealthcli sync --types steps --source-family wearable --from 2026-01-01
 ```

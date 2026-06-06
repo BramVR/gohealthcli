@@ -3171,6 +3171,306 @@ func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 	assertArchivedSampleDataPoint(t, archivePath, "users/me/dataTypes/oxygen-saturation/dataPoints/spo2-2026-01-01-a", "oxygen-saturation", "2026-01-01T22:10:00Z", "2026-01-01T22:10:00", "2026-01-01", "", `"percentage":"97.5"`)
 	assertArchiveTableCount(t, archivePath, "data_points", 2)
 	assertSyncRunForDataType(t, archivePath, 4, "sync_completed", "oxygen-saturation", "list", 1, 1, 0, "")
+
+	heartRateVariabilityPage := string(readTestFixture(t, "googlehealth_heart_rate_variability_list.json"))
+	installDataPointSyncFetchFake(t, "connect-access-secret", "heart-rate-variability", map[string]string{"": heartRateVariabilityPage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "heart-rate-variability",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("heart-rate variability sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("heart-rate variability stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 1)
+	assertArchivedSampleDataPoint(t, archivePath, "users/me/dataTypes/heart-rate-variability/dataPoints/hrv-2026-01-01-a", "heart-rate-variability", "2026-01-01T05:20:00Z", "2026-01-01T05:20:00", "2026-01-01", "", `"rootMeanSquareOfSuccessiveDifferencesMilliseconds":42.125`)
+	assertArchiveTableCount(t, archivePath, "data_points", 3)
+	assertSyncRunForDataType(t, archivePath, 5, "sync_completed", "heart-rate-variability", "list", 1, 1, 0, "")
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+
+	weightPage := string(readTestFixture(t, "googlehealth_weight_list.json"))
+	requests := installDataPointSyncFetchFake(t, "connect-access-secret", "weight", map[string]string{"": weightPage})
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "weight",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("weight sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("weight stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 1)
+	assertJSONNumber(t, got, "data_points_updated", 0)
+	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `weight.sample_time.physical_time >= "2026-01-01T00:00:00Z" AND weight.sample_time.physical_time < "2026-01-02T00:00:00Z"` {
+		t.Fatalf("weight filter = %q", gotFilter)
+	}
+	assertArchivedSampleDataPoint(t, archivePath, "users/me/dataTypes/weight/dataPoints/weight-2026-01-01", "weight", "2026-01-01T05:45:00Z", "2026-01-01T06:45:00", "2026-01-01", `{"utc_offset":"3600s"}`, `"weightGrams":71234.5`)
+	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "weight", "list", 1, 1, 0, "")
+
+	installDataPointSyncFetchFake(t, "connect-access-secret", "weight", map[string]string{"": weightPage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "weight",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("idempotent weight sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("idempotent weight stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 0)
+	assertJSONNumber(t, got, "data_points_updated", 0)
+	assertArchiveTableCount(t, archivePath, "data_point_revisions", 0)
+	assertSyncRunForDataType(t, archivePath, 2, "sync_completed", "weight", "list", 1, 0, 0, "")
+
+	correctedWeightPage := strings.Replace(weightPage, `"weightGrams": 71234.5`, `"weightGrams": 71235.25`, 1)
+	installDataPointSyncFetchFake(t, "connect-access-secret", "weight", map[string]string{"": correctedWeightPage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "weight",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("corrected weight sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("corrected weight stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 0)
+	assertJSONNumber(t, got, "data_points_updated", 1)
+	assertArchiveTableCount(t, archivePath, "data_point_revisions", 1)
+	assertArchivedSampleDataPoint(t, archivePath, "users/me/dataTypes/weight/dataPoints/weight-2026-01-01", "weight", "2026-01-01T05:45:00Z", "2026-01-01T06:45:00", "2026-01-01", `{"utc_offset":"3600s"}`, `"weightGrams":71235.25`)
+	assertSyncRunForDataType(t, archivePath, 3, "sync_completed", "weight", "list", 1, 0, 1, "")
+
+	reconciledWeightPage := `{"dataPoints": [{
+		"dataPointName": "users/me/dataTypes/weight/dataPoints/weight-2026-01-01-wearable",
+		"weight": {
+			"sampleTime": {
+				"physicalTime": "2026-01-01T06:45:00+01:00",
+				"utcOffset": "3600s",
+				"civilTime": {"date": {"year": 2026, "month": 1, "day": 1}, "time": {"hours": 6, "minutes": 45}}
+			},
+			"weightGrams": 71234.5
+		}
+	}]}`
+	reconcileRequests := installDataPointReconcileFetchFake(t, "connect-access-secret", "weight", map[string]string{"": reconciledWeightPage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "weight",
+		"--source-family", "wearable",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("wearable weight sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("wearable weight stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "endpoint_family", "reconcile")
+	assertJSONString(t, got, "source_family", "wearable")
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 1)
+	if gotFamily := mustURLQuery(t, (*reconcileRequests)[0].url).Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
+		t.Fatalf("weight dataSourceFamily = %q, want google-wearables", gotFamily)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 2)
+	assertDataPointSourceFamilyCounts(t, archivePath, map[string]int{"": 1, "wearable": 1})
+	assertArchivedSampleDataPoint(t, archivePath, "users/me/dataTypes/weight/dataPoints/weight-2026-01-01-wearable", "weight", "2026-01-01T05:45:00Z", "2026-01-01T06:45:00", "2026-01-01", `{"utc_offset":"3600s"}`, `"weightGrams":71234.5`)
+	assertSyncRunForDataTypeWithSourceFamily(t, archivePath, 4, "sync_completed", "weight", "reconcile", "wearable", 1, 1, 0, "")
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+
+	distancePage := string(readTestFixture(t, "googlehealth_distance_list.json"))
+	requests := installDataPointSyncFetchFake(t, "connect-access-secret", "distance", map[string]string{"": distancePage})
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "distance",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("distance sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("distance stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 1)
+	assertJSONNumber(t, got, "data_points_updated", 0)
+	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `distance.interval.start_time >= "2026-01-01T00:00:00Z" AND distance.interval.start_time < "2026-01-02T00:00:00Z"` {
+		t.Fatalf("distance filter = %q", gotFilter)
+	}
+	assertArchivedIntervalDataPoint(t, archivePath, "users/me/dataTypes/distance/dataPoints/distance-2026-01-01", "distance", "2026-01-01T07:00:00Z", "2026-01-01T07:30:00Z", "2026-01-01T08:00:00", "2026-01-01T08:30:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"millimeters":"2450"`)
+	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "distance", "list", 1, 1, 0, "")
+
+	installDataPointSyncFetchFake(t, "connect-access-secret", "distance", map[string]string{"": distancePage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "distance",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("idempotent distance sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("idempotent distance stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 0)
+	assertJSONNumber(t, got, "data_points_updated", 0)
+	assertArchiveTableCount(t, archivePath, "data_point_revisions", 0)
+	assertSyncRunForDataType(t, archivePath, 2, "sync_completed", "distance", "list", 1, 0, 0, "")
+
+	correctedDistancePage := strings.Replace(distancePage, `"millimeters": "2450"`, `"millimeters": "2500"`, 1)
+	installDataPointSyncFetchFake(t, "connect-access-secret", "distance", map[string]string{"": correctedDistancePage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "distance",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("corrected distance sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("corrected distance stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 0)
+	assertJSONNumber(t, got, "data_points_updated", 1)
+	assertArchiveTableCount(t, archivePath, "data_point_revisions", 1)
+	assertArchivedIntervalDataPoint(t, archivePath, "users/me/dataTypes/distance/dataPoints/distance-2026-01-01", "distance", "2026-01-01T07:00:00Z", "2026-01-01T07:30:00Z", "2026-01-01T08:00:00", "2026-01-01T08:30:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"millimeters":"2500"`)
+	assertSyncRunForDataType(t, archivePath, 3, "sync_completed", "distance", "list", 1, 0, 1, "")
+
+	reconciledDistancePage := `{"dataPoints": [{
+		"dataPointName": "users/me/dataTypes/distance/dataPoints/distance-2026-01-01-wearable",
+		"distance": {
+			"interval": {
+				"startTime": "2026-01-01T08:00:00+01:00",
+				"startUtcOffset": "3600s",
+				"endTime": "2026-01-01T08:30:00+01:00",
+				"endUtcOffset": "3600s",
+				"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}, "time": {"hours": 8}},
+				"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 1}, "time": {"hours": 8, "minutes": 30}}
+			},
+			"millimeters": "2450"
+		}
+	}]}`
+	reconcileRequests := installDataPointReconcileFetchFake(t, "connect-access-secret", "distance", map[string]string{"": reconciledDistancePage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "distance",
+		"--source-family", "wearable",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("wearable distance sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("wearable distance stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "endpoint_family", "reconcile")
+	assertJSONString(t, got, "source_family", "wearable")
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 1)
+	if gotFamily := mustURLQuery(t, (*reconcileRequests)[0].url).Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
+		t.Fatalf("distance dataSourceFamily = %q, want google-wearables", gotFamily)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 2)
+	assertDataPointSourceFamilyCounts(t, archivePath, map[string]int{"": 1, "wearable": 1})
+	assertArchivedIntervalDataPoint(t, archivePath, "users/me/dataTypes/distance/dataPoints/distance-2026-01-01-wearable", "distance", "2026-01-01T07:00:00Z", "2026-01-01T07:30:00Z", "2026-01-01T08:00:00", "2026-01-01T08:30:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, "{}", `"millimeters":"2450"`)
+	assertSyncRunForDataTypeWithSourceFamily(t, archivePath, 4, "sync_completed", "distance", "reconcile", "wearable", 1, 1, 0, "")
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
@@ -4425,6 +4725,11 @@ func TestGoogleHealthRawFilterFieldsCoverFirstReleaseDataTypes(t *testing.T) {
 			want:     `oxygen_saturation.sample_time.physical_time >= "2026-01-01T00:00:00Z"`,
 		},
 		{
+			dataType: "heart-rate-variability",
+			from:     "2026-01-01",
+			want:     `heart_rate_variability.sample_time.physical_time >= "2026-01-01T00:00:00Z"`,
+		},
+		{
 			dataType: "daily-resting-heart-rate",
 			from:     "2026-01-01",
 			want:     `daily_resting_heart_rate.date >= "2026-01-01"`,
@@ -4453,6 +4758,16 @@ func TestGoogleHealthRawFilterFieldsCoverFirstReleaseDataTypes(t *testing.T) {
 			dataType: "sleep",
 			from:     "2026-01-01",
 			want:     `sleep.interval.civil_end_time >= "2026-01-01"`,
+		},
+		{
+			dataType: "distance",
+			from:     "2026-01-01",
+			want:     `distance.interval.start_time >= "2026-01-01T00:00:00Z"`,
+		},
+		{
+			dataType: "weight",
+			from:     "2026-01-01",
+			want:     `weight.sample_time.physical_time >= "2026-01-01T00:00:00Z"`,
 		},
 	} {
 		t.Run(test.dataType, func(t *testing.T) {
@@ -5787,6 +6102,43 @@ func installStepReconcileFetchFake(t *testing.T, wantAccessToken string, pages m
 	return &requests
 }
 
+func installDataPointReconcileFetchFake(t *testing.T, wantAccessToken, dataType string, pages map[string]string) *[]rawProviderRequest {
+	t.Helper()
+
+	originalFetchRawProvider := fetchRawProvider
+	var requests []rawProviderRequest
+	fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		if accessToken != wantAccessToken {
+			t.Fatalf("reconcile sync access token = %q, want stored token", accessToken)
+		}
+		if request.endpointName != "dataTypes."+dataType+".reconcile" || request.dataType != dataType {
+			t.Fatalf("reconcile sync request = (%q, %q), want %s reconcile", request.endpointName, request.dataType, dataType)
+		}
+		if request.sourceFamilyFilter != "wearable" {
+			t.Fatalf("source family filter = %q, want wearable", request.sourceFamilyFilter)
+		}
+		parsedURL, err := url.Parse(request.url)
+		if err != nil {
+			t.Fatalf("parse reconcile URL: %v", err)
+		}
+		wantPath := "/v4/users/me/dataTypes/" + dataType + "/dataPoints:reconcile"
+		if parsedURL.Path != wantPath {
+			t.Fatalf("reconcile path = %q, want %q", parsedURL.Path, wantPath)
+		}
+		requests = append(requests, request)
+		pageToken := parsedURL.Query().Get("pageToken")
+		body, ok := pages[pageToken]
+		if !ok {
+			t.Fatalf("no fake reconcile page for pageToken %q", pageToken)
+		}
+		return []byte(body), nil
+	}
+	t.Cleanup(func() {
+		fetchRawProvider = originalFetchRawProvider
+	})
+	return &requests
+}
+
 func installStepDailyRollupFetchFake(t *testing.T, wantAccessToken string, pages map[string]string) *[]rawProviderRequest {
 	t.Helper()
 
@@ -6452,6 +6804,63 @@ func assertArchivedStepDataPoint(t *testing.T, archivePath string) {
 	}
 	if !strings.Contains(rawJSON, `"count":"512"`) {
 		t.Fatalf("raw_json = %s, want original steps count", rawJSON)
+	}
+}
+
+func assertArchivedIntervalDataPoint(t *testing.T, archivePath, resourceName, wantDataType, wantStartUTC, wantEndUTC, wantStartCivil, wantEndCivil, wantCivilDate, wantTimezoneMetadata, wantDataSourceJSON, wantRawContains string) {
+	t.Helper()
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	var dataType, recordKind, startUTC, endUTC, dataSourceJSON, rawJSON string
+	var startCivil, endCivil, civilDate, timezoneMetadata sql.NullString
+	if err := db.QueryRow(`SELECT
+		data_type,
+		record_kind,
+		start_time_utc,
+		end_time_utc,
+		start_civil_time,
+		end_civil_time,
+		provider_civil_date,
+		timezone_metadata,
+		data_source_json,
+		raw_json
+	FROM data_points
+	WHERE upstream_resource_name = ?
+	ORDER BY id`, resourceName).Scan(
+		&dataType,
+		&recordKind,
+		&startUTC,
+		&endUTC,
+		&startCivil,
+		&endCivil,
+		&civilDate,
+		&timezoneMetadata,
+		&dataSourceJSON,
+		&rawJSON,
+	); err != nil {
+		t.Fatalf("query archived interval Data Point: %v", err)
+	}
+	if dataType != wantDataType || recordKind != "interval" {
+		t.Fatalf("Data Point identity = (%q, %q), want (%q, interval)", dataType, recordKind, wantDataType)
+	}
+	if startUTC != wantStartUTC || endUTC != wantEndUTC {
+		t.Fatalf("physical time = (%q, %q), want (%q, %q)", startUTC, endUTC, wantStartUTC, wantEndUTC)
+	}
+	if startCivil.String != wantStartCivil || !startCivil.Valid || endCivil.String != wantEndCivil || !endCivil.Valid || civilDate.String != wantCivilDate || !civilDate.Valid {
+		t.Fatalf("civil time = (%v(%q), %v(%q), %v(%q)), want start %q end %q date %q", startCivil.Valid, startCivil.String, endCivil.Valid, endCivil.String, civilDate.Valid, civilDate.String, wantStartCivil, wantEndCivil, wantCivilDate)
+	}
+	if timezoneMetadata.String != wantTimezoneMetadata || !timezoneMetadata.Valid {
+		t.Fatalf("timezone_metadata = %v(%q), want %q", timezoneMetadata.Valid, timezoneMetadata.String, wantTimezoneMetadata)
+	}
+	if dataSourceJSON != wantDataSourceJSON {
+		t.Fatalf("data_source_json = %q, want %q", dataSourceJSON, wantDataSourceJSON)
+	}
+	if !strings.Contains(rawJSON, wantRawContains) {
+		t.Fatalf("raw_json = %s, want %s", rawJSON, wantRawContains)
 	}
 }
 
