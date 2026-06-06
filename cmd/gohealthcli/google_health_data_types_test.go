@@ -102,10 +102,11 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		{
 			dataType:              "sleep",
 			wantScopes:            []string{googleHealthSleepReadonlyScope},
-			wantListFilterField:   "sleep.interval.end_time",
+			wantListFilterField:   "sleep.interval.civil_end_time",
 			wantSyncDataPoint:     true,
 			wantParser:            "session",
 			wantRecordKind:        "session",
+			wantDateRangeDefault:  true,
 			wantDefaultConfigType: true,
 		},
 		{

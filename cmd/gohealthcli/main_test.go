@@ -3369,6 +3369,9 @@ func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
 	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
+	originalCurrentTime := currentTime
+	currentTime = func() time.Time { return time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { currentTime = originalCurrentTime })
 
 	sleepPage := string(readTestFixture(t, "googlehealth_sleep_list.json"))
 	requests := installDataPointSyncFetchFake(t, "connect-access-secret", "sleep", map[string]string{"": sleepPage})
@@ -3379,8 +3382,7 @@ func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
 		"--config", configPath,
 		"--db", archivePath,
 		"--types", "sleep",
-		"--from", "2026-01-01T00:00:00Z",
-		"--to", "2026-01-03T00:00:00Z",
+		"--from", "2026-01-01",
 		"--json",
 	}, stdout, stderr)
 	if code != 0 {
@@ -3392,13 +3394,14 @@ func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
 	}
 	assertJSONString(t, got, "status", "sync_completed")
 	assertJSONString(t, got, "endpoint_family", "list")
+	assertJSONString(t, got, "to", "2026-01-03")
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
 	assertJSONNumber(t, got, "data_points_updated", 0)
 	if (*requests)[0].endpointName != "dataTypes.sleep.list" {
 		t.Fatalf("endpoint = %q, want sleep Data Type list", (*requests)[0].endpointName)
 	}
-	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `sleep.interval.end_time >= "2026-01-01T00:00:00Z" AND sleep.interval.end_time < "2026-01-03T00:00:00Z"` {
+	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `sleep.interval.civil_end_time >= "2026-01-01" AND sleep.interval.civil_end_time < "2026-01-03"` {
 		t.Fatalf("sleep filter = %q", gotFilter)
 	}
 	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/sleep/dataPoints/sleep-2026-01-01", "sleep", "2026-01-01T21:30:00Z", "2026-01-02T05:45:00Z", "2026-01-01T22:30:00", "2026-01-02T06:45:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"type":"LIGHT"`)
@@ -3414,8 +3417,8 @@ func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
 		"--config", configPath,
 		"--db", archivePath,
 		"--types", "sleep",
-		"--from", "2026-01-01T00:00:00Z",
-		"--to", "2026-01-03T00:00:00Z",
+		"--from", "2026-01-01",
+		"--to", "2026-01-03",
 		"--json",
 	}, stdout, stderr)
 	if code != 0 {
@@ -3439,8 +3442,8 @@ func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
 		"--config", configPath,
 		"--db", archivePath,
 		"--types", "sleep",
-		"--from", "2026-01-01T00:00:00Z",
-		"--to", "2026-01-03T00:00:00Z",
+		"--from", "2026-01-01",
+		"--to", "2026-01-03",
 		"--json",
 	}, stdout, stderr)
 	if code != 0 {
@@ -4449,7 +4452,7 @@ func TestGoogleHealthRawFilterFieldsCoverFirstReleaseDataTypes(t *testing.T) {
 		{
 			dataType: "sleep",
 			from:     "2026-01-01",
-			want:     `sleep.interval.end_time >= "2026-01-01T00:00:00Z"`,
+			want:     `sleep.interval.civil_end_time >= "2026-01-01"`,
 		},
 	} {
 		t.Run(test.dataType, func(t *testing.T) {

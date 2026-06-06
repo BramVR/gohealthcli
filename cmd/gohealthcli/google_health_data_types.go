@@ -112,11 +112,12 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	{
 		DataType:              "sleep",
 		RequiredScopes:        []string{googleHealthSleepReadonlyScope},
-		ListFilterField:       "sleep.interval.end_time",
+		ListFilterField:       "sleep.interval.civil_end_time",
 		SupportsSyncDataPoint: true,
 		Parser:                "session",
 		JSONField:             "sleep",
 		RecordKind:            "session",
+		UsesDateRangeDefault:  true,
 		DefaultConfigType:     true,
 	},
 	{
