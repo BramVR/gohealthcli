@@ -110,16 +110,26 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		DefaultConfigType:     true,
 	},
 	{
-		DataType:          "sleep",
-		RequiredScopes:    []string{googleHealthSleepReadonlyScope},
-		ListFilterField:   "sleep.interval.end_time",
-		DefaultConfigType: true,
+		DataType:              "sleep",
+		RequiredScopes:        []string{googleHealthSleepReadonlyScope},
+		ListFilterField:       "sleep.interval.civil_end_time",
+		SupportsSyncDataPoint: true,
+		Parser:                "session",
+		JSONField:             "sleep",
+		RecordKind:            "session",
+		UsesDateRangeDefault:  true,
+		DefaultConfigType:     true,
 	},
 	{
-		DataType:          "exercise",
-		RequiredScopes:    []string{googleHealthActivityReadonlyScope},
-		ListFilterField:   "exercise.interval.civil_start_time",
-		DefaultConfigType: true,
+		DataType:              "exercise",
+		RequiredScopes:        []string{googleHealthActivityReadonlyScope},
+		ListFilterField:       "exercise.interval.civil_start_time",
+		SupportsSyncDataPoint: true,
+		Parser:                "session",
+		JSONField:             "exercise",
+		RecordKind:            "session",
+		UsesDateRangeDefault:  true,
+		DefaultConfigType:     true,
 	},
 	{
 		DataType:          "distance",
@@ -223,6 +233,14 @@ func googleHealthDailyDataPointJSONField(dataType string) string {
 		return shape.jsonField
 	}
 	return ""
+}
+
+func googleHealthSessionDataPointJSONField(dataType string) string {
+	entry, ok := googleHealthDataTypes.Lookup(dataType)
+	if !ok || entry.Parser != "session" {
+		return ""
+	}
+	return entry.JSONField
 }
 
 func syncDataPointDataTypeSupported(dataType string) bool {

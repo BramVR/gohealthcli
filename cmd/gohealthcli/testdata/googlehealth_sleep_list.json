@@ -1,0 +1,53 @@
+{
+  "dataPoints": [
+    {
+      "name": "users/me/dataTypes/sleep/dataPoints/sleep-2026-01-01",
+      "dataSource": {
+        "platform": "FITBIT",
+        "device": {
+          "manufacturer": "Google",
+          "model": "Pixel Watch"
+        }
+      },
+      "sleep": {
+        "interval": {
+          "startTime": "2026-01-01T22:30:00+01:00",
+          "startUtcOffset": "3600s",
+          "endTime": "2026-01-02T06:45:00+01:00",
+          "endUtcOffset": "3600s",
+          "civilStartTime": {
+            "date": {
+              "year": 2026,
+              "month": 1,
+              "day": 1
+            },
+            "time": {
+              "hours": 22,
+              "minutes": 30
+            }
+          },
+          "civilEndTime": {
+            "date": {
+              "year": 2026,
+              "month": 1,
+              "day": 2
+            },
+            "time": {
+              "hours": 6,
+              "minutes": 45
+            }
+          }
+        },
+        "stages": [
+          {
+            "type": "LIGHT",
+            "interval": {
+              "startTime": "2026-01-01T22:30:00+01:00",
+              "endTime": "2026-01-02T00:00:00+01:00"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
