@@ -158,21 +158,221 @@ func TestExportDailyStepsJSONLToStdout(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestWriteExportJSONLCanonicalizesIntegerFields(t *testing.T) {
+	output := new(bytes.Buffer)
+	err := writeExportJSONL([]exportRow{{
+		"googlehealth",
+		"googlehealth:111111256096816351",
+		"2026-01-01",
+		"+512",
+		"dataPoints",
+		"",
+		"01",
+		"2026-01-01T08:15:00Z",
+	}}, exportDatasetSpecs["daily-steps"], output)
+	if err != nil {
+		t.Fatalf("write JSONL: %v", err)
+	}
+	want := `{"provider_name":"googlehealth","connection_id":"googlehealth:111111256096816351","civil_date":"2026-01-01","step_count":512,"source_kind":"dataPoints","source_family_filter":"","source_record_count":1,"latest_source_timestamp":"2026-01-01T08:15:00Z"}` + "\n"
+	if output.String() != want {
+		t.Fatalf("JSONL =\n%s\nwant:\n%s", output.String(), want)
+	}
+}
+
+func TestExportHeartRateSamplesJSONLFromNormalizedView(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+	insertExportDataPoint(t, archivePath, exportDataPointFixture{
+		dataType:     "heart-rate",
+		resourceName: "users/me/dataTypes/heart-rate/dataPoints/hr-2026-01-01-a",
+		recordKind:   "sample",
+		startUTC:     "2026-01-01T07:30:00Z",
+		startCivil:   "2026-01-01T08:30:00",
+		civilDate:    "2026-01-01",
+		dataSource:   `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`,
+		rawJSON:      `{"heartRate":{"sampleTime":{"physicalTime":"2026-01-01T08:30:00+01:00"},"beatsPerMinute":"72"}}`,
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"export",
+		"--config", configPath,
+		"heart-rate-samples",
+		"--format", "jsonl",
+		"--stdout",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("export exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	want := `{"provider_name":"googlehealth","connection_id":"googlehealth:111111256096816351","sample_time_utc":"2026-01-01T07:30:00Z","sample_civil_time":"2026-01-01T08:30:00","civil_date":"2026-01-01","beats_per_minute":"72","source_family_filter":"","upstream_resource_name":"users/me/dataTypes/heart-rate/dataPoints/hr-2026-01-01-a"}` + "\n"
+	if stdout.String() != want {
+		t.Fatalf("stdout = %s\nwant = %s", stdout.String(), want)
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestExportRemainingFirstReleaseDatasetsCSVAndJSONL(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+	insertExportDataPoint(t, archivePath, exportDataPointFixture{
+		dataType:     "heart-rate",
+		resourceName: "users/me/dataTypes/heart-rate/dataPoints/hr-2026-01-01-a",
+		recordKind:   "sample",
+		startUTC:     "2026-01-01T07:30:00Z",
+		startCivil:   "2026-01-01T08:30:00",
+		civilDate:    "2026-01-01",
+		dataSource:   `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`,
+		rawJSON:      `{"heartRate":{"sampleTime":{"physicalTime":"2026-01-01T08:30:00+01:00"},"beatsPerMinute":"72"}}`,
+	})
+	insertExportDataPoint(t, archivePath, exportDataPointFixture{
+		dataType:     "daily-resting-heart-rate",
+		resourceName: "users/me/dataTypes/daily-resting-heart-rate/dataPoints/rhr-2026-01-01",
+		recordKind:   "daily",
+		civilDate:    "2026-01-01",
+		dataSource:   `{"platform":"FITBIT"}`,
+		rawJSON:      `{"dailyRestingHeartRate":{"date":{"year":2026,"month":1,"day":1},"beatsPerMinute":"61"}}`,
+	})
+	insertExportDataPoint(t, archivePath, exportDataPointFixture{
+		dataType:     "sleep",
+		resourceName: "users/me/dataTypes/sleep/dataPoints/sleep-2026-01-01",
+		recordKind:   "session",
+		startUTC:     "2026-01-01T21:30:00Z",
+		endUTC:       "2026-01-02T05:45:00Z",
+		startCivil:   "2026-01-01T22:30:00",
+		endCivil:     "2026-01-02T06:45:00",
+		civilDate:    "2026-01-01",
+		dataSource:   `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`,
+		rawJSON:      `{"sleep":{"interval":{"startTime":"2026-01-01T22:30:00+01:00","endTime":"2026-01-02T06:45:00+01:00"},"stages":[{"type":"LIGHT"}]}}`,
+	})
+	insertExportDataPoint(t, archivePath, exportDataPointFixture{
+		dataType:     "exercise",
+		resourceName: "users/me/dataTypes/exercise/dataPoints/exercise-2026-01-01",
+		recordKind:   "session",
+		startUTC:     "2026-01-01T16:15:00Z",
+		endUTC:       "2026-01-01T16:45:00Z",
+		startCivil:   "2026-01-01T17:15:00",
+		endCivil:     "2026-01-01T17:45:00",
+		civilDate:    "2026-01-01",
+		dataSource:   `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`,
+		rawJSON:      `{"exercise":{"interval":{"startTime":"2026-01-01T17:15:00+01:00","endTime":"2026-01-01T17:45:00+01:00"},"exerciseType":"RUNNING","activeDuration":"1800s"}}`,
+	})
+	insertExportDataPoint(t, archivePath, exportDataPointFixture{
+		dataType:     "weight",
+		resourceName: "users/me/dataTypes/weight/dataPoints/weight-2026-01-01",
+		recordKind:   "sample",
+		startUTC:     "2026-01-01T05:45:00Z",
+		startCivil:   "2026-01-01T06:45:00",
+		civilDate:    "2026-01-01",
+		dataSource:   `{"platform":"FITBIT"}`,
+		rawJSON:      `{"weight":{"sampleTime":{"physicalTime":"2026-01-01T06:45:00+01:00"},"weightGrams":71234.5}}`,
+	})
+
+	tests := []struct {
+		dataset  string
+		wantCSV  string
+		wantJSON string
+	}{
+		{
+			dataset: "heart-rate-samples",
+			wantCSV: "provider_name,connection_id,sample_time_utc,sample_civil_time,civil_date,beats_per_minute,source_family_filter,upstream_resource_name\n" +
+				"googlehealth,googlehealth:111111256096816351,2026-01-01T07:30:00Z,2026-01-01T08:30:00,2026-01-01,72,,users/me/dataTypes/heart-rate/dataPoints/hr-2026-01-01-a\n",
+			wantJSON: `{"provider_name":"googlehealth","connection_id":"googlehealth:111111256096816351","sample_time_utc":"2026-01-01T07:30:00Z","sample_civil_time":"2026-01-01T08:30:00","civil_date":"2026-01-01","beats_per_minute":"72","source_family_filter":"","upstream_resource_name":"users/me/dataTypes/heart-rate/dataPoints/hr-2026-01-01-a"}` + "\n",
+		},
+		{
+			dataset: "resting-heart-rate-by-day",
+			wantCSV: "provider_name,connection_id,civil_date,beats_per_minute,source_family_filter,upstream_resource_name\n" +
+				"googlehealth,googlehealth:111111256096816351,2026-01-01,61,,users/me/dataTypes/daily-resting-heart-rate/dataPoints/rhr-2026-01-01\n",
+			wantJSON: `{"provider_name":"googlehealth","connection_id":"googlehealth:111111256096816351","civil_date":"2026-01-01","beats_per_minute":"61","source_family_filter":"","upstream_resource_name":"users/me/dataTypes/daily-resting-heart-rate/dataPoints/rhr-2026-01-01"}` + "\n",
+		},
+		{
+			dataset: "sleep-sessions",
+			wantCSV: "provider_name,connection_id,start_time_utc,end_time_utc,start_civil_time,end_civil_time,civil_date,source_family_filter,upstream_resource_name\n" +
+				"googlehealth,googlehealth:111111256096816351,2026-01-01T21:30:00Z,2026-01-02T05:45:00Z,2026-01-01T22:30:00,2026-01-02T06:45:00,2026-01-01,,users/me/dataTypes/sleep/dataPoints/sleep-2026-01-01\n",
+			wantJSON: `{"provider_name":"googlehealth","connection_id":"googlehealth:111111256096816351","start_time_utc":"2026-01-01T21:30:00Z","end_time_utc":"2026-01-02T05:45:00Z","start_civil_time":"2026-01-01T22:30:00","end_civil_time":"2026-01-02T06:45:00","civil_date":"2026-01-01","source_family_filter":"","upstream_resource_name":"users/me/dataTypes/sleep/dataPoints/sleep-2026-01-01"}` + "\n",
+		},
+		{
+			dataset: "exercise-sessions",
+			wantCSV: "provider_name,connection_id,start_time_utc,end_time_utc,start_civil_time,end_civil_time,civil_date,exercise_type,active_duration,source_family_filter,upstream_resource_name\n" +
+				"googlehealth,googlehealth:111111256096816351,2026-01-01T16:15:00Z,2026-01-01T16:45:00Z,2026-01-01T17:15:00,2026-01-01T17:45:00,2026-01-01,RUNNING,1800s,,users/me/dataTypes/exercise/dataPoints/exercise-2026-01-01\n",
+			wantJSON: `{"provider_name":"googlehealth","connection_id":"googlehealth:111111256096816351","start_time_utc":"2026-01-01T16:15:00Z","end_time_utc":"2026-01-01T16:45:00Z","start_civil_time":"2026-01-01T17:15:00","end_civil_time":"2026-01-01T17:45:00","civil_date":"2026-01-01","exercise_type":"RUNNING","active_duration":"1800s","source_family_filter":"","upstream_resource_name":"users/me/dataTypes/exercise/dataPoints/exercise-2026-01-01"}` + "\n",
+		},
+		{
+			dataset: "weight-samples",
+			wantCSV: "provider_name,connection_id,sample_time_utc,sample_civil_time,civil_date,weight_grams,source_family_filter,upstream_resource_name\n" +
+				"googlehealth,googlehealth:111111256096816351,2026-01-01T05:45:00Z,2026-01-01T06:45:00,2026-01-01,71234.5,,users/me/dataTypes/weight/dataPoints/weight-2026-01-01\n",
+			wantJSON: `{"provider_name":"googlehealth","connection_id":"googlehealth:111111256096816351","sample_time_utc":"2026-01-01T05:45:00Z","sample_civil_time":"2026-01-01T06:45:00","civil_date":"2026-01-01","weight_grams":"71234.5","source_family_filter":"","upstream_resource_name":"users/me/dataTypes/weight/dataPoints/weight-2026-01-01"}` + "\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.dataset+"/csv", func(t *testing.T) {
+			stdout := new(bytes.Buffer)
+			stderr := new(bytes.Buffer)
+			code := run([]string{"export", "--config", configPath, test.dataset, "--format", "csv", "--stdout"}, stdout, stderr)
+			if code != 0 {
+				t.Fatalf("export exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+			}
+			if stdout.String() != test.wantCSV {
+				t.Fatalf("CSV =\n%s\nwant:\n%s", stdout.String(), test.wantCSV)
+			}
+			assertNoSecretWords(t, stdout.String()+stderr.String())
+		})
+		t.Run(test.dataset+"/jsonl", func(t *testing.T) {
+			stdout := new(bytes.Buffer)
+			stderr := new(bytes.Buffer)
+			code := run([]string{"export", "--config", configPath, test.dataset, "--format", "jsonl", "--stdout"}, stdout, stderr)
+			if code != 0 {
+				t.Fatalf("export exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+			}
+			if stdout.String() != test.wantJSON {
+				t.Fatalf("JSONL =\n%s\nwant:\n%s", stdout.String(), test.wantJSON)
+			}
+			assertNoSecretWords(t, stdout.String()+stderr.String())
+		})
+	}
+}
+
 func TestExportDailyStepsRequiresExplicitDestination(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
+
+	datasets := []string{
+		"daily-steps",
+		"heart-rate-samples",
+		"resting-heart-rate-by-day",
+		"sleep-sessions",
+		"exercise-sessions",
+		"weight-samples",
+	}
+	for _, dataset := range datasets {
+		t.Run(dataset+"/missing destination", func(t *testing.T) {
+			stdout := new(bytes.Buffer)
+			stderr := new(bytes.Buffer)
+			code := run([]string{"export", "--config", configPath, dataset, "--format", "csv"}, stdout, stderr)
+			if code != 1 {
+				t.Fatalf("export exit code = %d, want 1", code)
+			}
+			if stdout.String() != "" {
+				t.Fatalf("stdout = %q, want empty", stdout.String())
+			}
+			if !strings.Contains(stderr.String(), "requires --output PATH or --stdout") {
+				t.Fatalf("stderr = %q, want destination error", stderr.String())
+			}
+			assertNoSecretWords(t, stdout.String()+stderr.String())
+		})
+	}
 
 	for _, tc := range []struct {
 		name       string
 		args       []string
 		wantStderr string
 	}{
-		{
-			name:       "missing destination",
-			args:       []string{"export", "--config", configPath, "daily-steps", "--format", "csv"},
-			wantStderr: "requires --output PATH or --stdout",
-		},
 		{
 			name:       "ambiguous destination",
 			args:       []string{"export", "--config", configPath, "daily-steps", "--format", "csv", "--output", filepath.Join(tempDir, "out.csv"), "--stdout"},
@@ -195,6 +395,40 @@ func TestExportDailyStepsRequiresExplicitDestination(t *testing.T) {
 			assertNoSecretWords(t, stdout.String()+stderr.String())
 		})
 	}
+}
+
+func TestExportMigratesLegacyV4ArchiveBeforeReadingNormalizedView(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	if err := os.Remove(archivePath); err != nil {
+		t.Fatalf("remove current archive: %v", err)
+	}
+	createLegacyV4Archive(t, archivePath)
+	insertStatusFixtureRows(t, archivePath)
+	insertExportDataPoint(t, archivePath, exportDataPointFixture{
+		dataType:     "heart-rate",
+		resourceName: "users/me/dataTypes/heart-rate/dataPoints/hr-2026-01-01-a",
+		recordKind:   "sample",
+		startUTC:     "2026-01-01T07:30:00Z",
+		startCivil:   "2026-01-01T08:30:00",
+		civilDate:    "2026-01-01",
+		dataSource:   `{"platform":"FITBIT"}`,
+		rawJSON:      `{"heartRate":{"beatsPerMinute":"72"}}`,
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"export", "--config", configPath, "heart-rate-samples", "--format", "csv", "--stdout"}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("export exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	want := "provider_name,connection_id,sample_time_utc,sample_civil_time,civil_date,beats_per_minute,source_family_filter,upstream_resource_name\n" +
+		"googlehealth,googlehealth:111111256096816351,2026-01-01T07:30:00Z,2026-01-01T08:30:00,2026-01-01,72,,users/me/dataTypes/heart-rate/dataPoints/hr-2026-01-01-a\n"
+	if stdout.String() != want {
+		t.Fatalf("stdout =\n%s\nwant:\n%s", stdout.String(), want)
+	}
+	assertArchiveUserVersion(t, archivePath, currentSchemaVersion)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
 func TestExportRejectsUnsupportedFormatBeforeWritingFile(t *testing.T) {
@@ -241,6 +475,34 @@ func insertExportStepDataPoint(t *testing.T, archivePath, resourceName, startUTC
 
 func insertExportStepDataPointWithSourceFamily(t *testing.T, archivePath, resourceName, startUTC, endUTC, rawJSON, sourceFamily string) {
 	t.Helper()
+	insertExportDataPoint(t, archivePath, exportDataPointFixture{
+		dataType:     "steps",
+		resourceName: resourceName,
+		recordKind:   "interval",
+		startUTC:     startUTC,
+		endUTC:       endUTC,
+		dataSource:   "{}",
+		sourceFamily: sourceFamily,
+		rawJSON:      rawJSON,
+	})
+}
+
+type exportDataPointFixture struct {
+	dataType     string
+	resourceName string
+	recordKind   string
+	startUTC     any
+	endUTC       any
+	startCivil   any
+	endCivil     any
+	civilDate    any
+	dataSource   string
+	sourceFamily string
+	rawJSON      string
+}
+
+func insertExportDataPoint(t *testing.T, archivePath string, point exportDataPointFixture) {
+	t.Helper()
 	db, err := openArchive(archivePath)
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
@@ -254,22 +516,28 @@ func insertExportStepDataPointWithSourceFamily(t *testing.T, archivePath, resour
 		record_kind,
 		start_time_utc,
 		end_time_utc,
+		start_civil_time,
+		end_civil_time,
+		provider_civil_date,
 		data_source_json,
 		source_family_filter,
 		raw_json,
 		inserted_at,
 		updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"googlehealth",
 		"googlehealth:111111256096816351",
-		"steps",
-		resourceName,
-		"interval",
-		startUTC,
-		endUTC,
-		"{}",
-		nullString(sourceFamily),
-		rawJSON,
+		point.dataType,
+		point.resourceName,
+		point.recordKind,
+		point.startUTC,
+		point.endUTC,
+		point.startCivil,
+		point.endCivil,
+		point.civilDate,
+		point.dataSource,
+		nullString(point.sourceFamily),
+		point.rawJSON,
 		"2026-01-04T00:00:00Z",
 		"2026-01-04T00:00:00Z",
 	); err != nil {

@@ -403,8 +403,8 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("schema migration rows: %v", err)
 	}
-	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter,4:add_daily_steps_view" {
-		t.Fatalf("migrations = %v, want initial + identity + source family + daily steps view", migrations)
+	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter,4:add_daily_steps_view,5:add_first_release_normalized_views" {
+		t.Fatalf("migrations = %v, want initial + identity + source family + normalized views", migrations)
 	}
 
 	for _, table := range []string{
@@ -6543,6 +6543,12 @@ func createLegacyV3Archive(t *testing.T, archivePath string) {
 	createLegacyArchive(t, archivePath, 3)
 }
 
+func createLegacyV4Archive(t *testing.T, archivePath string) {
+	t.Helper()
+
+	createLegacyArchive(t, archivePath, 4)
+}
+
 func createLegacyArchive(t *testing.T, archivePath string, schemaVersion int) {
 	t.Helper()
 
@@ -6585,6 +6591,12 @@ func createLegacyArchive(t *testing.T, archivePath string, schemaVersion int) {
 		if err := applySourceFamilyArchiveMigration(tx, time.Date(2026, 5, 31, 23, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
 			_ = tx.Rollback()
 			t.Fatalf("apply legacy source family migration: %v", err)
+		}
+	}
+	if schemaVersion >= 4 {
+		if err := applyDailyStepsViewMigration(tx, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("apply legacy daily steps view migration: %v", err)
 		}
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
