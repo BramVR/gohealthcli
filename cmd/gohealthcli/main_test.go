@@ -3401,10 +3401,60 @@ func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
 	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `sleep.interval.end_time >= "2026-01-01T00:00:00Z" AND sleep.interval.end_time < "2026-01-03T00:00:00Z"` {
 		t.Fatalf("sleep filter = %q", gotFilter)
 	}
-	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/sleep/dataPoints/sleep-2026-01-01", "sleep", "2026-01-01T21:30:00Z", "2026-01-02T05:45:00Z", "2026-01-01T22:30:00", "2026-01-02T06:45:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"stage":"LIGHT"`)
+	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/sleep/dataPoints/sleep-2026-01-01", "sleep", "2026-01-01T21:30:00Z", "2026-01-02T05:45:00Z", "2026-01-01T22:30:00", "2026-01-02T06:45:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"type":"LIGHT"`)
 	assertArchiveTableCount(t, archivePath, "data_points", 1)
 	assertArchiveTableCount(t, archivePath, "rollups", 0)
 	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "sleep", "list", 1, 1, 0, "")
+
+	installDataPointSyncFetchFake(t, "connect-access-secret", "sleep", map[string]string{"": sleepPage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "sleep",
+		"--from", "2026-01-01T00:00:00Z",
+		"--to", "2026-01-03T00:00:00Z",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("idempotent sleep sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("idempotent sleep stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 0)
+	assertJSONNumber(t, got, "data_points_updated", 0)
+	assertArchiveTableCount(t, archivePath, "data_point_revisions", 0)
+	assertSyncRunForDataType(t, archivePath, 2, "sync_completed", "sleep", "list", 1, 0, 0, "")
+
+	correctedSleepPage := strings.Replace(sleepPage, `"type": "LIGHT"`, `"type": "REM"`, 1)
+	installDataPointSyncFetchFake(t, "connect-access-secret", "sleep", map[string]string{"": correctedSleepPage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "sleep",
+		"--from", "2026-01-01T00:00:00Z",
+		"--to", "2026-01-03T00:00:00Z",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("corrected sleep sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("corrected sleep stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 0)
+	assertJSONNumber(t, got, "data_points_updated", 1)
+	assertArchiveTableCount(t, archivePath, "data_point_revisions", 1)
+	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/sleep/dataPoints/sleep-2026-01-01", "sleep", "2026-01-01T21:30:00Z", "2026-01-02T05:45:00Z", "2026-01-01T22:30:00", "2026-01-02T06:45:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"type":"REM"`)
+	assertSyncRunForDataType(t, archivePath, 3, "sync_completed", "sleep", "list", 1, 0, 1, "")
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
