@@ -115,6 +115,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantSyncDataPoint:     true,
 			wantParser:            "session",
 			wantRecordKind:        "session",
+			wantDateRangeDefault:  true,
 			wantDefaultConfigType: true,
 		},
 		{

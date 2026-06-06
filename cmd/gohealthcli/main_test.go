@@ -3420,6 +3420,9 @@ func TestSyncArchivesExerciseSessionDataPointsIdempotentlyAndTracksRevisions(t *
 	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
+	originalCurrentTime := currentTime
+	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { currentTime = originalCurrentTime })
 
 	exercisePage := string(readTestFixture(t, "googlehealth_exercise_list.json"))
 	requests := installDataPointSyncFetchFake(t, "connect-access-secret", "exercise", map[string]string{"": exercisePage})
@@ -3431,7 +3434,6 @@ func TestSyncArchivesExerciseSessionDataPointsIdempotentlyAndTracksRevisions(t *
 		"--db", archivePath,
 		"--types", "exercise",
 		"--from", "2026-01-01",
-		"--to", "2026-01-02",
 		"--json",
 	}, stdout, stderr)
 	if code != 0 {
@@ -3444,6 +3446,7 @@ func TestSyncArchivesExerciseSessionDataPointsIdempotentlyAndTracksRevisions(t *
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
 	assertJSONNumber(t, got, "data_points_updated", 0)
+	assertJSONString(t, got, "to", "2026-01-02")
 	if (*requests)[0].endpointName != "dataTypes.exercise.list" {
 		t.Fatalf("endpoint = %q, want exercise Data Type list", (*requests)[0].endpointName)
 	}

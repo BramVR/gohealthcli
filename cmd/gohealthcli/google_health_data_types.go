@@ -127,6 +127,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		Parser:                "session",
 		JSONField:             "exercise",
 		RecordKind:            "session",
+		UsesDateRangeDefault:  true,
 		DefaultConfigType:     true,
 	},
 	{
