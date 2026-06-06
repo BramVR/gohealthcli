@@ -145,6 +145,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantScopes:            []string{googleHealthHealthMetricsReadonlyScope},
 			wantListFilterField:   "weight.sample_time.physical_time",
 			wantSyncDataPoint:     true,
+			wantReconcile:         true,
 			wantParser:            "sample",
 			wantRecordKind:        "sample",
 			wantDefaultConfigType: true,

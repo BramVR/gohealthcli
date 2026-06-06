@@ -3290,6 +3290,48 @@ func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 	assertArchiveTableCount(t, archivePath, "data_point_revisions", 1)
 	assertArchivedSampleDataPoint(t, archivePath, "users/me/dataTypes/weight/dataPoints/weight-2026-01-01", "weight", "2026-01-01T05:45:00Z", "2026-01-01T06:45:00", "2026-01-01", `{"utc_offset":"3600s"}`, `"weightGrams":71235.25`)
 	assertSyncRunForDataType(t, archivePath, 3, "sync_completed", "weight", "list", 1, 0, 1, "")
+
+	reconciledWeightPage := `{"dataPoints": [{
+		"dataPointName": "users/me/dataTypes/weight/dataPoints/weight-2026-01-01-wearable",
+		"weight": {
+			"sampleTime": {
+				"physicalTime": "2026-01-01T06:45:00+01:00",
+				"utcOffset": "3600s",
+				"civilTime": {"date": {"year": 2026, "month": 1, "day": 1}, "time": {"hours": 6, "minutes": 45}}
+			},
+			"weightGrams": 71234.5
+		}
+	}]}`
+	reconcileRequests := installDataPointReconcileFetchFake(t, "connect-access-secret", "weight", map[string]string{"": reconciledWeightPage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "weight",
+		"--source-family", "wearable",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("wearable weight sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("wearable weight stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "endpoint_family", "reconcile")
+	assertJSONString(t, got, "source_family", "wearable")
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 1)
+	if gotFamily := mustURLQuery(t, (*reconcileRequests)[0].url).Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
+		t.Fatalf("weight dataSourceFamily = %q, want google-wearables", gotFamily)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 2)
+	assertDataPointSourceFamilyCounts(t, archivePath, map[string]int{"": 1, "wearable": 1})
+	assertArchivedSampleDataPoint(t, archivePath, "users/me/dataTypes/weight/dataPoints/weight-2026-01-01-wearable", "weight", "2026-01-01T05:45:00Z", "2026-01-01T06:45:00", "2026-01-01", `{"utc_offset":"3600s"}`, `"weightGrams":71234.5`)
+	assertSyncRunForDataTypeWithSourceFamily(t, archivePath, 4, "sync_completed", "weight", "reconcile", "wearable", 1, 1, 0, "")
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 

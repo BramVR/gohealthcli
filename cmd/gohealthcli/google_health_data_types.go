@@ -157,6 +157,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		RequiredScopes:        []string{googleHealthHealthMetricsReadonlyScope},
 		ListFilterField:       "weight.sample_time.physical_time",
 		SupportsSyncDataPoint: true,
+		SupportsReconcile:     true,
 		Parser:                "sample",
 		JSONField:             "weight",
 		RecordKind:            "sample",
