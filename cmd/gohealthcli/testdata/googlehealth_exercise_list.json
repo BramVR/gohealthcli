@@ -1,0 +1,46 @@
+{
+  "dataPoints": [
+    {
+      "name": "users/me/dataTypes/exercise/dataPoints/exercise-2026-01-01",
+      "dataSource": {
+        "platform": "FITBIT",
+        "device": {
+          "manufacturer": "Google",
+          "model": "Pixel Watch"
+        }
+      },
+      "exercise": {
+        "interval": {
+          "startTime": "2026-01-01T17:15:00+01:00",
+          "startUtcOffset": "3600s",
+          "endTime": "2026-01-01T17:45:00+01:00",
+          "endUtcOffset": "3600s",
+          "civilStartTime": {
+            "date": {
+              "year": 2026,
+              "month": 1,
+              "day": 1
+            },
+            "time": {
+              "hours": 17,
+              "minutes": 15
+            }
+          },
+          "civilEndTime": {
+            "date": {
+              "year": 2026,
+              "month": 1,
+              "day": 1
+            },
+            "time": {
+              "hours": 17,
+              "minutes": 45
+            }
+          }
+        },
+        "exerciseType": "RUNNING",
+        "activeDuration": "1800s"
+      }
+    }
+  ]
+}

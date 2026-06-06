@@ -2592,6 +2592,9 @@ func parseGoogleHealthDataPoint(connection archivedConnection, dataType string, 
 	if googleHealthDailyDataPointJSONField(dataType) != "" {
 		return parseGoogleHealthDailyDataPoint(connection, dataType, rawPoint, sourceFamilyFilter)
 	}
+	if googleHealthSessionDataPointJSONField(dataType) != "" {
+		return parseGoogleHealthSessionDataPoint(connection, dataType, rawPoint, sourceFamilyFilter)
+	}
 	return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not supported", dataType)
 }
 
@@ -2797,6 +2800,93 @@ func parseGoogleHealthDailyDataPoint(connection archivedConnection, dataType str
 		upstreamResourceName: upstreamResourceName,
 		recordKind:           "daily",
 		providerCivilDate:    providerCivilDate,
+		dataSourceJSON:       dataSourceJSON,
+		sourceFamilyFilter:   sourceFamilyFilter,
+		rawJSON:              canonicalRaw,
+	}, nil
+}
+
+func parseGoogleHealthSessionDataPoint(connection archivedConnection, dataType string, rawPoint json.RawMessage, sourceFamilyFilter string) (archivedDataPoint, error) {
+	canonicalRaw, err := compactJSONString(rawPoint)
+	if err != nil {
+		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not valid JSON", dataType)
+	}
+	var raw struct {
+		Name          string                     `json:"name"`
+		DataPointName string                     `json:"dataPointName"`
+		DataSource    json.RawMessage            `json:"dataSource"`
+		Fields        map[string]json.RawMessage `json:"-"`
+	}
+	if err := json.Unmarshal(rawPoint, &raw.Fields); err != nil {
+		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not valid JSON", dataType)
+	}
+	if err := json.Unmarshal(rawPoint, &raw); err != nil {
+		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not valid JSON", dataType)
+	}
+	jsonField := googleHealthSessionDataPointJSONField(dataType)
+	rawSession, ok := raw.Fields[jsonField]
+	if !ok || len(rawSession) == 0 || string(rawSession) == "null" {
+		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point missing %s value", dataType, jsonField)
+	}
+	var session struct {
+		Interval struct {
+			StartTime      string          `json:"startTime"`
+			StartUTCOffset string          `json:"startUtcOffset"`
+			EndTime        string          `json:"endTime"`
+			EndUTCOffset   string          `json:"endUtcOffset"`
+			CivilStartTime json.RawMessage `json:"civilStartTime"`
+			CivilEndTime   json.RawMessage `json:"civilEndTime"`
+		} `json:"interval"`
+	}
+	if err := json.Unmarshal(rawSession, &session); err != nil {
+		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point %s is not valid JSON", dataType, jsonField)
+	}
+	if session.Interval.StartTime == "" || session.Interval.EndTime == "" {
+		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point missing interval startTime or endTime", dataType)
+	}
+	startTimeUTC, err := normalizeGoogleTimestamp(session.Interval.StartTime)
+	if err != nil {
+		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point startTime: %w", dataType, err)
+	}
+	endTimeUTC, err := normalizeGoogleTimestamp(session.Interval.EndTime)
+	if err != nil {
+		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point endTime: %w", dataType, err)
+	}
+	dataSourceJSON := "{}"
+	if len(raw.DataSource) != 0 && string(raw.DataSource) != "null" {
+		dataSourceJSON, err = compactJSONString(raw.DataSource)
+		if err != nil {
+			return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point dataSource is not valid JSON", dataType)
+		}
+	}
+	startCivilTime, providerCivilDate, err := googleCivilDateTimeText(session.Interval.CivilStartTime)
+	if err != nil {
+		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point civilStartTime: %w", dataType, err)
+	}
+	endCivilTime, _, err := googleCivilDateTimeText(session.Interval.CivilEndTime)
+	if err != nil {
+		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point civilEndTime: %w", dataType, err)
+	}
+	timezoneMetadata, err := googleIntervalTimezoneMetadataJSON(session.Interval.StartUTCOffset, session.Interval.EndUTCOffset)
+	if err != nil {
+		return archivedDataPoint{}, err
+	}
+	upstreamResourceName := raw.Name
+	if upstreamResourceName == "" {
+		upstreamResourceName = raw.DataPointName
+	}
+	return archivedDataPoint{
+		providerName:         connection.providerName,
+		connectionID:         connection.id,
+		dataType:             dataType,
+		upstreamResourceName: upstreamResourceName,
+		recordKind:           "session",
+		startTimeUTC:         startTimeUTC,
+		endTimeUTC:           endTimeUTC,
+		startCivilTime:       startCivilTime,
+		endCivilTime:         endCivilTime,
+		providerCivilDate:    providerCivilDate,
+		timezoneMetadataJSON: timezoneMetadata,
 		dataSourceJSON:       dataSourceJSON,
 		sourceFamilyFilter:   sourceFamilyFilter,
 		rawJSON:              canonicalRaw,

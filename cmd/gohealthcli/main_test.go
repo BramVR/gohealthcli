@@ -3357,6 +3357,154 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+
+	sleepPage := string(readTestFixture(t, "googlehealth_sleep_list.json"))
+	requests := installDataPointSyncFetchFake(t, "connect-access-secret", "sleep", map[string]string{"": sleepPage})
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "sleep",
+		"--from", "2026-01-01T00:00:00Z",
+		"--to", "2026-01-03T00:00:00Z",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("sleep sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("sleep stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "sync_completed")
+	assertJSONString(t, got, "endpoint_family", "list")
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 1)
+	assertJSONNumber(t, got, "data_points_updated", 0)
+	if (*requests)[0].endpointName != "dataTypes.sleep.list" {
+		t.Fatalf("endpoint = %q, want sleep Data Type list", (*requests)[0].endpointName)
+	}
+	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `sleep.interval.end_time >= "2026-01-01T00:00:00Z" AND sleep.interval.end_time < "2026-01-03T00:00:00Z"` {
+		t.Fatalf("sleep filter = %q", gotFilter)
+	}
+	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/sleep/dataPoints/sleep-2026-01-01", "sleep", "2026-01-01T21:30:00Z", "2026-01-02T05:45:00Z", "2026-01-01T22:30:00", "2026-01-02T06:45:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"stage":"LIGHT"`)
+	assertArchiveTableCount(t, archivePath, "data_points", 1)
+	assertArchiveTableCount(t, archivePath, "rollups", 0)
+	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "sleep", "list", 1, 1, 0, "")
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestSyncArchivesExerciseSessionDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+
+	exercisePage := string(readTestFixture(t, "googlehealth_exercise_list.json"))
+	requests := installDataPointSyncFetchFake(t, "connect-access-secret", "exercise", map[string]string{"": exercisePage})
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "exercise",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("exercise sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("exercise stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 1)
+	assertJSONNumber(t, got, "data_points_updated", 0)
+	if (*requests)[0].endpointName != "dataTypes.exercise.list" {
+		t.Fatalf("endpoint = %q, want exercise Data Type list", (*requests)[0].endpointName)
+	}
+	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `exercise.interval.civil_start_time >= "2026-01-01" AND exercise.interval.civil_start_time < "2026-01-02"` {
+		t.Fatalf("exercise filter = %q", gotFilter)
+	}
+	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/exercise/dataPoints/exercise-2026-01-01", "exercise", "2026-01-01T16:15:00Z", "2026-01-01T16:45:00Z", "2026-01-01T17:15:00", "2026-01-01T17:45:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"exerciseType":"RUNNING"`)
+	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "exercise", "list", 1, 1, 0, "")
+
+	installDataPointSyncFetchFake(t, "connect-access-secret", "exercise", map[string]string{"": exercisePage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "exercise",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("idempotent exercise sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("idempotent exercise stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 0)
+	assertJSONNumber(t, got, "data_points_updated", 0)
+	assertArchiveTableCount(t, archivePath, "data_point_revisions", 0)
+	assertSyncRunForDataType(t, archivePath, 2, "sync_completed", "exercise", "list", 1, 0, 0, "")
+
+	correctedExercisePage := strings.Replace(exercisePage, `"activeDuration": "1800s"`, `"activeDuration": "2100s"`, 1)
+	installDataPointSyncFetchFake(t, "connect-access-secret", "exercise", map[string]string{"": correctedExercisePage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "exercise",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("corrected exercise sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("corrected exercise stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 0)
+	assertJSONNumber(t, got, "data_points_updated", 1)
+	assertArchiveTableCount(t, archivePath, "data_point_revisions", 1)
+	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/exercise/dataPoints/exercise-2026-01-01", "exercise", "2026-01-01T16:15:00Z", "2026-01-01T16:45:00Z", "2026-01-01T17:15:00", "2026-01-01T17:45:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"activeDuration":"2100s"`)
+	assertSyncRunForDataType(t, archivePath, 3, "sync_completed", "exercise", "list", 1, 0, 1, "")
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestSyncArchivesWearableStepsViaReconcile(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -6359,6 +6507,63 @@ func assertArchivedDailyDataPoint(t *testing.T, archivePath, resourceName, wantD
 	}
 	if dataSourceJSON == "" {
 		t.Fatal("data_source_json is empty")
+	}
+	if !strings.Contains(rawJSON, wantRawContains) {
+		t.Fatalf("raw_json = %s, want %s", rawJSON, wantRawContains)
+	}
+}
+
+func assertArchivedSessionDataPoint(t *testing.T, archivePath, resourceName, wantDataType, wantStartUTC, wantEndUTC, wantStartCivil, wantEndCivil, wantCivilDate, wantTimezoneMetadata, wantDataSourceJSON, wantRawContains string) {
+	t.Helper()
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	var dataType, recordKind, startUTC, endUTC, dataSourceJSON, rawJSON string
+	var startCivil, endCivil, civilDate, timezoneMetadata sql.NullString
+	if err := db.QueryRow(`SELECT
+		data_type,
+		record_kind,
+		start_time_utc,
+		end_time_utc,
+		start_civil_time,
+		end_civil_time,
+		provider_civil_date,
+		timezone_metadata,
+		data_source_json,
+		raw_json
+	FROM data_points
+	WHERE upstream_resource_name = ?
+	ORDER BY id`, resourceName).Scan(
+		&dataType,
+		&recordKind,
+		&startUTC,
+		&endUTC,
+		&startCivil,
+		&endCivil,
+		&civilDate,
+		&timezoneMetadata,
+		&dataSourceJSON,
+		&rawJSON,
+	); err != nil {
+		t.Fatalf("query archived session Data Point: %v", err)
+	}
+	if dataType != wantDataType || recordKind != "session" {
+		t.Fatalf("Data Point identity = (%q, %q), want (%q, session)", dataType, recordKind, wantDataType)
+	}
+	if startUTC != wantStartUTC || endUTC != wantEndUTC {
+		t.Fatalf("physical time = (%q, %q), want (%q, %q)", startUTC, endUTC, wantStartUTC, wantEndUTC)
+	}
+	if startCivil.String != wantStartCivil || !startCivil.Valid || endCivil.String != wantEndCivil || !endCivil.Valid || civilDate.String != wantCivilDate || !civilDate.Valid {
+		t.Fatalf("civil time = (%v(%q), %v(%q), %v(%q)), want start %q end %q date %q", startCivil.Valid, startCivil.String, endCivil.Valid, endCivil.String, civilDate.Valid, civilDate.String, wantStartCivil, wantEndCivil, wantCivilDate)
+	}
+	if timezoneMetadata.String != wantTimezoneMetadata || !timezoneMetadata.Valid {
+		t.Fatalf("timezone_metadata = %v(%q), want %q", timezoneMetadata.Valid, timezoneMetadata.String, wantTimezoneMetadata)
+	}
+	if dataSourceJSON != wantDataSourceJSON {
+		t.Fatalf("data_source_json = %q, want %q", dataSourceJSON, wantDataSourceJSON)
 	}
 	if !strings.Contains(rawJSON, wantRawContains) {
 		t.Fatalf("raw_json = %s, want %s", rawJSON, wantRawContains)

@@ -63,10 +63,11 @@ and Rollups.
 `sync`: currently accepts exactly one Data Type per run and archives raw
 `steps`, `heart-rate`, `oxygen-saturation`, `daily-resting-heart-rate`,
 `daily-heart-rate-variability`, `daily-oxygen-saturation`, and
-`daily-respiratory-rate` Data Points from the provider list path, supported
-Data Point types from the reconcile path when `--source-family wearable` is
-explicit, or steps daily Rollups when `--rollup daily` is explicit. Daily-named
-Data Types are Data Points unless fetched from a Rollup endpoint family.
+`daily-respiratory-rate`, `sleep`, and `exercise` Data Points from the provider
+list path, supported Data Point types from the reconcile path when
+`--source-family wearable` is explicit, or steps daily Rollups when
+`--rollup daily` is explicit. Daily-named Data Types are Data Points unless
+fetched from a Rollup endpoint family.
 Default sync fetches Data Points from all Data Sources and never calls Rollup
 endpoints. Sync is idempotent and reports Data Point and Rollup seen, new, and
 updated counts separately. If required scopes are missing, fail with a clear
@@ -116,6 +117,8 @@ gohealthcli sync --types heart-rate --from 2026-01-01
 gohealthcli sync --types oxygen-saturation --from 2026-01-01
 gohealthcli sync --types daily-resting-heart-rate --from 2026-01-01
 gohealthcli sync --types daily-oxygen-saturation --from 2026-01-01
+gohealthcli sync --types sleep --from 2026-01-01
+gohealthcli sync --types exercise --from 2026-01-01
 gohealthcli sync --types steps --rollup daily --from 2026-01-01 --to 2026-05-24
 gohealthcli sync --types steps --source-family wearable --from 2026-01-01
 ```
