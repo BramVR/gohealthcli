@@ -93,6 +93,8 @@ summary. Do not infer completeness gaps unless gap tracking exists.
 `query`: run read-only SQL against the local Health Archive. Reject non-SELECT
 statements and mutating pragmas, apply pending Health Archive migrations, then
 execute through a read-only connection and return machine-readable stdout.
+Command flags must appear before the SQL argument, because Go flag parsing stops
+at the first positional argument.
 
 `export`: export named normalized records as CSV or JSONL. Supported datasets:
 `daily-steps`, `heart-rate-samples`, `resting-heart-rate-by-day`,
@@ -136,7 +138,7 @@ gohealthcli sync --types steps --source-family wearable --from 2026-01-01
 ## Export Sketch
 
 ```bash
-gohealthcli query 'SELECT data_type, end_time_utc FROM data_points ORDER BY end_time_utc DESC LIMIT 10'
+gohealthcli query --plain 'SELECT data_type, end_time_utc FROM data_points ORDER BY end_time_utc DESC LIMIT 10'
 gohealthcli export daily-steps --format csv --output steps.csv
 gohealthcli export heart-rate-samples --format jsonl --output heart-rate.jsonl
 gohealthcli export sleep-sessions --format jsonl --output sleep.jsonl
