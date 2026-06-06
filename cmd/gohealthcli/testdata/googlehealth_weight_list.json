@@ -1,0 +1,28 @@
+{
+  "dataPoints": [
+    {
+      "name": "users/me/dataTypes/weight/dataPoints/weight-2026-01-01",
+      "dataSource": {
+        "platform": "FITBIT"
+      },
+      "weight": {
+        "sampleTime": {
+          "physicalTime": "2026-01-01T06:45:00+01:00",
+          "utcOffset": "3600s",
+          "civilTime": {
+            "date": {
+              "year": 2026,
+              "month": 1,
+              "day": 1
+            },
+            "time": {
+              "hours": 6,
+              "minutes": 45
+            }
+          }
+        },
+        "weightGrams": 71234.5
+      }
+    }
+  ]
+}

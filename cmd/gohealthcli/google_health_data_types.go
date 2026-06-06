@@ -57,10 +57,15 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		DefaultConfigType:     true,
 	},
 	{
-		DataType:          "heart-rate-variability",
-		RequiredScopes:    []string{googleHealthHealthMetricsReadonlyScope},
-		ListFilterField:   "heart_rate_variability.sample_time.physical_time",
-		DefaultConfigType: true,
+		DataType:              "heart-rate-variability",
+		RequiredScopes:        []string{googleHealthHealthMetricsReadonlyScope},
+		ListFilterField:       "heart_rate_variability.sample_time.physical_time",
+		SupportsSyncDataPoint: true,
+		SupportsReconcile:     true,
+		Parser:                "sample",
+		JSONField:             "heartRateVariability",
+		RecordKind:            "sample",
+		DefaultConfigType:     true,
 	},
 	{
 		DataType:              "daily-heart-rate-variability",
@@ -132,10 +137,14 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		DefaultConfigType:     true,
 	},
 	{
-		DataType:          "distance",
-		RequiredScopes:    []string{googleHealthActivityReadonlyScope},
-		ListFilterField:   "distance.interval.start_time",
-		DefaultConfigType: true,
+		DataType:              "distance",
+		RequiredScopes:        []string{googleHealthActivityReadonlyScope},
+		ListFilterField:       "distance.interval.start_time",
+		SupportsSyncDataPoint: true,
+		Parser:                "interval",
+		JSONField:             "distance",
+		RecordKind:            "interval",
+		DefaultConfigType:     true,
 	},
 	{
 		DataType:          "total-calories",
@@ -143,10 +152,14 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		DefaultConfigType: true,
 	},
 	{
-		DataType:          "weight",
-		RequiredScopes:    []string{googleHealthHealthMetricsReadonlyScope},
-		ListFilterField:   "weight.sample_time.physical_time",
-		DefaultConfigType: true,
+		DataType:              "weight",
+		RequiredScopes:        []string{googleHealthHealthMetricsReadonlyScope},
+		ListFilterField:       "weight.sample_time.physical_time",
+		SupportsSyncDataPoint: true,
+		Parser:                "sample",
+		JSONField:             "weight",
+		RecordKind:            "sample",
+		DefaultConfigType:     true,
 	},
 })
 
@@ -210,6 +223,14 @@ func googleHealthDataTypeListFilterField(dataType string) (string, error) {
 func googleHealthSampleDataPointJSONField(dataType string) string {
 	entry, ok := googleHealthDataTypes.Lookup(dataType)
 	if !ok || entry.Parser != "sample" {
+		return ""
+	}
+	return entry.JSONField
+}
+
+func googleHealthIntervalDataPointJSONField(dataType string) string {
+	entry, ok := googleHealthDataTypes.Lookup(dataType)
+	if !ok || entry.Parser != "interval" {
 		return ""
 	}
 	return entry.JSONField

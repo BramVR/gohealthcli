@@ -54,7 +54,8 @@ has a polished normalized export.
 - `sleep`
 - `exercise`
 - `distance`
-- `total-calories`
+- `total-calories` (blocked for raw Data Point sync: generated Google Health
+  API discovery exposes it as a Rollup value, not a DataPoint union field)
 - `weight`
 
 ## First Normalized Views

@@ -54,6 +54,10 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			dataType:              "heart-rate-variability",
 			wantScopes:            []string{googleHealthHealthMetricsReadonlyScope},
 			wantListFilterField:   "heart_rate_variability.sample_time.physical_time",
+			wantSyncDataPoint:     true,
+			wantReconcile:         true,
+			wantParser:            "sample",
+			wantRecordKind:        "sample",
 			wantDefaultConfigType: true,
 		},
 		{
@@ -123,6 +127,9 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			dataType:              "distance",
 			wantScopes:            []string{googleHealthActivityReadonlyScope},
 			wantListFilterField:   "distance.interval.start_time",
+			wantSyncDataPoint:     true,
+			wantParser:            "interval",
+			wantRecordKind:        "interval",
 			wantDefaultConfigType: true,
 		},
 		{
@@ -136,6 +143,9 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			dataType:              "weight",
 			wantScopes:            []string{googleHealthHealthMetricsReadonlyScope},
 			wantListFilterField:   "weight.sample_time.physical_time",
+			wantSyncDataPoint:     true,
+			wantParser:            "sample",
+			wantRecordKind:        "sample",
 			wantDefaultConfigType: true,
 		},
 	}
