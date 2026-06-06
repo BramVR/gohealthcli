@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -13,6 +14,7 @@ type healthArchiveReader interface {
 	StatusSummary() (statusResult, error)
 	Query(statement string) (queryResult, error)
 	DailySteps() ([]dailyStepsExportRow, error)
+	ExportRows(spec exportDatasetSpec) ([]exportRow, error)
 }
 
 type sqliteHealthArchiveReader struct {
@@ -140,45 +142,70 @@ func (archive *sqliteHealthArchiveReader) Query(statement string) (queryResult, 
 }
 
 func (archive *sqliteHealthArchiveReader) DailySteps() ([]dailyStepsExportRow, error) {
-	rows, err := archive.db.Query(`SELECT
-		provider_name,
-		connection_id,
-		civil_date,
-		step_count,
-		source_kind,
-		source_family_filter,
-		source_record_count,
-		latest_source_timestamp
-	FROM daily_steps
-	ORDER BY civil_date, provider_name, connection_id, source_kind, source_family_filter`)
+	rows, err := archive.ExportRows(exportDatasetSpecs["daily-steps"])
+	if err != nil {
+		return nil, err
+	}
+	result := make([]dailyStepsExportRow, 0, len(rows))
+	for _, row := range rows {
+		stepCount, err := strconv.ParseInt(row[3], 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		sourceRecordCount, err := strconv.ParseInt(row[6], 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, dailyStepsExportRow{
+			ProviderName:          row[0],
+			ConnectionID:          row[1],
+			CivilDate:             row[2],
+			StepCount:             stepCount,
+			SourceKind:            row[4],
+			SourceFamilyFilter:    row[5],
+			SourceRecordCount:     sourceRecordCount,
+			LatestSourceTimestamp: row[7],
+		})
+	}
+	return result, nil
+}
+
+func (archive *sqliteHealthArchiveReader) ExportRows(spec exportDatasetSpec) ([]exportRow, error) {
+	query := fmt.Sprintf("SELECT %s FROM %s ORDER BY %s", exportSelectFields(spec), spec.view, spec.orderBy)
+	rows, err := archive.db.Query(query)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var result []dailyStepsExportRow
+	var result []exportRow
 	for rows.Next() {
-		var item dailyStepsExportRow
-		var latest sql.NullString
-		if err := rows.Scan(
-			&item.ProviderName,
-			&item.ConnectionID,
-			&item.CivilDate,
-			&item.StepCount,
-			&item.SourceKind,
-			&item.SourceFamilyFilter,
-			&item.SourceRecordCount,
-			&latest,
-		); err != nil {
+		values := make([]sql.NullString, len(spec.fields))
+		destinations := make([]any, len(spec.fields))
+		for index := range values {
+			destinations[index] = &values[index]
+		}
+		if err := rows.Scan(destinations...); err != nil {
 			return nil, err
 		}
-		item.LatestSourceTimestamp = latest.String
+		item := make(exportRow, len(spec.fields))
+		for index, value := range values {
+			item[index] = value.String
+		}
 		result = append(result, item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+func exportSelectFields(spec exportDatasetSpec) string {
+	fields := make([]string, 0, len(spec.fields))
+	for _, field := range spec.fields {
+		fields = append(fields, field.name)
+	}
+	return strings.Join(fields, ", ")
 }
 
 func statusSetup(archivePath string) (statusResult, error) {

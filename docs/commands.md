@@ -94,9 +94,11 @@ summary. Do not infer completeness gaps unless gap tracking exists.
 statements and mutating pragmas, apply pending Health Archive migrations, then
 execute through a read-only connection and return machine-readable stdout.
 
-`export`: export named normalized records as CSV or JSONL. `export daily-steps`
-reads the `daily_steps` normalized view and prefers requested daily Rollups for
-a civil date, falling back to summed steps Data Points when no Rollup exists.
+`export`: export named normalized records as CSV or JSONL. Supported datasets:
+`daily-steps`, `heart-rate-samples`, `resting-heart-rate-by-day`,
+`sleep-sessions`, `exercise-sessions`, and `weight-samples`. Each dataset reads
+from its normalized view; `daily-steps` prefers requested daily Rollups for a
+civil date, falling back to summed steps Data Points when no Rollup exists.
 Arbitrary SQL stays in `query`. Require either `--output PATH` or explicit
 `--stdout`.
 
@@ -136,7 +138,10 @@ gohealthcli sync --types steps --source-family wearable --from 2026-01-01
 ```bash
 gohealthcli query 'SELECT data_type, end_time_utc FROM data_points ORDER BY end_time_utc DESC LIMIT 10'
 gohealthcli export daily-steps --format csv --output steps.csv
+gohealthcli export heart-rate-samples --format jsonl --output heart-rate.jsonl
 gohealthcli export sleep-sessions --format jsonl --output sleep.jsonl
+gohealthcli export exercise-sessions --format csv --output exercise.csv
+gohealthcli export weight-samples --format csv --stdout
 gohealthcli export daily-steps --format jsonl --stdout
 ```
 

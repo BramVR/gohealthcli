@@ -26,7 +26,7 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 4
+const currentSchemaVersion = 5
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
@@ -3675,7 +3675,10 @@ func applyMigrations(db *sql.DB) error {
 	if err := applyDailyStepsViewMigration(tx, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 4`); err != nil {
+	if err := applyFirstReleaseNormalizedViewsMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 5`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -3712,7 +3715,7 @@ func applyPendingMigrations(db *sql.DB) error {
 	switch userVersion {
 	case currentSchemaVersion:
 		return nil
-	case 1, 2, 3:
+	case 1, 2, 3, 4:
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -3729,10 +3732,15 @@ func applyPendingMigrations(db *sql.DB) error {
 				return err
 			}
 		}
-		if err := applyDailyStepsViewMigration(tx, now); err != nil {
+		if userVersion <= 3 {
+			if err := applyDailyStepsViewMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if err := applyFirstReleaseNormalizedViewsMigration(tx, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`PRAGMA user_version = 4`); err != nil {
+		if _, err := tx.Exec(`PRAGMA user_version = 5`); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -3772,12 +3780,23 @@ func applyDailyStepsViewMigration(tx *sql.Tx, appliedAt string) error {
 	return err
 }
 
+func applyFirstReleaseNormalizedViewsMigration(tx *sql.Tx, appliedAt string) error {
+	for _, statement := range firstReleaseNormalizedViewMigrationStatements() {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (5, 'add_first_release_normalized_views', ?)`, appliedAt)
+	return err
+}
+
 func expectedSchemaMigrations() map[int]string {
 	return map[int]string{
 		1: "initial_archive_schema",
 		2: "add_google_identity_json",
 		3: "add_source_family_filter",
 		4: "add_daily_steps_view",
+		5: "add_first_release_normalized_views",
 	}
 }
 
@@ -3928,6 +3947,88 @@ func dailyStepsViewMigrationStatements() []string {
 					AND rollup_days.civil_date = data_point_days.civil_date
 					AND rollup_days.source_family_filter = data_point_days.source_family_filter
 			)`,
+	}
+}
+
+func firstReleaseNormalizedViewMigrationStatements() []string {
+	return []string{
+		`CREATE VIEW heart_rate_samples AS
+		SELECT
+			provider_name,
+			connection_id,
+			start_time_utc AS sample_time_utc,
+			IFNULL(start_civil_time, '') AS sample_civil_time,
+			IFNULL(provider_civil_date, '') AS civil_date,
+			CAST(json_extract(raw_json, '$.heartRate.beatsPerMinute') AS TEXT) AS beats_per_minute,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'heart-rate'
+			AND record_kind = 'sample'
+			AND start_time_utc IS NOT NULL
+			AND json_extract(raw_json, '$.heartRate.beatsPerMinute') IS NOT NULL`,
+		`CREATE VIEW resting_heart_rate_by_day AS
+		SELECT
+			provider_name,
+			connection_id,
+			provider_civil_date AS civil_date,
+			CAST(json_extract(raw_json, '$.dailyRestingHeartRate.beatsPerMinute') AS TEXT) AS beats_per_minute,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'daily-resting-heart-rate'
+			AND record_kind = 'daily'
+			AND provider_civil_date IS NOT NULL
+			AND json_extract(raw_json, '$.dailyRestingHeartRate.beatsPerMinute') IS NOT NULL`,
+		`CREATE VIEW sleep_sessions AS
+		SELECT
+			provider_name,
+			connection_id,
+			start_time_utc,
+			end_time_utc,
+			IFNULL(start_civil_time, '') AS start_civil_time,
+			IFNULL(end_civil_time, '') AS end_civil_time,
+			IFNULL(provider_civil_date, '') AS civil_date,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'sleep'
+			AND record_kind = 'session'
+			AND start_time_utc IS NOT NULL
+			AND end_time_utc IS NOT NULL`,
+		`CREATE VIEW exercise_sessions AS
+		SELECT
+			provider_name,
+			connection_id,
+			start_time_utc,
+			end_time_utc,
+			IFNULL(start_civil_time, '') AS start_civil_time,
+			IFNULL(end_civil_time, '') AS end_civil_time,
+			IFNULL(provider_civil_date, '') AS civil_date,
+			IFNULL(json_extract(raw_json, '$.exercise.exerciseType'), '') AS exercise_type,
+			IFNULL(json_extract(raw_json, '$.exercise.activeDuration'), '') AS active_duration,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'exercise'
+			AND record_kind = 'session'
+			AND start_time_utc IS NOT NULL
+			AND end_time_utc IS NOT NULL`,
+		`CREATE VIEW weight_samples AS
+		SELECT
+			provider_name,
+			connection_id,
+			start_time_utc AS sample_time_utc,
+			IFNULL(start_civil_time, '') AS sample_civil_time,
+			IFNULL(provider_civil_date, '') AS civil_date,
+			CAST(json_extract(raw_json, '$.weight.weightGrams') AS TEXT) AS weight_grams,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'weight'
+			AND record_kind = 'sample'
+			AND start_time_utc IS NOT NULL
+			AND json_extract(raw_json, '$.weight.weightGrams') IS NOT NULL`,
 	}
 }
 

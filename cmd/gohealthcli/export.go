@@ -23,6 +23,108 @@ type dailyStepsExportRow struct {
 	LatestSourceTimestamp string `json:"latest_source_timestamp"`
 }
 
+type exportDatasetSpec struct {
+	view    string
+	fields  []exportFieldSpec
+	orderBy string
+}
+
+type exportFieldSpec struct {
+	name string
+	kind string
+}
+
+type exportRow []string
+
+var exportDatasetSpecs = map[string]exportDatasetSpec{
+	"daily-steps": {
+		view: "daily_steps",
+		fields: []exportFieldSpec{
+			{name: "provider_name"},
+			{name: "connection_id"},
+			{name: "civil_date"},
+			{name: "step_count", kind: "int"},
+			{name: "source_kind"},
+			{name: "source_family_filter"},
+			{name: "source_record_count", kind: "int"},
+			{name: "latest_source_timestamp"},
+		},
+		orderBy: "civil_date, provider_name, connection_id, source_kind, source_family_filter",
+	},
+	"heart-rate-samples": {
+		view:    "heart_rate_samples",
+		orderBy: "sample_time_utc, provider_name, connection_id, source_family_filter, upstream_resource_name",
+		fields: []exportFieldSpec{
+			{name: "provider_name"},
+			{name: "connection_id"},
+			{name: "sample_time_utc"},
+			{name: "sample_civil_time"},
+			{name: "civil_date"},
+			{name: "beats_per_minute"},
+			{name: "source_family_filter"},
+			{name: "upstream_resource_name"},
+		},
+	},
+	"resting-heart-rate-by-day": {
+		view:    "resting_heart_rate_by_day",
+		orderBy: "civil_date, provider_name, connection_id, source_family_filter, upstream_resource_name",
+		fields: []exportFieldSpec{
+			{name: "provider_name"},
+			{name: "connection_id"},
+			{name: "civil_date"},
+			{name: "beats_per_minute"},
+			{name: "source_family_filter"},
+			{name: "upstream_resource_name"},
+		},
+	},
+	"sleep-sessions": {
+		view:    "sleep_sessions",
+		orderBy: "start_time_utc, provider_name, connection_id, source_family_filter, upstream_resource_name",
+		fields: []exportFieldSpec{
+			{name: "provider_name"},
+			{name: "connection_id"},
+			{name: "start_time_utc"},
+			{name: "end_time_utc"},
+			{name: "start_civil_time"},
+			{name: "end_civil_time"},
+			{name: "civil_date"},
+			{name: "source_family_filter"},
+			{name: "upstream_resource_name"},
+		},
+	},
+	"exercise-sessions": {
+		view:    "exercise_sessions",
+		orderBy: "start_time_utc, provider_name, connection_id, source_family_filter, upstream_resource_name",
+		fields: []exportFieldSpec{
+			{name: "provider_name"},
+			{name: "connection_id"},
+			{name: "start_time_utc"},
+			{name: "end_time_utc"},
+			{name: "start_civil_time"},
+			{name: "end_civil_time"},
+			{name: "civil_date"},
+			{name: "exercise_type"},
+			{name: "active_duration"},
+			{name: "source_family_filter"},
+			{name: "upstream_resource_name"},
+		},
+	},
+	"weight-samples": {
+		view:    "weight_samples",
+		orderBy: "sample_time_utc, provider_name, connection_id, source_family_filter, upstream_resource_name",
+		fields: []exportFieldSpec{
+			{name: "provider_name"},
+			{name: "connection_id"},
+			{name: "sample_time_utc"},
+			{name: "sample_civil_time"},
+			{name: "civil_date"},
+			{name: "weight_grams"},
+			{name: "source_family_filter"},
+			{name: "upstream_resource_name"},
+		},
+	},
+}
+
 func runExport(args []string, configPath, archivePath string, archivePathExplicit bool, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("export", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -50,7 +152,8 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 		fmt.Fprintln(stderr, "export requires exactly one dataset")
 		return 1
 	}
-	if dataset != "daily-steps" {
+	spec, ok := exportDatasetSpecs[dataset]
+	if !ok {
 		fmt.Fprintf(stderr, "export dataset %q is not supported\n", dataset)
 		return 1
 	}
@@ -72,20 +175,20 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 		fmt.Fprintf(stderr, "export: %v\n", err)
 		return 1
 	}
-	rows, err := dailyStepsExportRows(resolvedArchivePath)
+	rows, err := exportRows(resolvedArchivePath, spec)
 	if err != nil {
 		fmt.Fprintf(stderr, "export: %v\n", err)
 		return 1
 	}
 
 	if *exportStdout {
-		if err := writeDailyStepsExport(rows, *exportFormat, stdout); err != nil {
+		if err := writeExport(rows, spec, *exportFormat, stdout); err != nil {
 			fmt.Fprintf(stderr, "write output: %v\n", err)
 			return 1
 		}
 		return 0
 	}
-	if err := writeDailyStepsExportFile(rows, *exportFormat, *exportOutputPath); err != nil {
+	if err := writeExportFile(rows, spec, *exportFormat, *exportOutputPath); err != nil {
 		fmt.Fprintf(stderr, "write export: %v\n", err)
 		return 1
 	}
@@ -138,7 +241,7 @@ func validateExportFormat(format string) error {
 	}
 }
 
-func writeDailyStepsExportFile(rows []dailyStepsExportRow, format, path string) error {
+func writeExportFile(rows []exportRow, spec exportDatasetSpec, format, path string) error {
 	if usesPOSIXPermissions() {
 		if err := restrictExistingExportOutput(path); err != nil {
 			return err
@@ -148,7 +251,7 @@ func writeDailyStepsExportFile(rows []dailyStepsExportRow, format, path string) 
 	if err != nil {
 		return err
 	}
-	writeErr := writeDailyStepsExport(rows, format, file)
+	writeErr := writeExport(rows, spec, format, file)
 	closeErr := file.Close()
 	if writeErr != nil {
 		return writeErr
@@ -160,6 +263,10 @@ func writeDailyStepsExportFile(rows []dailyStepsExportRow, format, path string) 
 		return os.Chmod(path, 0o600)
 	}
 	return nil
+}
+
+func writeDailyStepsExportFile(rows []dailyStepsExportRow, format, path string) error {
+	return writeExportFile(dailyStepsExportRowsToExportRows(rows), exportDatasetSpecs["daily-steps"], format, path)
 }
 
 func restrictExistingExportOutput(path string) error {
@@ -179,24 +286,104 @@ func restrictExistingExportOutput(path string) error {
 	return nil
 }
 
-func writeDailyStepsExport(rows []dailyStepsExportRow, format string, writer io.Writer) error {
+func writeExport(rows []exportRow, spec exportDatasetSpec, format string, writer io.Writer) error {
 	switch format {
 	case "csv":
-		return writeDailyStepsCSV(rows, writer)
+		return writeExportCSV(rows, spec, writer)
 	case "jsonl":
-		return writeDailyStepsJSONL(rows, writer)
+		return writeExportJSONL(rows, spec, writer)
 	default:
 		return fmt.Errorf("unsupported export format %q", format)
 	}
 }
 
-func writeDailyStepsCSV(rows []dailyStepsExportRow, writer io.Writer) error {
+func writeDailyStepsExport(rows []dailyStepsExportRow, format string, writer io.Writer) error {
+	return writeExport(dailyStepsExportRowsToExportRows(rows), exportDatasetSpecs["daily-steps"], format, writer)
+}
+
+func writeExportCSV(rows []exportRow, spec exportDatasetSpec, writer io.Writer) error {
 	csvWriter := csv.NewWriter(writer)
-	if err := csvWriter.Write(dailyStepsExportFields()); err != nil {
+	if err := csvWriter.Write(exportFieldNames(spec)); err != nil {
 		return err
 	}
 	for _, row := range rows {
-		if err := csvWriter.Write([]string{
+		if err := csvWriter.Write([]string(row)); err != nil {
+			return err
+		}
+	}
+	csvWriter.Flush()
+	return csvWriter.Error()
+}
+
+func writeDailyStepsCSV(rows []dailyStepsExportRow, writer io.Writer) error {
+	return writeExportCSV(dailyStepsExportRowsToExportRows(rows), exportDatasetSpecs["daily-steps"], writer)
+}
+
+func writeExportJSONL(rows []exportRow, spec exportDatasetSpec, writer io.Writer) error {
+	for _, row := range rows {
+		if _, err := fmt.Fprint(writer, "{"); err != nil {
+			return err
+		}
+		for index, field := range spec.fields {
+			if index > 0 {
+				if _, err := fmt.Fprint(writer, ","); err != nil {
+					return err
+				}
+			}
+			name, err := json.Marshal(field.name)
+			if err != nil {
+				return err
+			}
+			if _, err := writer.Write(name); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprint(writer, ":"); err != nil {
+				return err
+			}
+			if field.kind == "int" && row[index] != "" {
+				if _, err := strconv.ParseInt(row[index], 10, 64); err != nil {
+					return err
+				}
+				if _, err := fmt.Fprint(writer, row[index]); err != nil {
+					return err
+				}
+				continue
+			}
+			value, err := json.Marshal(row[index])
+			if err != nil {
+				return err
+			}
+			if _, err := writer.Write(value); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(writer, "}"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeDailyStepsJSONL(rows []dailyStepsExportRow, writer io.Writer) error {
+	return writeExportJSONL(dailyStepsExportRowsToExportRows(rows), exportDatasetSpecs["daily-steps"], writer)
+}
+
+func dailyStepsExportFields() []string {
+	return exportFieldNames(exportDatasetSpecs["daily-steps"])
+}
+
+func exportFieldNames(spec exportDatasetSpec) []string {
+	fields := make([]string, 0, len(spec.fields))
+	for _, field := range spec.fields {
+		fields = append(fields, field.name)
+	}
+	return fields
+}
+
+func dailyStepsExportRowsToExportRows(rows []dailyStepsExportRow) []exportRow {
+	out := make([]exportRow, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, exportRow{
 			row.ProviderName,
 			row.ConnectionID,
 			row.CivilDate,
@@ -205,39 +392,16 @@ func writeDailyStepsCSV(rows []dailyStepsExportRow, writer io.Writer) error {
 			row.SourceFamilyFilter,
 			strconv.FormatInt(row.SourceRecordCount, 10),
 			row.LatestSourceTimestamp,
-		}); err != nil {
-			return err
-		}
+		})
 	}
-	csvWriter.Flush()
-	return csvWriter.Error()
+	return out
 }
 
-func writeDailyStepsJSONL(rows []dailyStepsExportRow, writer io.Writer) error {
-	for _, row := range rows {
-		content, err := json.Marshal(row)
-		if err != nil {
-			return err
-		}
-		if _, err := writer.Write(content); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintln(writer); err != nil {
-			return err
-		}
+func exportRows(archivePath string, spec exportDatasetSpec) ([]exportRow, error) {
+	reader, err := openHealthArchiveReader(archivePath)
+	if err != nil {
+		return nil, err
 	}
-	return nil
-}
-
-func dailyStepsExportFields() []string {
-	return []string{
-		"provider_name",
-		"connection_id",
-		"civil_date",
-		"step_count",
-		"source_kind",
-		"source_family_filter",
-		"source_record_count",
-		"latest_source_timestamp",
-	}
+	defer reader.Close()
+	return reader.ExportRows(spec)
 }
