@@ -141,6 +141,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		RequiredScopes:        []string{googleHealthActivityReadonlyScope},
 		ListFilterField:       "distance.interval.start_time",
 		SupportsSyncDataPoint: true,
+		SupportsReconcile:     true,
 		Parser:                "interval",
 		JSONField:             "distance",
 		RecordKind:            "interval",

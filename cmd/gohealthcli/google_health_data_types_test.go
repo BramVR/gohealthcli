@@ -128,6 +128,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantScopes:            []string{googleHealthActivityReadonlyScope},
 			wantListFilterField:   "distance.interval.start_time",
 			wantSyncDataPoint:     true,
+			wantReconcile:         true,
 			wantParser:            "interval",
 			wantRecordKind:        "interval",
 			wantDefaultConfigType: true,

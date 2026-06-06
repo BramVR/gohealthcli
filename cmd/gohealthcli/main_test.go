@@ -3384,6 +3384,51 @@ func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing
 	assertArchiveTableCount(t, archivePath, "data_point_revisions", 1)
 	assertArchivedIntervalDataPoint(t, archivePath, "users/me/dataTypes/distance/dataPoints/distance-2026-01-01", "distance", "2026-01-01T07:00:00Z", "2026-01-01T07:30:00Z", "2026-01-01T08:00:00", "2026-01-01T08:30:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"millimeters":"2500"`)
 	assertSyncRunForDataType(t, archivePath, 3, "sync_completed", "distance", "list", 1, 0, 1, "")
+
+	reconciledDistancePage := `{"dataPoints": [{
+		"dataPointName": "users/me/dataTypes/distance/dataPoints/distance-2026-01-01-wearable",
+		"distance": {
+			"interval": {
+				"startTime": "2026-01-01T08:00:00+01:00",
+				"startUtcOffset": "3600s",
+				"endTime": "2026-01-01T08:30:00+01:00",
+				"endUtcOffset": "3600s",
+				"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}, "time": {"hours": 8}},
+				"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 1}, "time": {"hours": 8, "minutes": 30}}
+			},
+			"millimeters": "2450"
+		}
+	}]}`
+	reconcileRequests := installDataPointReconcileFetchFake(t, "connect-access-secret", "distance", map[string]string{"": reconciledDistancePage})
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	code = run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "distance",
+		"--source-family", "wearable",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("wearable distance sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("wearable distance stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "endpoint_family", "reconcile")
+	assertJSONString(t, got, "source_family", "wearable")
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 1)
+	if gotFamily := mustURLQuery(t, (*reconcileRequests)[0].url).Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
+		t.Fatalf("distance dataSourceFamily = %q, want google-wearables", gotFamily)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 2)
+	assertDataPointSourceFamilyCounts(t, archivePath, map[string]int{"": 1, "wearable": 1})
+	assertArchivedIntervalDataPoint(t, archivePath, "users/me/dataTypes/distance/dataPoints/distance-2026-01-01-wearable", "distance", "2026-01-01T07:00:00Z", "2026-01-01T07:30:00Z", "2026-01-01T08:00:00", "2026-01-01T08:30:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, "{}", `"millimeters":"2450"`)
+	assertSyncRunForDataTypeWithSourceFamily(t, archivePath, 4, "sync_completed", "distance", "reconcile", "wearable", 1, 1, 0, "")
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
@@ -6000,6 +6045,43 @@ func installStepReconcileFetchFake(t *testing.T, wantAccessToken string, pages m
 		}
 		if parsedURL.Path != "/v4/users/me/dataTypes/steps/dataPoints:reconcile" {
 			t.Fatalf("reconcile path = %q, want reconcile path", parsedURL.Path)
+		}
+		requests = append(requests, request)
+		pageToken := parsedURL.Query().Get("pageToken")
+		body, ok := pages[pageToken]
+		if !ok {
+			t.Fatalf("no fake reconcile page for pageToken %q", pageToken)
+		}
+		return []byte(body), nil
+	}
+	t.Cleanup(func() {
+		fetchRawProvider = originalFetchRawProvider
+	})
+	return &requests
+}
+
+func installDataPointReconcileFetchFake(t *testing.T, wantAccessToken, dataType string, pages map[string]string) *[]rawProviderRequest {
+	t.Helper()
+
+	originalFetchRawProvider := fetchRawProvider
+	var requests []rawProviderRequest
+	fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		if accessToken != wantAccessToken {
+			t.Fatalf("reconcile sync access token = %q, want stored token", accessToken)
+		}
+		if request.endpointName != "dataTypes."+dataType+".reconcile" || request.dataType != dataType {
+			t.Fatalf("reconcile sync request = (%q, %q), want %s reconcile", request.endpointName, request.dataType, dataType)
+		}
+		if request.sourceFamilyFilter != "wearable" {
+			t.Fatalf("source family filter = %q, want wearable", request.sourceFamilyFilter)
+		}
+		parsedURL, err := url.Parse(request.url)
+		if err != nil {
+			t.Fatalf("parse reconcile URL: %v", err)
+		}
+		wantPath := "/v4/users/me/dataTypes/" + dataType + "/dataPoints:reconcile"
+		if parsedURL.Path != wantPath {
+			t.Fatalf("reconcile path = %q, want %q", parsedURL.Path, wantPath)
 		}
 		requests = append(requests, request)
 		pageToken := parsedURL.Query().Get("pageToken")
