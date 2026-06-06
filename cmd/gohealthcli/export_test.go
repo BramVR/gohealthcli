@@ -158,6 +158,27 @@ func TestExportDailyStepsJSONLToStdout(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestWriteExportJSONLCanonicalizesIntegerFields(t *testing.T) {
+	output := new(bytes.Buffer)
+	err := writeExportJSONL([]exportRow{{
+		"googlehealth",
+		"googlehealth:111111256096816351",
+		"2026-01-01",
+		"+512",
+		"dataPoints",
+		"",
+		"01",
+		"2026-01-01T08:15:00Z",
+	}}, exportDatasetSpecs["daily-steps"], output)
+	if err != nil {
+		t.Fatalf("write JSONL: %v", err)
+	}
+	want := `{"provider_name":"googlehealth","connection_id":"googlehealth:111111256096816351","civil_date":"2026-01-01","step_count":512,"source_kind":"dataPoints","source_family_filter":"","source_record_count":1,"latest_source_timestamp":"2026-01-01T08:15:00Z"}` + "\n"
+	if output.String() != want {
+		t.Fatalf("JSONL =\n%s\nwant:\n%s", output.String(), want)
+	}
+}
+
 func TestExportHeartRateSamplesJSONLFromNormalizedView(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)

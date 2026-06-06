@@ -341,10 +341,11 @@ func writeExportJSONL(rows []exportRow, spec exportDatasetSpec, writer io.Writer
 				return err
 			}
 			if field.kind == "int" && row[index] != "" {
-				if _, err := strconv.ParseInt(row[index], 10, 64); err != nil {
+				value, err := strconv.ParseInt(row[index], 10, 64)
+				if err != nil {
 					return err
 				}
-				if _, err := fmt.Fprint(writer, row[index]); err != nil {
+				if _, err := fmt.Fprint(writer, strconv.FormatInt(value, 10)); err != nil {
 					return err
 				}
 				continue
