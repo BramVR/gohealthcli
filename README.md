@@ -17,6 +17,8 @@ through the Google Health API.
 - [CONTEXT.md](./CONTEXT.md): project glossary only, used by grill-style review.
 - [docs/plan.md](./docs/plan.md): product and implementation plan.
 - [docs/commands.md](./docs/commands.md): planned CLI surface.
+- [docs/google-auth-setup.md](./docs/google-auth-setup.md): local Google
+  Health OAuth setup checklist.
 - [docs/data-model.md](./docs/data-model.md): archive model sketch.
 - [docs/security.md](./docs/security.md): local credentials and health data safety.
 - [docs/research.md](./docs/research.md): source-backed research notes.
