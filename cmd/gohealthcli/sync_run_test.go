@@ -9,20 +9,18 @@ import (
 func TestSyncRunExecutorArchivesDataPointList(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
+	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+		t.Fatalf("connect setup: %v", err)
 	}
-	originalCurrentTime := currentTime
-	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
-	requests := installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+	testRuntime, requests := withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 		"": `{
 			"dataPoints": [{
 				"name": "users/me/dataTypes/steps/dataPoints/step-2026-01-01-executor",
@@ -38,7 +36,7 @@ func TestSyncRunExecutorArchivesDataPointList(t *testing.T) {
 		}`,
 	})
 
-	result, err := (syncRunExecutor{}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -68,20 +66,18 @@ func TestSyncRunExecutorArchivesDataPointList(t *testing.T) {
 func TestSyncRunExecutorArchivesDataPointReconcileForSourceFamily(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
+	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+		t.Fatalf("connect setup: %v", err)
 	}
-	originalCurrentTime := currentTime
-	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
-	requests := installStepReconcileFetchFake(t, "connect-access-secret", map[string]string{
+	testRuntime, requests := withStepReconcileFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 		"": `{
 			"dataPoints": [{
 				"name": "users/me/dataTypes/steps/dataPoints/step-2026-01-01-wearable",
@@ -97,7 +93,7 @@ func TestSyncRunExecutorArchivesDataPointReconcileForSourceFamily(t *testing.T) 
 		}`,
 	})
 
-	result, err := (syncRunExecutor{}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
 		configPath:   configPath,
 		archivePath:  archivePath,
 		dataTypes:    []string{"steps"},
@@ -126,20 +122,18 @@ func TestSyncRunExecutorArchivesDataPointReconcileForSourceFamily(t *testing.T) 
 func TestSyncRunExecutorArchivesDailyRollups(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
+	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+		t.Fatalf("connect setup: %v", err)
 	}
-	originalCurrentTime := currentTime
-	currentTime = func() time.Time { return time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC) }
 
-	requests := installStepDailyRollupFetchFake(t, "connect-access-secret", map[string]string{
+	testRuntime, requests := withStepDailyRollupFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 		"2026-01-01/2026-01-02/": `{
 			"rollupDataPoints": [{
 				"steps": {"countSum": "1234"},
@@ -149,7 +143,7 @@ func TestSyncRunExecutorArchivesDailyRollups(t *testing.T) {
 		}`,
 	})
 
-	result, err := (syncRunExecutor{}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -179,25 +173,23 @@ func TestSyncRunExecutorArchivesDailyRollups(t *testing.T) {
 func TestSyncRunExecutorRecordsFailedListRunForRepeatedPageToken(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
+	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+		t.Fatalf("connect setup: %v", err)
 	}
-	originalCurrentTime := currentTime
-	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
-	installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 		"":           `{"dataPoints":[],"nextPageToken":"same-token"}`,
 		"same-token": `{"dataPoints":[],"nextPageToken":"same-token"}`,
 	})
 
-	result, err := (syncRunExecutor{}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -217,20 +209,18 @@ func TestSyncRunExecutorRecordsFailedListRunForRepeatedPageToken(t *testing.T) {
 func TestSyncRunExecutorRecordsPartialCountsWhenLaterPageFails(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
+	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+		t.Fatalf("connect setup: %v", err)
 	}
-	originalCurrentTime := currentTime
-	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
-	installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 		"": `{
 			"dataPoints": [{
 				"name": "users/me/dataTypes/steps/dataPoints/partial-before-failure",
@@ -247,7 +237,7 @@ func TestSyncRunExecutorRecordsPartialCountsWhenLaterPageFails(t *testing.T) {
 		"bad-page": `{`,
 	})
 
-	result, err := (syncRunExecutor{}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},

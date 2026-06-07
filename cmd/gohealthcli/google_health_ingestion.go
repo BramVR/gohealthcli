@@ -20,12 +20,6 @@ type googleHealthIngestionProvider interface {
 	Fetch(request rawProviderRequest, accessToken string) ([]byte, error)
 }
 
-type fetchRawGoogleHealthProvider struct{}
-
-func (fetchRawGoogleHealthProvider) Fetch(request rawProviderRequest, accessToken string) ([]byte, error) {
-	return fetchRawProvider(request, accessToken)
-}
-
 type googleHealthIngestion struct {
 	provider googleHealthIngestionProvider
 	now      func() time.Time
@@ -66,10 +60,23 @@ type googleHealthRollupList struct {
 }
 
 func newGoogleHealthIngestion() googleHealthIngestion {
+	return newGoogleHealthIngestionWithRuntime(productionRuntimeAdapters())
+}
+
+func newGoogleHealthIngestionWithRuntime(runtime runtimeAdapters) googleHealthIngestion {
+	runtime = runtime.withDefaults()
 	return googleHealthIngestion{
-		provider: fetchRawGoogleHealthProvider{},
-		now:      currentTime,
+		provider: runtimeGoogleHealthIngestionProvider{runtime: runtime},
+		now:      runtime.now,
 	}
+}
+
+type runtimeGoogleHealthIngestionProvider struct {
+	runtime runtimeAdapters
+}
+
+func (provider runtimeGoogleHealthIngestionProvider) Fetch(request rawProviderRequest, accessToken string) ([]byte, error) {
+	return provider.runtime.fetchRawProvider(request, accessToken)
 }
 
 func (ingestion googleHealthIngestion) Plan(request googleHealthIngestionRequest) (googleHealthIngestionPlan, error) {
