@@ -24,10 +24,12 @@ type dailyStepsExportRow struct {
 }
 
 type exportDatasetSpec struct {
-	view    string
-	viewSQL string
-	fields  []exportFieldSpec
-	orderBy string
+	name             string
+	view             string
+	viewSQL          string
+	migrationVersion int
+	fields           []exportFieldSpec
+	orderBy          string
 }
 
 type exportFieldSpec struct {
@@ -37,9 +39,11 @@ type exportFieldSpec struct {
 
 type exportRow []string
 
-var exportDatasetSpecs = map[string]exportDatasetSpec{
-	"daily-steps": {
-		view: "daily_steps",
+var exportDatasetDefinitions = []exportDatasetSpec{
+	{
+		name:             "daily-steps",
+		view:             "daily_steps",
+		migrationVersion: 4,
 		viewSQL: `WITH data_point_days AS (
 			SELECT
 				provider_name,
@@ -111,9 +115,11 @@ var exportDatasetSpecs = map[string]exportDatasetSpec{
 		},
 		orderBy: "civil_date, provider_name, connection_id, source_kind, source_family_filter",
 	},
-	"heart-rate-samples": {
-		view:    "heart_rate_samples",
-		orderBy: "sample_time_utc, provider_name, connection_id, source_family_filter, upstream_resource_name",
+	{
+		name:             "heart-rate-samples",
+		view:             "heart_rate_samples",
+		migrationVersion: 5,
+		orderBy:          "sample_time_utc, provider_name, connection_id, source_family_filter, upstream_resource_name",
 		viewSQL: `SELECT
 			provider_name,
 			connection_id,
@@ -139,9 +145,11 @@ var exportDatasetSpecs = map[string]exportDatasetSpec{
 			{name: "upstream_resource_name"},
 		},
 	},
-	"resting-heart-rate-by-day": {
-		view:    "resting_heart_rate_by_day",
-		orderBy: "civil_date, provider_name, connection_id, source_family_filter, upstream_resource_name",
+	{
+		name:             "resting-heart-rate-by-day",
+		view:             "resting_heart_rate_by_day",
+		migrationVersion: 5,
+		orderBy:          "civil_date, provider_name, connection_id, source_family_filter, upstream_resource_name",
 		viewSQL: `SELECT
 			provider_name,
 			connection_id,
@@ -163,9 +171,11 @@ var exportDatasetSpecs = map[string]exportDatasetSpec{
 			{name: "upstream_resource_name"},
 		},
 	},
-	"sleep-sessions": {
-		view:    "sleep_sessions",
-		orderBy: "start_time_utc, provider_name, connection_id, source_family_filter, upstream_resource_name",
+	{
+		name:             "sleep-sessions",
+		view:             "sleep_sessions",
+		migrationVersion: 5,
+		orderBy:          "start_time_utc, provider_name, connection_id, source_family_filter, upstream_resource_name",
 		viewSQL: `SELECT
 			provider_name,
 			connection_id,
@@ -193,9 +203,11 @@ var exportDatasetSpecs = map[string]exportDatasetSpec{
 			{name: "upstream_resource_name"},
 		},
 	},
-	"exercise-sessions": {
-		view:    "exercise_sessions",
-		orderBy: "start_time_utc, provider_name, connection_id, source_family_filter, upstream_resource_name",
+	{
+		name:             "exercise-sessions",
+		view:             "exercise_sessions",
+		migrationVersion: 5,
+		orderBy:          "start_time_utc, provider_name, connection_id, source_family_filter, upstream_resource_name",
 		viewSQL: `SELECT
 			provider_name,
 			connection_id,
@@ -227,9 +239,11 @@ var exportDatasetSpecs = map[string]exportDatasetSpec{
 			{name: "upstream_resource_name"},
 		},
 	},
-	"weight-samples": {
-		view:    "weight_samples",
-		orderBy: "sample_time_utc, provider_name, connection_id, source_family_filter, upstream_resource_name",
+	{
+		name:             "weight-samples",
+		view:             "weight_samples",
+		migrationVersion: 5,
+		orderBy:          "sample_time_utc, provider_name, connection_id, source_family_filter, upstream_resource_name",
 		viewSQL: `SELECT
 			provider_name,
 			connection_id,
@@ -257,10 +271,23 @@ var exportDatasetSpecs = map[string]exportDatasetSpec{
 	},
 }
 
-func exportDatasetViewMigrationStatements(names ...string) []string {
-	statements := make([]string, 0, len(names))
-	for _, name := range names {
-		statements = append(statements, exportDatasetViewMigrationStatement(exportDatasetSpecs[name]))
+var exportDatasetSpecs = exportDatasetSpecByName(exportDatasetDefinitions)
+
+func exportDatasetSpecByName(definitions []exportDatasetSpec) map[string]exportDatasetSpec {
+	specs := make(map[string]exportDatasetSpec, len(definitions))
+	for _, definition := range definitions {
+		specs[definition.name] = definition
+	}
+	return specs
+}
+
+func exportDatasetViewMigrationStatements(migrationVersion int) []string {
+	var statements []string
+	for _, definition := range exportDatasetDefinitions {
+		if definition.migrationVersion != migrationVersion {
+			continue
+		}
+		statements = append(statements, exportDatasetViewMigrationStatement(definition))
 	}
 	return statements
 }

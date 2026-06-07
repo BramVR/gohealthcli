@@ -3779,17 +3779,11 @@ func initialMigrationStatements() []string {
 }
 
 func dailyStepsViewMigrationStatements() []string {
-	return exportDatasetViewMigrationStatements("daily-steps")
+	return exportDatasetViewMigrationStatements(4)
 }
 
 func firstReleaseNormalizedViewMigrationStatements() []string {
-	return exportDatasetViewMigrationStatements(
-		"heart-rate-samples",
-		"resting-heart-rate-by-day",
-		"sleep-sessions",
-		"exercise-sessions",
-		"weight-samples",
-	)
+	return exportDatasetViewMigrationStatements(5)
 }
 
 func writeStatusResult(result statusResult, mode outputMode, stdout io.Writer) error {

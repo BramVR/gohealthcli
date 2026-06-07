@@ -11,38 +11,47 @@ import (
 )
 
 func TestExportDatasetDefinitionsIncludeViewSQL(t *testing.T) {
-	for name, spec := range exportDatasetSpecs {
+	if len(exportDatasetDefinitions) != len(exportDatasetSpecs) {
+		t.Fatalf("definition count = %d, lookup count = %d", len(exportDatasetDefinitions), len(exportDatasetSpecs))
+	}
+	seen := map[string]bool{}
+	for _, spec := range exportDatasetDefinitions {
+		if strings.TrimSpace(spec.name) == "" {
+			t.Fatal("dataset name = empty")
+		}
+		if seen[spec.name] {
+			t.Fatalf("duplicate dataset definition: %s", spec.name)
+		}
+		seen[spec.name] = true
 		if strings.TrimSpace(spec.view) == "" {
-			t.Fatalf("%s view = empty", name)
+			t.Fatalf("%s view = empty", spec.name)
 		}
 		if len(spec.fields) == 0 {
-			t.Fatalf("%s fields = empty", name)
+			t.Fatalf("%s fields = empty", spec.name)
 		}
 		if strings.TrimSpace(spec.orderBy) == "" {
-			t.Fatalf("%s orderBy = empty", name)
+			t.Fatalf("%s orderBy = empty", spec.name)
 		}
 		if strings.TrimSpace(spec.viewSQL) == "" {
-			t.Fatalf("%s viewSQL = empty", name)
+			t.Fatalf("%s viewSQL = empty", spec.name)
 		}
 		if strings.Contains(spec.viewSQL, "CREATE VIEW") {
-			t.Fatalf("%s viewSQL duplicates migration DDL", name)
+			t.Fatalf("%s viewSQL duplicates migration DDL", spec.name)
+		}
+		if spec.migrationVersion == 0 {
+			t.Fatalf("%s migrationVersion = 0", spec.name)
+		}
+		if _, ok := exportDatasetSpecs[spec.name]; !ok {
+			t.Fatalf("%s missing from lookup", spec.name)
 		}
 	}
 }
 
 func TestExportDatasetDefinitionsDriveViewMigrations(t *testing.T) {
-	if got, want := dailyStepsViewMigrationStatements(), exportDatasetViewMigrationStatements("daily-steps"); !reflect.DeepEqual(got, want) {
+	if got, want := dailyStepsViewMigrationStatements(), exportDatasetViewMigrationStatements(4); !reflect.DeepEqual(got, want) {
 		t.Fatalf("daily steps migration statements = %v, want %v", got, want)
 	}
-
-	firstReleaseDatasets := []string{
-		"heart-rate-samples",
-		"resting-heart-rate-by-day",
-		"sleep-sessions",
-		"exercise-sessions",
-		"weight-samples",
-	}
-	if got, want := firstReleaseNormalizedViewMigrationStatements(), exportDatasetViewMigrationStatements(firstReleaseDatasets...); !reflect.DeepEqual(got, want) {
+	if got, want := firstReleaseNormalizedViewMigrationStatements(), exportDatasetViewMigrationStatements(5); !reflect.DeepEqual(got, want) {
 		t.Fatalf("first release migration statements = %v, want %v", got, want)
 	}
 }
