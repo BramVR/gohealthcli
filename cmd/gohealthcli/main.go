@@ -864,6 +864,10 @@ func connectSetup(configPath, archivePath string, noInput bool) (connectResult, 
 		return connectResult{CredentialStore: config.credentialStore.kind}, errors.New("connect requires an OAuth client file source; Secret Provider references are setup-only")
 	}
 	if _, err := (healthArchiveLifecycle{path: archivePath}).MigrateAndInspect(false); err != nil {
+		var checkErr healthArchiveOpenError
+		if errors.As(err, &checkErr) {
+			return connectResult{}, err
+		}
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
 	store, err := newCredentialStore(config.credentialStore)
