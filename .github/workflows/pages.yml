@@ -6,6 +6,12 @@ on:
       - main
     paths:
       - "docs/**"
+      # Explicit internal-document exclusions per PRD #77 — these stay in-repo
+      # but never appear on the Project Site, so they should not trigger a deploy.
+      - "!docs/adr/**"
+      - "!docs/agents/**"
+      - "!docs/plan.md"
+      - "!docs/research.md"
       - "scripts/build-docs-site.mjs"
       - "scripts/docs-site-assets.mjs"
       - "Makefile"
