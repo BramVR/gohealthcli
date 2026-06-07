@@ -24,7 +24,7 @@ A Homebrew tap is planned. Once it ships, the install command will be:
 brew install BramVR/tap/gohealthcli
 ```
 
-Until the tap is live, prefer `go install` above. The homepage will drop the **Coming soon** badge from this line when the tap is published.
+Until the tap is live, prefer `go install` above.
 
 ## From source
 

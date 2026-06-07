@@ -280,7 +280,6 @@ const input=document.getElementById('doc-search');
 input?.addEventListener('input',()=>{const q=input.value.trim().toLowerCase();document.querySelectorAll('nav section').forEach(sec=>{let any=false;sec.querySelectorAll('.nav-link').forEach(a=>{const m=!q||a.textContent.toLowerCase().includes(q);a.style.display=m?'block':'none';if(m)any=true});sec.style.display=any?'block':'none'})});
 function attachCopy(target,getText){const btn=document.createElement('button');btn.type='button';btn.className='copy';btn.textContent='Copy';btn.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(getText());btn.textContent='Copied';btn.classList.add('copied');setTimeout(()=>{btn.textContent='Copy';btn.classList.remove('copied')},1400)}catch{btn.textContent='Failed';setTimeout(()=>{btn.textContent='Copy'},1400)}});target.appendChild(btn)}
 document.querySelectorAll('.doc pre').forEach(pre=>attachCopy(pre,()=>pre.querySelector('code')?.textContent??''));
-document.querySelectorAll('.install-line[data-copyable]').forEach(el=>attachCopy(el,()=>el.querySelector('code')?.textContent??''));
 const tocLinks=document.querySelectorAll('.toc a');
 if(tocLinks.length){const map=new Map();tocLinks.forEach(a=>{const id=a.getAttribute('href').slice(1);const el=document.getElementById(id);if(el)map.set(el,a)});const setActive=l=>{tocLinks.forEach(x=>x.classList.remove('active'));l.classList.add('active')};const obs=new IntersectionObserver(entries=>{const visible=entries.filter(e=>e.isIntersecting).sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top);if(visible.length){const link=map.get(visible[0].target);if(link)setActive(link)}},{rootMargin:'-15% 0px -65% 0px',threshold:0});map.forEach((_,el)=>obs.observe(el))}
 `;
@@ -303,7 +302,7 @@ export function brandMarkSvg() {
 
 export function ekgArtSvg() {
   const path = "M 14 115 L 36 115 L 42 103 L 48 115 L 66 115 L 72 125 L 77 45 L 82 150 L 87 115 L 109 115 L 119 98 L 129 115 L 156 115 L 162 103 L 168 115 L 186 115 L 192 125 L 197 45 L 202 150 L 207 115 L 229 115 L 239 98 L 249 115 L 276 115 L 282 103 L 288 115 L 306 115 L 312 125 L 317 45 L 322 150 L 327 115 L 346 115";
-  return `<svg viewBox="0 0 360 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Animated heartbeat trace">
+  return `<svg viewBox="0 0 360 200" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
 <defs>
 <linearGradient id="ekg-stroke" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#4ade80"/><stop offset="100%" stop-color="#14b8a6"/></linearGradient>
 <linearGradient id="ekg-card" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#060a14"/></linearGradient>
@@ -336,7 +335,7 @@ const ICON_PATHS = {
 
 export function iconSvg(name) {
   const d = ICON_PATHS[name];
-  if (!d) return "";
+  if (!d) throw new Error(`iconSvg: unknown icon "${name}" — add its path to ICON_PATHS in scripts/docs-site-assets.mjs`);
   return `<svg class="cap-icon" viewBox="0 -960 960 960" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"><path d="${d}" fill="currentColor"/></svg>`;
 }
 

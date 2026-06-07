@@ -492,7 +492,7 @@ function homeHero(page) {
           <div class="home-cta">
             ${ctas}
           </div>
-          <p class="cta-foot">Read-only local archive and search for your Google Health data.</p>
+          <p class="cta-foot">${escapeHtml("Read-only local archive and search for your Google Health data.")}</p>
         </div>
         <div class="hero-art" aria-hidden="true">${ekgArtSvg()}</div>
         <div class="home-services" aria-label="Supported capabilities">
