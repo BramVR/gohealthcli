@@ -508,7 +508,10 @@ function layout({ page, html, toc, prev, next, sectionName }) {
   const titleSuffix = home ? `${productName} — ${productTagline}` : `${page.title} — ${productName}`;
   const description = page.frontmatter.description || (home ? productDescription : `${page.title} — ${productName} CLI documentation.`);
   const canonicalUrl = pageCanonicalUrl(page);
-  const socialImage = siteBase ? `${siteBase}/social-card.png` : `${rootPrefix}social-card.png`;
+  const socialCardExists = fs.existsSync(path.join(docsDir, "social-card.png"));
+  const socialImage = socialCardExists
+    ? (siteBase ? `${siteBase}/social-card.png` : `${rootPrefix}social-card.png`)
+    : null;
   const socialMeta = [
     ["link", "rel", "canonical", "href", canonicalUrl],
     ["meta", "property", "og:type", "content", "website"],
@@ -516,13 +519,15 @@ function layout({ page, html, toc, prev, next, sectionName }) {
     ["meta", "property", "og:title", "content", titleSuffix],
     ["meta", "property", "og:description", "content", description],
     ["meta", "property", "og:url", "content", canonicalUrl],
-    ["meta", "property", "og:image", "content", socialImage],
-    ["meta", "property", "og:image:width", "content", "1200"],
-    ["meta", "property", "og:image:height", "content", "630"],
-    ["meta", "name", "twitter:card", "content", "summary_large_image"],
+    ...(socialImage ? [
+      ["meta", "property", "og:image", "content", socialImage],
+      ["meta", "property", "og:image:width", "content", "1200"],
+      ["meta", "property", "og:image:height", "content", "630"],
+    ] : []),
+    ["meta", "name", "twitter:card", "content", socialImage ? "summary_large_image" : "summary"],
     ["meta", "name", "twitter:title", "content", titleSuffix],
     ["meta", "name", "twitter:description", "content", description],
-    ["meta", "name", "twitter:image", "content", socialImage],
+    ...(socialImage ? [["meta", "name", "twitter:image", "content", socialImage]] : []),
   ].map(tagHtml).join("\n  ");
   return `<!doctype html>
 <html lang="en">
