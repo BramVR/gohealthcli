@@ -19,5 +19,5 @@ The output is a structured report on stdout. Use `--json` for stable machine-rea
 | `--db` | string | — | SQLite Health Archive path |
 | `--json` | bool | `false` | write stable JSON to stdout |
 | `--plain` | bool | `false` | write plain key/value output to stdout |
-| `--online` | bool | `false` | refresh tokens and check provider reachability |
 | `--no-input` | bool | `false` | never prompt, never wait for browser input |
+| `--online` | bool | `false` | refresh tokens and check provider reachability |
