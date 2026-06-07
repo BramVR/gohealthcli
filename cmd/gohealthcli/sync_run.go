@@ -1,33 +1,19 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/url"
-	"strconv"
 	"strings"
 	"time"
 )
 
 type syncRunExecutor struct{}
 
-type googleHealthDateRange struct {
-	from string
-	to   string
-}
-
-type googleHealthRollupList struct {
-	rollups       []json.RawMessage
-	nextPageToken string
-}
-
 func syncSetup(options syncCommandOptions) (syncResult, error) {
 	return (syncRunExecutor{}).Execute(options)
 }
 
-func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
+func (syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
 	if len(options.dataTypes) == 0 {
 		return syncResult{Status: "sync_failed"}, errors.New("sync requires at least one Data Type")
 	}
@@ -76,11 +62,18 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	if err != nil {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, err
 	}
-	endpointFamily := "list"
-	if options.rollup == "daily" {
-		endpointFamily = "dailyRollUp"
-	} else if options.sourceFamily != "" {
-		endpointFamily = "reconcile"
+	ingestion := newGoogleHealthIngestion()
+	ingestionRequest := googleHealthIngestionRequest{
+		connection:   connection,
+		dataType:     dataType,
+		from:         options.from,
+		to:           options.to,
+		rollup:       options.rollup,
+		sourceFamily: options.sourceFamily,
+	}
+	ingestionPlan, err := ingestion.Plan(ingestionRequest)
+	if err != nil {
+		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, err
 	}
 	result := syncResult{
 		ConnectionID:   connection.id,
@@ -88,7 +81,7 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 		DataTypes:      options.dataTypes,
 		From:           options.from,
 		To:             options.to,
-		EndpointFamily: endpointFamily,
+		EndpointFamily: ingestionPlan.endpointFamily,
 		SourceFamily:   options.sourceFamily,
 	}
 	startedAt := currentTime().UTC().Format(time.RFC3339)
@@ -126,14 +119,11 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	if identity.healthUserID != connection.googleHealthUserID {
 		return fail(errors.New("Provider returned a different Google Identity; use a new archive path"))
 	}
-	if options.rollup == "daily" {
-		if err := executor.executeDailyRollupPages(archive, connection, dataType, options, accessToken, &result); err != nil {
-			return fail(err)
-		}
-	} else {
-		if err := executor.executeDataPointPages(archive, connection, dataType, options, accessToken, &result); err != nil {
-			return fail(err)
-		}
+	ingestionRequest.accessToken = accessToken
+	ingestionResult, err := ingestion.Execute(archive, ingestionRequest)
+	applyGoogleHealthIngestionCounts(&result, ingestionResult)
+	if err != nil {
+		return fail(err)
 	}
 	seen, newCount, updated := syncResultTotalCounts(result)
 	if err := archive.FinishSyncRun(syncRunID, "sync_completed", seen, newCount, updated, currentTime().UTC().Format(time.RFC3339), ""); err != nil {
@@ -152,270 +142,13 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	return result, nil
 }
 
-func (syncRunExecutor) executeDailyRollupPages(archive healthArchiveWriter, connection archivedConnection, dataType string, options syncCommandOptions, accessToken string, result *syncResult) error {
-	windows, err := googleHealthDailyRollupDateWindows(options.from, options.to)
-	if err != nil {
-		return err
-	}
-	for _, window := range windows {
-		seenPageTokens := map[string]struct{}{}
-		for pageToken := ""; ; {
-			request, err := buildGoogleHealthDailyRollupRawRequest(dataType, window.from, window.to, 0, pageToken)
-			if err != nil {
-				return err
-			}
-			body, err := fetchRawProvider(request, accessToken)
-			if err != nil {
-				return syncProviderRequestError(err)
-			}
-			page, err := parseGoogleHealthRollupList(body)
-			if err != nil {
-				return err
-			}
-			for _, rawRollup := range page.rollups {
-				rollup, err := parseGoogleHealthStepsDailyRollup(connection, rawRollup)
-				if err != nil {
-					return err
-				}
-				status, err := archive.UpsertRollup(rollup, currentTime().UTC().Format(time.RFC3339))
-				if err != nil {
-					return err
-				}
-				result.RollupsSeen++
-				switch status {
-				case "new":
-					result.RollupsNew++
-				case "updated":
-					result.RollupsUpdated++
-				}
-			}
-			if page.nextPageToken == "" {
-				break
-			}
-			if _, ok := seenPageTokens[page.nextPageToken]; ok {
-				return errors.New("Google Health steps dailyRollUp returned a repeated page token")
-			}
-			seenPageTokens[page.nextPageToken] = struct{}{}
-			pageToken = page.nextPageToken
-		}
-	}
-	return nil
-}
-
-func buildGoogleHealthDailyRollupRawRequest(dataType, from, to string, pageSize int64, pageToken string) (rawProviderRequest, error) {
-	if err := validateRawGoogleHealthDataType(dataType); err != nil {
-		return rawProviderRequest{}, err
-	}
-	if !dailyRollupDataTypeSupported(dataType) {
-		return rawProviderRequest{}, errors.New("daily Rollup sync currently supports only Data Type steps")
-	}
-	if from == "" {
-		return rawProviderRequest{}, errors.New("daily Rollup calls require --from")
-	}
-	rangeJSON, err := googleHealthCivilTimeIntervalJSON(from, to)
-	if err != nil {
-		return rawProviderRequest{}, err
-	}
-	body := struct {
-		Range          json.RawMessage `json:"range"`
-		WindowSizeDays int             `json:"windowSizeDays"`
-		PageSize       int64           `json:"pageSize,omitempty"`
-		PageToken      string          `json:"pageToken,omitempty"`
-	}{
-		Range:          rangeJSON,
-		WindowSizeDays: 1,
-		PageSize:       pageSize,
-		PageToken:      pageToken,
-	}
-	bodyJSON, err := json.Marshal(body)
-	if err != nil {
-		return rawProviderRequest{}, err
-	}
-	return rawProviderRequest{
-		endpointName:   "dataTypes." + dataType + ".dailyRollUp",
-		dataType:       dataType,
-		method:         http.MethodPost,
-		url:            googleHealthBaseURL + "/users/me/dataTypes/" + url.PathEscape(dataType) + "/dataPoints:dailyRollUp",
-		body:           bodyJSON,
-		requiredScopes: googleHealthScopesForDataType(dataType),
-	}, nil
-}
-
-func googleHealthCivilTimeIntervalJSON(from, to string) (json.RawMessage, error) {
-	if to == "" {
-		return nil, errors.New("daily Rollup calls require --to")
-	}
-	start, err := googleHealthCivilDateJSON(from)
-	if err != nil {
-		return nil, fmt.Errorf("--from: %w", err)
-	}
-	end, err := googleHealthCivilDateJSON(to)
-	if err != nil {
-		return nil, fmt.Errorf("--to: %w", err)
-	}
-	content, err := json.Marshal(struct {
-		Start json.RawMessage `json:"start"`
-		End   json.RawMessage `json:"end"`
-	}{
-		Start: start,
-		End:   end,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return content, nil
-}
-
-func googleHealthDailyRollupDateWindows(from, to string) ([]googleHealthDateRange, error) {
-	start, err := time.Parse("2006-01-02", from)
-	if err != nil {
-		return nil, fmt.Errorf("--from: expected YYYY-MM-DD")
-	}
-	end, err := time.Parse("2006-01-02", to)
-	if err != nil {
-		return nil, fmt.Errorf("--to: expected YYYY-MM-DD")
-	}
-	if !end.After(start) {
-		return nil, errors.New("--to must be after --from for daily Rollup sync")
-	}
-	var windows []googleHealthDateRange
-	for current := start; current.Before(end); {
-		next := current.AddDate(0, 0, 90)
-		if next.After(end) {
-			next = end
-		}
-		windows = append(windows, googleHealthDateRange{
-			from: current.Format("2006-01-02"),
-			to:   next.Format("2006-01-02"),
-		})
-		current = next
-	}
-	return windows, nil
-}
-
-func googleHealthCivilDateJSON(value string) (json.RawMessage, error) {
-	if parsed, err := time.Parse("2006-01-02", value); err == nil {
-		date := struct {
-			Year  int `json:"year"`
-			Month int `json:"month"`
-			Day   int `json:"day"`
-		}{
-			Year:  parsed.Year(),
-			Month: int(parsed.Month()),
-			Day:   parsed.Day(),
-		}
-		return json.Marshal(struct {
-			Date any `json:"date"`
-		}{Date: date})
-	}
-	return nil, errors.New("expected YYYY-MM-DD")
-}
-
-func parseGoogleHealthRollupList(body []byte) (googleHealthRollupList, error) {
-	var raw struct {
-		Rollups       []json.RawMessage `json:"rollupDataPoints"`
-		NextPageToken string            `json:"nextPageToken"`
-	}
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return googleHealthRollupList{}, errors.New("Google Health Rollup response is not valid JSON")
-	}
-	return googleHealthRollupList{rollups: raw.Rollups, nextPageToken: raw.NextPageToken}, nil
-}
-
-func (syncRunExecutor) executeDataPointPages(archive healthArchiveWriter, connection archivedConnection, dataType string, options syncCommandOptions, accessToken string, result *syncResult) error {
-	seenPageTokens := map[string]struct{}{}
-	for pageToken := ""; ; {
-		request, err := buildGoogleHealthSyncDataPointRawRequest(dataType, options.from, options.to, options.sourceFamily, 0, pageToken)
-		if err != nil {
-			return err
-		}
-		body, err := fetchRawProvider(request, accessToken)
-		if err != nil {
-			return syncProviderRequestError(err)
-		}
-		page, err := parseGoogleHealthDataPointList(body)
-		if err != nil {
-			return err
-		}
-		for _, rawPoint := range page.dataPoints {
-			point, err := parseGoogleHealthDataPoint(connection, dataType, rawPoint, options.sourceFamily)
-			if err != nil {
-				return err
-			}
-			status, err := archive.UpsertDataPoint(point, currentTime().UTC().Format(time.RFC3339))
-			if err != nil {
-				return err
-			}
-			result.DataPointsSeen++
-			switch status {
-			case "new":
-				result.DataPointsNew++
-			case "updated":
-				result.DataPointsUpdated++
-			}
-		}
-		if page.nextPageToken == "" {
-			break
-		}
-		if _, ok := seenPageTokens[page.nextPageToken]; ok {
-			return fmt.Errorf("Google Health %s %s returned a repeated page token", dataType, result.EndpointFamily)
-		}
-		seenPageTokens[page.nextPageToken] = struct{}{}
-		pageToken = page.nextPageToken
-	}
-	return nil
-}
-
-func buildGoogleHealthSyncDataPointRawRequest(dataType, from, to, sourceFamily string, pageSize int64, pageToken string) (rawProviderRequest, error) {
-	if sourceFamily == "" {
-		return buildGoogleHealthDataTypeListRawRequest(dataType, from, to, pageSize, pageToken)
-	}
-	return buildGoogleHealthDataTypeReconcileRawRequest(dataType, from, to, sourceFamily, pageSize, pageToken)
-}
-
-func buildGoogleHealthDataTypeReconcileRawRequest(dataType, from, to, sourceFamily string, pageSize int64, pageToken string) (rawProviderRequest, error) {
-	if err := validateRawGoogleHealthDataType(dataType); err != nil {
-		return rawProviderRequest{}, err
-	}
-	if from == "" {
-		return rawProviderRequest{}, errors.New("Data Type reconcile raw calls require --from")
-	}
-	dataSourceFamily, err := googleHealthSourceFamilyFilterName(dataType, sourceFamily)
-	if err != nil {
-		return rawProviderRequest{}, err
-	}
-	query := url.Values{}
-	filter, err := googleHealthDataTypeListFilter(dataType, from, to)
-	if err != nil {
-		return rawProviderRequest{}, err
-	}
-	query.Set("filter", filter)
-	query.Set("dataSourceFamily", dataSourceFamily)
-	if pageSize > 0 {
-		query.Set("pageSize", strconv.FormatInt(pageSize, 10))
-	}
-	if pageToken != "" {
-		query.Set("pageToken", pageToken)
-	}
-	requestURL := googleHealthBaseURL + "/users/me/dataTypes/" + url.PathEscape(dataType) + "/dataPoints:reconcile"
-	if encoded := query.Encode(); encoded != "" {
-		requestURL += "?" + encoded
-	}
-	return rawProviderRequest{
-		endpointName:       "dataTypes." + dataType + ".reconcile",
-		dataType:           dataType,
-		method:             http.MethodGet,
-		url:                requestURL,
-		requiredScopes:     googleHealthScopesForDataType(dataType),
-		sourceFamilyFilter: sourceFamily,
-	}, nil
-}
-
-func syncProviderRequestError(err error) error {
-	if strings.Contains(err.Error(), "HTTP 401") {
-		return errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again")
-	}
-	return err
+func applyGoogleHealthIngestionCounts(result *syncResult, ingestionResult googleHealthIngestionResult) {
+	result.DataPointsSeen = ingestionResult.dataPointsSeen
+	result.DataPointsNew = ingestionResult.dataPointsNew
+	result.DataPointsUpdated = ingestionResult.dataPointsUpdated
+	result.RollupsSeen = ingestionResult.rollupsSeen
+	result.RollupsNew = ingestionResult.rollupsNew
+	result.RollupsUpdated = ingestionResult.rollupsUpdated
 }
 
 func syncResultTotalCounts(result syncResult) (int, int, int) {
