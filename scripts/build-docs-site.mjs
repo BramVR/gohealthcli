@@ -26,7 +26,7 @@ const capabilities = [
 ];
 
 const sections = [
-  ["Start", ["index.md"]],
+  ["Start", ["index.md", "install.md", "quickstart.md"]],
 ];
 
 // Allowlist: only pages whose relative path is listed in `sections` above are rendered.
