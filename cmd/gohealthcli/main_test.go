@@ -130,7 +130,15 @@ func TestDoctorRejectsUnknownFlagAfterCommand(t *testing.T) {
 }
 
 func TestDoctorAcceptsNoInputBeforeCommand(t *testing.T) {
-	code, stdout, stderr := runCommand(t, "--no-input", "doctor", "--plain")
+	tempDir := t.TempDir()
+
+	code, stdout, stderr := runCommand(t,
+		"--config", filepath.Join(tempDir, "config.toml"),
+		"--db", filepath.Join(tempDir, "gohealthcli.sqlite"),
+		"--no-input",
+		"doctor",
+		"--plain",
+	)
 
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
@@ -144,7 +152,15 @@ func TestDoctorAcceptsNoInputBeforeCommand(t *testing.T) {
 }
 
 func TestDoctorAcceptsNoInputAfterCommand(t *testing.T) {
-	code, stdout, stderr := runCommand(t, "doctor", "--no-input", "--plain")
+	tempDir := t.TempDir()
+
+	code, stdout, stderr := runCommand(t,
+		"--config", filepath.Join(tempDir, "config.toml"),
+		"--db", filepath.Join(tempDir, "gohealthcli.sqlite"),
+		"doctor",
+		"--no-input",
+		"--plain",
+	)
 
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
