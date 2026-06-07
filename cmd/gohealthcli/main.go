@@ -334,6 +334,11 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	return runWithRuntime(args, stdout, stderr, productionRuntimeAdapters())
+}
+
+func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+	runtime = runtime.withDefaults()
 	flags := flag.NewFlagSet("gohealthcli", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -364,17 +369,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	switch flags.Arg(0) {
 	case "doctor":
-		return runDoctor(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
+		return runDoctorWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
 	case "init":
 		return runInit(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	case "connect":
-		return runConnect(flags.Args()[1:], *configPath, *archivePath, *noInput, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
+		return runConnectWithRuntime(flags.Args()[1:], *configPath, *archivePath, *noInput, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
 	case "identity":
-		return runIdentity(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
+		return runIdentityWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
 	case "profile":
-		return runProfile(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
+		return runProfileWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
 	case "sync":
-		return runSync(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
+		return runSyncWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
 	case "status":
 		return runStatus(flags.Args()[1:], *configPath, *archivePath, globalArchivePathExplicit, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	case "query":
@@ -382,7 +387,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "export":
 		return runExport(flags.Args()[1:], *configPath, *archivePath, globalArchivePathExplicit, stdout, stderr)
 	case "raw":
-		return runRaw(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
+		return runRawWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
 	default:
 		fmt.Fprintf(stderr, "unknown command: %s\n", flags.Arg(0))
 		return 1
@@ -405,6 +410,10 @@ func flagWasProvided(flags *flag.FlagSet, name string) bool {
 }
 
 func runDoctor(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
+	return runDoctorWithRuntime(args, configPath, archivePath, mode, stdout, stderr, productionRuntimeAdapters())
+}
+
+func runDoctorWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -429,7 +438,7 @@ func runDoctor(args []string, configPath, archivePath string, mode outputMode, s
 	mode = outputMode{json: *doctorJSONOutput, plain: *doctorPlainOutput}
 	if fileExists(*doctorConfigPath) && fileExists(*doctorArchivePath) {
 		if *doctorOnline {
-			return runDoctorOnline(*doctorConfigPath, *doctorArchivePath, mode, stdout, stderr)
+			return runDoctorOnlineWithRuntime(*doctorConfigPath, *doctorArchivePath, mode, stdout, stderr, runtime)
 		}
 		config, err := inspectConfig(*doctorConfigPath, *doctorArchivePath)
 		if err != nil {
@@ -493,7 +502,11 @@ func runDoctorInvalid(configPath, archivePath, message string, mode outputMode, 
 }
 
 func runDoctorOnline(configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
-	result, err := doctorOnlineSetup(configPath, archivePath)
+	return runDoctorOnlineWithRuntime(configPath, archivePath, mode, stdout, stderr, productionRuntimeAdapters())
+}
+
+func runDoctorOnlineWithRuntime(configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+	result, err := doctorOnlineSetupWithRuntime(configPath, archivePath, runtime)
 	if err != nil {
 		if result.Status == "" || result.Status == "ok" {
 			result.Status = "connection_unhealthy"
@@ -657,6 +670,10 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 }
 
 func runConnect(args []string, configPath, archivePath string, globalNoInput bool, mode outputMode, stdout, stderr io.Writer) int {
+	return runConnectWithRuntime(args, configPath, archivePath, globalNoInput, mode, stdout, stderr, productionRuntimeAdapters())
+}
+
+func runConnectWithRuntime(args []string, configPath, archivePath string, globalNoInput bool, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("connect", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -678,7 +695,7 @@ func runConnect(args []string, configPath, archivePath string, globalNoInput boo
 	}
 
 	mode = outputMode{json: *connectJSONOutput, plain: *connectPlainOutput}
-	result, err := connectSetup(*connectConfigPath, *connectArchivePath, *noInput)
+	result, err := connectSetupWithRuntime(*connectConfigPath, *connectArchivePath, *noInput, runtime)
 	if err != nil {
 		result.Status = "connect_failed"
 		result.Message = err.Error()
@@ -696,6 +713,10 @@ func runConnect(args []string, configPath, archivePath string, globalNoInput boo
 }
 
 func runIdentity(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
+	return runIdentityWithRuntime(args, configPath, archivePath, mode, stdout, stderr, productionRuntimeAdapters())
+}
+
+func runIdentityWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("identity", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -717,7 +738,7 @@ func runIdentity(args []string, configPath, archivePath string, mode outputMode,
 	}
 
 	mode = outputMode{json: *identityJSONOutput, plain: *identityPlainOutput}
-	result, err := identitySetup(*identityConfigPath, *identityArchivePath)
+	result, err := identitySetupWithRuntime(*identityConfigPath, *identityArchivePath, runtime)
 	if err != nil {
 		if result.Status == "" {
 			result.Status = "identity_failed"
@@ -737,6 +758,10 @@ func runIdentity(args []string, configPath, archivePath string, mode outputMode,
 }
 
 func runProfile(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
+	return runProfileWithRuntime(args, configPath, archivePath, mode, stdout, stderr, productionRuntimeAdapters())
+}
+
+func runProfileWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("profile", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -758,7 +783,7 @@ func runProfile(args []string, configPath, archivePath string, mode outputMode, 
 	}
 
 	mode = outputMode{json: *profileJSONOutput, plain: *profilePlainOutput}
-	result, err := profileSetup(*profileConfigPath, *profileArchivePath)
+	result, err := profileSetupWithRuntime(*profileConfigPath, *profileArchivePath, runtime)
 	if err != nil {
 		if result.Status == "" {
 			result.Status = "profile_failed"
@@ -778,6 +803,10 @@ func runProfile(args []string, configPath, archivePath string, mode outputMode, 
 }
 
 func runSync(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
+	return runSyncWithRuntime(args, configPath, archivePath, mode, stdout, stderr, productionRuntimeAdapters())
+}
+
+func runSyncWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("sync", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -804,7 +833,7 @@ func runSync(args []string, configPath, archivePath string, mode outputMode, std
 	}
 
 	mode = outputMode{json: *syncJSONOutput, plain: *syncPlainOutput}
-	result, err := syncSetup(syncCommandOptions{
+	result, err := syncSetupWithRuntime(syncCommandOptions{
 		configPath:   *syncConfigPath,
 		archivePath:  *syncArchivePath,
 		dataTypes:    parseCommaList(*syncTypes),
@@ -812,7 +841,7 @@ func runSync(args []string, configPath, archivePath string, mode outputMode, std
 		to:           *syncTo,
 		rollup:       *syncRollup,
 		sourceFamily: *syncSourceFamily,
-	})
+	}, runtime)
 	if err != nil {
 		if result.Status == "" {
 			result.Status = "sync_failed"
@@ -832,6 +861,10 @@ func runSync(args []string, configPath, archivePath string, mode outputMode, std
 }
 
 func runRaw(args []string, configPath, archivePath string, _ outputMode, stdout, stderr io.Writer) int {
+	return runRawWithRuntime(args, configPath, archivePath, outputMode{}, stdout, stderr, productionRuntimeAdapters())
+}
+
+func runRawWithRuntime(args []string, configPath, archivePath string, _ outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	options, err := parseRawCommandOptions(args, configPath, archivePath)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -848,7 +881,7 @@ func runRaw(args []string, configPath, archivePath string, _ outputMode, stdout,
 		fmt.Fprintf(stderr, "raw: %v\n", err)
 		return 1
 	}
-	body, err := rawSetup(options.configPath, options.archivePath, request)
+	body, err := rawSetupWithRuntime(options.configPath, options.archivePath, request, runtime)
 	if err != nil {
 		fmt.Fprintf(stderr, "raw: %v\n", err)
 		return 1
@@ -861,6 +894,10 @@ func runRaw(args []string, configPath, archivePath string, _ outputMode, stdout,
 }
 
 func connectSetup(configPath, archivePath string, noInput bool) (connectResult, error) {
+	return connectSetupWithRuntime(configPath, archivePath, noInput, productionRuntimeAdapters())
+}
+
+func connectSetupWithRuntime(configPath, archivePath string, noInput bool, runtime runtimeAdapters) (connectResult, error) {
 	config, err := inspectFullConfig(configPath, archivePath)
 	if err != nil {
 		return connectResult{}, fmt.Errorf("config check failed: %w", err)
@@ -875,22 +912,22 @@ func connectSetup(configPath, archivePath string, noInput bool) (connectResult, 
 		}
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
-	store, err := newCredentialStore(config.credentialStore)
+	store, err := newCredentialStoreWithRuntime(config.credentialStore, runtime)
 	if err != nil {
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
-	if err := validateCredentialStoreRuntime(config.credentialStore, []string{configPath, archivePath, config.oauthClient.path}); err != nil {
+	if err := validateCredentialStoreRuntimeWithRuntime(config.credentialStore, []string{configPath, archivePath, config.oauthClient.path}, runtime); err != nil {
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
 	client, err := loadOAuthClientConfig(config.oauthClient.path)
 	if err != nil {
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
-	token, err := runOAuthFlow(client, oauthScopesForDataTypes(config.defaultDataTypes), noInput)
+	token, err := runtime.runOAuthFlow(client, oauthScopesForDataTypes(config.defaultDataTypes), noInput)
 	if err != nil {
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
-	identity, err := fetchIdentity(token.accessToken)
+	identity, err := runtime.fetchIdentity(token.accessToken)
 	if err != nil {
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
@@ -907,7 +944,7 @@ func connectSetup(configPath, archivePath string, noInput bool) (connectResult, 
 	if err := store.Store(connectionID, token.rawTokenMaterialObject); err != nil {
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
-	if err := archive.UpsertConnection(connectionID, identity, token, currentTime()); err != nil {
+	if err := archive.UpsertConnection(connectionID, identity, token, runtime.now()); err != nil {
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
 	return connectResult{
@@ -923,6 +960,11 @@ func connectSetup(configPath, archivePath string, noInput bool) (connectResult, 
 }
 
 func identitySetup(configPath, archivePath string) (identityResult, error) {
+	return identitySetupWithRuntime(configPath, archivePath, productionRuntimeAdapters())
+}
+
+func identitySetupWithRuntime(configPath, archivePath string, runtime runtimeAdapters) (identityResult, error) {
+	runtime = runtime.withDefaults()
 	config, err := inspectIdentityConfig(configPath, archivePath)
 	if err != nil {
 		return identityResult{}, fmt.Errorf("config check failed: %w", err)
@@ -945,7 +987,7 @@ func identitySetup(configPath, archivePath string) (identityResult, error) {
 		GoogleHealthUserID: connection.googleHealthUserID,
 		LegacyFitbitUserID: connection.legacyFitbitUserID,
 	}
-	connectionAccess := newCurrentConnectionAccess(config.credentialStore, connection, []string{configPath, archivePath})
+	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{configPath, archivePath}, runtime)
 	accessToken, err := connectionAccess.AccessToken(nil)
 	if err != nil {
 		return result, err
@@ -957,7 +999,7 @@ func identitySetup(configPath, archivePath string) (identityResult, error) {
 		}
 		return result, err
 	}
-	if err := archive.RefreshConnectionIdentity(connection, identity, currentTime()); err != nil {
+	if err := archive.RefreshConnectionIdentity(connection, identity, runtime.now()); err != nil {
 		return result, err
 	}
 	result.Status = "identity_refreshed"
@@ -970,6 +1012,11 @@ func identitySetup(configPath, archivePath string) (identityResult, error) {
 }
 
 func profileSetup(configPath, archivePath string) (profileResult, error) {
+	return profileSetupWithRuntime(configPath, archivePath, productionRuntimeAdapters())
+}
+
+func profileSetupWithRuntime(configPath, archivePath string, runtime runtimeAdapters) (profileResult, error) {
+	runtime = runtime.withDefaults()
 	config, err := inspectIdentityConfig(configPath, archivePath)
 	if err != nil {
 		return profileResult{}, fmt.Errorf("config check failed: %w", err)
@@ -992,12 +1039,12 @@ func profileSetup(configPath, archivePath string) (profileResult, error) {
 		GoogleHealthUserID: connection.googleHealthUserID,
 		LegacyFitbitUserID: connection.legacyFitbitUserID,
 	}
-	connectionAccess := newCurrentConnectionAccess(config.credentialStore, connection, []string{configPath, archivePath})
+	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{configPath, archivePath}, runtime)
 	accessToken, err := connectionAccess.AccessToken([]string{googleHealthProfileReadonlyScope})
 	if err != nil {
 		return result, err
 	}
-	profile, err := fetchProfile(accessToken)
+	profile, err := runtime.fetchProfile(accessToken)
 	if err != nil {
 		return result, currentConnectionProviderError(err)
 	}
@@ -1016,7 +1063,7 @@ func profileSetup(configPath, archivePath string) (profileResult, error) {
 		result.Status = "profile_mismatch"
 		return result, err
 	}
-	fetchedAt := currentTime().UTC().Format(time.RFC3339)
+	fetchedAt := runtime.now().UTC().Format(time.RFC3339)
 	snapshotID, err := archive.InsertProfileSnapshot(connection, profile.rawJSON, fetchedAt)
 	if err != nil {
 		return result, err
@@ -1078,6 +1125,11 @@ func readConfigArchivePath(configPath string) (string, bool, error) {
 }
 
 func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
+	return doctorOnlineSetupWithRuntime(configPath, archivePath, productionRuntimeAdapters())
+}
+
+func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtimeAdapters) (doctorResult, error) {
+	runtime = runtime.withDefaults()
 	config, err := inspectFullConfig(configPath, archivePath)
 	if err != nil {
 		return doctorResult{Status: "setup_invalid", ConfigPath: configPath, ArchivePath: archivePath, TokenStatus: "unknown"}, fmt.Errorf("config check failed: %w", err)
@@ -1115,7 +1167,7 @@ func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
 		return result, err
 	}
 	protectedPaths := []string{configPath, archivePath, config.oauthClient.path}
-	connectionAccess := newCurrentConnectionAccess(config.credentialStore, connection, protectedPaths)
+	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, protectedPaths, runtime)
 	tokenCheck, err := connectionAccess.RefreshableAccessToken(config.oauthClient)
 	if err != nil {
 		if result.TokenStatus == archive.tokenStatus {
@@ -1138,7 +1190,7 @@ func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
 		return result, err
 	}
 	if tokenCheck.refreshedToken != nil {
-		if err := persistDoctorOnlineRefreshedToken(archiveAPI, config.credentialStore, connection.id, *tokenCheck.refreshedToken, tokenCheck.previousTokenMaterial); err != nil {
+		if err := persistDoctorOnlineRefreshedTokenWithRuntime(archiveAPI, config.credentialStore, connection.id, *tokenCheck.refreshedToken, tokenCheck.previousTokenMaterial, runtime); err != nil {
 			result.TokenStatus = "refresh_failed"
 			return result, err
 		}
@@ -1149,14 +1201,19 @@ func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
 }
 
 func persistDoctorOnlineRefreshedToken(archive healthArchiveConnectionAPI, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse, previousTokenMaterial map[string]any) error {
-	store, err := newCredentialStore(credentialStore)
+	return persistDoctorOnlineRefreshedTokenWithRuntime(archive, credentialStore, connectionID, token, previousTokenMaterial, productionRuntimeAdapters())
+}
+
+func persistDoctorOnlineRefreshedTokenWithRuntime(archive healthArchiveConnectionAPI, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse, previousTokenMaterial map[string]any, runtime runtimeAdapters) error {
+	runtime = runtime.withDefaults()
+	store, err := newCredentialStoreWithRuntime(credentialStore, runtime)
 	if err != nil {
 		return err
 	}
 	if err := store.Store(connectionID, token.rawTokenMaterialObject); err != nil {
 		return err
 	}
-	if err := archive.UpdateConnectionTokenMetadata(connectionID, token, currentTime()); err != nil {
+	if err := archive.UpdateConnectionTokenMetadata(connectionID, token, runtime.now()); err != nil {
 		if rollbackErr := store.Store(connectionID, previousTokenMaterial); rollbackErr != nil {
 			return fmt.Errorf("%w; rollback Credential Store token material: %v", err, rollbackErr)
 		}
@@ -1166,6 +1223,11 @@ func persistDoctorOnlineRefreshedToken(archive healthArchiveConnectionAPI, crede
 }
 
 func rawSetup(configPath, archivePath string, request rawProviderRequest) ([]byte, error) {
+	return rawSetupWithRuntime(configPath, archivePath, request, productionRuntimeAdapters())
+}
+
+func rawSetupWithRuntime(configPath, archivePath string, request rawProviderRequest, runtime runtimeAdapters) ([]byte, error) {
+	runtime = runtime.withDefaults()
 	config, err := inspectIdentityConfig(configPath, archivePath)
 	if err != nil {
 		return nil, fmt.Errorf("config check failed: %w", err)
@@ -1182,12 +1244,12 @@ func rawSetup(configPath, archivePath string, request rawProviderRequest) ([]byt
 		}
 		return nil, err
 	}
-	connectionAccess := newCurrentConnectionAccess(config.credentialStore, connection, []string{configPath, archivePath})
+	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{configPath, archivePath}, runtime)
 	accessToken, err := connectionAccess.AccessToken(request.requiredScopes)
 	if err != nil {
 		return nil, err
 	}
-	body, err := fetchRawProvider(request, accessToken)
+	body, err := runtime.fetchRawProvider(request, accessToken)
 	if err != nil {
 		return nil, currentConnectionProviderError(err)
 	}
@@ -1786,6 +1848,11 @@ func validateCredentialStoreConfig(store credentialStoreConfig) error {
 }
 
 func validateCredentialStoreRuntime(store credentialStoreConfig, protectedPaths []string) error {
+	return validateCredentialStoreRuntimeWithRuntime(store, protectedPaths, productionRuntimeAdapters())
+}
+
+func validateCredentialStoreRuntimeWithRuntime(store credentialStoreConfig, protectedPaths []string, runtime runtimeAdapters) error {
+	runtime = runtime.withDefaults()
 	switch store.kind {
 	case "file":
 		storePath, err := canonicalCredentialPath(store.path)
@@ -1805,18 +1872,18 @@ func validateCredentialStoreRuntime(store credentialStoreConfig, protectedPaths 
 			}
 		}
 	case "os_native":
-		switch currentOS {
+		switch runtime.currentOS {
 		case "darwin":
-			if _, err := findExecutable("security"); err != nil {
+			if _, err := runtime.findExecutable("security"); err != nil {
 				return errors.New("OS-native Credential Store requires the security command; configure credential_store type \"file\"")
 			}
 		case "linux":
-			if _, err := findExecutable("secret-tool"); err != nil {
+			if _, err := runtime.findExecutable("secret-tool"); err != nil {
 				return errors.New("OS-native Credential Store requires secret-tool; install libsecret tooling or configure credential_store type \"file\"")
 			}
 		case "windows":
-			if _, err := findExecutable("powershell"); err != nil {
-				if _, err := findExecutable("powershell.exe"); err != nil {
+			if _, err := runtime.findExecutable("powershell"); err != nil {
+				if _, err := runtime.findExecutable("powershell.exe"); err != nil {
 					return errors.New("OS-native Credential Store requires PowerShell; configure credential_store type \"file\"")
 				}
 			}
@@ -1944,6 +2011,13 @@ func oauthScopesForDataTypes(dataTypes []string) []string {
 }
 
 func runBrowserOAuthFlow(client oauthClientConfig, scopes []string, noInput bool) (oauthTokenResponse, error) {
+	return runBrowserOAuthFlowWithRuntime(client, scopes, noInput, runtimeAdapters{openBrowser: openBrowser})
+}
+
+func runBrowserOAuthFlowWithRuntime(client oauthClientConfig, scopes []string, noInput bool, runtime runtimeAdapters) (oauthTokenResponse, error) {
+	if runtime.openBrowser == nil {
+		runtime.openBrowser = openBrowser
+	}
 	if noInput {
 		return oauthTokenResponse{}, errors.New("connect requires browser OAuth; rerun without --no-input")
 	}
@@ -1966,7 +2040,7 @@ func runBrowserOAuthFlow(client oauthClientConfig, scopes []string, noInput bool
 	if err != nil {
 		return oauthTokenResponse{}, err
 	}
-	if err := openBrowser(authURL); err != nil {
+	if err := runtime.openBrowser(authURL); err != nil {
 		return oauthTokenResponse{}, fmt.Errorf("open browser: %w", err)
 	}
 	code, err := waitForOAuthCode(listener, state)
@@ -2973,14 +3047,19 @@ type credentialStore interface {
 }
 
 func newCredentialStore(config credentialStoreConfig) (credentialStore, error) {
+	return newCredentialStoreWithRuntime(config, productionRuntimeAdapters())
+}
+
+func newCredentialStoreWithRuntime(config credentialStoreConfig, runtime runtimeAdapters) (credentialStore, error) {
+	runtime = runtime.withDefaults()
 	switch config.kind {
 	case "file":
 		return fileCredentialStore{path: config.path}, nil
 	case "os_native":
-		if currentOS != "darwin" && currentOS != "linux" && currentOS != "windows" {
+		if runtime.currentOS != "darwin" && runtime.currentOS != "linux" && runtime.currentOS != "windows" {
 			return nil, errors.New("OS-native Credential Store is not available on this platform; configure credential_store type \"file\"")
 		}
-		return osNativeCredentialStore{service: config.service}, nil
+		return osNativeCredentialStore{service: config.service, runtime: runtime}, nil
 	default:
 		return nil, errors.New("unsupported Credential Store type")
 	}
@@ -3042,6 +3121,7 @@ func (store fileCredentialStore) Load(key string) (map[string]any, error) {
 
 type osNativeCredentialStore struct {
 	service string
+	runtime runtimeAdapters
 }
 
 func (store osNativeCredentialStore) Store(key string, tokenMaterial map[string]any) error {
@@ -3049,13 +3129,14 @@ func (store osNativeCredentialStore) Store(key string, tokenMaterial map[string]
 	if err != nil {
 		return err
 	}
-	switch currentOS {
+	runtime := store.runtime.withDefaults()
+	switch runtime.currentOS {
 	case "darwin":
-		return runSecurityAddGenericPassword(store.service, key, content)
+		return runtime.runSecurityAddGenericPassword(store.service, key, content)
 	case "linux":
-		return runSecretToolStore(store.service, key, content)
+		return runtime.runSecretToolStore(store.service, key, content)
 	case "windows":
-		return runWindowsCredentialWrite(store.service, key, content)
+		return runtime.runWindowsCredentialWrite(store.service, key, content)
 	default:
 		return errors.New("OS-native Credential Store is not available on this platform; configure credential_store type \"file\"")
 	}
@@ -3064,13 +3145,14 @@ func (store osNativeCredentialStore) Store(key string, tokenMaterial map[string]
 func (store osNativeCredentialStore) Load(key string) (map[string]any, error) {
 	var content []byte
 	var err error
-	switch currentOS {
+	runtime := store.runtime.withDefaults()
+	switch runtime.currentOS {
 	case "darwin":
-		content, err = runSecurityFindGenericPassword(store.service, key)
+		content, err = runtime.runSecurityFindGenericPassword(store.service, key)
 	case "linux":
-		content, err = runSecretToolLookup(store.service, key)
+		content, err = runtime.runSecretToolLookup(store.service, key)
 	case "windows":
-		content, err = runWindowsCredentialRead(store.service, key)
+		content, err = runtime.runWindowsCredentialRead(store.service, key)
 	default:
 		return nil, errors.New("OS-native Credential Store is not available on this platform; configure credential_store type \"file\"")
 	}

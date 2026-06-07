@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"strings"
-	"time"
 )
 
 var (
@@ -17,7 +16,7 @@ type currentConnectionAccess struct {
 	credentialStore credentialStoreConfig
 	connection      archivedConnection
 	protectedPaths  []string
-	now             func() time.Time
+	runtime         runtimeAdapters
 }
 
 type doctorOnlineTokenCheck struct {
@@ -27,16 +26,20 @@ type doctorOnlineTokenCheck struct {
 }
 
 func newCurrentConnectionAccess(credentialStore credentialStoreConfig, connection archivedConnection, protectedPaths []string) currentConnectionAccess {
+	return newCurrentConnectionAccessWithRuntime(credentialStore, connection, protectedPaths, productionRuntimeAdapters())
+}
+
+func newCurrentConnectionAccessWithRuntime(credentialStore credentialStoreConfig, connection archivedConnection, protectedPaths []string, runtime runtimeAdapters) currentConnectionAccess {
 	return currentConnectionAccess{
 		credentialStore: credentialStore,
 		connection:      connection,
 		protectedPaths:  append([]string(nil), protectedPaths...),
-		now:             currentTime,
+		runtime:         runtime.withDefaults(),
 	}
 }
 
 func (access currentConnectionAccess) AccessToken(requiredScopes []string) (string, error) {
-	if err := requireUsableConnectionAccessToken(access.connection.tokenMetadataJSON, access.now()); err != nil {
+	if err := requireUsableConnectionAccessToken(access.connection.tokenMetadataJSON, access.runtime.now()); err != nil {
 		return "", err
 	}
 	if err := requireConnectionScopes(access.connection.tokenMetadataJSON, requiredScopes); err != nil {
@@ -50,7 +53,7 @@ func (access currentConnectionAccess) AccessToken(requiredScopes []string) (stri
 }
 
 func (access currentConnectionAccess) FetchVerifiedIdentity(accessToken string) (googleIdentity, error) {
-	identity, err := fetchIdentity(accessToken)
+	identity, err := access.runtime.fetchIdentity(accessToken)
 	if err != nil {
 		return googleIdentity{}, currentConnectionProviderError(err)
 	}
@@ -90,7 +93,7 @@ func (access currentConnectionAccess) RefreshableAccessToken(oauthClient oauthCl
 	if err != nil {
 		return doctorOnlineTokenCheck{}, err
 	}
-	token, err := refreshOAuthToken(client, refreshToken, scopes)
+	token, err := access.runtime.refreshOAuthToken(client, refreshToken, scopes)
 	if err != nil {
 		return doctorOnlineTokenCheck{}, err
 	}
@@ -98,10 +101,10 @@ func (access currentConnectionAccess) RefreshableAccessToken(oauthClient oauthCl
 }
 
 func (access currentConnectionAccess) loadTokenMaterial() (map[string]any, error) {
-	if err := validateCredentialStoreRuntime(access.credentialStore, access.protectedPaths); err != nil {
+	if err := validateCredentialStoreRuntimeWithRuntime(access.credentialStore, access.protectedPaths, access.runtime); err != nil {
 		return nil, err
 	}
-	store, err := newCredentialStore(access.credentialStore)
+	store, err := newCredentialStoreWithRuntime(access.credentialStore, access.runtime)
 	if err != nil {
 		return nil, err
 	}

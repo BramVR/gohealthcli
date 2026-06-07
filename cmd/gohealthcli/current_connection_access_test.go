@@ -17,7 +17,7 @@ func TestCurrentConnectionAccessTokenValidatesMetadataBeforeCredentialStore(t *t
 		},
 		nil,
 	)
-	access.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
+	access.runtime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	_, err := access.AccessToken([]string{googleHealthProfileReadonlyScope})
 	if err == nil || !strings.Contains(err.Error(), "token has expired") {
@@ -34,7 +34,7 @@ func TestCurrentConnectionAccessTokenRequiresScopesBeforeCredentialStore(t *test
 		},
 		nil,
 	)
-	access.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
+	access.runtime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	_, err := access.AccessToken([]string{googleHealthProfileReadonlyScope})
 	if err == nil || !strings.Contains(err.Error(), googleHealthProfileReadonlyScope) {
@@ -43,16 +43,15 @@ func TestCurrentConnectionAccessTokenRequiresScopesBeforeCredentialStore(t *test
 }
 
 func TestCurrentConnectionAccessFetchVerifiedIdentityNormalizesUnauthorized(t *testing.T) {
-	originalFetchIdentity := fetchIdentity
-	fetchIdentity = func(accessToken string) (googleIdentity, error) {
+	runtime := productionRuntimeAdapters()
+	runtime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
 		return googleIdentity{}, errors.New("Google Health raw request failed with HTTP 401")
 	}
-	t.Cleanup(func() { fetchIdentity = originalFetchIdentity })
-
-	access := newCurrentConnectionAccess(
+	access := newCurrentConnectionAccessWithRuntime(
 		credentialStoreConfig{},
 		archivedConnection{googleHealthUserID: "111111256096816351"},
 		nil,
+		runtime,
 	)
 
 	_, err := access.FetchVerifiedIdentity("access-secret")
@@ -65,16 +64,15 @@ func TestCurrentConnectionAccessFetchVerifiedIdentityNormalizesUnauthorized(t *t
 }
 
 func TestCurrentConnectionAccessFetchVerifiedIdentityRejectsMismatch(t *testing.T) {
-	originalFetchIdentity := fetchIdentity
-	fetchIdentity = func(accessToken string) (googleIdentity, error) {
+	runtime := productionRuntimeAdapters()
+	runtime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
 		return googleIdentity{healthUserID: "other"}, nil
 	}
-	t.Cleanup(func() { fetchIdentity = originalFetchIdentity })
-
-	access := newCurrentConnectionAccess(
+	access := newCurrentConnectionAccessWithRuntime(
 		credentialStoreConfig{},
 		archivedConnection{googleHealthUserID: "111111256096816351"},
 		nil,
+		runtime,
 	)
 
 	_, err := access.FetchVerifiedIdentity("access-secret")

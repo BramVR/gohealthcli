@@ -6,13 +6,20 @@ import (
 	"time"
 )
 
-type syncRunExecutor struct{}
-
-func syncSetup(options syncCommandOptions) (syncResult, error) {
-	return (syncRunExecutor{}).Execute(options)
+type syncRunExecutor struct {
+	runtime runtimeAdapters
 }
 
-func (syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
+func syncSetup(options syncCommandOptions) (syncResult, error) {
+	return syncSetupWithRuntime(options, productionRuntimeAdapters())
+}
+
+func syncSetupWithRuntime(options syncCommandOptions, runtime runtimeAdapters) (syncResult, error) {
+	return (syncRunExecutor{runtime: runtime}).Execute(options)
+}
+
+func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
+	runtime := executor.runtime.withDefaults()
 	if len(options.dataTypes) == 0 {
 		return syncResult{Status: "sync_failed"}, errors.New("sync requires at least one Data Type")
 	}
@@ -42,9 +49,9 @@ func (syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
 	}
 	if options.to == "" {
 		if options.rollup == "daily" || syncDataPointUsesDateRange(dataType) {
-			options.to = currentTime().UTC().Format("2006-01-02")
+			options.to = runtime.now().UTC().Format("2006-01-02")
 		} else {
-			options.to = currentTime().UTC().Format(time.RFC3339)
+			options.to = runtime.now().UTC().Format(time.RFC3339)
 		}
 	}
 
@@ -61,7 +68,7 @@ func (syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
 	if err != nil {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, err
 	}
-	ingestion := newGoogleHealthIngestion()
+	ingestion := newGoogleHealthIngestionWithRuntime(runtime)
 	ingestionRequest := googleHealthIngestionRequest{
 		connection:   connection,
 		dataType:     dataType,
@@ -83,7 +90,7 @@ func (syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
 		EndpointFamily: ingestionPlan.endpointFamily,
 		SourceFamily:   options.sourceFamily,
 	}
-	startedAt := currentTime().UTC().Format(time.RFC3339)
+	startedAt := runtime.now().UTC().Format(time.RFC3339)
 	syncRunID, err := archive.StartSyncRun(connection, options.dataTypes, options.from, options.to, result.EndpointFamily, result.SourceFamily, startedAt)
 	if err != nil {
 		return result, err
@@ -93,12 +100,12 @@ func (syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
 		result.Status = "sync_failed"
 		result.Message = cause.Error()
 		seen, newCount, updated := syncResultTotalCounts(result)
-		if updateErr := archive.FinishSyncRun(syncRunID, result.Status, seen, newCount, updated, currentTime().UTC().Format(time.RFC3339), result.Message); updateErr != nil {
+		if updateErr := archive.FinishSyncRun(syncRunID, result.Status, seen, newCount, updated, runtime.now().UTC().Format(time.RFC3339), result.Message); updateErr != nil {
 			return result, fmt.Errorf("%w; record failed Sync Run: %v", cause, updateErr)
 		}
 		return result, cause
 	}
-	connectionAccess := newCurrentConnectionAccess(config.credentialStore, connection, []string{options.configPath, options.archivePath})
+	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{options.configPath, options.archivePath}, runtime)
 	accessToken, err := connectionAccess.AccessToken(googleHealthScopesForDataType(dataType))
 	if err != nil {
 		return fail(err)
@@ -113,7 +120,7 @@ func (syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
 		return fail(err)
 	}
 	seen, newCount, updated := syncResultTotalCounts(result)
-	if err := archive.FinishSyncRun(syncRunID, "sync_completed", seen, newCount, updated, currentTime().UTC().Format(time.RFC3339), ""); err != nil {
+	if err := archive.FinishSyncRun(syncRunID, "sync_completed", seen, newCount, updated, runtime.now().UTC().Format(time.RFC3339), ""); err != nil {
 		result.Status = "sync_failed"
 		result.Message = err.Error()
 		return result, err
