@@ -592,7 +592,12 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 			fmt.Fprintf(stderr, "existing config is not initialized: %v\n", err)
 			return 1
 		}
-		if _, err := (healthArchiveLifecycle{path: *initArchivePath}).MigrateAndInspect(false); err != nil {
+		lifecycle := healthArchiveLifecycle{path: *initArchivePath}
+		if err := lifecycle.Migrate(); err != nil {
+			fmt.Fprintf(stderr, "existing Health Archive is not initialized: %v\n", err)
+			return 1
+		}
+		if _, err := lifecycle.Inspect(false); err != nil {
 			fmt.Fprintf(stderr, "existing Health Archive is not initialized: %v\n", err)
 			return 1
 		}

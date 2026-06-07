@@ -5662,6 +5662,9 @@ func TestInitRejectsExistingInvalidArchive(t *testing.T) {
 	if !strings.Contains(stderr.String(), "existing Health Archive is not initialized") {
 		t.Fatalf("stderr missing archive validation error: %q", stderr.String())
 	}
+	if strings.Contains(stderr.String(), "Health Archive check failed") {
+		t.Fatalf("stderr included extra check wrapper: %q", stderr.String())
+	}
 }
 
 func TestInitRejectsExistingInvalidConfig(t *testing.T) {
