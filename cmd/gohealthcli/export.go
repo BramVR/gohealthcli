@@ -276,6 +276,12 @@ var exportDatasetSpecs = exportDatasetSpecByName(exportDatasetDefinitions)
 func exportDatasetSpecByName(definitions []exportDatasetSpec) map[string]exportDatasetSpec {
 	specs := make(map[string]exportDatasetSpec, len(definitions))
 	for _, definition := range definitions {
+		if definition.name == "" {
+			panic("export dataset definition missing name")
+		}
+		if _, exists := specs[definition.name]; exists {
+			panic(fmt.Sprintf("duplicate export dataset definition: %s", definition.name))
+		}
 		specs[definition.name] = definition
 	}
 	return specs

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -48,12 +47,67 @@ func TestExportDatasetDefinitionsIncludeViewSQL(t *testing.T) {
 }
 
 func TestExportDatasetDefinitionsDriveViewMigrations(t *testing.T) {
-	if got, want := dailyStepsViewMigrationStatements(), exportDatasetViewMigrationStatements(4); !reflect.DeepEqual(got, want) {
-		t.Fatalf("daily steps migration statements = %v, want %v", got, want)
+	tests := []struct {
+		name       string
+		statements []string
+		wantViews  []string
+	}{
+		{
+			name:       "daily steps migration",
+			statements: dailyStepsViewMigrationStatements(),
+			wantViews:  []string{"daily_steps"},
+		},
+		{
+			name:       "first release normalized views migration",
+			statements: firstReleaseNormalizedViewMigrationStatements(),
+			wantViews: []string{
+				"heart_rate_samples",
+				"resting_heart_rate_by_day",
+				"sleep_sessions",
+				"exercise_sessions",
+				"weight_samples",
+			},
+		},
 	}
-	if got, want := firstReleaseNormalizedViewMigrationStatements(), exportDatasetViewMigrationStatements(5); !reflect.DeepEqual(got, want) {
-		t.Fatalf("first release migration statements = %v, want %v", got, want)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if len(test.statements) != len(test.wantViews) {
+				t.Fatalf("statement count = %d, want %d: %v", len(test.statements), len(test.wantViews), test.statements)
+			}
+			for index, wantView := range test.wantViews {
+				wantPrefix := "CREATE VIEW " + wantView + " AS\n"
+				if !strings.HasPrefix(test.statements[index], wantPrefix) {
+					t.Fatalf("statement %d = %q, want prefix %q", index, test.statements[index], wantPrefix)
+				}
+			}
+		})
 	}
+	if got := exportDatasetViewMigrationStatements(999); len(got) != 0 {
+		t.Fatalf("unknown migration statements = %v, want empty", got)
+	}
+}
+
+func TestExportDatasetLookupRejectsDuplicateNames(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("duplicate dataset panic = nil")
+		}
+	}()
+	exportDatasetSpecByName([]exportDatasetSpec{
+		{name: "daily-steps"},
+		{name: "daily-steps"},
+	})
+}
+
+func TestExportDatasetLookupRejectsMissingNames(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("missing dataset name panic = nil")
+		}
+	}()
+	exportDatasetSpecByName([]exportDatasetSpec{
+		{view: "daily_steps"},
+	})
 }
 
 func TestDailyStepsNormalizedViewPrefersRollupsAndAggregatesDataPoints(t *testing.T) {
