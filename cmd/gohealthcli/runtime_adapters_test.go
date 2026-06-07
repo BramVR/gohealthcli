@@ -11,8 +11,7 @@ func TestConnectSetupUsesRuntimeAdapter(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	now := time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC)
-	runtime := productionRuntimeAdapters()
-	runtime.now = func() time.Time { return now }
+	runtime := runtimeAdapters{}
 	runtime.runOAuthFlow = func(client oauthClientConfig, scopes []string, noInput bool) (oauthTokenResponse, error) {
 		if client.clientID != "test-client" || client.clientSecret != "test-secret" {
 			t.Fatalf("OAuth client = (%q, %q), want test client", client.clientID, client.clientSecret)

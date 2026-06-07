@@ -898,6 +898,7 @@ func connectSetup(configPath, archivePath string, noInput bool) (connectResult, 
 }
 
 func connectSetupWithRuntime(configPath, archivePath string, noInput bool, runtime runtimeAdapters) (connectResult, error) {
+	runtime = runtime.withDefaults()
 	config, err := inspectFullConfig(configPath, archivePath)
 	if err != nil {
 		return connectResult{}, fmt.Errorf("config check failed: %w", err)
