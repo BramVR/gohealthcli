@@ -69,15 +69,9 @@ func (lifecycle healthArchiveLifecycle) Create() (err error) {
 }
 
 func (lifecycle healthArchiveLifecycle) Open(mode healthArchiveOpenMode) (healthArchiveHandle, error) {
-	if err := lifecycle.Migrate(); err != nil {
-		return healthArchiveHandle{}, fmt.Errorf("Health Archive migration failed: %w", err)
-	}
-	archive, err := lifecycle.Inspect(false)
+	archive, err := lifecycle.MigrateAndInspect(false)
 	if err != nil {
-		return healthArchiveHandle{}, healthArchiveOpenError{
-			schemaVersion: archive.schemaVersion,
-			err:           fmt.Errorf("Health Archive check failed: %w", err),
-		}
+		return healthArchiveHandle{}, err
 	}
 	db, err := lifecycle.openDB(mode)
 	if err != nil {
@@ -100,6 +94,20 @@ func (lifecycle healthArchiveLifecycle) Migrate() error {
 	}
 	defer db.Close()
 	return applyPendingMigrations(db)
+}
+
+func (lifecycle healthArchiveLifecycle) MigrateAndInspect(validateTokens bool) (archiveCheck, error) {
+	if err := lifecycle.Migrate(); err != nil {
+		return archiveCheck{}, fmt.Errorf("Health Archive migration failed: %w", err)
+	}
+	archive, err := lifecycle.Inspect(validateTokens)
+	if err != nil {
+		return archive, healthArchiveOpenError{
+			schemaVersion: archive.schemaVersion,
+			err:           fmt.Errorf("Health Archive check failed: %w", err),
+		}
+	}
+	return archive, nil
 }
 
 func (lifecycle healthArchiveLifecycle) Inspect(validateTokens bool) (archiveCheck, error) {

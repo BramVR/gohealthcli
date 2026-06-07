@@ -435,12 +435,9 @@ func runDoctor(args []string, configPath, archivePath string, mode outputMode, s
 		if err != nil {
 			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, fmt.Sprintf("config check failed: %v", err), mode, stdout, stderr)
 		}
-		if err := migrateArchiveIfNeeded(*doctorArchivePath); err != nil {
-			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, fmt.Sprintf("Health Archive migration failed: %v", err), mode, stdout, stderr)
-		}
-		archive, err := inspectArchive(*doctorArchivePath, true)
+		archive, err := (healthArchiveLifecycle{path: *doctorArchivePath}).MigrateAndInspect(true)
 		if err != nil {
-			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, fmt.Sprintf("Health Archive check failed: %v", err), mode, stdout, stderr)
+			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, err.Error(), mode, stdout, stderr)
 		}
 		result := doctorResult{
 			Status:            "ok",
@@ -595,11 +592,7 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 			fmt.Fprintf(stderr, "existing config is not initialized: %v\n", err)
 			return 1
 		}
-		if err := migrateArchiveIfNeeded(*initArchivePath); err != nil {
-			fmt.Fprintf(stderr, "existing Health Archive is not initialized: %v\n", err)
-			return 1
-		}
-		if err := validateArchive(*initArchivePath); err != nil {
+		if _, err := (healthArchiveLifecycle{path: *initArchivePath}).MigrateAndInspect(false); err != nil {
 			fmt.Fprintf(stderr, "existing Health Archive is not initialized: %v\n", err)
 			return 1
 		}
@@ -870,11 +863,8 @@ func connectSetup(configPath, archivePath string, noInput bool) (connectResult, 
 	if config.oauthClient.kind != "file" {
 		return connectResult{CredentialStore: config.credentialStore.kind}, errors.New("connect requires an OAuth client file source; Secret Provider references are setup-only")
 	}
-	if err := migrateArchiveIfNeeded(archivePath); err != nil {
-		return connectResult{CredentialStore: config.credentialStore.kind}, fmt.Errorf("Health Archive migration failed: %w", err)
-	}
-	if _, err := inspectArchive(archivePath, false); err != nil {
-		return connectResult{}, fmt.Errorf("Health Archive check failed: %w", err)
+	if _, err := (healthArchiveLifecycle{path: archivePath}).MigrateAndInspect(false); err != nil {
+		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
 	store, err := newCredentialStore(config.credentialStore)
 	if err != nil {
@@ -1115,16 +1105,11 @@ func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
 		OAuthClientSource: config.oauthClient.kind,
 		CredentialStore:   config.credentialStore.kind,
 	}
-	if err := migrateArchiveIfNeeded(archivePath); err != nil {
-		result.Status = "setup_invalid"
-		result.TokenStatus = "unknown"
-		return result, fmt.Errorf("Health Archive migration failed: %w", err)
-	}
-	archive, err := inspectArchive(archivePath, true)
+	archive, err := (healthArchiveLifecycle{path: archivePath}).MigrateAndInspect(true)
 	if err != nil {
 		result.Status = "setup_invalid"
 		result.TokenStatus = "unknown"
-		return result, fmt.Errorf("Health Archive check failed: %w", err)
+		return result, err
 	}
 	result.SchemaVersion = &archive.schemaVersion
 	result.ConnectionCount = &archive.connectionCount
