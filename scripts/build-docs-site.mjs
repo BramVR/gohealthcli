@@ -157,7 +157,14 @@ function pageUrl(origin, outRel) {
 
 function readCname() {
   for (const candidate of [path.join(docsDir, "CNAME"), path.join(root, "CNAME")]) {
-    if (fs.existsSync(candidate)) return fs.readFileSync(candidate, "utf8").trim();
+    if (fs.existsSync(candidate)) {
+      let value = fs.readFileSync(candidate, "utf8").trim();
+      // Tolerate a stray protocol or path in the CNAME file. GitHub Pages
+      // itself accepts only a bare hostname, but it is a common authoring
+      // mistake to paste a full URL.
+      value = value.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
+      return value;
+    }
   }
   return "";
 }
