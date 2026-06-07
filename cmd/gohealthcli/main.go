@@ -945,34 +945,17 @@ func identitySetup(configPath, archivePath string) (identityResult, error) {
 		GoogleHealthUserID: connection.googleHealthUserID,
 		LegacyFitbitUserID: connection.legacyFitbitUserID,
 	}
-	if err := requireUsableConnectionAccessToken(connection.tokenMetadataJSON, currentTime()); err != nil {
-		return result, err
-	}
-	if err := validateCredentialStoreRuntime(config.credentialStore, []string{configPath, archivePath}); err != nil {
-		return result, err
-	}
-	store, err := newCredentialStore(config.credentialStore)
+	connectionAccess := newCurrentConnectionAccess(config.credentialStore, connection, []string{configPath, archivePath})
+	accessToken, err := connectionAccess.AccessToken(nil)
 	if err != nil {
 		return result, err
 	}
-	tokenMaterial, err := store.Load(connection.id)
+	identity, err := connectionAccess.FetchVerifiedIdentity(accessToken)
 	if err != nil {
-		return result, err
-	}
-	accessToken, ok := tokenMaterial["access_token"].(string)
-	if !ok || accessToken == "" {
-		return result, errors.New("Credential Store token material is missing access token; run `gohealthcli connect` again")
-	}
-	identity, err := fetchIdentity(accessToken)
-	if err != nil {
-		if strings.Contains(err.Error(), "HTTP 401") {
-			return result, errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again")
+		if isCurrentConnectionIdentityMismatch(err) {
+			result.Status = "identity_mismatch"
 		}
 		return result, err
-	}
-	if identity.healthUserID != connection.googleHealthUserID {
-		result.Status = "identity_mismatch"
-		return result, errors.New("Provider returned a different Google Identity; use a new archive path")
 	}
 	if err := archive.RefreshConnectionIdentity(connection, identity, currentTime()); err != nil {
 		return result, err
@@ -1009,37 +992,29 @@ func profileSetup(configPath, archivePath string) (profileResult, error) {
 		GoogleHealthUserID: connection.googleHealthUserID,
 		LegacyFitbitUserID: connection.legacyFitbitUserID,
 	}
-	if err := requireUsableConnectionAccessToken(connection.tokenMetadataJSON, currentTime()); err != nil {
-		return result, err
-	}
-	if err := requireConnectionScopes(connection.tokenMetadataJSON, []string{googleHealthProfileReadonlyScope}); err != nil {
-		return result, err
-	}
-	accessToken, err := loadAccessTokenForConnection(config.credentialStore, connection, []string{configPath, archivePath})
+	connectionAccess := newCurrentConnectionAccess(config.credentialStore, connection, []string{configPath, archivePath})
+	accessToken, err := connectionAccess.AccessToken([]string{googleHealthProfileReadonlyScope})
 	if err != nil {
 		return result, err
 	}
 	profile, err := fetchProfile(accessToken)
 	if err != nil {
-		if strings.Contains(err.Error(), "HTTP 401") {
-			return result, errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again")
-		}
-		return result, err
+		return result, currentConnectionProviderError(err)
 	}
 	profileHealthUserID := profile.healthUserID
 	if profileHealthUserID == "" {
-		identity, err := fetchIdentity(accessToken)
+		identity, err := connectionAccess.FetchVerifiedIdentity(accessToken)
 		if err != nil {
-			if strings.Contains(err.Error(), "HTTP 401") {
-				return result, errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again")
+			if isCurrentConnectionIdentityMismatch(err) {
+				result.Status = "profile_mismatch"
 			}
 			return result, err
 		}
 		profileHealthUserID = identity.healthUserID
 	}
-	if profileHealthUserID != connection.googleHealthUserID {
+	if err := connectionAccess.RequireMatchingHealthUserID(profileHealthUserID); err != nil {
 		result.Status = "profile_mismatch"
-		return result, errors.New("Provider returned a different Google Identity; use a new archive path")
+		return result, err
 	}
 	fetchedAt := currentTime().UTC().Format(time.RFC3339)
 	snapshotID, err := archive.InsertProfileSnapshot(connection, profile.rawJSON, fetchedAt)
@@ -1140,10 +1115,11 @@ func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
 		return result, err
 	}
 	protectedPaths := []string{configPath, archivePath, config.oauthClient.path}
-	tokenCheck, err := doctorOnlineAccessToken(config, connection, protectedPaths)
+	connectionAccess := newCurrentConnectionAccess(config.credentialStore, connection, protectedPaths)
+	tokenCheck, err := connectionAccess.RefreshableAccessToken(config.oauthClient)
 	if err != nil {
 		if result.TokenStatus == archive.tokenStatus {
-			if strings.Contains(err.Error(), "missing access token") || strings.Contains(err.Error(), "missing refresh token") || strings.Contains(err.Error(), "token material not found") {
+			if isCurrentConnectionTokenMissing(err) {
 				result.TokenStatus = "token_missing"
 			} else {
 				result.TokenStatus = "refresh_failed"
@@ -1154,17 +1130,12 @@ func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
 	if tokenCheck.refreshedToken == nil {
 		result.TokenStatus = "metadata_present"
 	}
-	identity, err := fetchIdentity(tokenCheck.accessToken)
-	if err != nil {
+	if _, err := connectionAccess.FetchVerifiedIdentity(tokenCheck.accessToken); err != nil {
 		result.TokenStatus = "provider_unreachable"
-		if strings.Contains(err.Error(), "HTTP 401") {
-			return result, errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again")
+		if isCurrentConnectionIdentityMismatch(err) {
+			result.TokenStatus = "identity_mismatch"
 		}
 		return result, err
-	}
-	if identity.healthUserID != connection.googleHealthUserID {
-		result.TokenStatus = "identity_mismatch"
-		return result, errors.New("Provider returned a different Google Identity; use a new archive path")
 	}
 	if tokenCheck.refreshedToken != nil {
 		if err := persistDoctorOnlineRefreshedToken(archiveAPI, config.credentialStore, connection.id, *tokenCheck.refreshedToken, tokenCheck.previousTokenMaterial); err != nil {
@@ -1175,50 +1146,6 @@ func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
 	result.TokenStatus = "online_ok"
 	result.Message = "online Google Health check passed"
 	return result, nil
-}
-
-type doctorOnlineTokenCheck struct {
-	accessToken           string
-	refreshedToken        *oauthTokenResponse
-	previousTokenMaterial map[string]any
-}
-
-func doctorOnlineAccessToken(config fullConfigCheck, connection archivedConnection, protectedPaths []string) (doctorOnlineTokenCheck, error) {
-	if err := validateCredentialStoreRuntime(config.credentialStore, protectedPaths); err != nil {
-		return doctorOnlineTokenCheck{}, err
-	}
-	store, err := newCredentialStore(config.credentialStore)
-	if err != nil {
-		return doctorOnlineTokenCheck{}, err
-	}
-	tokenMaterial, err := store.Load(connection.id)
-	if err != nil {
-		return doctorOnlineTokenCheck{}, err
-	}
-	accessToken, ok := tokenMaterial["access_token"].(string)
-	if !ok || accessToken == "" {
-		return doctorOnlineTokenCheck{}, errors.New("Credential Store token material is missing access token; run `gohealthcli connect` again")
-	}
-	refreshToken, ok := tokenMaterial["refresh_token"].(string)
-	if !ok || refreshToken == "" {
-		return doctorOnlineTokenCheck{}, errors.New("Credential Store token material is missing refresh token; run `gohealthcli connect` again")
-	}
-	_, scopes, err := connectionTokenExpiryAndScopes(connection.tokenMetadataJSON)
-	if err != nil {
-		return doctorOnlineTokenCheck{}, err
-	}
-	if config.oauthClient.kind != "file" {
-		return doctorOnlineTokenCheck{}, errors.New("doctor --online requires an OAuth client file source to refresh tokens; run `gohealthcli connect` again")
-	}
-	client, err := loadOAuthClientConfig(config.oauthClient.path)
-	if err != nil {
-		return doctorOnlineTokenCheck{}, err
-	}
-	token, err := refreshOAuthToken(client, refreshToken, scopes)
-	if err != nil {
-		return doctorOnlineTokenCheck{}, err
-	}
-	return doctorOnlineTokenCheck{accessToken: token.accessToken, refreshedToken: &token, previousTokenMaterial: tokenMaterial}, nil
 }
 
 func persistDoctorOnlineRefreshedToken(archive healthArchiveConnectionAPI, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse, previousTokenMaterial map[string]any) error {
@@ -1255,43 +1182,16 @@ func rawSetup(configPath, archivePath string, request rawProviderRequest) ([]byt
 		}
 		return nil, err
 	}
-	if err := requireUsableConnectionAccessToken(connection.tokenMetadataJSON, currentTime()); err != nil {
-		return nil, err
-	}
-	if err := requireConnectionScopes(connection.tokenMetadataJSON, request.requiredScopes); err != nil {
-		return nil, err
-	}
-	accessToken, err := loadAccessTokenForConnection(config.credentialStore, connection, []string{configPath, archivePath})
+	connectionAccess := newCurrentConnectionAccess(config.credentialStore, connection, []string{configPath, archivePath})
+	accessToken, err := connectionAccess.AccessToken(request.requiredScopes)
 	if err != nil {
 		return nil, err
 	}
 	body, err := fetchRawProvider(request, accessToken)
 	if err != nil {
-		if strings.Contains(err.Error(), "HTTP 401") {
-			return nil, errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again")
-		}
-		return nil, err
+		return nil, currentConnectionProviderError(err)
 	}
 	return body, nil
-}
-
-func loadAccessTokenForConnection(config credentialStoreConfig, connection archivedConnection, protectedPaths []string) (string, error) {
-	if err := validateCredentialStoreRuntime(config, protectedPaths); err != nil {
-		return "", err
-	}
-	store, err := newCredentialStore(config)
-	if err != nil {
-		return "", err
-	}
-	tokenMaterial, err := store.Load(connection.id)
-	if err != nil {
-		return "", err
-	}
-	accessToken, ok := tokenMaterial["access_token"].(string)
-	if !ok || accessToken == "" {
-		return "", errors.New("Credential Store token material is missing access token; run `gohealthcli connect` again")
-	}
-	return accessToken, nil
 }
 
 func requireConnectionScopes(metadata string, requiredScopes []string) error {

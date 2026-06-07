@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -99,25 +98,13 @@ func (syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
 		}
 		return result, cause
 	}
-	if err := requireUsableConnectionAccessToken(connection.tokenMetadataJSON, currentTime()); err != nil {
-		return fail(err)
-	}
-	if err := requireConnectionScopes(connection.tokenMetadataJSON, googleHealthScopesForDataType(dataType)); err != nil {
-		return fail(err)
-	}
-	accessToken, err := loadAccessTokenForConnection(config.credentialStore, connection, []string{options.configPath, options.archivePath})
+	connectionAccess := newCurrentConnectionAccess(config.credentialStore, connection, []string{options.configPath, options.archivePath})
+	accessToken, err := connectionAccess.AccessToken(googleHealthScopesForDataType(dataType))
 	if err != nil {
 		return fail(err)
 	}
-	identity, err := fetchIdentity(accessToken)
-	if err != nil {
-		if strings.Contains(err.Error(), "HTTP 401") {
-			return fail(errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again"))
-		}
+	if _, err := connectionAccess.FetchVerifiedIdentity(accessToken); err != nil {
 		return fail(err)
-	}
-	if identity.healthUserID != connection.googleHealthUserID {
-		return fail(errors.New("Provider returned a different Google Identity; use a new archive path"))
 	}
 	ingestionRequest.accessToken = accessToken
 	ingestionResult, err := ingestion.Execute(archive, ingestionRequest)
