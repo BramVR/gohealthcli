@@ -25,5 +25,5 @@ gohealthcli raw <target> [<args>...]
 | `--db` | string | — | SQLite Health Archive path |
 | `--from` | string | — | inclusive time-range start (where supported by the endpoint) |
 | `--to` | string | — | exclusive time-range end (where supported by the endpoint) |
-| `--page-size` | string | — | pagination page size (where supported by the endpoint) |
+| `--page-size` | int | — | pagination page size (positive integer; where supported by the endpoint) |
 | `--page-token` | string | — | pagination page token from a prior response |

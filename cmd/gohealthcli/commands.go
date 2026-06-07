@@ -45,8 +45,12 @@ type flagSpec struct {
 // markdown.
 const commandSchemaVersion = 1
 
-// commonFlags are the five shared flags every user-facing subcommand accepts.
-// Centralising them here keeps the registry concise; the dedicated
+// commonFlags are the five shared flags that the standard output subcommands
+// (init, doctor, connect, identity, profile, sync, status, query) accept.
+// `export` and `raw` use different flag sets — see their explicit Flags slices
+// below — because their output semantics differ.
+//
+// Centralising the shared flags here keeps the registry concise; the dedicated
 // commonFlagsSpec module that #76 introduces will collapse them further.
 var commonFlags = []flagSpec{
 	{Name: "config", Type: "string", Default: "", Usage: "config file path"},
@@ -155,7 +159,7 @@ var commands = []commandDef{
 			{Name: "db", Type: "string", Default: "", Usage: "SQLite Health Archive path"},
 			{Name: "from", Type: "string", Default: "", Usage: "inclusive time-range start (where supported by the endpoint)"},
 			{Name: "to", Type: "string", Default: "", Usage: "exclusive time-range end (where supported by the endpoint)"},
-			{Name: "page-size", Type: "string", Default: "", Usage: "pagination page size (where supported by the endpoint)"},
+			{Name: "page-size", Type: "int", Default: "", Usage: "pagination page size (positive integer; where supported by the endpoint)"},
 			{Name: "page-token", Type: "string", Default: "", Usage: "pagination page token from a prior response"},
 		},
 	},
