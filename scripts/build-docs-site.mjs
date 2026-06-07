@@ -444,6 +444,16 @@ function homeHero(page) {
   const installOther = installRel
     ? `<p class="install-other"><a href="${installRel}">Other install options →</a></p>`
     : "";
+  const brewLine = brewAvailable
+    ? `<div class="install-line" data-copyable aria-label="Install with Homebrew">
+            <span class="prompt" aria-hidden="true">$</span>
+            <code>${escapeHtml(brewInstall)}</code>
+          </div>`
+    : `<div class="install-line soon" aria-label="Homebrew install (coming soon)">
+            <span class="prompt" aria-hidden="true">$</span>
+            <code>${escapeHtml(brewInstall)}</code>
+            <span class="badge">Coming soon</span>
+          </div>`;
   return `<header class="home-hero">
         <p class="eyebrow">Local-first · Google Health · SQLite</p>
         <h1>${tagline}</h1>
@@ -452,11 +462,7 @@ function homeHero(page) {
           ${ctas}
         </div>
         <div class="install-stack" aria-label="Install">
-          <div class="install-line soon" aria-label="Homebrew install (coming soon)">
-            <span class="prompt" aria-hidden="true">$</span>
-            <code>${escapeHtml(brewInstall)}</code>
-            <span class="badge">Coming soon</span>
-          </div>
+          ${brewLine}
           <div class="install-line" data-copyable aria-label="Install with go install">
             <span class="prompt" aria-hidden="true">$</span>
             <code>${escapeHtml(goInstall)}</code>
