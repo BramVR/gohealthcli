@@ -1249,18 +1249,12 @@ func rawSetup(configPath, archivePath string, request rawProviderRequest) ([]byt
 	if err != nil {
 		return nil, fmt.Errorf("config check failed: %w", err)
 	}
-	if err := migrateArchiveIfNeeded(archivePath); err != nil {
-		return nil, fmt.Errorf("Health Archive migration failed: %w", err)
-	}
-	if _, err := inspectArchive(archivePath, false); err != nil {
-		return nil, fmt.Errorf("Health Archive check failed: %w", err)
-	}
-	db, err := openArchiveReadOnly(archivePath)
+	archive, err := (healthArchiveLifecycle{path: archivePath}).Open(readOnlyArchive)
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
-	connection, err := readCurrentConnection(db)
+	defer archive.Close()
+	connection, err := readCurrentConnection(archive.db)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errors.New("no Connection found; run `gohealthcli connect` first")
@@ -1499,34 +1493,7 @@ func configContent(configPath, archivePath string, source oauthClientSource) str
 }
 
 func createArchive(archivePath string) (err error) {
-	if err := ensureOwnerOnlyDir(filepath.Dir(archivePath)); err != nil {
-		return err
-	}
-	file, err := os.OpenFile(archivePath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			_ = os.Remove(archivePath)
-		}
-	}()
-	if err := file.Close(); err != nil {
-		return err
-	}
-
-	db, err := openArchive(archivePath)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	if err := applyMigrations(db); err != nil {
-		return err
-	}
-	if !usesPOSIXPermissions() {
-		return nil
-	}
-	return os.Chmod(archivePath, 0o600)
+	return (healthArchiveLifecycle{path: archivePath}).Create()
 }
 
 func validateConfig(configPath, archivePath string) error {
@@ -3374,56 +3341,7 @@ func validateArchive(archivePath string) error {
 }
 
 func inspectArchive(archivePath string, validateTokens bool) (archiveCheck, error) {
-	if err := validateOwnerOnlyDir(filepath.Dir(archivePath)); err != nil {
-		return archiveCheck{}, err
-	}
-	info, err := os.Stat(archivePath)
-	if err != nil {
-		return archiveCheck{}, err
-	}
-	if info.IsDir() {
-		return archiveCheck{}, fmt.Errorf("%s is a directory", archivePath)
-	}
-	if usesPOSIXPermissions() && info.Mode().Perm() != 0o600 {
-		mode := info.Mode().Perm()
-		return archiveCheck{}, fmt.Errorf("%s is not owner-only: mode %04o, want 0600", archivePath, mode)
-	}
-
-	db, err := openArchiveReadOnly(archivePath)
-	if err != nil {
-		return archiveCheck{}, err
-	}
-	defer db.Close()
-
-	var userVersion int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
-		return archiveCheck{}, err
-	}
-	if userVersion != currentSchemaVersion {
-		return archiveCheck{schemaVersion: userVersion}, fmt.Errorf("schema version %d, want %d", userVersion, currentSchemaVersion)
-	}
-
-	for version, name := range expectedSchemaMigrations() {
-		var migrationCount int
-		if err := db.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version = ? AND name = ?`, version, name).Scan(&migrationCount); err != nil {
-			return archiveCheck{schemaVersion: userVersion}, err
-		}
-		if migrationCount != 1 {
-			return archiveCheck{schemaVersion: userVersion}, fmt.Errorf("missing schema migration %d", version)
-		}
-	}
-	if !validateTokens {
-		return archiveCheck{schemaVersion: userVersion}, nil
-	}
-	count, tokenStatus, err := inspectConnectionTokenMetadata(db)
-	if err != nil {
-		return archiveCheck{}, err
-	}
-	return archiveCheck{
-		schemaVersion:   userVersion,
-		connectionCount: count,
-		tokenStatus:     tokenStatus,
-	}, nil
+	return (healthArchiveLifecycle{path: archivePath}).Inspect(validateTokens)
 }
 
 func validateTokenMetadata(metadata string) error {
@@ -3685,26 +3603,7 @@ func applyMigrations(db *sql.DB) error {
 }
 
 func migrateArchiveIfNeeded(archivePath string) error {
-	if err := validateOwnerOnlyDir(filepath.Dir(archivePath)); err != nil {
-		return err
-	}
-	info, err := os.Stat(archivePath)
-	if err != nil {
-		return err
-	}
-	if info.IsDir() {
-		return fmt.Errorf("%s is a directory", archivePath)
-	}
-	if usesPOSIXPermissions() && info.Mode().Perm() != 0o600 {
-		return fmt.Errorf("%s is not owner-only: mode %04o, want 0600", archivePath, info.Mode().Perm())
-	}
-
-	db, err := openArchive(archivePath)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	return applyPendingMigrations(db)
+	return (healthArchiveLifecycle{path: archivePath}).Migrate()
 }
 
 func applyPendingMigrations(db *sql.DB) error {

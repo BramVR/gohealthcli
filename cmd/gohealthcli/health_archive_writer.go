@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"reflect"
 )
 
@@ -24,17 +23,11 @@ type sqliteHealthArchiveWriter struct {
 var finishSyncRunRecord = finishSyncRun
 
 func openHealthArchiveWriter(archivePath string) (healthArchiveWriter, error) {
-	if err := migrateArchiveIfNeeded(archivePath); err != nil {
-		return nil, fmt.Errorf("Health Archive migration failed: %w", err)
-	}
-	if _, err := inspectArchive(archivePath, false); err != nil {
-		return nil, fmt.Errorf("Health Archive check failed: %w", err)
-	}
-	db, err := openArchive(archivePath)
+	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(writeArchive)
 	if err != nil {
 		return nil, err
 	}
-	return &sqliteHealthArchiveWriter{db: db}, nil
+	return &sqliteHealthArchiveWriter{db: handle.db}, nil
 }
 
 func (archive *sqliteHealthArchiveWriter) Close() error {
