@@ -5897,6 +5897,21 @@ func installConnectFakes(t *testing.T, config fakeConnectConfig) {
 	originalOAuthFlow := runOAuthFlow
 	originalFetchIdentity := fetchIdentity
 	originalCurrentTime := currentTime
+	runtime := newConnectFakeRuntime(t, config)
+	runOAuthFlow = runtime.runOAuthFlow
+	fetchIdentity = runtime.fetchIdentity
+	currentTime = runtime.now
+	t.Cleanup(func() {
+		runOAuthFlow = originalOAuthFlow
+		fetchIdentity = originalFetchIdentity
+		currentTime = originalCurrentTime
+	})
+}
+
+func newConnectFakeRuntime(t *testing.T, config fakeConnectConfig) runtimeAdapters {
+	t.Helper()
+
+	runtime := productionRuntimeAdapters()
 	if config.now.IsZero() {
 		config.now = time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC)
 	}
@@ -5909,7 +5924,7 @@ func installConnectFakes(t *testing.T, config fakeConnectConfig) {
 	if config.healthUserID == "" {
 		config.healthUserID = "111111256096816351"
 	}
-	runOAuthFlow = func(client oauthClientConfig, scopes []string, noInput bool) (oauthTokenResponse, error) {
+	runtime.runOAuthFlow = func(client oauthClientConfig, scopes []string, noInput bool) (oauthTokenResponse, error) {
 		if config.failIfCalled {
 			t.Fatalf("OAuth flow should not be called")
 		}
@@ -5938,7 +5953,7 @@ func installConnectFakes(t *testing.T, config fakeConnectConfig) {
 			},
 		}, nil
 	}
-	fetchIdentity = func(accessToken string) (googleIdentity, error) {
+	runtime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
 		if config.failIfCalled {
 			t.Fatalf("identity fetch should not be called")
 		}
@@ -5951,12 +5966,8 @@ func installConnectFakes(t *testing.T, config fakeConnectConfig) {
 			rawJSON:            fmt.Sprintf(`{"healthUserId":%q,"legacyUserId":%q}`, config.healthUserID, config.legacyFitbitUserID),
 		}, nil
 	}
-	currentTime = func() time.Time { return config.now }
-	t.Cleanup(func() {
-		runOAuthFlow = originalOAuthFlow
-		fetchIdentity = originalFetchIdentity
-		currentTime = originalCurrentTime
-	})
+	runtime.now = func() time.Time { return config.now }
+	return runtime
 }
 
 func installDoctorOnlineFakes(t *testing.T, config fakeDoctorOnlineConfig) {
@@ -6084,8 +6095,19 @@ func installStepSyncFetchFake(t *testing.T, wantAccessToken string, pages map[st
 	t.Helper()
 
 	originalFetchRawProvider := fetchRawProvider
+	runtime, requests := withStepSyncFetchFake(t, productionRuntimeAdapters(), wantAccessToken, pages)
+	fetchRawProvider = runtime.fetchRawProvider
+	t.Cleanup(func() {
+		fetchRawProvider = originalFetchRawProvider
+	})
+	return requests
+}
+
+func withStepSyncFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]rawProviderRequest) {
+	t.Helper()
+
 	var requests []rawProviderRequest
-	fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	runtime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("sync access token = %q, want stored token", accessToken)
 		}
@@ -6100,18 +6122,26 @@ func installStepSyncFetchFake(t *testing.T, wantAccessToken string, pages map[st
 		}
 		return []byte(body), nil
 	}
-	t.Cleanup(func() {
-		fetchRawProvider = originalFetchRawProvider
-	})
-	return &requests
+	return runtime, &requests
 }
 
 func installStepReconcileFetchFake(t *testing.T, wantAccessToken string, pages map[string]string) *[]rawProviderRequest {
 	t.Helper()
 
 	originalFetchRawProvider := fetchRawProvider
+	runtime, requests := withStepReconcileFetchFake(t, productionRuntimeAdapters(), wantAccessToken, pages)
+	fetchRawProvider = runtime.fetchRawProvider
+	t.Cleanup(func() {
+		fetchRawProvider = originalFetchRawProvider
+	})
+	return requests
+}
+
+func withStepReconcileFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]rawProviderRequest) {
+	t.Helper()
+
 	var requests []rawProviderRequest
-	fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	runtime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("reconcile sync access token = %q, want stored token", accessToken)
 		}
@@ -6136,10 +6166,7 @@ func installStepReconcileFetchFake(t *testing.T, wantAccessToken string, pages m
 		}
 		return []byte(body), nil
 	}
-	t.Cleanup(func() {
-		fetchRawProvider = originalFetchRawProvider
-	})
-	return &requests
+	return runtime, &requests
 }
 
 func installDataPointReconcileFetchFake(t *testing.T, wantAccessToken, dataType string, pages map[string]string) *[]rawProviderRequest {
@@ -6183,8 +6210,19 @@ func installStepDailyRollupFetchFake(t *testing.T, wantAccessToken string, pages
 	t.Helper()
 
 	originalFetchRawProvider := fetchRawProvider
+	runtime, requests := withStepDailyRollupFetchFake(t, productionRuntimeAdapters(), wantAccessToken, pages)
+	fetchRawProvider = runtime.fetchRawProvider
+	t.Cleanup(func() {
+		fetchRawProvider = originalFetchRawProvider
+	})
+	return requests
+}
+
+func withStepDailyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]rawProviderRequest) {
+	t.Helper()
+
 	var requests []rawProviderRequest
-	fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	runtime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("rollup sync access token = %q, want stored token", accessToken)
 		}
@@ -6243,10 +6281,7 @@ func installStepDailyRollupFetchFake(t *testing.T, wantAccessToken string, pages
 		}
 		return []byte(response), nil
 	}
-	t.Cleanup(func() {
-		fetchRawProvider = originalFetchRawProvider
-	})
-	return &requests
+	return runtime, &requests
 }
 
 func installDataPointSyncFetchFake(t *testing.T, wantAccessToken, dataType string, pages map[string]string) *[]rawProviderRequest {
