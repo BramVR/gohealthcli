@@ -3,8 +3,6 @@ title: Quickstart
 description: Walk from a fresh install through OAuth setup, your first connect, and your first sync of Google Health Data Points into a local Health Archive.
 ---
 
-## Quickstart
-
 This page walks from a fresh install to your first sync. Plan for fifteen minutes — most of that is the one-time Google Cloud OAuth setup, which you only do once per Google account.
 
 If you have not installed yet, start with the [Install](install.html) page.
@@ -123,8 +121,8 @@ gohealthcli raw data-type steps --from 2026-01-01 --to 2026-01-02
 
 ## Where next
 
-- The full subcommand reference is at the **Reference** section in the sidebar (auto-generated from the binary).
-- `gohealthcli <command> --help` prints command-specific flags.
+- `gohealthcli <command> --help` prints flags and a usage summary for any subcommand.
 - `gohealthcli doctor --plain` is the fastest sanity check whenever something feels off.
+- A per-subcommand reference section will appear in the sidebar once the auto-generated command reference ships.
 
 The archive is yours. Move it, back it up, query it — `gohealthcli` will only write when you ask.

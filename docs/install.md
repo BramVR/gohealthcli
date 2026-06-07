@@ -3,8 +3,6 @@ title: Install
 description: Install gohealthcli with go install, the upcoming Homebrew tap, or a local source build.
 ---
 
-## Install gohealthcli
-
 Pick the path that fits your setup. The CLI runs entirely on your machine — there is no service to sign up for and nothing to configure beyond your local Google OAuth client.
 
 ## Go install (works today)
