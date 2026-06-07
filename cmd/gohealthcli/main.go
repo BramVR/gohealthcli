@@ -388,6 +388,8 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 		return runExport(flags.Args()[1:], *configPath, *archivePath, globalArchivePathExplicit, stdout, stderr)
 	case "raw":
 		return runRawWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
+	case "schema":
+		return runSchema(flags.Args()[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command: %s\n", flags.Arg(0))
 		return 1
