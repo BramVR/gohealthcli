@@ -50,6 +50,9 @@ _Avoid_: credential store, token backend
 **Health Connect Export**: A separate Android-origin export path for Health Connect data, not the primary Provider. It may become an import fallback when API access is incomplete.
 _Avoid_: Google Health export, Fitbit export
 
+**Project Site**: The public, generated website at the project's custom domain that introduces `gohealthcli` and hosts its end-user documentation. A Project Site has an explicit page allowlist; internal working documents stay in `docs/` but are not on the Project Site.
+_Avoid_: docs, homepage, marketing site, landing page
+
 ## Flagged Ambiguities
 
 **Google Watch 4**: The intended device is probably a Google Pixel Watch or a Wear OS watch, but "Google Watch 4" is not a canonical project term. Use Wearable Data unless the exact device model matters.
