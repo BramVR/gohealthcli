@@ -121,15 +121,10 @@ func (syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
 	}
 	ingestionRequest.accessToken = accessToken
 	ingestionResult, err := ingestion.Execute(archive, ingestionRequest)
+	applyGoogleHealthIngestionCounts(&result, ingestionResult)
 	if err != nil {
 		return fail(err)
 	}
-	result.DataPointsSeen = ingestionResult.dataPointsSeen
-	result.DataPointsNew = ingestionResult.dataPointsNew
-	result.DataPointsUpdated = ingestionResult.dataPointsUpdated
-	result.RollupsSeen = ingestionResult.rollupsSeen
-	result.RollupsNew = ingestionResult.rollupsNew
-	result.RollupsUpdated = ingestionResult.rollupsUpdated
 	seen, newCount, updated := syncResultTotalCounts(result)
 	if err := archive.FinishSyncRun(syncRunID, "sync_completed", seen, newCount, updated, currentTime().UTC().Format(time.RFC3339), ""); err != nil {
 		result.Status = "sync_failed"
@@ -145,6 +140,15 @@ func (syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
 		result.Message = fmt.Sprintf("Sync Run archived %s Data Points", dataType)
 	}
 	return result, nil
+}
+
+func applyGoogleHealthIngestionCounts(result *syncResult, ingestionResult googleHealthIngestionResult) {
+	result.DataPointsSeen = ingestionResult.dataPointsSeen
+	result.DataPointsNew = ingestionResult.dataPointsNew
+	result.DataPointsUpdated = ingestionResult.dataPointsUpdated
+	result.RollupsSeen = ingestionResult.rollupsSeen
+	result.RollupsNew = ingestionResult.rollupsNew
+	result.RollupsUpdated = ingestionResult.rollupsUpdated
 }
 
 func syncResultTotalCounts(result syncResult) (int, int, int) {
