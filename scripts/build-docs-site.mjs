@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { brandMarkSvg, css, faviconSvg, js, preThemeScript, themeToggleHtml } from "./docs-site-assets.mjs";
+import { brandMarkSvg, css, ekgArtSvg, faviconSvg, iconSvg, js, preThemeScript, themeToggleHtml } from "./docs-site-assets.mjs";
 
 const root = process.cwd();
 const docsDir = path.join(root, "docs");
@@ -25,8 +25,16 @@ const brewAvailable = false;
 const goInstall = "go install github.com/BramVR/gohealthcli/cmd/gohealthcli@latest";
 
 const capabilities = [
-  "Steps", "Heart Rate", "HRV", "Sleep", "Exercise",
-  "Weight", "Oxygen", "Distance", "Wearable", "Rollups",
+  { name: "Steps",      icon: "directions_walk" },
+  { name: "Heart Rate", icon: "favorite" },
+  { name: "HRV",        icon: "monitor_heart" },
+  { name: "Sleep",      icon: "bedtime" },
+  { name: "Exercise",   icon: "fitness_center" },
+  { name: "Weight",     icon: "monitor_weight" },
+  { name: "Oxygen",     icon: "bloodtype" },
+  { name: "Distance",   icon: "route" },
+  { name: "Wearable",   icon: "watch" },
+  { name: "Rollups",    icon: "bar_chart" },
 ];
 
 // A sections entry can list explicit markdown paths or a directory wildcard
@@ -473,38 +481,22 @@ function homeHero(page) {
   const tagline = renderTagline(productTagline);
   const ctas = [
     quickstartRel ? `<a class="btn btn-primary" href="${quickstartRel}">Quickstart</a>` : "",
-    `<a class="btn btn-ghost" href="${repoBase}" rel="noopener">GitHub</a>`,
+    installRel ? `<a class="btn btn-ghost" href="${installRel}">Install</a>` : "",
+    `<a class="btn btn-link" href="${repoBase}" rel="noopener">GitHub →</a>`,
   ].filter(Boolean).join("\n          ");
-  const installOther = installRel
-    ? `<p class="install-other"><a href="${installRel}">Other install options →</a></p>`
-    : "";
-  const brewLine = brewAvailable
-    ? `<div class="install-line" data-copyable aria-label="Install with Homebrew">
-            <span class="prompt" aria-hidden="true">$</span>
-            <code>${escapeHtml(brewInstall)}</code>
-          </div>`
-    : `<div class="install-line soon" aria-label="Homebrew install (coming soon)">
-            <span class="prompt" aria-hidden="true">$</span>
-            <code>${escapeHtml(brewInstall)}</code>
-            <span class="badge">Coming soon</span>
-          </div>`;
   return `<header class="home-hero">
-        <p class="eyebrow">Local-first · Google Health · SQLite</p>
-        <h1>${tagline}</h1>
-        <p class="lede">${escapeHtml(description)}</p>
-        <div class="home-cta">
-          ${ctas}
-        </div>
-        <div class="install-stack" aria-label="Install">
-          ${brewLine}
-          <div class="install-line" data-copyable aria-label="Install with go install">
-            <span class="prompt" aria-hidden="true">$</span>
-            <code>${escapeHtml(goInstall)}</code>
+        <div class="hero-text">
+          <p class="eyebrow">Local-first · Google Health · SQLite</p>
+          <h1>${tagline}</h1>
+          <p class="lede">${escapeHtml(description)}</p>
+          <div class="home-cta">
+            ${ctas}
           </div>
+          <p class="cta-foot">Read-only local archive and search for your Google Health data.</p>
         </div>
-        ${installOther}
+        <div class="hero-art" aria-hidden="true">${ekgArtSvg()}</div>
         <div class="home-services" aria-label="Supported capabilities">
-          ${capabilities.map((s) => `<span>${escapeHtml(s)}</span>`).join("")}
+          ${capabilities.map((c) => `<span class="cap">${iconSvg(c.icon)}<span class="cap-label">${escapeHtml(c.name)}</span></span>`).join("")}
         </div>
       </header>`;
 }
@@ -639,7 +631,7 @@ function navHtml(currentPage) {
 function navTitle(page) {
   if (page.rel === "index.md") return "Overview";
   if (page.rel === "commands/README.md") return "Command Index";
-  return page.title.replace(/^`gohealthcli\s*/, "").replace(/`$/, "");
+  return page.title.replace(/^`?gohealthcli\s+/i, "").replace(/`$/, "");
 }
 
 function hrefToOutRel(targetOutRel, currentOutRel) {
