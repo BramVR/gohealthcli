@@ -24,17 +24,11 @@ type sqliteHealthArchiveConnectionAPI struct {
 }
 
 func openHealthArchiveConnectionAPI(archivePath string) (healthArchiveConnectionAPI, error) {
-	if err := migrateArchiveIfNeeded(archivePath); err != nil {
-		return nil, fmt.Errorf("Health Archive migration failed: %w", err)
-	}
-	if _, err := inspectArchive(archivePath, false); err != nil {
-		return nil, fmt.Errorf("Health Archive check failed: %w", err)
-	}
-	db, err := openArchive(archivePath)
+	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(writeArchive)
 	if err != nil {
 		return nil, err
 	}
-	return &sqliteHealthArchiveConnectionAPI{db: db}, nil
+	return &sqliteHealthArchiveConnectionAPI{db: handle.db}, nil
 }
 
 func (archive *sqliteHealthArchiveConnectionAPI) Close() error {

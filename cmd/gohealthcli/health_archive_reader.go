@@ -23,38 +23,17 @@ type sqliteHealthArchiveReader struct {
 	schemaVersion int
 }
 
-type healthArchiveReaderOpenError struct {
-	schemaVersion int
-	err           error
-}
-
-func (err healthArchiveReaderOpenError) Error() string {
-	return err.err.Error()
-}
-
-func (err healthArchiveReaderOpenError) Unwrap() error {
-	return err.err
-}
+type healthArchiveReaderOpenError = healthArchiveOpenError
 
 func openHealthArchiveReader(archivePath string) (healthArchiveReader, error) {
-	if err := migrateArchiveIfNeeded(archivePath); err != nil {
-		return nil, fmt.Errorf("Health Archive migration failed: %w", err)
-	}
-	archive, err := inspectArchive(archivePath, false)
-	if err != nil {
-		return nil, healthArchiveReaderOpenError{
-			schemaVersion: archive.schemaVersion,
-			err:           fmt.Errorf("Health Archive check failed: %w", err),
-		}
-	}
-	db, err := openArchiveReadOnly(archivePath)
+	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(readOnlyArchive)
 	if err != nil {
 		return nil, err
 	}
 	return &sqliteHealthArchiveReader{
-		archivePath:   archivePath,
-		db:            db,
-		schemaVersion: archive.schemaVersion,
+		archivePath:   handle.path,
+		db:            handle.db,
+		schemaVersion: handle.schemaVersion,
 	}, nil
 }
 

@@ -1866,6 +1866,43 @@ func TestConnectReauthorizesSameIdentityWithoutSecondConnection(t *testing.T) {
 	}
 }
 
+func TestConnectArchiveInspectionFailureDoesNotReportCredentialStore(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version = ?`, currentSchemaVersion); err != nil {
+		_ = db.Close()
+		t.Fatalf("delete schema migration: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close archive: %v", err)
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("connect exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "connect_failed")
+	if _, ok := got["credential_store"]; ok {
+		t.Fatalf("credential_store = %v, want omitted for Health Archive check failure", got["credential_store"])
+	}
+	if !strings.Contains(got["message"].(string), "Health Archive check failed") {
+		t.Fatalf("message = %q, want Health Archive check failed", got["message"])
+	}
+}
+
 func TestConnectRejectsDifferentGoogleIdentity(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
@@ -5624,6 +5661,9 @@ func TestInitRejectsExistingInvalidArchive(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "existing Health Archive is not initialized") {
 		t.Fatalf("stderr missing archive validation error: %q", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "Health Archive check failed") {
+		t.Fatalf("stderr included extra check wrapper: %q", stderr.String())
 	}
 }
 
