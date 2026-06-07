@@ -10,7 +10,11 @@ const outDir = path.join(root, "dist", "docs-site");
 const repoBase = "https://github.com/BramVR/gohealthcli";
 const repoEditBase = `${repoBase}/edit/main/docs`;
 const cname = readCname();
-const siteBase = cname ? `https://${cname}` : "";
+// Canonical site base URL. Falls back to the default GitHub Pages URL for this
+// repository so OG/Twitter meta and llms.txt emit absolute URLs that social
+// validators and AI crawlers can resolve. When a custom domain ships, drop a
+// CNAME file at docs/CNAME or repo root and it takes precedence.
+const siteBase = cname ? `https://${cname}` : "https://bramvr.github.io/gohealthcli";
 
 const productName = "gohealthcli";
 const productTagline = "Your Google Health, archived locally.";
@@ -136,10 +140,11 @@ function docsSourceUrl() {
 }
 
 function docsInstallHint() {
-  if (typeof installCommand !== "undefined") return installCommand;
-  if (typeof installLine !== "undefined") return installLine;
-  if (typeof installCmd !== "undefined") return installCmd;
-  if (typeof installSnippet !== "undefined") return installSnippet;
+  // Prefer the working install command. The Homebrew line is the planned
+  // surface, but until the tap ships the go-install path is what readers and
+  // AI agents should run.
+  if (brewAvailable && typeof brewInstall !== "undefined") return brewInstall;
+  if (typeof goInstall !== "undefined") return goInstall;
   if (typeof brewInstall !== "undefined") return brewInstall;
   return "";
 }
@@ -152,7 +157,14 @@ function pageUrl(origin, outRel) {
 
 function readCname() {
   for (const candidate of [path.join(docsDir, "CNAME"), path.join(root, "CNAME")]) {
-    if (fs.existsSync(candidate)) return fs.readFileSync(candidate, "utf8").trim();
+    if (fs.existsSync(candidate)) {
+      let value = fs.readFileSync(candidate, "utf8").trim();
+      // Tolerate a stray protocol or path in the CNAME file. GitHub Pages
+      // itself accepts only a bare hostname, but it is a common authoring
+      // mistake to paste a full URL.
+      value = value.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
+      return value;
+    }
   }
   return "";
 }
