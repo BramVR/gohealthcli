@@ -28,6 +28,35 @@ func TestRunSchemaEmitsValidDocument(t *testing.T) {
 	}
 }
 
+func TestRunSchemaIncludesEveryUserFacingSubcommand(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if code := runSchema(nil, stdout, stderr); code != 0 {
+		t.Fatalf("runSchema exit code = %d; stderr=%q", code, stderr.String())
+	}
+	var doc schemaDocument
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+		t.Fatalf("schema output is not valid JSON: %v", err)
+	}
+
+	visible := make(map[string]bool)
+	for _, c := range doc.Commands {
+		if !c.Hidden {
+			visible[c.Name] = true
+		}
+	}
+
+	want := []string{"init", "doctor", "connect", "identity", "profile", "sync", "status", "query", "export", "raw"}
+	for _, name := range want {
+		if !visible[name] {
+			t.Errorf("registry missing user-facing command %q", name)
+		}
+	}
+	if len(visible) != len(want) {
+		t.Errorf("registry has %d user-facing commands, want %d", len(visible), len(want))
+	}
+}
+
 func TestRunSchemaIncludesDoctor(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
