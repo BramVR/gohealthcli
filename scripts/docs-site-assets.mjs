@@ -1,65 +1,65 @@
 export function css() {
   return `
 :root[data-theme="dark"]{
-  --ink:#f4f5f8;
-  --text:#d8dbe2;
-  --muted:#8b929e;
-  --subtle:#5a6068;
-  --bg:#0d1015;
-  --paper:#14181f;
-  --paper-2:#191e26;
-  --accent:#ff7e6b;
-  --accent-soft:rgba(255,126,107,.14);
-  --accent-strong:#ff9683;
-  --warn:#f5b86a;
-  --warn-soft:rgba(245,184,106,.14);
-  --line:#212630;
-  --line-soft:#1a1e26;
-  --code-bg:#06080c;
-  --code-fg:#e6e8ed;
-  --code-inline-fg:#e6e8ed;
-  --code-border:#1c2030;
-  --pill-border:#2a2f3c;
-  --shadow-card:0 8px 28px rgba(0,0,0,.35);
-  --scrollbar:#2a2f3c;
-  --hl-keyword:#a6b8ff;
-  --hl-string:#9bd49b;
-  --hl-number:#f0a868;
-  --hl-comment:#5d6675;
-  --hl-flag:#d4a4ff;
-  --hl-meta:#ff9aa0;
-  --hl-prompt:#525a68;
-  --grain:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .85 0 0 0 0 .85 0 0 0 0 .9 0 0 0 .03 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  --ink:#f1f5f9;
+  --text:#cbd5e1;
+  --muted:#94a3b8;
+  --subtle:#64748b;
+  --bg:#0a0f1a;
+  --paper:#11182a;
+  --paper-2:#1a2436;
+  --accent:#14b8a6;
+  --accent-soft:rgba(20,184,166,.14);
+  --accent-strong:#2dd4bf;
+  --warn:#fbbf24;
+  --warn-soft:rgba(251,191,36,.14);
+  --line:#1e293b;
+  --line-soft:#172033;
+  --code-bg:#060a14;
+  --code-fg:#e2e8f0;
+  --code-inline-fg:#e2e8f0;
+  --code-border:#1e293b;
+  --pill-border:#334155;
+  --shadow-card:0 8px 28px rgba(0,0,0,.4);
+  --scrollbar:#334155;
+  --hl-keyword:#5eead4;
+  --hl-string:#4ade80;
+  --hl-number:#fbbf24;
+  --hl-comment:#64748b;
+  --hl-flag:#a78bfa;
+  --hl-meta:#2dd4bf;
+  --hl-prompt:#4ade80;
+  --grain:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .55 0 0 0 0 .75 0 0 0 0 .85 0 0 0 .025 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
 }
 :root,:root[data-theme="light"]{
-  --ink:#14171c;
-  --text:#2c3038;
-  --muted:#6b6f78;
-  --subtle:#9aa0a8;
-  --bg:#faf8f3;
+  --ink:#0f172a;
+  --text:#334155;
+  --muted:#64748b;
+  --subtle:#94a3b8;
+  --bg:#f6f9fc;
   --paper:#ffffff;
-  --paper-2:#f5f1ea;
-  --accent:#c4421a;
-  --accent-soft:rgba(196,66,26,.10);
-  --accent-strong:#9c2f10;
-  --warn:#a96a14;
-  --warn-soft:rgba(169,106,20,.12);
-  --line:#e5e1d8;
-  --line-soft:#eee9de;
-  --code-bg:#161b22;
-  --code-fg:#e6edf3;
-  --code-inline-fg:#26303d;
-  --code-border:#212a36;
-  --pill-border:#dcd7cc;
-  --shadow-card:0 6px 24px rgba(20,23,28,.06);
-  --scrollbar:#cfc9bd;
-  --hl-keyword:#8294ff;
-  --hl-string:#3a8a3a;
-  --hl-number:#b3711f;
-  --hl-comment:#7c8597;
-  --hl-flag:#9b6dff;
-  --hl-meta:#c4421a;
-  --hl-prompt:#7b8190;
+  --paper-2:#eef4fa;
+  --accent:#0d9488;
+  --accent-soft:rgba(13,148,136,.10);
+  --accent-strong:#0f766e;
+  --warn:#b45309;
+  --warn-soft:rgba(180,83,9,.10);
+  --line:#e2e8f0;
+  --line-soft:#f1f5f9;
+  --code-bg:#0f172a;
+  --code-fg:#e2e8f0;
+  --code-inline-fg:#0f766e;
+  --code-border:#1e293b;
+  --pill-border:#cbd5e1;
+  --shadow-card:0 6px 24px rgba(15,23,42,.06);
+  --scrollbar:#cbd5e1;
+  --hl-keyword:#5eead4;
+  --hl-string:#4ade80;
+  --hl-number:#fbbf24;
+  --hl-comment:#94a3b8;
+  --hl-flag:#a78bfa;
+  --hl-meta:#2dd4bf;
+  --hl-prompt:#4ade80;
   --grain:none;
 }
 :root,:root[data-theme="light"]{color-scheme:light}
@@ -78,8 +78,8 @@ a:hover{text-decoration:underline;text-underline-offset:.22em;text-decoration-th
 .sidebar-head{display:flex;align-items:center;gap:10px;margin-bottom:28px}
 .brand{display:flex;align-items:center;gap:11px;color:var(--ink);text-decoration:none;flex:1;min-width:0}
 .brand:hover{text-decoration:none}
-.brand .mark{flex:0 0 28px;width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,#1d2230,#0d1015);display:flex;align-items:center;justify-content:center;color:var(--accent);border:1px solid var(--line)}
-:root[data-theme="light"] .brand .mark{background:linear-gradient(135deg,#fff,#f5f1ea);color:var(--accent)}
+.brand .mark{flex:0 0 28px;width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,#1e293b,#0a1018);display:flex;align-items:center;justify-content:center;color:var(--accent);border:1px solid var(--line)}
+:root[data-theme="light"] .brand .mark{background:linear-gradient(135deg,#ffffff,#e6f4f2);color:var(--accent)}
 .brand .mark svg{width:18px;height:18px;display:block}
 .brand strong{display:block;font-family:"Fraunces","Times New Roman",ui-serif,serif;font-size:1.08rem;line-height:1.05;font-weight:600;letter-spacing:-.005em;color:var(--ink);font-variation-settings:"SOFT" 30,"opsz" 14}
 .brand small{display:block;color:var(--muted);font-size:.7rem;margin-top:3px;font-weight:500;letter-spacing:.04em;text-transform:uppercase}
@@ -299,7 +299,17 @@ export function brandMarkSvg() {
 
 export function faviconSvg() {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="gohealthcli">
-<rect width="64" height="64" rx="13" fill="#0d1015"/>
-<path d="M6 33h7l4-13 6 24 5-17 4 9h26" stroke="#ff7e6b" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0%" stop-color="#1e293b"/>
+<stop offset="100%" stop-color="#0a0f1a"/>
+</linearGradient>
+<linearGradient id="ekg" x1="0" y1="0" x2="1" y2="0">
+<stop offset="0%" stop-color="#4ade80"/>
+<stop offset="100%" stop-color="#14b8a6"/>
+</linearGradient>
+</defs>
+<rect width="64" height="64" rx="13" fill="url(#bg)"/>
+<path d="M6 33h7l4-13 6 24 5-17 4 9h26" stroke="url(#ekg)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
 </svg>`;
 }
