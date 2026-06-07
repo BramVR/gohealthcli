@@ -5,9 +5,47 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestExportDatasetDefinitionsIncludeViewSQL(t *testing.T) {
+	for name, spec := range exportDatasetSpecs {
+		if strings.TrimSpace(spec.view) == "" {
+			t.Fatalf("%s view = empty", name)
+		}
+		if len(spec.fields) == 0 {
+			t.Fatalf("%s fields = empty", name)
+		}
+		if strings.TrimSpace(spec.orderBy) == "" {
+			t.Fatalf("%s orderBy = empty", name)
+		}
+		if strings.TrimSpace(spec.viewSQL) == "" {
+			t.Fatalf("%s viewSQL = empty", name)
+		}
+		if strings.Contains(spec.viewSQL, "CREATE VIEW") {
+			t.Fatalf("%s viewSQL duplicates migration DDL", name)
+		}
+	}
+}
+
+func TestExportDatasetDefinitionsDriveViewMigrations(t *testing.T) {
+	if got, want := dailyStepsViewMigrationStatements(), exportDatasetViewMigrationStatements("daily-steps"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("daily steps migration statements = %v, want %v", got, want)
+	}
+
+	firstReleaseDatasets := []string{
+		"heart-rate-samples",
+		"resting-heart-rate-by-day",
+		"sleep-sessions",
+		"exercise-sessions",
+		"weight-samples",
+	}
+	if got, want := firstReleaseNormalizedViewMigrationStatements(), exportDatasetViewMigrationStatements(firstReleaseDatasets...); !reflect.DeepEqual(got, want) {
+		t.Fatalf("first release migration statements = %v, want %v", got, want)
+	}
+}
 
 func TestDailyStepsNormalizedViewPrefersRollupsAndAggregatesDataPoints(t *testing.T) {
 	tempDir := t.TempDir()

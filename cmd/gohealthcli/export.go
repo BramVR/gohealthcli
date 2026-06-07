@@ -25,6 +25,7 @@ type dailyStepsExportRow struct {
 
 type exportDatasetSpec struct {
 	view    string
+	viewSQL string
 	fields  []exportFieldSpec
 	orderBy string
 }
@@ -39,6 +40,65 @@ type exportRow []string
 var exportDatasetSpecs = map[string]exportDatasetSpec{
 	"daily-steps": {
 		view: "daily_steps",
+		viewSQL: `WITH data_point_days AS (
+			SELECT
+				provider_name,
+				connection_id,
+				COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(end_civil_time, 1, 10), substr(start_time_utc, 1, 10), substr(end_time_utc, 1, 10)) AS civil_date,
+				IFNULL(source_family_filter, '') AS source_family_filter,
+				SUM(CAST(json_extract(raw_json, '$.steps.count') AS INTEGER)) AS step_count,
+				COUNT(*) AS source_record_count,
+				MAX(COALESCE(end_time_utc, start_time_utc, updated_at, '')) AS latest_source_timestamp
+			FROM data_points
+			WHERE data_type = 'steps'
+				AND json_extract(raw_json, '$.steps.count') IS NOT NULL
+				AND COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(end_civil_time, 1, 10), substr(start_time_utc, 1, 10), substr(end_time_utc, 1, 10)) IS NOT NULL
+			GROUP BY provider_name, connection_id, civil_date, source_family_filter
+		),
+		rollup_days AS (
+			SELECT
+				provider_name,
+				connection_id,
+				civil_date,
+				'' AS source_family_filter,
+				CAST(json_extract(raw_json, '$.steps.countSum') AS INTEGER) AS step_count,
+				1 AS source_record_count,
+				COALESCE(window_end_utc, window_start_utc, civil_date, updated_at, '') AS latest_source_timestamp
+			FROM rollups
+			WHERE data_type = 'steps'
+				AND rollup_kind = 'dailyRollUp'
+				AND civil_date IS NOT NULL
+				AND json_extract(raw_json, '$.steps.countSum') IS NOT NULL
+		)
+		SELECT
+			provider_name,
+			connection_id,
+			civil_date,
+			source_family_filter,
+			step_count,
+			'dailyRollUp' AS source_kind,
+			source_record_count,
+			latest_source_timestamp
+		FROM rollup_days
+		UNION ALL
+		SELECT
+			provider_name,
+			connection_id,
+			civil_date,
+			source_family_filter,
+			step_count,
+			'dataPoints' AS source_kind,
+			source_record_count,
+			latest_source_timestamp
+		FROM data_point_days
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM rollup_days
+				WHERE rollup_days.provider_name = data_point_days.provider_name
+					AND rollup_days.connection_id = data_point_days.connection_id
+					AND rollup_days.civil_date = data_point_days.civil_date
+					AND rollup_days.source_family_filter = data_point_days.source_family_filter
+			)`,
 		fields: []exportFieldSpec{
 			{name: "provider_name"},
 			{name: "connection_id"},
@@ -54,6 +114,20 @@ var exportDatasetSpecs = map[string]exportDatasetSpec{
 	"heart-rate-samples": {
 		view:    "heart_rate_samples",
 		orderBy: "sample_time_utc, provider_name, connection_id, source_family_filter, upstream_resource_name",
+		viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			start_time_utc AS sample_time_utc,
+			IFNULL(start_civil_time, '') AS sample_civil_time,
+			IFNULL(provider_civil_date, '') AS civil_date,
+			CAST(json_extract(raw_json, '$.heartRate.beatsPerMinute') AS TEXT) AS beats_per_minute,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'heart-rate'
+			AND record_kind = 'sample'
+			AND start_time_utc IS NOT NULL
+			AND json_extract(raw_json, '$.heartRate.beatsPerMinute') IS NOT NULL`,
 		fields: []exportFieldSpec{
 			{name: "provider_name"},
 			{name: "connection_id"},
@@ -68,6 +142,18 @@ var exportDatasetSpecs = map[string]exportDatasetSpec{
 	"resting-heart-rate-by-day": {
 		view:    "resting_heart_rate_by_day",
 		orderBy: "civil_date, provider_name, connection_id, source_family_filter, upstream_resource_name",
+		viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			provider_civil_date AS civil_date,
+			CAST(json_extract(raw_json, '$.dailyRestingHeartRate.beatsPerMinute') AS TEXT) AS beats_per_minute,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'daily-resting-heart-rate'
+			AND record_kind = 'daily'
+			AND provider_civil_date IS NOT NULL
+			AND json_extract(raw_json, '$.dailyRestingHeartRate.beatsPerMinute') IS NOT NULL`,
 		fields: []exportFieldSpec{
 			{name: "provider_name"},
 			{name: "connection_id"},
@@ -80,6 +166,21 @@ var exportDatasetSpecs = map[string]exportDatasetSpec{
 	"sleep-sessions": {
 		view:    "sleep_sessions",
 		orderBy: "start_time_utc, provider_name, connection_id, source_family_filter, upstream_resource_name",
+		viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			start_time_utc,
+			end_time_utc,
+			IFNULL(start_civil_time, '') AS start_civil_time,
+			IFNULL(end_civil_time, '') AS end_civil_time,
+			IFNULL(provider_civil_date, '') AS civil_date,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'sleep'
+			AND record_kind = 'session'
+			AND start_time_utc IS NOT NULL
+			AND end_time_utc IS NOT NULL`,
 		fields: []exportFieldSpec{
 			{name: "provider_name"},
 			{name: "connection_id"},
@@ -95,6 +196,23 @@ var exportDatasetSpecs = map[string]exportDatasetSpec{
 	"exercise-sessions": {
 		view:    "exercise_sessions",
 		orderBy: "start_time_utc, provider_name, connection_id, source_family_filter, upstream_resource_name",
+		viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			start_time_utc,
+			end_time_utc,
+			IFNULL(start_civil_time, '') AS start_civil_time,
+			IFNULL(end_civil_time, '') AS end_civil_time,
+			IFNULL(provider_civil_date, '') AS civil_date,
+			IFNULL(json_extract(raw_json, '$.exercise.exerciseType'), '') AS exercise_type,
+			IFNULL(json_extract(raw_json, '$.exercise.activeDuration'), '') AS active_duration,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'exercise'
+			AND record_kind = 'session'
+			AND start_time_utc IS NOT NULL
+			AND end_time_utc IS NOT NULL`,
 		fields: []exportFieldSpec{
 			{name: "provider_name"},
 			{name: "connection_id"},
@@ -112,6 +230,20 @@ var exportDatasetSpecs = map[string]exportDatasetSpec{
 	"weight-samples": {
 		view:    "weight_samples",
 		orderBy: "sample_time_utc, provider_name, connection_id, source_family_filter, upstream_resource_name",
+		viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			start_time_utc AS sample_time_utc,
+			IFNULL(start_civil_time, '') AS sample_civil_time,
+			IFNULL(provider_civil_date, '') AS civil_date,
+			CAST(json_extract(raw_json, '$.weight.weightGrams') AS TEXT) AS weight_grams,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'weight'
+			AND record_kind = 'sample'
+			AND start_time_utc IS NOT NULL
+			AND json_extract(raw_json, '$.weight.weightGrams') IS NOT NULL`,
 		fields: []exportFieldSpec{
 			{name: "provider_name"},
 			{name: "connection_id"},
@@ -123,6 +255,18 @@ var exportDatasetSpecs = map[string]exportDatasetSpec{
 			{name: "upstream_resource_name"},
 		},
 	},
+}
+
+func exportDatasetViewMigrationStatements(names ...string) []string {
+	statements := make([]string, 0, len(names))
+	for _, name := range names {
+		statements = append(statements, exportDatasetViewMigrationStatement(exportDatasetSpecs[name]))
+	}
+	return statements
+}
+
+func exportDatasetViewMigrationStatement(spec exportDatasetSpec) string {
+	return fmt.Sprintf("CREATE VIEW %s AS\n%s", spec.view, strings.TrimSpace(spec.viewSQL))
 }
 
 func runExport(args []string, configPath, archivePath string, archivePathExplicit bool, stdout, stderr io.Writer) int {
