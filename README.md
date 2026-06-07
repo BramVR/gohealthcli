@@ -1,4 +1,13 @@
+<p align="center">
+  <img src="./assets/readme-header.jpg" alt="gohealthcli local-first Google Health archive CLI">
+</p>
+
 # gohealthcli
+
+[![Go Reference](https://pkg.go.dev/badge/github.com/BramVR/gohealthcli.svg)](https://pkg.go.dev/github.com/BramVR/gohealthcli)
+[![Go Report Card](https://goreportcard.com/badge/github.com/BramVR/gohealthcli)](https://goreportcard.com/report/github.com/BramVR/gohealthcli)
+![Go version](https://img.shields.io/github/go-mod/go-version/BramVR/gohealthcli)
+[![GitHub repository](https://img.shields.io/badge/GitHub-BramVR%2Fgohealthcli-24292f?logo=github)](https://github.com/BramVR/gohealthcli)
 
 Local-first, read-only Google Health archive CLI.
 
