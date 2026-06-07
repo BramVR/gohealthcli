@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { renderCommand, yamlString } from "./gen-command-reference.mjs";
+import { renderCommand, renderIndex, yamlString } from "./gen-command-reference.mjs";
 
 describe("yamlString", () => {
   it("wraps a plain string in double quotes", () => {
@@ -73,5 +73,40 @@ describe("renderCommand", () => {
     const cmd = { ...sample, long: "" };
     const out = renderCommand(cmd, "gohealthcli");
     assert.ok(out.includes("Validate local setup."));
+  });
+});
+
+describe("renderIndex", () => {
+  const cmds = [
+    { name: "doctor", short: "Validate local setup.", hidden: false },
+    { name: "sync", short: "Archive Data Points.", hidden: false },
+    { name: "schema", short: "Emit registry as JSON.", hidden: true },
+  ];
+
+  it("emits frontmatter with title and description", () => {
+    const out = renderIndex(cmds, "gohealthcli");
+    assert.match(out, /^---\ntitle: "Command reference"\ndescription: "Every gohealthcli subcommand at a stable URL\."\n---/);
+  });
+
+  it("includes the auto-gen warning comment", () => {
+    const out = renderIndex(cmds, "gohealthcli");
+    assert.match(out, /<!-- Auto-generated from `gohealthcli schema --json`\. Do not edit by hand\. -->/);
+  });
+
+  it("lists every non-hidden command with its short description and link", () => {
+    const out = renderIndex(cmds, "gohealthcli");
+    assert.ok(out.includes("- [`gohealthcli doctor`](commands/doctor.html) — Validate local setup."));
+    assert.ok(out.includes("- [`gohealthcli sync`](commands/sync.html) — Archive Data Points."));
+  });
+
+  it("omits hidden commands from the subcommand list", () => {
+    const out = renderIndex(cmds, "gohealthcli");
+    assert.ok(!out.includes("commands/schema.html"), "schema link should not appear in the index");
+    assert.ok(!out.includes("`gohealthcli schema`]"), "schema bullet should not appear in the index");
+  });
+
+  it("handles commands with no short description", () => {
+    const out = renderIndex([{ name: "x", short: "", hidden: false }], "gohealthcli");
+    assert.ok(out.includes("- [`gohealthcli x`](commands/x.html)"));
   });
 });

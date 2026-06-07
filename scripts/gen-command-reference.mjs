@@ -12,6 +12,28 @@ import path from "node:path";
 const EXPECTED_VERSION = 1;
 const VALID_COMMAND_NAME = /^[a-z][a-z0-9-]*$/;
 
+export function renderIndex(commands, binary) {
+  const visible = commands.filter((c) => !c.hidden);
+  const lines = [];
+  lines.push("---");
+  lines.push(`title: ${yamlString("Command reference")}`);
+  lines.push(`description: ${yamlString(`Every ${binary} subcommand at a stable URL.`)}`);
+  lines.push("---");
+  lines.push("");
+  lines.push(`<!-- Auto-generated from \`${binary} schema --json\`. Do not edit by hand. -->`);
+  lines.push("");
+  lines.push(`Every user-facing subcommand exposed by \`${binary}\`. Pages are regenerated from the binary by \`make docs-commands\`; the committed copies must match a fresh regeneration.`);
+  lines.push("");
+  lines.push("## Subcommands");
+  lines.push("");
+  for (const cmd of visible) {
+    const short = cmd.short ? ` — ${cmd.short}` : "";
+    lines.push(`- [\`${binary} ${cmd.name}\`](commands/${cmd.name}.html)${short}`);
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
 export function renderCommand(cmd, binary) {
   const lines = [];
   lines.push("---");
@@ -19,7 +41,7 @@ export function renderCommand(cmd, binary) {
   if (cmd.short) lines.push(`description: ${yamlString(cmd.short)}`);
   lines.push("---");
   lines.push("");
-  lines.push("<!-- Auto-generated from `gohealthcli schema --json`. Do not edit by hand. -->");
+  lines.push(`<!-- Auto-generated from \`${binary} schema --json\`. Do not edit by hand. -->`);
   lines.push("");
   if (cmd.long) {
     lines.push(cmd.long.trim());
@@ -97,7 +119,8 @@ async function main() {
   }
 
   const root = process.cwd();
-  const outDir = path.join(root, "docs", "commands");
+  const docsDir = path.join(root, "docs");
+  const outDir = path.join(docsDir, "commands");
 
   // Clear the directory before writing so a removed command does not leave a
   // stale page behind. Anything outside docs/commands/ is never touched.
@@ -116,5 +139,10 @@ async function main() {
     written += 1;
     console.log(`wrote ${path.relative(root, filePath)}`);
   }
-  console.log(`generated ${written} command-reference page${written === 1 ? "" : "s"}`);
+
+  const indexPath = path.join(docsDir, "commands.md");
+  fs.writeFileSync(indexPath, renderIndex(doc.commands, doc.binary), "utf8");
+  console.log(`wrote ${path.relative(root, indexPath)}`);
+
+  console.log(`generated ${written} command-reference page${written === 1 ? "" : "s"} + index`);
 }
