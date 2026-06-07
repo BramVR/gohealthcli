@@ -44,14 +44,21 @@ func productionRuntimeAdapters() runtimeAdapters {
 
 func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
 	production := productionRuntimeAdapters()
-	if adapters.runOAuthFlow == nil {
-		adapters.runOAuthFlow = production.runOAuthFlow
-	}
-	if adapters.refreshOAuthToken == nil {
-		adapters.refreshOAuthToken = production.refreshOAuthToken
-	}
 	if adapters.openBrowser == nil {
 		adapters.openBrowser = production.openBrowser
+	}
+	if adapters.now == nil {
+		adapters.now = production.now
+	}
+	if adapters.runOAuthFlow == nil {
+		adapters.runOAuthFlow = func(client oauthClientConfig, scopes []string, noInput bool) (oauthTokenResponse, error) {
+			return runBrowserOAuthFlowWithRuntime(client, scopes, noInput, adapters)
+		}
+	}
+	if adapters.refreshOAuthToken == nil {
+		adapters.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
+			return refreshGoogleOAuthTokenWithRuntime(client, refreshToken, fallbackScopes, adapters)
+		}
 	}
 	if adapters.fetchIdentity == nil {
 		adapters.fetchIdentity = production.fetchIdentity
@@ -61,9 +68,6 @@ func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
 	}
 	if adapters.fetchRawProvider == nil {
 		adapters.fetchRawProvider = production.fetchRawProvider
-	}
-	if adapters.now == nil {
-		adapters.now = production.now
 	}
 	if adapters.currentOS == "" {
 		adapters.currentOS = production.currentOS

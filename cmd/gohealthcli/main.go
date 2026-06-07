@@ -2019,6 +2019,9 @@ func runBrowserOAuthFlowWithRuntime(client oauthClientConfig, scopes []string, n
 	if runtime.openBrowser == nil {
 		runtime.openBrowser = openBrowser
 	}
+	if runtime.now == nil {
+		runtime.now = currentTime
+	}
 	if noInput {
 		return oauthTokenResponse{}, errors.New("connect requires browser OAuth; rerun without --no-input")
 	}
@@ -2048,7 +2051,7 @@ func runBrowserOAuthFlowWithRuntime(client oauthClientConfig, scopes []string, n
 	if err != nil {
 		return oauthTokenResponse{}, err
 	}
-	return exchangeOAuthCode(client, redirectURI, code, verifier)
+	return exchangeOAuthCodeWithRuntime(client, redirectURI, code, verifier, runtime)
 }
 
 func listenForOAuthRedirect(redirectURIs []string) (net.Listener, string, error) {
@@ -2145,6 +2148,13 @@ func waitForOAuthCode(listener net.Listener, wantState string) (string, error) {
 }
 
 func exchangeOAuthCode(client oauthClientConfig, redirectURI, code, verifier string) (oauthTokenResponse, error) {
+	return exchangeOAuthCodeWithRuntime(client, redirectURI, code, verifier, runtimeAdapters{now: currentTime})
+}
+
+func exchangeOAuthCodeWithRuntime(client oauthClientConfig, redirectURI, code, verifier string, runtime runtimeAdapters) (oauthTokenResponse, error) {
+	if runtime.now == nil {
+		runtime.now = currentTime
+	}
 	values := url.Values{}
 	values.Set("client_id", client.clientID)
 	values.Set("client_secret", client.clientSecret)
@@ -2164,10 +2174,17 @@ func exchangeOAuthCode(client oauthClientConfig, redirectURI, code, verifier str
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return oauthTokenResponse{}, fmt.Errorf("OAuth token exchange failed with HTTP %d", response.StatusCode)
 	}
-	return parseOAuthTokenResponse(body, currentTime())
+	return parseOAuthTokenResponse(body, runtime.now())
 }
 
 func refreshGoogleOAuthToken(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
+	return refreshGoogleOAuthTokenWithRuntime(client, refreshToken, fallbackScopes, runtimeAdapters{now: currentTime})
+}
+
+func refreshGoogleOAuthTokenWithRuntime(client oauthClientConfig, refreshToken string, fallbackScopes []string, runtime runtimeAdapters) (oauthTokenResponse, error) {
+	if runtime.now == nil {
+		runtime.now = currentTime
+	}
 	values := url.Values{}
 	values.Set("client_id", client.clientID)
 	values.Set("client_secret", client.clientSecret)
@@ -2185,7 +2202,7 @@ func refreshGoogleOAuthToken(client oauthClientConfig, refreshToken string, fall
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return oauthTokenResponse{}, fmt.Errorf("OAuth token refresh failed with HTTP %d", response.StatusCode)
 	}
-	return parseOAuthRefreshTokenResponse(body, currentTime(), refreshToken, fallbackScopes)
+	return parseOAuthRefreshTokenResponse(body, runtime.now(), refreshToken, fallbackScopes)
 }
 
 func parseOAuthTokenResponse(body []byte, now time.Time) (oauthTokenResponse, error) {
