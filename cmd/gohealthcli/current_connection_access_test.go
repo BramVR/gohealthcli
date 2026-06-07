@@ -59,6 +59,9 @@ func TestCurrentConnectionAccessFetchVerifiedIdentityNormalizesUnauthorized(t *t
 	if err == nil || err.Error() != "Google Health rejected stored Connection token; run `gohealthcli connect` again" {
 		t.Fatalf("FetchVerifiedIdentity error = %v, want normalized unauthorized error", err)
 	}
+	if !errors.Is(err, errCurrentConnectionProviderUnauthorized) {
+		t.Fatalf("FetchVerifiedIdentity error = %v, want current Connection provider unauthorized category", err)
+	}
 }
 
 func TestCurrentConnectionAccessFetchVerifiedIdentityRejectsMismatch(t *testing.T) {
@@ -77,6 +80,21 @@ func TestCurrentConnectionAccessFetchVerifiedIdentityRejectsMismatch(t *testing.
 	_, err := access.FetchVerifiedIdentity("access-secret")
 	if err == nil || err.Error() != "Provider returned a different Google Identity; use a new archive path" {
 		t.Fatalf("FetchVerifiedIdentity error = %v, want mismatch error", err)
+	}
+	if !isCurrentConnectionIdentityMismatch(err) {
+		t.Fatalf("FetchVerifiedIdentity error = %v, want current Connection identity mismatch category", err)
+	}
+}
+
+func TestCurrentConnectionAccessTokenMissingCategory(t *testing.T) {
+	if !isCurrentConnectionTokenMissing(errCurrentConnectionMissingAccessToken) {
+		t.Fatal("missing access token error is not categorized as token_missing")
+	}
+	if !isCurrentConnectionTokenMissing(errCurrentConnectionMissingRefreshToken) {
+		t.Fatal("missing refresh token error is not categorized as token_missing")
+	}
+	if !isCurrentConnectionTokenMissing(errors.New("Credential Store token material not found; run `gohealthcli connect` first")) {
+		t.Fatal("missing stored token material error is not categorized as token_missing")
 	}
 }
 

@@ -6,6 +6,13 @@ import (
 	"time"
 )
 
+var (
+	errCurrentConnectionIdentityMismatch     = errors.New("Provider returned a different Google Identity; use a new archive path")
+	errCurrentConnectionProviderUnauthorized = errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again")
+	errCurrentConnectionMissingAccessToken   = errors.New("Credential Store token material is missing access token; run `gohealthcli connect` again")
+	errCurrentConnectionMissingRefreshToken  = errors.New("Credential Store token material is missing refresh token; run `gohealthcli connect` again")
+)
+
 type currentConnectionAccess struct {
 	credentialStore credentialStoreConfig
 	connection      archivedConnection
@@ -55,7 +62,7 @@ func (access currentConnectionAccess) FetchVerifiedIdentity(accessToken string) 
 
 func (access currentConnectionAccess) RequireMatchingHealthUserID(healthUserID string) error {
 	if healthUserID != access.connection.googleHealthUserID {
-		return errors.New("Provider returned a different Google Identity; use a new archive path")
+		return errCurrentConnectionIdentityMismatch
 	}
 	return nil
 }
@@ -70,7 +77,7 @@ func (access currentConnectionAccess) RefreshableAccessToken(oauthClient oauthCl
 	}
 	refreshToken, ok := tokenMaterial["refresh_token"].(string)
 	if !ok || refreshToken == "" {
-		return doctorOnlineTokenCheck{}, errors.New("Credential Store token material is missing refresh token; run `gohealthcli connect` again")
+		return doctorOnlineTokenCheck{}, errCurrentConnectionMissingRefreshToken
 	}
 	_, scopes, err := connectionTokenExpiryAndScopes(access.connection.tokenMetadataJSON)
 	if err != nil {
@@ -104,14 +111,24 @@ func (access currentConnectionAccess) loadTokenMaterial() (map[string]any, error
 func accessTokenFromTokenMaterial(tokenMaterial map[string]any) (string, error) {
 	accessToken, ok := tokenMaterial["access_token"].(string)
 	if !ok || accessToken == "" {
-		return "", errors.New("Credential Store token material is missing access token; run `gohealthcli connect` again")
+		return "", errCurrentConnectionMissingAccessToken
 	}
 	return accessToken, nil
 }
 
 func currentConnectionProviderError(err error) error {
 	if strings.Contains(err.Error(), "HTTP 401") {
-		return errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again")
+		return errCurrentConnectionProviderUnauthorized
 	}
 	return err
+}
+
+func isCurrentConnectionIdentityMismatch(err error) bool {
+	return errors.Is(err, errCurrentConnectionIdentityMismatch)
+}
+
+func isCurrentConnectionTokenMissing(err error) bool {
+	return errors.Is(err, errCurrentConnectionMissingAccessToken) ||
+		errors.Is(err, errCurrentConnectionMissingRefreshToken) ||
+		strings.Contains(err.Error(), "token material not found")
 }

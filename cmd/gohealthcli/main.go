@@ -952,7 +952,7 @@ func identitySetup(configPath, archivePath string) (identityResult, error) {
 	}
 	identity, err := connectionAccess.FetchVerifiedIdentity(accessToken)
 	if err != nil {
-		if err.Error() == "Provider returned a different Google Identity; use a new archive path" {
+		if isCurrentConnectionIdentityMismatch(err) {
 			result.Status = "identity_mismatch"
 		}
 		return result, err
@@ -1005,7 +1005,7 @@ func profileSetup(configPath, archivePath string) (profileResult, error) {
 	if profileHealthUserID == "" {
 		identity, err := connectionAccess.FetchVerifiedIdentity(accessToken)
 		if err != nil {
-			if err.Error() == "Provider returned a different Google Identity; use a new archive path" {
+			if isCurrentConnectionIdentityMismatch(err) {
 				result.Status = "profile_mismatch"
 			}
 			return result, err
@@ -1119,7 +1119,7 @@ func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
 	tokenCheck, err := connectionAccess.RefreshableAccessToken(config.oauthClient)
 	if err != nil {
 		if result.TokenStatus == archive.tokenStatus {
-			if strings.Contains(err.Error(), "missing access token") || strings.Contains(err.Error(), "missing refresh token") || strings.Contains(err.Error(), "token material not found") {
+			if isCurrentConnectionTokenMissing(err) {
 				result.TokenStatus = "token_missing"
 			} else {
 				result.TokenStatus = "refresh_failed"
@@ -1132,7 +1132,7 @@ func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
 	}
 	if _, err := connectionAccess.FetchVerifiedIdentity(tokenCheck.accessToken); err != nil {
 		result.TokenStatus = "provider_unreachable"
-		if err.Error() == "Provider returned a different Google Identity; use a new archive path" {
+		if isCurrentConnectionIdentityMismatch(err) {
 			result.TokenStatus = "identity_mismatch"
 		}
 		return result, err
