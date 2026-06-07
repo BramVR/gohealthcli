@@ -5,6 +5,16 @@ package main
 // are generated from the JSON encoding of this slice via `gohealthcli schema
 // --json` — keep field names stable, because they are part of the contract
 // downstream tooling reads.
+//
+// Fields on the published JSON contract:
+//   - name           (string)              — the subcommand's invocation name
+//   - short          (string)              — one-line description for the index
+//   - long           (string)              — full prose for the per-page body
+//   - hidden         (bool)                — hidden from --help and reference
+//   - positional_args (string, optional)   — usage hint for trailing positional
+//                                            arguments (e.g. "<SQL>"); omitted
+//                                            entirely when empty
+//   - flags          (array of flagSpec)   — flag specifications
 type commandDef struct {
 	Name           string     `json:"name"`
 	Short          string     `json:"short"`
@@ -15,9 +25,13 @@ type commandDef struct {
 }
 
 // flagSpec describes one flag accepted by a subcommand. The string-typed
-// Default field carries the canonical default value (the same text the binary's
-// --help would print), so the Project Site renders the same value the user
-// would see at the prompt.
+// Default field carries the literal default value emitted in the schema.
+//
+// Flags whose real runtime default is platform-dependent (XDG-derived paths,
+// OS-resolved state) carry the empty string here; the Project Site generator
+// renders the em-dash rather than hard-coding a path that would be wrong on
+// other machines. Document the resolved location in prose (long descriptions,
+// README, install page) rather than baking a per-host value into the schema.
 type flagSpec struct {
 	Name    string `json:"name"`
 	Type    string `json:"type"`

@@ -31,9 +31,13 @@ func TestRunSchemaEmitsValidDocument(t *testing.T) {
 func TestRunSchemaIncludesDoctor(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	runSchema(nil, stdout, stderr)
+	if code := runSchema(nil, stdout, stderr); code != 0 {
+		t.Fatalf("runSchema exit code = %d, want 0; stderr=%q", code, stderr.String())
+	}
 	var doc schemaDocument
-	json.Unmarshal(stdout.Bytes(), &doc)
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+		t.Fatalf("schema output is not valid JSON: %v", err)
+	}
 
 	var doctor *commandDef
 	for i := range doc.Commands {
@@ -66,9 +70,13 @@ func TestRunSchemaIncludesDoctor(t *testing.T) {
 func TestRunSchemaIncludesHiddenSchemaCommand(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	runSchema(nil, stdout, stderr)
+	if code := runSchema(nil, stdout, stderr); code != 0 {
+		t.Fatalf("runSchema exit code = %d, want 0; stderr=%q", code, stderr.String())
+	}
 	var doc schemaDocument
-	json.Unmarshal(stdout.Bytes(), &doc)
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+		t.Fatalf("schema output is not valid JSON: %v", err)
+	}
 
 	for _, c := range doc.Commands {
 		if c.Name == "schema" {

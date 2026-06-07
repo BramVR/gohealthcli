@@ -1,6 +1,6 @@
 ---
-title: `gohealthcli doctor`
-description: Validate local setup and provider reachability.
+title: "gohealthcli doctor"
+description: "Validate local setup and provider reachability."
 ---
 
 <!-- Auto-generated from `gohealthcli schema --json`. Do not edit by hand. -->
