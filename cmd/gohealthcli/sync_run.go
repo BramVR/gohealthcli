@@ -145,8 +145,10 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 			if outcome == syncRunOutcomeCompleted {
 				_ = archive.FinishSyncRun(syncRunID, "sync_failed", seen, newCount, updated, now, result.Message)
 			}
+			// commitSyncCursor already prefixes its errors with
+			// "commit Sync Cursor:" — don't double-wrap.
 			if cause != nil {
-				return result, fmt.Errorf("%w; commit Sync Cursor: %v", cause, commitErr)
+				return result, fmt.Errorf("%w; %v", cause, commitErr)
 			}
 			return result, commitErr
 		}

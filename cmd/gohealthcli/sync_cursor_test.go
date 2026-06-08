@@ -6,6 +6,65 @@ import (
 	"time"
 )
 
+func TestStatusSurfacesCursorOnlyDataTypeWithZeroCounts(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+
+	archive, err := openHealthArchiveWriter(archivePath)
+	if err != nil {
+		t.Fatalf("open writer: %v", err)
+	}
+	connection, err := archive.CurrentConnection()
+	if err != nil {
+		archive.Close()
+		t.Fatalf("CurrentConnection: %v", err)
+	}
+	if err := archive.CommitSyncCursor(syncCursorKey{
+		connectionID: connection.id,
+		dataType:     "blood-glucose",
+		rollupKind:   syncCursorRollupKindNone,
+	}, syncRunOutcomeCompleted, "2026-01-02T00:00:00Z", "2026-01-02T00:00:01Z"); err != nil {
+		archive.Close()
+		t.Fatalf("CommitSyncCursor: %v", err)
+	}
+	archive.Close()
+
+	reader, err := openHealthArchiveReader(archivePath)
+	if err != nil {
+		t.Fatalf("open reader: %v", err)
+	}
+	defer reader.Close()
+	summary, err := reader.StatusSummary()
+	if err != nil {
+		t.Fatalf("StatusSummary: %v", err)
+	}
+	var found *statusDataType
+	for index := range summary.DataTypes {
+		if summary.DataTypes[index].DataType == "blood-glucose" {
+			found = &summary.DataTypes[index]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("blood-glucose missing from status: %+v", summary.DataTypes)
+	}
+	if found.DataPointCount != 0 || found.RollupCount != 0 {
+		t.Fatalf("blood-glucose counts = (%d, %d), want (0, 0) for cursor-only Data Type", found.DataPointCount, found.RollupCount)
+	}
+	if len(found.SyncCursors) != 1 || found.SyncCursors[0].CursorTime != "2026-01-02T00:00:00Z" {
+		t.Fatalf("blood-glucose cursors = %+v, want one entry with cursor_time 2026-01-02T00:00:00Z", found.SyncCursors)
+	}
+}
+
 func TestSyncCursorResolveReturnsZeroWhenNoCursorExists(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
