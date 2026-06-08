@@ -9,7 +9,7 @@ Open the system browser, run the installed-app OAuth flow against the OAuth clie
 
 A Health Archive holds exactly one Connection. Running `connect` against an archive that already has a Connection refreshes the token material in place rather than adding a second identity.
 
-`--add-scopes` extends an existing grant with optional scope keywords (`irn`, `ecg`) without re-running setup; Google's `include_granted_scopes=true` makes the resulting token cover the union of prior + new scopes. Use `connect --add-scopes irn` to unlock `gohealthcli irn-profile` and Tier 2 ECG / IRN Data Types.
+`--add-scopes` extends an existing grant with optional scope keywords (`irn`, `ecg`, `nutrition`) without re-running setup; Google's `include_granted_scopes=true` makes the resulting token cover the union of prior + new scopes. Use `connect --add-scopes irn` to unlock `gohealthcli irn-profile` and Tier 2 ECG / IRN Data Types; use `connect --add-scopes nutrition` to unlock hydration-log.
 
 `--no-input` makes the command fail with a non-zero exit code if the browser flow would block (useful in CI smoke tests after the tokens are already provisioned).
 
@@ -22,4 +22,4 @@ A Health Archive holds exactly one Connection. Running `connect` against an arch
 | `--json` | bool | `false` | write stable JSON to stdout |
 | `--plain` | bool | `false` | write plain key/value output to stdout |
 | `--no-input` | bool | `false` | never prompt, never wait for browser input |
-| `--add-scopes` | string | — | extend the OAuth grant with optional scope keywords (csv): irn, ecg |
+| `--add-scopes` | string | — | extend the OAuth grant with optional scope keywords (csv): irn, ecg, nutrition |

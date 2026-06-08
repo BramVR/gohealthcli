@@ -11,11 +11,13 @@ import (
 // Types" picks `ecg` (electrocardiogram) and `irn`
 // (irregular-rhythm-notification) as the two opt-in expansions;
 // `nutrition` covers hydration-log (#103) and any future
-// nutrition.readonly Data Types.
+// nutrition.readonly Data Types. Values reference the
+// `googleHealth*ReadonlyScope` constants so the URL string lives in
+// exactly one place.
 var connectAddScopeKeywords = map[string]string{
-	"irn":       "https://www.googleapis.com/auth/googlehealth.irn.readonly",
-	"ecg":       "https://www.googleapis.com/auth/googlehealth.electrocardiogram.readonly",
-	"nutrition": "https://www.googleapis.com/auth/googlehealth.nutrition.readonly",
+	"irn":       googleHealthIrnReadonlyScope,
+	"ecg":       googleHealthEcgReadonlyScope,
+	"nutrition": googleHealthNutritionReadonlyScope,
 }
 
 // expandConnectAddScopes turns the CLI-side keyword list into the
