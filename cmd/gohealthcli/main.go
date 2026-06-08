@@ -474,6 +474,32 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 		fmt.Fprintln(stderr, "missing command")
 		return 1
 	}
+
+	// `help` verb dispatch sits BEFORE the subcommand switch so it doesn't
+	// fall through to the unknown-command fallthrough. The verb form is an
+	// alias for the equivalent flag form: `help` ≡ `--help`, `help <cmd>` ≡
+	// `<cmd> --help` (with the registry's `Long` prose prepended). Slice 2 of
+	// PRD #143.
+	if flags.Arg(0) == "help" {
+		if flags.NArg() == 1 || flags.Arg(1) == "--help" || flags.Arg(1) == "-help" {
+			printTopLevelUsage(flags, stderr)
+			return 0
+		}
+		target := flags.Arg(1)
+		def, ok := lookupCommand(target)
+		if !ok {
+			fmt.Fprintf(stderr, "unknown command: %s\n", target)
+			return 1
+		}
+		// Print the registry Long prose, then re-dispatch through the runtime
+		// with `--help` so the flag-set portion is identical to the bytes a
+		// user gets from `gohealthcli <cmd> --help` directly. This satisfies
+		// both AC bullets: Long description AND its accepted flags.
+		fmt.Fprintln(stderr, def.Long)
+		fmt.Fprintln(stderr)
+		return runWithRuntime([]string{target, "--help"}, stdout, stderr, runtime)
+	}
+
 	globalArchivePathExplicit := flagWasProvided(flags, "db")
 
 	switch flags.Arg(0) {
