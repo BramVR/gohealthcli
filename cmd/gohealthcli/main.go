@@ -1357,11 +1357,11 @@ func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtim
 	return result, nil
 }
 
-func persistDoctorOnlineRefreshedToken(archive healthArchiveConnectionAPI, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse, previousTokenMaterial map[string]any) error {
+func persistDoctorOnlineRefreshedToken(archive connectionTokenWriter, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse, previousTokenMaterial map[string]any) error {
 	return persistDoctorOnlineRefreshedTokenWithRuntime(archive, credentialStore, connectionID, token, previousTokenMaterial, productionRuntimeAdapters())
 }
 
-func persistDoctorOnlineRefreshedTokenWithRuntime(archive healthArchiveConnectionAPI, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse, previousTokenMaterial map[string]any, runtime runtimeAdapters) error {
+func persistDoctorOnlineRefreshedTokenWithRuntime(archive connectionTokenWriter, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse, previousTokenMaterial map[string]any, runtime runtimeAdapters) error {
 	runtime = runtime.withDefaults()
 	store, err := newCredentialStoreWithRuntime(credentialStore, runtime)
 	if err != nil {
@@ -1723,7 +1723,14 @@ func inspectIdentityConfig(configPath, archivePath string) (fullConfigCheck, err
 	return fullConfigCheck{
 		archivePath:      config.archivePath,
 		defaultDataTypes: config.defaultDataTypes,
-		credentialStore:  config.credentialStore,
+		// oauthClient is returned unvalidated so the sync auto-refresh
+		// path can reach it without forcing every identity-only command
+		// to validate the OAuth client file. validateOAuthClientFile is
+		// still triggered inside loadOAuthClientConfig when a refresh
+		// actually runs, so an invalid file fails the refresh, not the
+		// happy-path read.
+		oauthClient:     config.oauthClient,
+		credentialStore: config.credentialStore,
 	}, nil
 }
 
@@ -3592,7 +3599,7 @@ func requireUsableConnectionAccessToken(metadata string, now time.Time) error {
 		return err
 	}
 	if !expiresAt.After(now.UTC()) {
-		return errors.New("Connection token has expired; run `gohealthcli connect` again")
+		return errCurrentConnectionTokenExpired
 	}
 	return nil
 }

@@ -253,3 +253,73 @@ func TestSyncRunExecutorRecordsPartialCountsWhenLaterPageFails(t *testing.T) {
 	assertArchiveTableCount(t, archivePath, "data_points", 1)
 	assertSyncRunForDataType(t, archivePath, 1, "sync_failed", "steps", "list", 1, 1, 0, "not valid JSON")
 }
+
+func TestSyncRunExecutorAutoRefreshesExpiredAccessTokenAndPersists(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	connectAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+		now:                connectAt,
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+		t.Fatalf("connect setup: %v", err)
+	}
+	// Force the stored access-token expires_at into the past so AccessToken
+	// must take the auto-refresh path.
+	setConnectionTokenExpiry(t, archivePath, "2026-01-01T00:00:00Z")
+
+	syncNow := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC)
+	refreshedExpiresAt := syncNow.Add(time.Hour)
+	testRuntime.now = func() time.Time { return syncNow }
+	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
+		if refreshToken != "connect-refresh-secret" {
+			t.Fatalf("refresh token = %q, want connect-refresh-secret", refreshToken)
+		}
+		return oauthTokenResponse{
+			accessToken:  "rotated-access-secret",
+			refreshToken: "connect-refresh-secret",
+			tokenType:    "Bearer",
+			scopes:       fallbackScopes,
+			expiresAt:    refreshedExpiresAt,
+			rawTokenMaterialObject: map[string]any{
+				"access_token":  "rotated-access-secret",
+				"refresh_token": "connect-refresh-secret",
+				"token_type":    "Bearer",
+				"expires_in":    float64(3600),
+			},
+		}, nil
+	}
+	testRuntime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
+		if accessToken != "rotated-access-secret" {
+			t.Fatalf("identity access token = %q, want rotated token", accessToken)
+		}
+		return googleIdentity{healthUserID: "111111256096816351", legacyFitbitUserID: "A1B2C3"}, nil
+	}
+
+	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "rotated-access-secret", map[string]string{
+		"": `{"dataPoints":[]}`,
+	})
+
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+		configPath:  configPath,
+		archivePath: archivePath,
+		dataTypes:   []string{"steps"},
+		from:        "2026-01-01",
+		to:          "2026-01-02T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("execute Sync Run: %v", err)
+	}
+	if result.Status != "sync_completed" {
+		t.Fatalf("Sync Run status = %q, want sync_completed", result.Status)
+	}
+
+	gotMetadata := archivedConnectionTokenMetadata(t, archivePath)
+	if !strings.Contains(gotMetadata, refreshedExpiresAt.Format(time.RFC3339)) {
+		t.Fatalf("token metadata after sync = %s, want refreshed expires_at %s", gotMetadata, refreshedExpiresAt.Format(time.RFC3339))
+	}
+}
