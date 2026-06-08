@@ -40,17 +40,33 @@ const googleHealthProfileURL = "https://health.googleapis.com/v4/users/me/profil
 const googleHealthRawResponseLimit = 10 << 20
 
 type doctorResult struct {
-	Status              string `json:"status"`
-	ConfigPath          string `json:"config_path"`
-	ArchivePath         string `json:"archive_path"`
-	OAuthClientSource   string `json:"oauth_client_source"`
-	CredentialStore     string `json:"credential_store"`
-	SchemaVersion       *int   `json:"schema_version"`
-	ConnectionCount     *int   `json:"connection_count"`
-	TokenStatus         string `json:"token_status"`
-	AttachmentRootPath  string `json:"attachment_root_path,omitempty"`
-	AttachmentRootMode  string `json:"attachment_root_mode,omitempty"`
-	Message             string `json:"message"`
+	Status              string                  `json:"status"`
+	ConfigPath          string                  `json:"config_path"`
+	ArchivePath         string                  `json:"archive_path"`
+	OAuthClientSource   string                  `json:"oauth_client_source"`
+	CredentialStore     string                  `json:"credential_store"`
+	SchemaVersion       *int                    `json:"schema_version"`
+	ConnectionCount     *int                    `json:"connection_count"`
+	TokenStatus         string                  `json:"token_status"`
+	AttachmentRootPath  string                  `json:"attachment_root_path,omitempty"`
+	AttachmentRootMode  string                  `json:"attachment_root_mode,omitempty"`
+	Attachments         *doctorAttachmentReport `json:"attachments,omitempty"`
+	Message             string                  `json:"message"`
+}
+
+type doctorAttachmentReport struct {
+	OrphanRows  []doctorOrphanRow  `json:"orphan_rows,omitempty"`
+	OrphanFiles []doctorOrphanFile `json:"orphan_files,omitempty"`
+}
+
+type doctorOrphanRow struct {
+	SHA256       string `json:"sha256"`
+	PathRelative string `json:"path_relative"`
+	DataPointID  int64  `json:"data_point_id"`
+}
+
+type doctorOrphanFile struct {
+	AbsolutePath string `json:"absolute_path"`
 }
 
 type initResult struct {
@@ -494,6 +510,11 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 		}
 		result.AttachmentRootPath = attachmentRoot
 		result.AttachmentRootMode = attachmentMode
+		attachments, attachmentsErr := collectAttachmentOrphans(*doctorArchivePath)
+		if attachmentsErr != nil {
+			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, attachmentsErr.Error(), mode, stdout, stderr)
+		}
+		result.Attachments = attachments
 		if err := writeDoctorResult(result, mode, stdout); err != nil {
 			fmt.Fprintf(stderr, "write output: %v\n", err)
 			return 1
@@ -4471,6 +4492,18 @@ func writeDoctorResult(result doctorResult, mode outputMode, stdout io.Writer) e
 			}
 			if result.AttachmentRootMode != "" {
 				if _, err := fmt.Fprintf(stdout, "attachment_root_mode: %s\n", result.AttachmentRootMode); err != nil {
+					return err
+				}
+			}
+		}
+		if result.Attachments != nil {
+			if n := len(result.Attachments.OrphanFiles); n > 0 {
+				if _, err := fmt.Fprintf(stdout, "attachments_orphan_files: %d\n", n); err != nil {
+					return err
+				}
+			}
+			if n := len(result.Attachments.OrphanRows); n > 0 {
+				if _, err := fmt.Fprintf(stdout, "attachments_orphan_rows: %d\n", n); err != nil {
 					return err
 				}
 			}
