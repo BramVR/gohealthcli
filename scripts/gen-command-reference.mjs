@@ -12,6 +12,15 @@ import path from "node:path";
 const EXPECTED_VERSION = 1;
 const VALID_COMMAND_NAME = /^[a-z][a-z0-9-]*$/;
 
+// PRESERVED_DOC_FILES lists hand-written pages under docs/commands/ that the
+// regenerator must NOT delete. They document discoverability surfaces that
+// live outside the Command Registry: `help` is a top-level dispatch verb (no
+// registry entry), and `version` is a top-level flag (no registry entry).
+// Both pages are referenced from README.md and docs/quickstart.md; deleting
+// them on every `make docs-commands` would break those links and silently
+// drop the surface from the Project Site sidebar.
+const PRESERVED_DOC_FILES = new Set(["help.md", "version.md"]);
+
 export function renderIndex(commands, binary) {
   const visible = commands.filter((c) => !c.hidden);
   const lines = [];
@@ -28,6 +37,15 @@ export function renderIndex(commands, binary) {
     const short = cmd.short ? ` — ${cmd.short}` : "";
     lines.push(`- [\`${binary} ${cmd.name}\`](commands/${cmd.name}.html)${short}`);
   }
+  lines.push("");
+  // Discoverability surfaces that live outside the Command Registry. The
+  // pages themselves are hand-written and preserved by the generator (see
+  // PRESERVED_DOC_FILES); linking them here keeps the sidebar and reference
+  // index honest about every flag and verb the binary actually exposes.
+  lines.push("## Discoverability");
+  lines.push("");
+  lines.push(`- [\`${binary} help\`](commands/help.html) — discoverability verb (\`help\`, \`help <command>\`, did-you-mean).`);
+  lines.push(`- [\`${binary} --version\`](commands/version.html) — build-stamped version, commit, and built identifiers (plain and JSON shapes).`);
   lines.push("");
   return lines.join("\n");
 }
@@ -120,8 +138,17 @@ async function main() {
 
   // Clear the directory before writing so a removed command does not leave a
   // stale page behind. Anything outside docs/commands/ is never touched.
-  fs.rmSync(outDir, { recursive: true, force: true });
-  fs.mkdirSync(outDir, { recursive: true });
+  // PRESERVED_DOC_FILES (e.g. help.md, version.md) survive the wipe: they
+  // document discoverability surfaces that live outside the Command Registry
+  // and are not regenerated from schema --json.
+  if (fs.existsSync(outDir)) {
+    for (const entry of fs.readdirSync(outDir, { withFileTypes: true })) {
+      if (entry.isFile() && PRESERVED_DOC_FILES.has(entry.name)) continue;
+      fs.rmSync(path.join(outDir, entry.name), { recursive: true, force: true });
+    }
+  } else {
+    fs.mkdirSync(outDir, { recursive: true });
+  }
 
   let written = 0;
   for (const cmd of doc.commands) {

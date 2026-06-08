@@ -20,19 +20,41 @@ data, delete health data, run a server, upload archives, or share exports.
 
 ## Status
 
-First CLI tracer in progress. Implemented commands:
+First CLI tracer in progress. The Command Registry in
+`cmd/gohealthcli/commands.go` is the single source of truth for the user-facing
+surface; the list below mirrors each entry's `Short` description and stays in
+sync with `gohealthcli --help`.
 
-- `init`: create config and an empty Health Archive.
-- `doctor`: validate local setup; `doctor --online` verifies token refresh and
-  Google Health reachability.
-- `connect`: run browser OAuth and anchor one Google Health identity.
-- `identity`: refresh archived Google Health identity metadata.
-- `profile`: archive a Google Health profile snapshot.
-- `sync`: archive Google Health Data Points and supported Rollups.
-- `status`: summarize archive counts and newest synced timestamps.
-- `query`: run guarded read-only SQL over the archive.
-- `export`: write normalized CSV or JSONL datasets.
-- `raw`: print provider JSON for endpoint exploration.
+- `init`: Create local config and an empty Health Archive.
+- `doctor`: Validate local setup and provider reachability.
+- `connect`: Run the browser OAuth flow and anchor one Google Identity.
+- `identity`: Refresh the archived Google Identity metadata.
+- `profile`: Archive a Profile Snapshot from the provider.
+- `settings`: Archive a Settings Snapshot from the provider.
+- `devices`: Archive a Paired Devices Snapshot from the provider.
+- `irn-profile`: Archive an IRN Profile Snapshot from the provider.
+- `sync`: Archive Google Health Data Points and supported Rollups.
+- `status`: Summarise archive counts and newest synced timestamps.
+- `query`: Run guarded read-only SQL over the Health Archive.
+- `export`: Write a normalised dataset to CSV or JSONL.
+- `raw`: Print raw provider JSON for endpoint exploration.
+- `describe-schema`: Self-describe the Health Archive for LLM consumption.
+
+The discoverability verbs added by PRD #143 cover the rest of the surface:
+
+- `gohealthcli` with no arguments prints the same Subcommands block as
+  `gohealthcli --help` to stdout and exits 0 — the binary never errors on a
+  bare invocation.
+- `gohealthcli help` and `gohealthcli help <command>` are alias verbs for
+  `--help` / `<command> --help`, prepending the registry's long-form prose to
+  the flag block on stderr.
+- `gohealthcli --version` and `gohealthcli --version --json` print the
+  build-stamped `version`, `commit`, and `built` identifiers; see
+  [docs/commands/version.md](./docs/commands/version.md) for the shape.
+- An unknown command prints `unknown command: <typo>` on stderr, a
+  Levenshtein-2 "Did you mean" hint (at most two suggestions), and the
+  canonical `Run 'gohealthcli --help' for a list of commands.` discovery
+  line — see [docs/commands/help.md](./docs/commands/help.md).
 
 Supported Data Point sync types:
 
@@ -179,7 +201,51 @@ gohealthcli query --plain 'SELECT data_type, COUNT(*) FROM data_points GROUP BY 
 Command flags must appear before the SQL argument because Go flag parsing stops
 at the first positional argument.
 
-Use `gohealthcli <command> --help` for command-specific flags.
+Use `gohealthcli <command> --help` or `gohealthcli help <command>` for
+command-specific flags.
+
+## Global flags
+
+These flags apply to the top-level invocation and (where the subcommand
+accepts them) to the per-subcommand parse. The shared set is the contract
+captured by the Common Flag Set module in
+[`cmd/gohealthcli/common_flags.go`](./cmd/gohealthcli/common_flags.go):
+
+- `--config <path>`: config file path.
+- `--db <path>`: SQLite Health Archive path.
+- `--json`: write stable JSON to stdout.
+- `--plain`: write plain key/value output to stdout.
+- `--no-input`: never prompt, never wait for browser input.
+- `--version`: print the build-stamped version line and exit (top level only).
+
+`--plain` and `--json` are mutually exclusive — passing both exits non-zero
+with a `flag_invalid` failure envelope ("`--plain and --json are mutually
+exclusive`"). The check fires for `--version` too, so
+`gohealthcli --plain --json --version` is rejected before any output is
+written.
+
+A few subcommands treat `--plain` / `--json` as no-ops on their *success*
+output:
+
+- `describe-schema` always emits the curated JSON catalog (or live DDL when
+  `--sql` is passed). Its own `--json` flag is on by default; the global
+  `--json` / `--plain` are accepted and parsed but have no effect on the
+  schema bytes. Its *failure* envelopes do route through the Failure
+  Reporter, so `gohealthcli --json describe-schema bogus` lands a JSON
+  failure on stdout like every other subcommand.
+- `export` always writes CSV (default) or JSONL according to its own
+  `--format` flag. The global `--plain` / `--json` are no-ops both for its
+  success output (always CSV/JSONL) AND for its failure envelopes — the
+  subcommand's `ReportFailure` call sites do not currently set `Mode`, so
+  failure messages stay as the canonical `export: <reason>` plain line
+  regardless of which global mode was requested. Passing `--plain` /
+  `--json` *after* `export` is rejected at parse time as an unknown flag
+  (export's own flag set declares only `--config`, `--db`, `--format`,
+  `--output`, `--stdout`, `--no-input`). See
+  [docs/commands/export.md](./docs/commands/export.md).
+- `raw` writes the provider's raw bytes to stdout and ignores `--plain`,
+  `--json`, and `--no-input`; passing any of them directly on `raw` is
+  rejected at parse time with a targeted "not supported by raw" message.
 
 ## Configuration
 

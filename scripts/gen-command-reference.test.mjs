@@ -109,4 +109,16 @@ describe("renderIndex", () => {
     const out = renderIndex([{ name: "x", short: "", hidden: false }], "gohealthcli");
     assert.ok(out.includes("- [`gohealthcli x`](commands/x.html)"));
   });
+
+  it("links the Discoverability section to the hand-written help and version pages", () => {
+    // help and version are top-level dispatch surfaces (verb / flag) — they
+    // do not appear in `schema --json`, so the generator emits a fixed
+    // Discoverability section that links the hand-written reference pages.
+    // The PRESERVED_DOC_FILES whitelist in the same module keeps those
+    // pages alive across regenerations.
+    const out = renderIndex(cmds, "gohealthcli");
+    assert.match(out, /## Discoverability/);
+    assert.ok(out.includes("[`gohealthcli help`](commands/help.html)"));
+    assert.ok(out.includes("[`gohealthcli --version`](commands/version.html)"));
+  });
 });
