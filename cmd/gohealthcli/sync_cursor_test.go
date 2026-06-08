@@ -201,6 +201,117 @@ func TestSyncRunExecutorErrorsClearlyWhenCursorMissingAndNoFrom(t *testing.T) {
 	}
 }
 
+func TestSyncRunExecutorDoesNotCreateCursorWhenFirstRunFails(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+		t.Fatalf("connect setup: %v", err)
+	}
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
+
+	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
+		"": `{`, // unparseable response forces the first sync to fail
+	})
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+		configPath:  configPath,
+		archivePath: archivePath,
+		dataTypes:   []string{"steps"},
+		from:        "2026-01-01",
+		to:          "2026-01-02T00:00:00Z",
+	})
+	if err == nil || result.Status != "sync_failed" {
+		t.Fatalf("first sync: status=%q err=%v, want sync_failed", result.Status, err)
+	}
+
+	// ADR-0008 invariant: failed first sync must NOT create a cursor row.
+	archive, err := openHealthArchiveWriter(archivePath)
+	if err != nil {
+		t.Fatalf("reopen archive: %v", err)
+	}
+	defer archive.Close()
+	connection, err := archive.CurrentConnection()
+	if err != nil {
+		t.Fatalf("CurrentConnection: %v", err)
+	}
+	if _, found, err := archive.ResolveSyncCursor(syncCursorKey{
+		connectionID: connection.id,
+		dataType:     "steps",
+		rollupKind:   syncCursorRollupKindNone,
+	}); err != nil || found {
+		t.Fatalf("cursor present after failed first sync: found=%v err=%v, want absent", found, err)
+	}
+}
+
+// TestSyncRunExecutorRoundTripsCursorThroughExactToString pins ADR-0008's
+// contract: whatever string the prior Sync Run resolved as --to is exactly
+// what the next sync sees as --from. The cursor does not transform formats
+// (date-range vs RFC3339) — it stores the literal --to so callers passing
+// inclusive dates and callers passing RFC3339 instants both round-trip.
+func TestSyncRunExecutorRoundTripsCursorThroughExactToString(t *testing.T) {
+	for _, format := range []struct {
+		name   string
+		first  string
+		second string
+	}{
+		{"RFC3339 with seconds", "2026-01-02T00:00:00Z", "2026-01-04T00:00:00Z"},
+		{"plain calendar date", "2026-01-02", "2026-01-04"},
+	} {
+		format := format
+		t.Run(format.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+			testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+				accessToken:        "connect-access-secret",
+				refreshToken:       "connect-refresh-secret",
+				healthUserID:       "111111256096816351",
+				legacyFitbitUserID: "A1B2C3",
+			})
+			if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+				t.Fatalf("connect setup: %v", err)
+			}
+			testRuntime.now = func() time.Time { return time.Date(2026, 1, 4, 0, 0, 0, 0, time.UTC) }
+			testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
+				"": `{"dataPoints":[]}`,
+			})
+			first, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+				configPath:  configPath,
+				archivePath: archivePath,
+				dataTypes:   []string{"steps"},
+				from:        "2026-01-01",
+				to:          format.first,
+			})
+			if err != nil || first.Status != "sync_completed" {
+				t.Fatalf("first sync: status=%q err=%v", first.Status, err)
+			}
+
+			testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
+				"": `{"dataPoints":[]}`,
+			})
+			second, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+				configPath:  configPath,
+				archivePath: archivePath,
+				dataTypes:   []string{"steps"},
+				to:          format.second,
+			})
+			if err != nil || second.Status != "sync_completed" {
+				t.Fatalf("resumed sync: status=%q err=%v", second.Status, err)
+			}
+			if !second.ResumedFromCursor {
+				t.Fatal("ResumedFromCursor = false on second sync")
+			}
+			if second.From != format.first {
+				t.Fatalf("second.From = %q, want round-trip of first --to %q", second.From, format.first)
+			}
+		})
+	}
+}
+
 func TestSyncRunExecutorPreservesCursorOnFailedRun(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
