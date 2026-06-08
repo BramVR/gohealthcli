@@ -4355,14 +4355,19 @@ func TestSyncReportsFailedWhenCompletionRecordFails(t *testing.T) {
 			}]
 		}`,
 	})
-	originalFinishSyncRunRecord := finishSyncRunRecord
-	finishSyncRunRecord = func(db *sql.DB, syncRunID int64, status string, seen, newCount, updated int, finishedAt, errorSummary string) error {
-		if status == "sync_completed" {
-			return errors.New("archive finalization failed")
+	// Wrap the writer so FinalizeSyncRun (the atomic sync_run+cursor write)
+	// fails when called for a sync_completed outcome. This exercises the
+	// CLI's "atomic finalize failed → recover-as-sync_failed" path without
+	// reaching into the legacy package-level indirection that the executor
+	// no longer routes through for completed runs.
+	t.Cleanup(func() { healthArchiveWriterOpenerForTest = openHealthArchiveWriter })
+	healthArchiveWriterOpenerForTest = func(path string) (healthArchiveWriter, error) {
+		inner, err := openHealthArchiveWriter(path)
+		if err != nil {
+			return nil, err
 		}
-		return originalFinishSyncRunRecord(db, syncRunID, status, seen, newCount, updated, finishedAt, errorSummary)
+		return fakeFinalizeWriter{healthArchiveWriter: inner, failOn: failOnCompletedOutcome(errSimulatedFinalizeCompletedFailure)}, nil
 	}
-	t.Cleanup(func() { finishSyncRunRecord = originalFinishSyncRunRecord })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)

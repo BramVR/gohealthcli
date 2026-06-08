@@ -127,31 +127,38 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 		}
 		now := runtime.now().UTC().Format(time.RFC3339)
 		seen, newCount, updated := syncResultTotalCounts(result)
-		if updateErr := archive.FinishSyncRun(syncRunID, result.Status, seen, newCount, updated, now, errorSummary); updateErr != nil {
+		if finalizeErr := archive.FinalizeSyncRun(syncRunFinalize{
+			SyncRunID:      syncRunID,
+			Outcome:        outcome,
+			SeenCount:      seen,
+			NewCount:       newCount,
+			UpdatedCount:   updated,
+			FinishedAt:     now,
+			ErrorSummary:   errorSummary,
+			CursorKey:      cursorKey,
+			CursorTo:       options.to,
+			CursorAdvanced: now,
+		}); finalizeErr != nil {
+			// The atomic write rolled back: the sync_run row is still in its
+			// StartSyncRun state and no cursor advance happened. For an
+			// originally sync_completed outcome, write a separate sync_failed
+			// row so the audit trail does not show a perpetually-running
+			// attempt; for outcomes that were already failure-shaped
+			// (sync_failed / sync_canceled), the legacy single-UPDATE path
+			// would have left the row as sync_running on the same write
+			// failure, so do not silently change a canceled run into a
+			// failed one. Surface both errors when the recovery write also
+			// fails — there is no in-process action that can repair an
+			// unreachable database.
 			result.Status = "sync_failed"
-			result.Message = updateErr.Error()
+			result.Message = finalizeErr.Error()
+			finalErr := fmt.Errorf("record %s Sync Run: %w", outcome, finalizeErr)
 			if cause != nil {
-				return result, fmt.Errorf("%w; record %s Sync Run: %v", cause, outcome, updateErr)
+				finalErr = fmt.Errorf("%w; %v", cause, finalErr)
 			}
-			return result, fmt.Errorf("record %s Sync Run: %w", outcome, updateErr)
-		}
-		if commitErr := archive.CommitSyncCursor(cursorKey, outcome, options.to, now); commitErr != nil {
-			result.Status = "sync_failed"
-			result.Message = commitErr.Error()
-			// Reconcile the audit trail: the Sync Run row was just written as
-			// `outcome` (e.g. sync_completed) but the cursor commit failed, so
-			// the next sync would resume from the prior cursor while status
-			// reports the run as successful. Re-mark the row as failed so the
-			// audit trail and the cursor agree. Surface the reconciliation
-			// error if it also fails — that combined failure is the exact
-			// inconsistency this block exists to prevent.
-			finalErr := commitErr
-			if cause != nil {
-				finalErr = fmt.Errorf("%w; %v", cause, commitErr)
-			}
-			if outcome == syncRunOutcomeCompleted {
-				if reconcileErr := archive.FinishSyncRun(syncRunID, "sync_failed", seen, newCount, updated, now, result.Message); reconcileErr != nil {
-					finalErr = fmt.Errorf("%v; reconcile Sync Run: %w", finalErr, reconcileErr)
+			if outcome.AdvancesCursor() {
+				if recoveryErr := archive.FinishSyncRun(syncRunID, "sync_failed", seen, newCount, updated, now, result.Message); recoveryErr != nil {
+					finalErr = fmt.Errorf("%v; mark Sync Run failed: %w", finalErr, recoveryErr)
 				}
 			}
 			return result, finalErr

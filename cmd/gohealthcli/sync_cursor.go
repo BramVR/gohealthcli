@@ -29,6 +29,15 @@ const (
 	syncRunOutcomeCanceled  syncRunOutcome = "sync_canceled"
 )
 
+// AdvancesCursor expresses the ADR-0008 invariant at the seam where the
+// outcome value is defined: only sync_completed advances a Sync Cursor.
+// Callers route every terminal outcome through one path and ask the
+// outcome whether it warrants a cursor write, instead of duplicating
+// the rule at each call site.
+func (outcome syncRunOutcome) AdvancesCursor() bool {
+	return outcome == syncRunOutcomeCompleted
+}
+
 type syncCursorKey struct {
 	connectionID       string
 	dataType           string
@@ -74,13 +83,24 @@ func resolveSyncCursor(db *sql.DB, key syncCursorKey) (string, bool, error) {
 // sync_failed and sync_canceled are accepted so callers can route every
 // terminal outcome through one path, but they no-op on storage.
 func commitSyncCursor(db *sql.DB, key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error {
-	if outcome != syncRunOutcomeCompleted {
+	return commitSyncCursorExec(db, key, outcome, to, advancedAt)
+}
+
+// commitSyncCursorTx is the same write as commitSyncCursor but bound to
+// an open transaction so it can compose with finishSyncRunTx inside the
+// writer's FinalizeSyncRun atomic-commit path.
+func commitSyncCursorTx(tx *sql.Tx, key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error {
+	return commitSyncCursorExec(tx, key, outcome, to, advancedAt)
+}
+
+func commitSyncCursorExec(executor sqlExecutor, key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error {
+	if !outcome.AdvancesCursor() {
 		return nil
 	}
 	if to == "" {
 		return errors.New("sync cursor commit requires a non-empty cursor time")
 	}
-	_, err := db.Exec(`INSERT INTO sync_cursors (
+	_, err := executor.Exec(`INSERT INTO sync_cursors (
 		connection_id,
 		data_type,
 		source_family_filter,
