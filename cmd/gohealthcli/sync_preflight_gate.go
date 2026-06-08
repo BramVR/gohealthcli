@@ -63,15 +63,17 @@ type preflightFailure struct {
 // preflight rule discriminators. New rules added in later slices append
 // here; existing constants are stable so downstream tests can pin them.
 const (
-	preflightRuleMissingDataTypes          = "missing_data_types"
-	preflightRuleAllVsTypesConflict        = "all_vs_types_conflict"
-	preflightRuleDuplicateDataType         = "duplicate_data_type"
-	preflightRuleUnsupportedDataType       = "unsupported_data_type"
-	preflightRuleRollupParse               = "rollup_parse"
-	preflightRuleRollupCatalog             = "rollup_catalog"
-	preflightRuleSourceFamily              = "source_family"
+	preflightRuleMissingDataTypes           = "missing_data_types"
+	preflightRuleAllVsTypesConflict         = "all_vs_types_conflict"
+	preflightRuleDuplicateDataType          = "duplicate_data_type"
+	preflightRuleUnsupportedDataType        = "unsupported_data_type"
+	preflightRuleRollupParse                = "rollup_parse"
+	preflightRuleRollupCatalog              = "rollup_catalog"
+	preflightRuleSourceFamily               = "source_family"
 	preflightRuleRollupSourceFamilyConflict = "rollup_source_family_conflict"
-	preflightRuleConnectionLookup          = "connection_lookup"
+	preflightRuleConnectionLookup           = "connection_lookup"
+	preflightRuleRangeOrderInverted         = "range_order_inverted"
+	preflightRuleRangeZeroWidth             = "range_zero_width"
 )
 
 func (f *preflightFailure) Error() string { return f.err.Error() }
@@ -127,6 +129,17 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 			if _, err := gate.ctx.sourceFamilyFilter(dataType, options.sourceFamily); err != nil {
 				return preflightPlan{}, newPreflightFailure(preflightRuleSourceFamily, err)
 			}
+		}
+	}
+	// Range ordering: --from > --to and --from == --to are both flag-
+	// shape rejections and must fire before the archive connection
+	// lookup so an operator typo surfaces faster than a disk open.
+	// --from "" is the cursor-resume case (lifecycle fills it from the
+	// Sync Cursor later) and the executor's resume path covers that
+	// separately, so skip the check entirely when --from is empty.
+	if options.from != "" && options.to != "" {
+		if err := validatePreflightRangeOrder(options.from, options.to); err != nil {
+			return preflightPlan{}, err
 		}
 	}
 	to := options.to
@@ -219,6 +232,59 @@ func (gate syncPreflightGate) defaultTo(options syncCommandOptions, dataTypes []
 		}
 	}
 	return gate.ctx.now().UTC().Format(time.RFC3339)
+}
+
+// validatePreflightRangeOrder enforces the two range-ordering rules
+// (inverted range, zero-width window) on a parsed time.Time so that
+// civil-date and RFC3339 inputs compose correctly. Civil dates parse
+// as start-of-UTC-day; RFC3339 keeps its embedded offset. A small
+// local parser lives here on purpose: the unified syncRollupSpec
+// normalizer arrives in a later slice and will supersede or reuse
+// this helper at that time.
+//
+// Parse failures DEFER to the downstream code path (which owns the
+// per-rollup civil-date-vs-RFC3339 acceptance ergonomics — for example,
+// --rollup daily requires civil-date and produces its own error
+// shape). Range-ordering only fires when both inputs successfully
+// parse, so this slice does not change error messages for any
+// previously-rejected shape.
+func validatePreflightRangeOrder(from, to string) error {
+	fromTime, fromOK := parsePreflightDateOrTime(from)
+	toTime, toOK := parsePreflightDateOrTime(to)
+	if !fromOK || !toOK {
+		return nil
+	}
+	if fromTime.Equal(toTime) {
+		return newPreflightFailure(
+			preflightRuleRangeZeroWidth,
+			fmt.Errorf("sync --from and --to are equal (%s); zero-width sync window is not useful", from),
+		)
+	}
+	if fromTime.After(toTime) {
+		return newPreflightFailure(
+			preflightRuleRangeOrderInverted,
+			fmt.Errorf("sync --from %s: from must be earlier than to (got --to %s)", from, to),
+		)
+	}
+	return nil
+}
+
+// parsePreflightDateOrTime accepts either civil-date (YYYY-MM-DD,
+// interpreted as start-of-UTC-day) or RFC3339. The two-shape acceptance
+// matches the flag-parsing ergonomics the executor used to enforce
+// downstream; concentrating it here lets the gate compare --from and
+// --to on time.Time values instead of risky string comparisons. The
+// bool reports whether parsing succeeded; the error shape is owned
+// by the downstream code path (e.g. --rollup daily's civil-date-only
+// rule), so the gate never authors a parse-error message here.
+func parsePreflightDateOrTime(value string) (time.Time, bool) {
+	if parsed, err := time.ParseInLocation("2006-01-02", value, time.UTC); err == nil {
+		return parsed, true
+	}
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed, true
+	}
+	return time.Time{}, false
 }
 
 // productionSyncPreflightContext wires the gate to the real catalog +
