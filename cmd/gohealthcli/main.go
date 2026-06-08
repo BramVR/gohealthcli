@@ -1443,9 +1443,12 @@ func requireConnectionScopes(metadata string, requiredScopes []string) error {
 	for _, scope := range grantedScopes {
 		granted[scope] = struct{}{}
 	}
-	// Gather every required scope that is not granted. Reporting all
-	// missing scopes at once lets the AC's `--add-scopes ecg,irn`
-	// combined hint emerge when both Tier 2 scopes are missing.
+	// Collect every required scope that is not granted so the hint
+	// path below can decide whether all missing scopes are
+	// `--add-scopes` keywords (and therefore worth combining into a
+	// single `ecg,irn`-style recovery hint). The error message itself
+	// still names the first missing scope; the keyword join is what
+	// changes between single-scope and multi-scope misses.
 	var missing []string
 	for _, requiredScope := range requiredScopes {
 		if _, ok := granted[requiredScope]; !ok {

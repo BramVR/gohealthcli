@@ -125,6 +125,8 @@ gohealthcli status --plain  # per-Data-Type newest_data_point_timestamp lands
 ```
 
 If a Tier 2 sync is called without the matching scope on the stored
-Connection, the command exits with the literal hint
-`run \`gohealthcli connect --add-scopes ecg,irn\`` — run that one
-line to fix it. No second base-set browser sign-in is needed.
+Connection, the command exits with a recovery hint pointing at the
+keywords for the missing scopes specifically: `--add-scopes ecg` when
+only the ECG scope is missing, `--add-scopes irn` for IRN, and
+`--add-scopes ecg,irn` when both are. Run that exact line to fix it.
+No second base-set browser sign-in is needed.
