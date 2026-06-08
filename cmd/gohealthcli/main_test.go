@@ -2840,29 +2840,6 @@ func TestCountArchiveRowsRejectsUnknownTable(t *testing.T) {
 	}
 }
 
-func TestSyncRequiresFrom(t *testing.T) {
-	stdout := new(bytes.Buffer)
-	stderr := new(bytes.Buffer)
-	code := run([]string{"sync", "--json"}, stdout, stderr)
-	if code != 1 {
-		t.Fatalf("sync exit code = %d, want 1", code)
-	}
-	if stderr.String() != "" {
-		t.Fatalf("stderr = %q, want empty", stderr.String())
-	}
-	var got map[string]any
-	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
-		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
-	}
-	assertJSONString(t, got, "status", "sync_failed")
-	if !strings.Contains(got["message"].(string), "--from") {
-		t.Fatalf("message = %v, want --from hint", got["message"])
-	}
-	if _, ok := got["sync_run_id"]; ok {
-		t.Fatalf("sync_run_id = %v, want omitted before setup", got["sync_run_id"])
-	}
-}
-
 func TestSyncRejectsInvalidSourceFamilyOptionsBeforeSetup(t *testing.T) {
 	for _, tc := range []struct {
 		name        string

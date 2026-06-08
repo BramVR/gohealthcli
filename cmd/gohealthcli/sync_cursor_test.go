@@ -312,6 +312,73 @@ func TestSyncRunExecutorRoundTripsCursorThroughExactToString(t *testing.T) {
 	}
 }
 
+// brokenCursorCommitWriter wraps an existing healthArchiveWriter and forces
+// CommitSyncCursor to fail. It exists to exercise the reconciliation path
+// where FinishSyncRun has already persisted sync_completed but the cursor
+// commit then errors — the Sync Run row must be re-marked sync_failed so
+// the audit trail and the cursor agree.
+type brokenCursorCommitWriter struct {
+	healthArchiveWriter
+}
+
+func (writer brokenCursorCommitWriter) CommitSyncCursor(syncCursorKey, syncRunOutcome, string, string) error {
+	return errSimulatedCommitFailure
+}
+
+var errSimulatedCommitFailure = errSimulated("simulated cursor commit failure")
+
+type errSimulated string
+
+func (err errSimulated) Error() string { return string(err) }
+
+func TestSyncRunReconcilesSyncRunWhenCursorCommitFailsAfterCompletion(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+		t.Fatalf("connect setup: %v", err)
+	}
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
+
+	t.Cleanup(func() { healthArchiveWriterOpenerForTest = openHealthArchiveWriter })
+	healthArchiveWriterOpenerForTest = func(path string) (healthArchiveWriter, error) {
+		inner, err := openHealthArchiveWriter(path)
+		if err != nil {
+			return nil, err
+		}
+		return brokenCursorCommitWriter{healthArchiveWriter: inner}, nil
+	}
+
+	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
+		"": `{"dataPoints":[]}`,
+	})
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+		configPath:  configPath,
+		archivePath: archivePath,
+		dataTypes:   []string{"steps"},
+		from:        "2026-01-01",
+		to:          "2026-01-02T00:00:00Z",
+	})
+	if err == nil {
+		t.Fatal("expected commit-cursor failure, got nil error")
+	}
+	if result.Status != "sync_failed" {
+		t.Fatalf("result.Status = %q, want sync_failed", result.Status)
+	}
+	if !strings.Contains(err.Error(), "simulated cursor commit failure") {
+		t.Fatalf("err = %v, want simulated commit failure", err)
+	}
+
+	// The Sync Run row should have been reconciled from sync_completed back
+	// to sync_failed so the audit trail matches the cursor (still absent).
+	assertSyncRunForDataType(t, archivePath, result.SyncRunID, "sync_failed", "steps", "list", 0, 0, 0, "simulated cursor commit failure")
+}
+
 func TestSyncRunExecutorPreservesCursorOnFailedRun(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)

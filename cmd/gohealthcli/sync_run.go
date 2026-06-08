@@ -10,6 +10,11 @@ type syncRunExecutor struct {
 	runtime runtimeAdapters
 }
 
+// healthArchiveWriterOpenerForTest allows tests to inject a wrapped writer
+// (for example, one that forces CommitSyncCursor to fail) without rewriting
+// the whole sync pipeline. Production always uses openHealthArchiveWriter.
+var healthArchiveWriterOpenerForTest = openHealthArchiveWriter
+
 func syncSetup(options syncCommandOptions) (syncResult, error) {
 	return syncSetupWithRuntime(options, productionRuntimeAdapters())
 }
@@ -56,7 +61,7 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	if err != nil {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, fmt.Errorf("config check failed: %w", err)
 	}
-	archive, err := openHealthArchiveWriter(options.archivePath)
+	archive, err := healthArchiveWriterOpenerForTest(options.archivePath)
 	if err != nil {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, err
 	}
@@ -132,6 +137,14 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 		if commitErr := archive.CommitSyncCursor(cursorKey, outcome, options.to, now); commitErr != nil {
 			result.Status = "sync_failed"
 			result.Message = commitErr.Error()
+			// Reconcile the audit trail: the Sync Run row was just written as
+			// `outcome` (e.g. sync_completed) but the cursor commit failed, so
+			// the next sync would resume from the prior cursor while status
+			// reports the run as successful. Re-mark the row as failed so the
+			// audit trail and the cursor agree.
+			if outcome == syncRunOutcomeCompleted {
+				_ = archive.FinishSyncRun(syncRunID, "sync_failed", seen, newCount, updated, now, result.Message)
+			}
 			if cause != nil {
 				return result, fmt.Errorf("%w; commit Sync Cursor: %v", cause, commitErr)
 			}

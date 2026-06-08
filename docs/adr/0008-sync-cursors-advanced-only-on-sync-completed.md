@@ -8,7 +8,7 @@ read_when:
 ---
 # Sync Cursors Advance Only on `sync_completed`
 
-To make `gohealthcli sync` incrementally re-runnable without explicit `--from`, the archive carries a `Sync Cursor` per `(Connection, Data Type, source-family filter, endpoint family)` tuple. The cursor is a durable highwater mark advanced by the Sync Run module **only when the run finishes with status `sync_completed`**. A partial or failed run leaves the cursor at its prior value even though some Data Points may already be archived.
+To make `gohealthcli sync` incrementally re-runnable without explicit `--from`, the archive carries a `Sync Cursor` per `(Connection, Data Type, source-family filter, rollup kind)` tuple. (Endpoint family is derived from the source-family filter and the rollup kind by the existing planner, so it is not part of the key.) The cursor is a durable highwater mark advanced by the Sync Run module **only when the run finishes with status `sync_completed`**. A partial or failed run leaves the cursor at its prior value even though some Data Points may already be archived.
 
 This is deliberately not `max(start_time_utc, end_time_utc, civil_date, provider_civil_date)` over archived rows. That derivation already mixes columns differently per Data Type (`health_archive_reader.go`), and using it as a cursor would make the COALESCE chain load-bearing for correctness. Failure cases would also become impossible to distinguish from "successfully synced through that point" — archived rows from a partial run would silently advance the implicit watermark.
 
