@@ -170,6 +170,64 @@ func TestSyncRunExecutorArchivesDailyRollups(t *testing.T) {
 	assertSyncRunWithEndpointFamily(t, archivePath, 1, "sync_completed", "dailyRollUp", 1, 1, 0, "")
 }
 
+// TestSyncRunExecutorWiresNormalizedFromIntoHourlyRollup is the slice-3
+// regression test for the executor seam that the gate's NormalizeRange
+// only fixed for --to: civil `--from 2026-06-07` passed to `--rollup
+// hourly` must reach the upstream rollUp body as `2026-06-07T00:00:00Z`,
+// not as the raw civil string. The fake provider keys its canned pages
+// off the body's startTime/endTime verbatim, so a missing
+// `options.from = plan.from` assignment surfaces as "no fake rollup
+// page for key ..." with the civil form on the left-hand side.
+func TestSyncRunExecutorWiresNormalizedFromIntoHourlyRollup(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+		t.Fatalf("connect setup: %v", err)
+	}
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC) }
+
+	testRuntime, requests := withHeartRateHourlyRollupFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
+		"2026-01-01T00:00:00Z/2026-01-02T00:00:00Z/3600s/": `{
+			"rollupDataPoints": [{
+				"heartRate": {"bpmAvg": 72.0, "bpmMin": 60.0, "bpmMax": 90.0},
+				"startTime": "2026-01-01T00:00:00Z",
+				"endTime": "2026-01-01T01:00:00Z"
+			}]
+		}`,
+	})
+
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+		configPath:  configPath,
+		archivePath: archivePath,
+		dataTypes:   []string{"heart-rate"},
+		rollup:      "hourly",
+		from:        "2026-01-01",
+		to:          "2026-01-02",
+	})
+	if err != nil {
+		t.Fatalf("execute Sync Run: %v", err)
+	}
+
+	if result.Status != "sync_completed" || result.EndpointFamily != "rollUp" {
+		t.Fatalf("Sync Run result = (%q, %q), want completed rollUp", result.Status, result.EndpointFamily)
+	}
+	if result.From != "2026-01-01T00:00:00Z" {
+		t.Errorf("result.From = %q, want RFC3339 normalized form 2026-01-01T00:00:00Z", result.From)
+	}
+	if result.To != "2026-01-02T00:00:00Z" {
+		t.Errorf("result.To = %q, want RFC3339 normalized form 2026-01-02T00:00:00Z", result.To)
+	}
+	if len(*requests) != 1 || (*requests)[0].endpointName != "dataTypes.heart-rate.rollUp" {
+		t.Fatalf("requests = %#v, want one heart-rate rollUp request", *requests)
+	}
+}
+
 func TestSyncRunExecutorRecordsFailedListRunForRepeatedPageToken(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)

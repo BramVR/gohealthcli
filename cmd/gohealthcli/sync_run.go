@@ -61,6 +61,17 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	}
 	dataType := plan.dataTypes[0]
 	options.to = plan.to
+	// plan.from carries the gate's NormalizeRange output (civil for
+	// dailyRollUp, RFC3339 for hourly/weekly/window=<dur>). The cursor-
+	// resume path below leaves plan.from == "" so the lifecycle can fill
+	// it from the Sync Cursor — keep options.from empty in that case so
+	// the resume branch still runs. When --from was supplied, ship the
+	// normalized form upstream so a civil --from on --rollup hourly does
+	// not leak past the gate as a raw civil string that the upstream API
+	// rejects with HTTP 400 (PRD #141 slice 3 AC 3/4).
+	if plan.from != "" {
+		options.from = plan.from
+	}
 	connection := plan.connection
 	archive, err := healthArchiveWriterOpenerForTest(options.archivePath)
 	if err != nil {

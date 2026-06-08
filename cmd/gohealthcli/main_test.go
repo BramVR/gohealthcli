@@ -6744,6 +6744,62 @@ func withStepDailyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAcc
 	return runtime, &requests
 }
 
+// withHeartRateHourlyRollupFetchFake routes the runtime's fetchRawProvider
+// to per-page-key canned responses for the hourly heart-rate windowed
+// rollUp endpoint. The page-key shape is "<startTime>/<endTime>/<windowSize>/<pageToken>"
+// where startTime/endTime are taken VERBATIM from the request body, so a
+// test that passes civil dates into the gate-normalized executor proves
+// the executor actually used the normalized RFC3339 form (the gate emits
+// RFC3339 for hourly per PRD #141 slice 3) rather than the raw civil
+// option.from.
+func withHeartRateHourlyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]rawProviderRequest) {
+	t.Helper()
+
+	var requests []rawProviderRequest
+	runtime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		if accessToken != wantAccessToken {
+			t.Fatalf("rollup sync access token = %q, want stored token", accessToken)
+		}
+		if request.endpointName != "dataTypes.heart-rate.rollUp" || request.dataType != "heart-rate" {
+			t.Fatalf("rollup sync request = (%q, %q), want heart-rate rollUp", request.endpointName, request.dataType)
+		}
+		if request.method != http.MethodPost {
+			t.Fatalf("rollup method = %q, want POST", request.method)
+		}
+		parsedURL, err := url.Parse(request.url)
+		if err != nil {
+			t.Fatalf("parse rollup URL: %v", err)
+		}
+		if parsedURL.Path != "/v4/users/me/dataTypes/heart-rate/dataPoints:rollUp" {
+			t.Fatalf("rollup path = %q, want rollUp path", parsedURL.Path)
+		}
+		var body struct {
+			Range struct {
+				StartTime string `json:"startTime"`
+				EndTime   string `json:"endTime"`
+			} `json:"range"`
+			WindowSize string `json:"windowSize"`
+			PageToken  string `json:"pageToken"`
+		}
+		if err := json.Unmarshal(request.body, &body); err != nil {
+			t.Fatalf("rollup body is not valid JSON: %v\nbody: %s", err, string(request.body))
+		}
+		requests = append(requests, request)
+		key := fmt.Sprintf("%s/%s/%s/%s",
+			body.Range.StartTime,
+			body.Range.EndTime,
+			body.WindowSize,
+			body.PageToken,
+		)
+		response, ok := pages[key]
+		if !ok {
+			t.Fatalf("no fake rollup page for key %q", key)
+		}
+		return []byte(response), nil
+	}
+	return runtime, &requests
+}
+
 func installDataPointSyncFetchFake(t *testing.T, wantAccessToken, dataType string, pages map[string]string) *[]rawProviderRequest {
 	t.Helper()
 
