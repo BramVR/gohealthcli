@@ -68,6 +68,77 @@ func parseSyncRollupSpec(value string) (syncRollupSpec, error) {
 		value, strings.Join(supportedSyncRollupKinds, " | "))
 }
 
+// NormalizeRange owns the civil-vs-RFC3339 input-shape rule per
+// rollup kind (PRD #141 slice 3). The planner downstream consumes
+// only the normalized values, so the catalog's SupportedEndpoints
+// data stays authoritative — civil-vs-RFC3339 is purely an input
+// ergonomic decision concentrated here.
+//
+// Acceptance per rollup kind:
+//   - daily: civil dates AND RFC3339; emits civil (YYYY-MM-DD).
+//     RFC3339 inputs are projected to their UTC calendar day so the
+//     downstream dailyRollUp call body receives the catalog-required
+//     civil-time interval.
+//   - hourly / weekly / window=<dur>: civil dates (interpreted as
+//     start-of-UTC-day) AND RFC3339; emits RFC3339 so the windowed
+//     rollUp call body carries the upstream-required RFC3339 range.
+//
+// Empty inputs pass through: --from "" is the cursor-resume signal
+// the lifecycle resolves later, and --to "" is the gate-defaulting
+// signal; the gate normalises a resolved --to before calling this
+// helper, but treating empty as pass-through keeps the contract
+// composable for callers that have not yet defaulted.
+//
+// Parse failures surface a local message naming both supported
+// shapes for this rollup kind so the operator no longer sees an
+// opaque upstream HTTP 400 for civil-on-hourly etc.
+func (spec syncRollupSpec) NormalizeRange(from, to string, now time.Time) (string, string, error) {
+	_ = now // now is reserved for future relative-input ergonomics (e.g. "yesterday").
+	rfcFrom, err := spec.normalizeBoundary(from, "--from")
+	if err != nil {
+		return "", "", err
+	}
+	rfcTo, err := spec.normalizeBoundary(to, "--to")
+	if err != nil {
+		return "", "", err
+	}
+	return rfcFrom, rfcTo, nil
+}
+
+// normalizeBoundary handles one end of the range. The shape it accepts
+// is the same for both ends; the per-rollup choice is what it EMITS
+// (civil for daily, RFC3339 for the windowed family).
+func (spec syncRollupSpec) normalizeBoundary(value, flag string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	parsed, ok := parseSyncRangeBoundary(value)
+	if !ok {
+		return "", fmt.Errorf(
+			"sync %s %q for --rollup %s: expected YYYY-MM-DD or RFC3339 (e.g. 2026-01-02T00:00:00Z)",
+			flag, value, spec.cursorKind,
+		)
+	}
+	if spec.endpointFamily == endpointFamilyDailyRollUp {
+		return parsed.UTC().Format("2006-01-02"), nil
+	}
+	return parsed.UTC().Format(time.RFC3339), nil
+}
+
+// parseSyncRangeBoundary accepts either civil-date (YYYY-MM-DD,
+// interpreted as start-of-UTC-day) or RFC3339. Both shapes are
+// supported by every rollup kind as an input ergonomic, even when
+// the emitted shape is restricted by the upstream endpoint.
+func parseSyncRangeBoundary(value string) (time.Time, bool) {
+	if parsed, err := time.ParseInLocation("2006-01-02", value, time.UTC); err == nil {
+		return parsed, true
+	}
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed, true
+	}
+	return time.Time{}, false
+}
+
 // validateSyncRollupAgainstDataType checks whether the rollup kind
 // the operator asked for is wired into the Data Type's catalog row.
 // Failure quotes the actual SupportedEndpoints map keys — the #106

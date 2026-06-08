@@ -171,3 +171,185 @@ func TestSyncRollupSpecValidateAgainstDataTypeAcceptsStepsDaily(t *testing.T) {
 		t.Errorf("validateSyncRollupAgainstDataType steps+daily: %v", err)
 	}
 }
+
+// TestSyncRollupSpecNormalizeRange pins PRD #141 slice 3: civil-vs-RFC3339
+// is owned by syncRollupSpec. The matrix is (input shape) × (rollup kind)
+// → normalized output / error. The planner downstream consumes only the
+// normalized values, so this table is the single source of truth for the
+// shape contract.
+//
+// Rules per rollup kind:
+//   - daily: accepts civil AND RFC3339 → emits civil (YYYY-MM-DD).
+//   - hourly / weekly / window=<dur>: accepts civil (interpreted as
+//     start-of-UTC-day) AND RFC3339 → emits RFC3339.
+func TestSyncRollupSpecNormalizeRange(t *testing.T) {
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name     string
+		rollup   string
+		from, to string
+		wantFrom string
+		wantTo   string
+		wantErr  string
+	}{
+		{
+			name:     "daily civil-civil normalizes to civil",
+			rollup:   "daily",
+			from:     "2026-06-07",
+			to:       "2026-06-08",
+			wantFrom: "2026-06-07",
+			wantTo:   "2026-06-08",
+		},
+		{
+			name:     "daily RFC3339-RFC3339 normalizes to civil (UTC day)",
+			rollup:   "daily",
+			from:     "2026-06-07T00:00:00Z",
+			to:       "2026-06-08T00:00:00Z",
+			wantFrom: "2026-06-07",
+			wantTo:   "2026-06-08",
+		},
+		{
+			name:     "daily mixed civil-RFC3339 normalizes to civil",
+			rollup:   "daily",
+			from:     "2026-06-07",
+			to:       "2026-06-08T00:00:00Z",
+			wantFrom: "2026-06-07",
+			wantTo:   "2026-06-08",
+		},
+		{
+			name:     "hourly civil-civil normalizes to RFC3339 start-of-UTC-day",
+			rollup:   "hourly",
+			from:     "2026-06-07",
+			to:       "2026-06-08",
+			wantFrom: "2026-06-07T00:00:00Z",
+			wantTo:   "2026-06-08T00:00:00Z",
+		},
+		{
+			name:     "hourly RFC3339-RFC3339 passes through",
+			rollup:   "hourly",
+			from:     "2026-06-07T03:30:00Z",
+			to:       "2026-06-07T04:30:00Z",
+			wantFrom: "2026-06-07T03:30:00Z",
+			wantTo:   "2026-06-07T04:30:00Z",
+		},
+		{
+			name:     "hourly mixed civil-RFC3339 normalizes to RFC3339",
+			rollup:   "hourly",
+			from:     "2026-06-07",
+			to:       "2026-06-08T06:00:00Z",
+			wantFrom: "2026-06-07T00:00:00Z",
+			wantTo:   "2026-06-08T06:00:00Z",
+		},
+		{
+			name:     "weekly civil-civil normalizes to RFC3339",
+			rollup:   "weekly",
+			from:     "2026-06-01",
+			to:       "2026-06-08",
+			wantFrom: "2026-06-01T00:00:00Z",
+			wantTo:   "2026-06-08T00:00:00Z",
+		},
+		{
+			name:     "weekly RFC3339-RFC3339 passes through",
+			rollup:   "weekly",
+			from:     "2026-06-01T00:00:00Z",
+			to:       "2026-06-08T00:00:00Z",
+			wantFrom: "2026-06-01T00:00:00Z",
+			wantTo:   "2026-06-08T00:00:00Z",
+		},
+		{
+			name:     "window=6h civil-civil normalizes to RFC3339",
+			rollup:   "window=6h",
+			from:     "2026-06-07",
+			to:       "2026-06-08",
+			wantFrom: "2026-06-07T00:00:00Z",
+			wantTo:   "2026-06-08T00:00:00Z",
+		},
+		{
+			name:     "window=6h RFC3339-RFC3339 passes through",
+			rollup:   "window=6h",
+			from:     "2026-06-07T00:00:00Z",
+			to:       "2026-06-07T12:00:00Z",
+			wantFrom: "2026-06-07T00:00:00Z",
+			wantTo:   "2026-06-07T12:00:00Z",
+		},
+		{
+			name:    "hourly rejects unparseable from with supported-shapes message",
+			rollup:  "hourly",
+			from:    "not-a-date",
+			to:      "2026-06-08T00:00:00Z",
+			wantErr: "hourly",
+		},
+		{
+			name:    "daily rejects unparseable to with supported-shapes message",
+			rollup:  "daily",
+			from:    "2026-06-07",
+			to:      "definitely-bad",
+			wantErr: "daily",
+		},
+		{
+			name:    "window rejects unparseable from",
+			rollup:  "window=6h",
+			from:    "garbage",
+			to:      "2026-06-08T00:00:00Z",
+			wantErr: "window=6h",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec, err := parseSyncRollupSpec(tc.rollup)
+			if err != nil {
+				t.Fatalf("parseSyncRollupSpec %q: %v", tc.rollup, err)
+			}
+			gotFrom, gotTo, err := spec.NormalizeRange(tc.from, tc.to, now)
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("NormalizeRange(%q, %q) error = nil, want substring %q", tc.from, tc.to, tc.wantErr)
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("error = %q, want substring %q", err.Error(), tc.wantErr)
+				}
+				// The supported-shapes message must name BOTH supported shapes
+				// so the operator sees what's acceptable for this rollup kind.
+				if !strings.Contains(err.Error(), "YYYY-MM-DD") || !strings.Contains(err.Error(), "RFC3339") {
+					t.Errorf("error = %q, want supported shapes (YYYY-MM-DD, RFC3339) named", err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NormalizeRange(%q, %q): %v", tc.from, tc.to, err)
+			}
+			if gotFrom != tc.wantFrom {
+				t.Errorf("from = %q, want %q", gotFrom, tc.wantFrom)
+			}
+			if gotTo != tc.wantTo {
+				t.Errorf("to = %q, want %q", gotTo, tc.wantTo)
+			}
+		})
+	}
+}
+
+// TestSyncRollupSpecNormalizeRangePassesThroughEmpty pins the cursor-resume
+// case: --from "" is the lifecycle's resume signal, the gate must not
+// reject on an empty input and the normalizer must pass it through so the
+// downstream cursor lookup still fires. Empty --to is similarly a default
+// signal — the gate fills it before calling NormalizeRange in production,
+// but the normalizer treats an empty string as a pass-through too so the
+// helper is safe to call before defaulting (defensive: callers that
+// forget to default get an empty-out, not a parse error).
+func TestSyncRollupSpecNormalizeRangePassesThroughEmpty(t *testing.T) {
+	spec, err := parseSyncRollupSpec("hourly")
+	if err != nil {
+		t.Fatalf("parseSyncRollupSpec hourly: %v", err)
+	}
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	gotFrom, gotTo, err := spec.NormalizeRange("", "2026-06-08T00:00:00Z", now)
+	if err != nil {
+		t.Fatalf("NormalizeRange empty-from: %v", err)
+	}
+	if gotFrom != "" {
+		t.Errorf("from = %q, want empty pass-through", gotFrom)
+	}
+	if gotTo != "2026-06-08T00:00:00Z" {
+		t.Errorf("to = %q, want passthrough RFC3339", gotTo)
+	}
+}

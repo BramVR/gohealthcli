@@ -4611,11 +4611,23 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("timed rollup sync exit code = %d, want 1\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "--from: expected YYYY-MM-DD") {
-		t.Fatalf("timed rollup stdout = %q, want date-only error", stdout.String())
+	// The gate's preflight message names both supported shapes and the
+	// rollup kind so an operator hears exactly what the rollup will
+	// accept; this replaces the slice-2 planner-stage "expected
+	// YYYY-MM-DD" error with a richer local rejection.
+	if !strings.Contains(stdout.String(), "expected YYYY-MM-DD or RFC3339") {
+		t.Fatalf("timed rollup stdout = %q, want supported-shapes error", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "daily") {
+		t.Fatalf("timed rollup stdout = %q, want rollup kind named", stdout.String())
 	}
 	assertArchiveTableCount(t, archivePath, "rollups", 1)
-	assertSyncRunWithEndpointFamily(t, archivePath, 5, "sync_failed", "dailyRollUp", 0, 0, 0, "--from: expected YYYY-MM-DD")
+	// PRD #141 slice 3: civil-vs-RFC3339 input-shape errors are caught at
+	// the preflight gate before any sync_run row is written. Previously
+	// this scenario produced an audit row from the planner-stage parse
+	// error; the gate now owns the contract so the archive must show
+	// only the 4 rows from the earlier successful invocations.
+	assertArchiveTableCount(t, archivePath, "sync_runs", 4)
 
 	longRangeRequests := installStepDailyRollupFetchFake(t, "connect-access-secret", map[string]string{
 		"2026-01-01/2026-04-01/": `{"rollupDataPoints": [{
@@ -4652,7 +4664,9 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 	assertJSONNumber(t, got, "rollups_seen", 2)
 	assertJSONNumber(t, got, "rollups_new", 2)
 	assertArchiveTableCount(t, archivePath, "rollups", 3)
-	assertSyncRunWithEndpointFamily(t, archivePath, 6, "sync_completed", "dailyRollUp", 2, 2, 0, "")
+	// Sync Run id is 5 (not 6) because the preceding civil-shape failure
+	// is now caught at the gate and does not write a sync_run row.
+	assertSyncRunWithEndpointFamily(t, archivePath, 5, "sync_completed", "dailyRollUp", 2, 2, 0, "")
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
