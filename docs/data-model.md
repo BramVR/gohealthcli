@@ -166,8 +166,8 @@ user can retry.
 
 `exportExerciseTcx` returns a JSON envelope `{"tcxData": "<xml>"}`,
 not raw XML. The ingestion unwraps the envelope and stores the raw
-TCX XML as the sidecar (#187) — opening `tcx/<sha[0:2]>/<sha>.tcx` in
-any TCX viewer Just Works. The SHA + path are computed against the
+TCX XML as the sidecar (#187) — opening `tcx/<sha256[0:2]>/<sha256>.tcx`
+in any TCX viewer just works. The SHA + path are computed against the
 raw XML bytes, so a re-sync after upgrading from an envelope-storing
 build naturally produces a fresh row at a new path; the old
 envelope-era row and its sidecar remain on disk untouched (both

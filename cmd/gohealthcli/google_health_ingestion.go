@@ -437,12 +437,13 @@ func (ingestion googleHealthIngestion) attachExerciseTcxIfAvailable(archive goog
 }
 
 // unwrapExerciseTcxResponse extracts the raw TCX XML from Google's
-// `exportExerciseTcx` JSON envelope. Returns (xml, true) when the body
-// is a JSON object with a non-empty `tcxData` string field. Returns
-// (body, false) for any other shape — including raw XML, an empty
-// object, or a JSON value with `tcxData` of the wrong type — so the
-// caller can fall back to storing the response verbatim if Google's
-// shape changes.
+// `exportExerciseTcx` JSON envelope. Returns (xml, true) — including
+// an empty xml slice — when the body is a JSON object with a `tcxData`
+// string field present (any value, empty or not). The caller treats
+// the empty-tcxData case as a no-op via its empty-body guard. Returns
+// (body, false) for any other shape — raw XML, an empty object, or a
+// JSON value with `tcxData` of the wrong type — so the caller falls
+// back to storing the response verbatim if Google's shape changes.
 func unwrapExerciseTcxResponse(body []byte) ([]byte, bool) {
 	var envelope struct {
 		TcxData *string `json:"tcxData"`
