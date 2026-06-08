@@ -118,6 +118,24 @@ the raw Data Point JSON — no re-sync needed:
   `exercise.splits[]` array into one row per split with `split_type`
   and `distance_meters`.
 
+`searchable_text` is the one-target free-text needle path for LLM and
+human queries that need to find a string (device model, source app
+name, exercise label) without knowing which underlying column to look
+in. Schema: `(kind, text, ref_table, ref_id)`. Use `WHERE text LIKE
+'%needle%'`. `kind ∈ {device, data_source, profile, exercise_type}`
+tags where the row came from; `ref_table` + `ref_id` let downstream
+code jump back to the source row.
+
+Note on the `profile` kind: the view extracts `firstName`/`lastName`
+from profile snapshots, but Google Health's current `users.getProfile`
+response does not emit those fields (only `name` as the resource path,
+plus `age`, membership date, and stride lengths). Profile rows will
+appear here only when Google starts emitting name fields. The kind is
+reserved so prompts can stay stable across the API change.
+
+The view name is the stable contract — the backing can swap to FTS5
+later without changing prompts.
+
 Rows pre-dating migration 7 keep `snapshot_kind='profile'` via the column
 default; no parallel-table-with-view shim was used (PRD #93
 §"identity_snapshots migration: explicit strategy").

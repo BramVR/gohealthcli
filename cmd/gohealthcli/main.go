@@ -28,7 +28,7 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 12
+const currentSchemaVersion = 13
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
@@ -3752,7 +3752,10 @@ func applyMigrations(db *sql.DB) error {
 	if err := applyExerciseSplitsRealShapeMigration(tx, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 12`); err != nil {
+	if err := applySearchableTextViewMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 13`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -3770,7 +3773,7 @@ func applyPendingMigrations(db *sql.DB) error {
 	switch userVersion {
 	case currentSchemaVersion:
 		return nil
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12:
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -3832,7 +3835,12 @@ func applyPendingMigrations(db *sql.DB) error {
 				return err
 			}
 		}
-		if _, err := tx.Exec(`PRAGMA user_version = 12`); err != nil {
+		if userVersion <= 12 {
+			if err := applySearchableTextViewMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(`PRAGMA user_version = 13`); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -3889,6 +3897,16 @@ func applySyncCursorsMigration(tx *sql.Tx, appliedAt string) error {
 		}
 	}
 	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (6, 'add_sync_cursors', ?)`, appliedAt)
+	return err
+}
+
+func applySearchableTextViewMigration(tx *sql.Tx, appliedAt string) error {
+	for _, statement := range normalizedViewsRegistry().MigrationStatements(13) {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (13, 'add_searchable_text_view', ?)`, appliedAt)
 	return err
 }
 
@@ -4005,6 +4023,7 @@ func expectedSchemaMigrations() map[int]string {
 		10: "add_current_irn_profile_view",
 		11: "add_sleep_stages_and_exercise_splits_views",
 		12: "fix_exercise_splits_real_shape",
+		13: "add_searchable_text_view",
 	}
 }
 

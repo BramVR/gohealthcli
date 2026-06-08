@@ -279,6 +279,49 @@ var exportDatasetDefinitions = []exportDatasetSpec{
 		},
 	},
 	{
+		// searchable_text is the LLM's one-target free-text needle path.
+		// UNIONs categorical text from paired devices, Data Point data
+		// source JSON, the latest profile snapshot, and exercise labels,
+		// each tagged with a kind discriminator. WHERE text LIKE
+		// '%needle%' answers across all four without the caller knowing
+		// which underlying column to read. The view name is the stable
+		// contract; backing can swap to FTS5 later without affecting
+		// prompts that read it.
+		name:             "searchable-text",
+		view:             "searchable_text",
+		migrationVersion: 13,
+		orderBy:          "kind, text",
+		viewSQL: `SELECT 'device' AS kind, model AS text, 'paired_devices' AS ref_table, connection_id AS ref_id FROM paired_devices WHERE model != ''
+UNION ALL
+SELECT 'device' AS kind, manufacturer AS text, 'paired_devices' AS ref_table, connection_id AS ref_id FROM paired_devices WHERE manufacturer != ''
+UNION ALL
+SELECT 'data_source' AS kind, IFNULL(json_extract(data_source_json, '$.applicationName'), '') AS text, 'data_points' AS ref_table, CAST(id AS TEXT) AS ref_id FROM data_points WHERE json_extract(data_source_json, '$.applicationName') IS NOT NULL
+UNION ALL
+SELECT 'data_source' AS kind, IFNULL(json_extract(data_source_json, '$.device.displayName'), '') AS text, 'data_points' AS ref_table, CAST(id AS TEXT) AS ref_id FROM data_points WHERE json_extract(data_source_json, '$.device.displayName') IS NOT NULL
+UNION ALL
+SELECT 'data_source' AS kind, IFNULL(json_extract(data_source_json, '$.device.model'), '') AS text, 'data_points' AS ref_table, CAST(id AS TEXT) AS ref_id FROM data_points WHERE json_extract(data_source_json, '$.device.model') IS NOT NULL
+UNION ALL
+-- The profile kind covers any free-text field Google Health emits in
+-- users.getProfile. As of 2026-06 the API only emits 'name' (the
+-- resource path), age (number), membership date, and stride lengths;
+-- the user's first/last name is NOT in the response. firstName /
+-- lastName extractions stay in case Google adds them later — they're
+-- harmless on current data (json_extract returns NULL → row filtered).
+SELECT 'profile' AS kind, IFNULL(json_extract(raw_json, '$.firstName'), '') AS text, 'identity_snapshots' AS ref_table, CAST(id AS TEXT) AS ref_id FROM identity_snapshots WHERE snapshot_kind = 'profile' AND json_extract(raw_json, '$.firstName') IS NOT NULL
+UNION ALL
+SELECT 'profile' AS kind, IFNULL(json_extract(raw_json, '$.lastName'), '') AS text, 'identity_snapshots' AS ref_table, CAST(id AS TEXT) AS ref_id FROM identity_snapshots WHERE snapshot_kind = 'profile' AND json_extract(raw_json, '$.lastName') IS NOT NULL
+UNION ALL
+SELECT 'exercise_type' AS kind, IFNULL(json_extract(raw_json, '$.exercise.exerciseType'), '') AS text, 'data_points' AS ref_table, CAST(id AS TEXT) AS ref_id FROM data_points WHERE data_type = 'exercise' AND json_extract(raw_json, '$.exercise.exerciseType') IS NOT NULL
+UNION ALL
+SELECT 'exercise_type' AS kind, IFNULL(json_extract(raw_json, '$.exercise.displayName'), '') AS text, 'data_points' AS ref_table, CAST(id AS TEXT) AS ref_id FROM data_points WHERE data_type = 'exercise' AND json_extract(raw_json, '$.exercise.displayName') IS NOT NULL`,
+		fields: []exportFieldSpec{
+			{name: "kind"},
+			{name: "text"},
+			{name: "ref_table"},
+			{name: "ref_id"},
+		},
+	},
+	{
 		// sleep_stages explodes the stages[] array inside every archived
 		// sleep Data Point into one row per stage. Pure SQL over the
 		// existing raw_json — no new sync required.
