@@ -419,6 +419,25 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return runWithRuntime(args, stdout, stderr, productionRuntimeAdapters())
 }
 
+// printTopLevelUsage renders the top-level --help block: a Subcommands list
+// sourced from the registry (hidden entries filtered out) followed by the
+// standard FlagSet defaults. The "Usage of gohealthcli:" header matches Go's
+// default flag output so that callers (and tests) keying off it keep working.
+func printTopLevelUsage(flags *flag.FlagSet, stderr io.Writer) {
+	fmt.Fprintln(stderr, "Usage of gohealthcli:")
+	fmt.Fprintln(stderr)
+	fmt.Fprintln(stderr, "Subcommands:")
+	for _, cmd := range commands {
+		if cmd.Hidden {
+			continue
+		}
+		fmt.Fprintf(stderr, "  %-16s %s\n", cmd.Name, cmd.Short)
+	}
+	fmt.Fprintln(stderr)
+	fmt.Fprintln(stderr, "Global flags:")
+	flags.PrintDefaults()
+}
+
 func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	runtime = runtime.withDefaults()
 	flags := flag.NewFlagSet("gohealthcli", flag.ContinueOnError)
@@ -430,6 +449,8 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 	plainOutput := flags.Bool("plain", false, "write plain key/value output to stdout")
 	noInput := flags.Bool("no-input", false, "never prompt, never wait for browser input")
 	versionOutput := flags.Bool("version", false, "print version and exit")
+
+	flags.Usage = func() { printTopLevelUsage(flags, stderr) }
 
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

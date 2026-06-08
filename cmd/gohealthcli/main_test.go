@@ -275,6 +275,57 @@ func TestHelpExitsSuccessfully(t *testing.T) {
 	}
 }
 
+func TestTopLevelHelpListsVisibleSubcommandsFromRegistry(t *testing.T) {
+	code, _, stderr := runCommand(t, "--help")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	out := stderr.String()
+	for _, cmd := range commands {
+		if cmd.Hidden {
+			continue
+		}
+		if !strings.Contains(out, cmd.Name) {
+			t.Errorf("--help missing subcommand name %q\noutput:\n%s", cmd.Name, out)
+		}
+		if !strings.Contains(out, cmd.Short) {
+			t.Errorf("--help missing short for %q (%q)\noutput:\n%s", cmd.Name, cmd.Short, out)
+		}
+	}
+}
+
+func TestTopLevelHelpOmitsHiddenSubcommands(t *testing.T) {
+	code, _, stderr := runCommand(t, "--help")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// The "schema" command is the only hidden entry; assert it is filtered.
+	// We look for it as a whole word in a "  schema  <short>" line so that
+	// substrings inside other words (e.g. "describe-schema") don't false-positive.
+	for _, line := range strings.Split(stderr.String(), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "schema ") || trimmed == "schema" {
+			t.Fatalf("--help should not list hidden subcommand 'schema'; got line %q\nfull output:\n%s", line, stderr.String())
+		}
+	}
+}
+
+func TestTopLevelHelpStillShowsGlobalFlags(t *testing.T) {
+	code, _, stderr := runCommand(t, "--help")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	out := stderr.String()
+	for _, flagName := range []string{"-config", "-db", "-json", "-plain", "-no-input", "-version"} {
+		if !strings.Contains(out, flagName) {
+			t.Errorf("--help missing global flag %q\noutput:\n%s", flagName, out)
+		}
+	}
+}
+
 func TestDoctorDefaultPathsAreUsable(t *testing.T) {
 	home := t.TempDir()
 	xdgConfig := filepath.Join(home, "xdg-config")
