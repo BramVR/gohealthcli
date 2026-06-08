@@ -116,17 +116,42 @@ func TestExportDatasetLookupRejectsMissingNames(t *testing.T) {
 // registry without a README update, this test fails. Each name must
 // appear as an inline code span (`name`) so the match is unambiguous
 // and not satisfied by prose that happens to contain the substring.
+//
+// The search is scoped to the "Normalized export datasets" section only
+// (between the section marker and the next markdown header). A name
+// that appears in an unrelated code example elsewhere in the README
+// must not silently satisfy the guard while the section itself stays
+// stale.
 func TestREADMEListsEveryExportDataset(t *testing.T) {
 	readmePath := filepath.Join("..", "..", "README.md")
 	content, err := os.ReadFile(readmePath)
 	if err != nil {
 		t.Fatalf("read README: %v", err)
 	}
+	const sectionMarker = "Normalized export datasets"
 	readme := string(content)
+	start := strings.Index(readme, sectionMarker)
+	if start < 0 {
+		t.Fatalf("README section marker %q not found; the drift guard cannot enforce sync. Restore the section or update sectionMarker.", sectionMarker)
+	}
+	rest := readme[start:]
+	// The section ends at the next top-level or sub-section markdown
+	// header. Skip the marker itself (which may be on a header line) by
+	// searching from the next newline onward.
+	bodyStart := strings.Index(rest, "\n")
+	if bodyStart < 0 {
+		bodyStart = 0
+	}
+	body := rest[bodyStart:]
+	end := strings.Index(body, "\n## ")
+	if end < 0 {
+		end = len(body)
+	}
+	section := body[:end]
 	for _, spec := range exportDatasetDefinitions {
 		token := "`" + spec.name + "`"
-		if !strings.Contains(readme, token) {
-			t.Errorf("README missing export dataset %s (looked for %q); update README.md \"Normalized export datasets\" section to match exportDatasetDefinitions", spec.name, token)
+		if !strings.Contains(section, token) {
+			t.Errorf("README \"Normalized export datasets\" section missing %s (looked for %q); update README.md to match exportDatasetDefinitions", spec.name, token)
 		}
 	}
 }
