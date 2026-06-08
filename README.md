@@ -20,7 +20,7 @@ data, delete health data, run a server, upload archives, or share exports.
 
 ## Status
 
-First CLI tracer in progress. Current commands:
+First CLI tracer in progress. Implemented commands:
 
 - `init`: create config and an empty Health Archive.
 - `doctor`: validate local setup; `doctor --online` verifies token refresh and
@@ -34,10 +34,34 @@ First CLI tracer in progress. Current commands:
 - `export`: write normalized CSV or JSONL datasets.
 - `raw`: print provider JSON for endpoint exploration.
 
-Supported sync Data Types include steps, heart-rate,
-heart-rate-variability, oxygen-saturation, daily-shaped metrics, sleep,
-exercise, distance, weight, wearable-filtered Data Points, and steps daily
-Rollups.
+Supported Data Point sync types:
+
+- `steps`
+- `heart-rate`
+- `heart-rate-variability`
+- `oxygen-saturation`
+- `daily-resting-heart-rate`
+- `daily-heart-rate-variability`
+- `daily-oxygen-saturation`
+- `daily-respiratory-rate`
+- `sleep`
+- `exercise`
+- `distance`
+- `weight`
+
+`sync --source-family wearable` is available for Data Types backed by the
+Google Health reconcile path. `sync --types steps --rollup daily` archives
+steps daily Rollups. `total-calories` is known to the catalog but is not
+supported by raw Data Point sync because Google exposes it as Rollup data.
+
+Normalized export datasets:
+
+- `daily-steps`
+- `heart-rate-samples`
+- `resting-heart-rate-by-day`
+- `sleep-sessions`
+- `exercise-sessions`
+- `weight-samples`
 
 ## Install
 
@@ -109,6 +133,13 @@ gohealthcli sync --types steps --from 2026-01-01 --to 2026-01-02 --plain
 gohealthcli status --plain
 ```
 
+Archive daily step Rollups or wearable-filtered Data Points when needed:
+
+```bash
+gohealthcli sync --types steps --rollup daily --from 2026-01-01 --to 2026-01-31 --plain
+gohealthcli sync --types heart-rate --source-family wearable --from 2026-01-01 --to 2026-01-02 --plain
+```
+
 Export normalized daily steps:
 
 ```bash
@@ -131,6 +162,8 @@ gohealthcli query --plain 'SELECT data_type, COUNT(*) FROM data_points GROUP BY 
 
 Command flags must appear before the SQL argument because Go flag parsing stops
 at the first positional argument.
+
+Use `gohealthcli <command> --help` for command-specific flags.
 
 ## Configuration
 
