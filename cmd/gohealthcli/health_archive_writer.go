@@ -137,7 +137,20 @@ func (archive *sqliteHealthArchiveWriter) StoreAttachment(point archivedDataPoin
 // still stale. The cursor advance is gated by the outcome via
 // commitSyncCursorTx, so sync_failed and sync_canceled finalize the
 // run row without touching the cursor.
+//
+// The body runs under retryFinalizeSyncRunOnBusy so transient
+// SQLITE_BUSY contention from a competing writer process (slice 4 of
+// PRD #141) does not surface to the caller as a finalize failure
+// before a small bounded number of retries. When the budget is
+// exhausted the typed errFinalizeSyncRunBusyExhausted bubbles up so
+// the lifecycle module can drive its recovery write.
 func (archive *sqliteHealthArchiveWriter) FinalizeSyncRun(finalize syncRunFinalize) error {
+	return retryFinalizeSyncRunOnBusy(finalizeSyncRunRetryBudget, func() error {
+		return archive.finalizeSyncRunAttempt(finalize)
+	})
+}
+
+func (archive *sqliteHealthArchiveWriter) finalizeSyncRunAttempt(finalize syncRunFinalize) error {
 	tx, err := archive.db.Begin()
 	if err != nil {
 		return err

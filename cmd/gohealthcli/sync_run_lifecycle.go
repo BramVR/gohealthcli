@@ -1,0 +1,326 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	sqlite "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
+)
+
+// syncRunLifecycle owns the post-Validate path of a single-Data-Type
+// Sync Run: archive open, cursor resume, token refresh, ingestion,
+// terminal finalize, and the recovery write when the writer's
+// retry-budget for SQLITE_BUSY is exhausted. Every return from
+// lifecycle.Run produces a syncResult with a non-empty enum Status
+// (sync_completed | sync_failed | sync_canceled) — the empty string is
+// structurally impossible because every return path goes through
+// syncResultFromOutcome (AC #2 of PRD #141 slice 4).
+//
+// Future deferral note (slice 1 architecture seam): the gate currently
+// opens the archive once for currentConnection lookup, and Run reopens
+// it. Threading the open handle through preflightPlan would remove the
+// double-open but widens the gate interface and the orchestrator's
+// per-Data-Type loop. Slice 4 keeps the double-open and addresses it
+// in a future slice (see PRD #141 slice 4 design notes).
+type syncRunLifecycle struct {
+	options syncCommandOptions
+	plan    preflightPlan
+	runtime runtimeAdapters
+}
+
+// Run is the single entry point for the post-Validate flow. The
+// returned syncResult always carries a non-empty Status; the error
+// return is for the orchestrator's "did the per-Data-Type call
+// surface a Go error" signal and is independent of Status (a sync
+// can fail and still return nil error if the failure was already
+// captured in result.Message + result.Status).
+func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
+	runtime := lifecycle.runtime.withDefaults()
+	options := lifecycle.options
+	plan := lifecycle.plan
+	if len(plan.dataTypes) != 1 {
+		return syncResultFromOutcome(syncRunOutcomeFailed, syncResult{
+			DataTypes: plan.dataTypes,
+		}), errors.New("sync currently supports one Data Type per run")
+	}
+	dataType := plan.dataTypes[0]
+	options.to = plan.to
+	if plan.from != "" {
+		options.from = plan.from
+	}
+	connection := plan.connection
+	archive, err := healthArchiveWriterOpenerForTest(options.archivePath)
+	if err != nil {
+		return syncResultFromOutcome(syncRunOutcomeFailed, syncResult{
+			DataTypes: plan.dataTypes,
+			From:      options.from,
+			To:        options.to,
+			Message:   err.Error(),
+		}), err
+	}
+	defer archive.Close()
+	config, err := inspectIdentityConfig(options.configPath, options.archivePath)
+	if err != nil {
+		wrapped := fmt.Errorf("config check failed: %w", err)
+		return syncResultFromOutcome(syncRunOutcomeFailed, syncResult{
+			DataTypes: plan.dataTypes,
+			From:      options.from,
+			To:        options.to,
+			Message:   wrapped.Error(),
+		}), wrapped
+	}
+	cursorKey := plan.cursorKeys[0]
+	resumedFromCursor := false
+	if options.from == "" {
+		cursorTime, found, err := archive.ResolveSyncCursor(cursorKey)
+		if err != nil {
+			wrapped := fmt.Errorf("resolve Sync Cursor: %w", err)
+			return syncResultFromOutcome(syncRunOutcomeFailed, syncResult{
+				DataTypes: options.dataTypes,
+				To:        options.to,
+				Message:   wrapped.Error(),
+			}), wrapped
+		}
+		if !found {
+			missing := errors.New("sync has no Sync Cursor for this Data Type yet; set --from for the initial backfill")
+			return syncResultFromOutcome(syncRunOutcomeFailed, syncResult{
+				DataTypes: options.dataTypes,
+				To:        options.to,
+				Message:   missing.Error(),
+			}), missing
+		}
+		options.from = cursorTime
+		resumedFromCursor = true
+	}
+	ingestion := newGoogleHealthIngestionWithRuntime(runtime)
+	_, grantedScopes, err := connectionTokenExpiryAndScopes(connection.tokenMetadataJSON)
+	if err != nil {
+		return syncResultFromOutcome(syncRunOutcomeFailed, syncResult{
+			DataTypes: options.dataTypes,
+			From:      options.from,
+			To:        options.to,
+			Message:   err.Error(),
+		}), err
+	}
+	ingestionRequest := googleHealthIngestionRequest{
+		connection:    connection,
+		dataType:      dataType,
+		from:          options.from,
+		to:            options.to,
+		rollup:        options.rollup,
+		sourceFamily:  options.sourceFamily,
+		grantedScopes: grantedScopes,
+		cancelCh:      options.cancelCh,
+	}
+	ingestionPlan, err := ingestion.Plan(ingestionRequest)
+	if err != nil {
+		return syncResultFromOutcome(syncRunOutcomeFailed, syncResult{
+			DataTypes: options.dataTypes,
+			From:      options.from,
+			To:        options.to,
+			Message:   err.Error(),
+		}), err
+	}
+	result := syncResult{
+		ConnectionID:      connection.id,
+		ProviderName:      connection.providerName,
+		DataTypes:         options.dataTypes,
+		From:              options.from,
+		To:                options.to,
+		EndpointFamily:    ingestionPlan.endpointFamily,
+		SourceFamily:      options.sourceFamily,
+		ResumedFromCursor: resumedFromCursor,
+	}
+	startedAt := runtime.now().UTC().Format(time.RFC3339)
+	syncRunID, err := archive.StartSyncRun(connection, options.dataTypes, options.from, options.to, result.EndpointFamily, result.SourceFamily, startedAt)
+	if err != nil {
+		// StartSyncRun failed before any audit row was written: no
+		// SyncRunID to populate. The status enum stays well-defined
+		// (sync_failed) so the JSON envelope still satisfies AC #2.
+		return syncResultFromOutcome(syncRunOutcomeFailed, withMessage(result, err)), err
+	}
+	result.SyncRunID = syncRunID
+	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{options.configPath, options.archivePath}, runtime)
+	if config.oauthClient.kind == "file" {
+		connectionAccess = connectionAccess.WithAutoRefresh(config.oauthClient, archive)
+	}
+	accessToken, err := connectionAccess.AccessToken(googleHealthScopesForDataType(dataType))
+	if err != nil {
+		return lifecycle.finalize(archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeFailed, err)
+	}
+	if _, err := connectionAccess.FetchVerifiedIdentity(accessToken); err != nil {
+		return lifecycle.finalize(archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeFailed, err)
+	}
+	ingestionRequest.accessToken = accessToken
+	ingestionResult, err := ingestion.Execute(archive, ingestionRequest)
+	applyGoogleHealthIngestionCounts(&result, ingestionResult)
+	if err != nil {
+		if errors.Is(err, errSyncCanceled) {
+			return lifecycle.finalize(archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeCanceled, err)
+		}
+		return lifecycle.finalize(archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeFailed, err)
+	}
+	if options.rollup != "" {
+		result.Message = fmt.Sprintf("Sync Run archived %s %s Rollups", dataType, options.rollup)
+	} else if options.sourceFamily != "" {
+		result.Message = fmt.Sprintf("Sync Run archived %s Data Points with source-family filter", dataType)
+	} else {
+		result.Message = fmt.Sprintf("Sync Run archived %s Data Points", dataType)
+	}
+	return lifecycle.finalize(archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeCompleted, nil)
+}
+
+// finalize is the single terminal-write seam. Every Sync Run that
+// reached the audit-row state passes through here, so the SyncRunID
+// populates the returned syncResult on every path (AC #3) and the
+// status enum is sealed by syncResultFromOutcome.
+//
+// When FinalizeSyncRun returns errFinalizeSyncRunBusyExhausted, the
+// writer's retry budget against SQLITE_BUSY ran out. The lifecycle
+// converts that into sync_failed with a contention-aware message and
+// writes a recovery row in a separate short transaction so the
+// sync_runs row never lingers as sync_running. The cursor remains
+// untouched because the recovery write goes through FinishSyncRun
+// (not Finalize) and the original Finalize never committed.
+func (lifecycle syncRunLifecycle) finalize(archive healthArchiveWriter, result syncResult, syncRunID int64, cursorKey syncCursorKey, cursorTo string, outcome syncRunOutcome, cause error) (syncResult, error) {
+	runtime := lifecycle.runtime.withDefaults()
+	result.SyncRunID = syncRunID
+	result = syncResultFromOutcome(outcome, result)
+	errorSummary := ""
+	if cause != nil {
+		result.Message = cause.Error()
+		errorSummary = result.Message
+	}
+	now := runtime.now().UTC().Format(time.RFC3339)
+	seen, newCount, updated := syncResultTotalCounts(result)
+	finalizeErr := archive.FinalizeSyncRun(syncRunFinalize{
+		SyncRunID:      syncRunID,
+		Outcome:        outcome,
+		SeenCount:      seen,
+		NewCount:       newCount,
+		UpdatedCount:   updated,
+		FinishedAt:     now,
+		ErrorSummary:   errorSummary,
+		CursorKey:      cursorKey,
+		CursorTo:       cursorTo,
+		CursorAdvanced: now,
+	})
+	if finalizeErr == nil {
+		return result, cause
+	}
+	// The atomic finalize failed (rolled back). The sync_runs row is
+	// still in StartSyncRun's sync_running state and no cursor advance
+	// happened. Branch: a SQLITE_BUSY exhaustion gets a dedicated
+	// contention message, everything else gets the historical wrap.
+	// Either way we drive the row to a terminal state via a separate
+	// short transaction (FinishSyncRun) so concurrent invocations
+	// never leave dangling sync_running rows.
+	var busyExhausted *errFinalizeSyncRunBusyExhausted
+	if errors.As(finalizeErr, &busyExhausted) {
+		result.Message = fmt.Sprintf("FinalizeSyncRun lost contention against another writer after %d attempts: %v", busyExhausted.attempts, busyExhausted.cause)
+	} else {
+		result.Message = finalizeErr.Error()
+	}
+	// Wrap so the finalize error is the %w (errors.As reach typed
+	// errFinalizeSyncRunBusyExhausted from callers); fold in the
+	// underlying cause as %v so it survives in the message without
+	// clobbering the typed-error chain.
+	finalErr := fmt.Errorf("record %s Sync Run: %w", outcome, finalizeErr)
+	if cause != nil {
+		finalErr = fmt.Errorf("%w (after upstream cause: %v)", finalErr, cause)
+	}
+	result = syncResultFromOutcome(syncRunOutcomeFailed, result)
+	if recoveryErr := archive.FinishSyncRun(syncRunID, "sync_failed", seen, newCount, updated, now, result.Message); recoveryErr != nil {
+		finalErr = fmt.Errorf("%v; mark Sync Run failed: %w", finalErr, recoveryErr)
+	}
+	return result, finalErr
+}
+
+// withMessage copies result and sets Message to err.Error(); it lets
+// the early-return paths use syncResultFromOutcome without losing the
+// cause text.
+func withMessage(result syncResult, err error) syncResult {
+	result.Message = err.Error()
+	return result
+}
+
+// finalizeSyncRunRetryBudget bounds how many attempts the SQLite
+// adapter makes when it sees SQLITE_BUSY during FinalizeSyncRun. The
+// value is small enough that the operator does not stare at a hung
+// terminal but large enough that brief contention from a sibling
+// reader or a competing Sync Run does not surface as a failure. The
+// modernc.org driver does not implement a global busy_timeout pragma
+// the way mattn's binding does, so this loop owns the policy.
+const finalizeSyncRunRetryBudget = 8
+
+// retryFinalizeSyncRunOnBusy invokes attempt repeatedly while the
+// returned error matches the SQLITE_BUSY contention predicate, up to
+// budget total attempts. When the budget is exhausted the helper
+// returns errFinalizeSyncRunBusyExhausted wrapping the last underlying
+// error so the lifecycle module can branch via errors.As. Non-busy
+// errors short-circuit on the first occurrence so unrelated failures
+// (constraint violations, IO errors) surface immediately.
+func retryFinalizeSyncRunOnBusy(budget int, attempt func() error) error {
+	var lastErr error
+	for i := 0; i < budget; i++ {
+		lastErr = attempt()
+		if lastErr == nil {
+			return nil
+		}
+		if !isSQLiteBusy(lastErr) {
+			return lastErr
+		}
+	}
+	return &errFinalizeSyncRunBusyExhausted{attempts: budget, cause: lastErr}
+}
+
+// isSQLiteBusy returns true when err originates from the SQLite
+// adapter reporting SQLITE_BUSY (or its extended variants). The
+// modernc.org driver wraps the result code in *sqlite.Error so we
+// match on Code() first; a string-prefix fallback covers errors that
+// drop the typed wrapper (for example wrapped with fmt.Errorf %v).
+func isSQLiteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	var sqliteErr *sqlite.Error
+	if errors.As(err, &sqliteErr) {
+		code := sqliteErr.Code()
+		if code == sqlite3.SQLITE_BUSY || code == sqlite3.SQLITE_BUSY_SNAPSHOT || code == sqlite3.SQLITE_BUSY_RECOVERY {
+			return true
+		}
+	}
+	return strings.Contains(err.Error(), "database is locked") || strings.Contains(err.Error(), "SQLITE_BUSY")
+}
+
+// syncResultFromOutcome is the ONLY constructor the lifecycle uses to
+// produce a syncResult. It guarantees AC #2 of PRD #141 slice 4: a
+// returned syncResult always carries a non-empty enum Status
+// (sync_completed | sync_failed | sync_canceled). The base argument
+// supplies the rest of the envelope (counts, ids, message) so callers
+// do not have to thread Status through every error path by hand.
+func syncResultFromOutcome(outcome syncRunOutcome, base syncResult) syncResult {
+	base.Status = string(outcome)
+	return base
+}
+
+// errFinalizeSyncRunBusyExhausted is the typed error the SQLite writer
+// surfaces when FinalizeSyncRun's retry budget is exhausted by
+// repeated SQLITE_BUSY responses. The lifecycle module recognises this
+// via errors.As, marks the Sync Run sync_failed in a fresh short
+// transaction, and surfaces a contention message to the operator.
+// attempts is the number of attempts made (including the final
+// failure); cause is the last underlying SQLite error.
+type errFinalizeSyncRunBusyExhausted struct {
+	attempts int
+	cause    error
+}
+
+func (err *errFinalizeSyncRunBusyExhausted) Error() string {
+	return fmt.Sprintf("FinalizeSyncRun exhausted %d retries against SQLITE_BUSY: %v", err.attempts, err.cause)
+}
+
+func (err *errFinalizeSyncRunBusyExhausted) Unwrap() error { return err.cause }
