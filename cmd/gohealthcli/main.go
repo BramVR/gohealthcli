@@ -3961,11 +3961,11 @@ func initialMigrationStatements() []string {
 }
 
 func dailyStepsViewMigrationStatements() []string {
-	return exportDatasetViewMigrationStatements(4)
+	return normalizedViewsRegistry().MigrationStatements(4)
 }
 
 func firstReleaseNormalizedViewMigrationStatements() []string {
-	return exportDatasetViewMigrationStatements(5)
+	return normalizedViewsRegistry().MigrationStatements(5)
 }
 
 func writeStatusResult(result statusResult, mode outputMode, stdout io.Writer) error {
