@@ -23,11 +23,13 @@ func newSyncOrchestrator(runtime runtimeAdapters, cancelCh <-chan struct{}) sync
 	}
 }
 
-// Sync runs every requested Data Type in order, returning one syncResult
-// per Data Type plus an aggregate. The error return is non-nil only when
-// the orchestration itself could not run any Data Type (e.g. expansion
-// failed); per-type failures are reported inside the result slice and the
-// returned error is nil so the caller can render every outcome.
+// Sync runs every requested Data Type in order and returns one
+// syncResult per Data Type. The aggregate (counts, status) is computed
+// downstream by summarizeSyncFanOut / fanOutStatus when the caller
+// renders multi-type output. The error return is non-nil only when the
+// orchestration itself could not start any run (e.g. --all + --types
+// mutual-exclusion); per-type failures live inside the result slice and
+// the returned error is nil so the caller can render every outcome.
 func (orchestrator syncOrchestrator) Sync(options syncCommandOptions) ([]syncResult, error) {
 	dataTypes, err := orchestrator.expandDataTypes(options)
 	if err != nil {

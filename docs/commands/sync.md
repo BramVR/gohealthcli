@@ -22,7 +22,7 @@ A Sync Run is recorded for every invocation — succeeded, failed, or cancelled 
 | `--json` | bool | `false` | write stable JSON to stdout |
 | `--plain` | bool | `false` | write plain key/value output to stdout |
 | `--no-input` | bool | `false` | never prompt, never wait for browser input |
-| `--types` | string | — | comma-separated Data Types |
+| `--types` | string | — | comma-separated Data Types; defaults to "steps" when neither --types nor --all is set |
 | `--all` | bool | `false` | sync every default Data Type |
 | `--from` | string | — | inclusive sync range start; optional once a Sync Cursor exists |
 | `--to` | string | — | exclusive sync range end |

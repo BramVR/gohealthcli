@@ -832,7 +832,7 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 	syncArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
 	syncJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
 	syncPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
-	syncTypes := flags.String("types", "", "comma-separated Data Types")
+	syncTypes := flags.String("types", "", "comma-separated Data Types; defaults to \"steps\" when neither --types nor --all is set")
 	syncAll := flags.Bool("all", false, "sync every default Data Type")
 	syncFrom := flags.String("from", "", "inclusive sync range start")
 	syncTo := flags.String("to", "", "exclusive sync range end")
@@ -4612,11 +4612,20 @@ func writeSyncFanOutResult(results []syncResult, options syncCommandOptions, mod
 					return err
 				}
 			}
-			if _, err := fmt.Fprintf(stdout, "%sdata_points_new: %d\n", prefix, result.DataPointsNew); err != nil {
-				return err
-			}
-			if _, err := fmt.Fprintf(stdout, "%srollups_new: %d\n", prefix, result.RollupsNew); err != nil {
-				return err
+			for _, counter := range []struct {
+				key   string
+				value int
+			}{
+				{"data_points_seen", result.DataPointsSeen},
+				{"data_points_new", result.DataPointsNew},
+				{"data_points_updated", result.DataPointsUpdated},
+				{"rollups_seen", result.RollupsSeen},
+				{"rollups_new", result.RollupsNew},
+				{"rollups_updated", result.RollupsUpdated},
+			} {
+				if _, err := fmt.Fprintf(stdout, "%s%s: %d\n", prefix, counter.key, counter.value); err != nil {
+					return err
+				}
 			}
 			if result.Message != "" {
 				if _, err := fmt.Fprintf(stdout, "%smessage: %s\n", prefix, result.Message); err != nil {
