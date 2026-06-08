@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -203,5 +204,134 @@ func TestHealthArchiveWriterStoreAttachmentErrorsWhenDataPointMissing(t *testing
 	}
 	if err := archive.StoreAttachment(point, "tcx", []byte("<?xml?>"), "2026-01-01T00:00:00Z"); err == nil {
 		t.Fatalf("expected error attaching to missing Data Point")
+	}
+}
+
+// TestFinalizeSyncRunRetriesOnBusyThenAdvancesCursor pins AC #4 of PRD
+// #141 slice 4: when a finalize attempt sees SQLITE_BUSY a bounded
+// number of times before succeeding, the writer must still leave the
+// sync_runs row in the requested terminal state AND advance the Sync
+// Cursor on sync_completed. We exercise the retry policy via the
+// retry helper directly with a fake attempt that simulates N busy
+// responses then writes through the real writer; this isolates the
+// retry contract from the SQLite contention conditions of a true
+// concurrent-process integration test.
+func TestFinalizeSyncRunRetriesOnBusyThenAdvancesCursor(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	archive, err := openHealthArchiveWriter(archivePath)
+	if err != nil {
+		t.Fatalf("open writer: %v", err)
+	}
+	defer archive.Close()
+	connection, err := archive.CurrentConnection()
+	if err != nil {
+		t.Fatalf("CurrentConnection: %v", err)
+	}
+	runID, err := archive.StartSyncRun(connection, []string{"steps"}, "2026-01-01", "2026-01-02", "list", "", "2026-01-01T00:00:00Z")
+	if err != nil {
+		t.Fatalf("StartSyncRun: %v", err)
+	}
+
+	cursorKey := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: syncCursorRollupKindNone}
+	finalize := syncRunFinalize{
+		SyncRunID:      runID,
+		Outcome:        syncRunOutcomeCompleted,
+		SeenCount:      1,
+		NewCount:       1,
+		UpdatedCount:   0,
+		FinishedAt:     "2026-01-01T00:00:10Z",
+		ErrorSummary:   "",
+		CursorKey:      cursorKey,
+		CursorTo:       "2026-01-02T00:00:00Z",
+		CursorAdvanced: "2026-01-01T00:00:10Z",
+	}
+	calls := 0
+	busy := errors.New("database is locked")
+	err = retryFinalizeSyncRunOnBusy(5, func() error {
+		calls++
+		if calls < 3 {
+			return busy
+		}
+		return archive.(*sqliteHealthArchiveWriter).finalizeSyncRunAttempt(finalize)
+	})
+	if err != nil {
+		t.Fatalf("retry-then-success returned %v", err)
+	}
+	if calls != 3 {
+		t.Errorf("calls = %d, want 3 (2 busy + 1 real attempt)", calls)
+	}
+	assertSyncRunForDataType(t, archivePath, runID, "sync_completed", "steps", "list", 1, 1, 0, "")
+	got, found, err := archive.ResolveSyncCursor(cursorKey)
+	if err != nil || !found {
+		t.Fatalf("ResolveSyncCursor = (%q, %v, %v), want cursor present", got, found, err)
+	}
+	if got != "2026-01-02T00:00:00Z" {
+		t.Errorf("cursor = %q, want 2026-01-02T00:00:00Z", got)
+	}
+}
+
+// TestFinalizeSyncRunDoesNotAdvanceCursorOnFailedOutcome pins the
+// ADR-0008 invariant at the writer boundary (AC #4 + AC #7): a
+// sync_failed finalize, even when it succeeds on first try, must
+// leave the cursor table empty for the key. The retry policy must
+// not weaken this — a successful finalize on a non-completed outcome
+// still goes through commitSyncCursorTx which no-ops, so the cursor
+// stays unset.
+func TestFinalizeSyncRunDoesNotAdvanceCursorOnFailedOutcome(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	archive, err := openHealthArchiveWriter(archivePath)
+	if err != nil {
+		t.Fatalf("open writer: %v", err)
+	}
+	defer archive.Close()
+	connection, err := archive.CurrentConnection()
+	if err != nil {
+		t.Fatalf("CurrentConnection: %v", err)
+	}
+	runID, err := archive.StartSyncRun(connection, []string{"steps"}, "2026-01-01", "2026-01-02", "list", "", "2026-01-01T00:00:00Z")
+	if err != nil {
+		t.Fatalf("StartSyncRun: %v", err)
+	}
+	cursorKey := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: syncCursorRollupKindNone}
+	if err := archive.FinalizeSyncRun(syncRunFinalize{
+		SyncRunID:      runID,
+		Outcome:        syncRunOutcomeFailed,
+		SeenCount:      0,
+		NewCount:       0,
+		UpdatedCount:   0,
+		FinishedAt:     "2026-01-01T00:00:10Z",
+		ErrorSummary:   "boom",
+		CursorKey:      cursorKey,
+		CursorTo:       "2026-01-02T00:00:00Z",
+		CursorAdvanced: "2026-01-01T00:00:10Z",
+	}); err != nil {
+		t.Fatalf("FinalizeSyncRun(failed): %v", err)
+	}
+	_, found, err := archive.ResolveSyncCursor(cursorKey)
+	if err != nil {
+		t.Fatalf("ResolveSyncCursor: %v", err)
+	}
+	if found {
+		t.Errorf("cursor unexpectedly advanced on sync_failed outcome")
 	}
 }

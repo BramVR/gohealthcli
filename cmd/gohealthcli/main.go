@@ -4076,6 +4076,16 @@ func archiveDSN(archivePath string, readOnly bool) (string, error) {
 	}
 	query := url.Values{}
 	query.Add("_pragma", "foreign_keys=on")
+	// busy_timeout makes SQLite block internally for up to 5 seconds
+	// when it encounters a lock contention (SQLITE_BUSY) instead of
+	// immediately surfacing the error. This is what lets two concurrent
+	// sync invocations against the same Health Archive coexist without
+	// the second one failing at StartSyncRun — modernc's driver does
+	// not implement an automatic global busy_timeout the way mattn's
+	// does, so the DSN must opt in explicitly. The finalize-time retry
+	// (retryFinalizeSyncRunOnBusy) still guards the terminal-write
+	// path for the rare case where the wait elapses.
+	query.Add("_pragma", "busy_timeout=5000")
 	if readOnly {
 		query.Add("mode", "ro")
 	}
