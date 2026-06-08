@@ -1443,10 +1443,23 @@ func requireConnectionScopes(metadata string, requiredScopes []string) error {
 	for _, scope := range grantedScopes {
 		granted[scope] = struct{}{}
 	}
+	// Gather every required scope that is not granted. Reporting all
+	// missing scopes at once lets the AC's `--add-scopes ecg,irn`
+	// combined hint emerge when both Tier 2 scopes are missing.
+	var missing []string
 	for _, requiredScope := range requiredScopes {
 		if _, ok := granted[requiredScope]; !ok {
-			return fmt.Errorf("Connection token is missing required Google Health scope %s; run `gohealthcli connect` again", requiredScope)
+			missing = append(missing, requiredScope)
 		}
+	}
+	if len(missing) > 0 {
+		if keywords := addScopeKeywordsForScopes(missing); len(keywords) == len(missing) {
+			// Every missing scope is an opt-in Tier 2 scope — point
+			// the user at the lightweight `connect --add-scopes` flow
+			// rather than re-running the full base-set connect.
+			return fmt.Errorf("Connection token is missing required Google Health scope %s; run `gohealthcli connect --add-scopes %s`", missing[0], strings.Join(keywords, ","))
+		}
+		return fmt.Errorf("Connection token is missing required Google Health scope %s; run `gohealthcli connect` again", missing[0])
 	}
 	return nil
 }

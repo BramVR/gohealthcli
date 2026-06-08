@@ -69,3 +69,27 @@ func supportedAddScopeKeywords() string {
 	sort.Strings(keywords)
 	return strings.Join(keywords, ", ")
 }
+
+// addScopeKeywordsForScopes reverses connectAddScopeKeywords for the
+// missing-scope error path (#104): given a list of scope URLs,
+// return the matching CLI keywords in deterministic alphabetical
+// order so the user sees a stable `--add-scopes ecg,irn` hint
+// regardless of slice order. Scopes that are not opt-in keyword
+// scopes are dropped; callers compare `len(returned) == len(input)`
+// to decide whether every missing scope is recoverable via
+// `--add-scopes` (otherwise the hint must fall back to the generic
+// "run `connect` again" message).
+func addScopeKeywordsForScopes(scopes []string) []string {
+	reverse := make(map[string]string, len(connectAddScopeKeywords))
+	for keyword, scope := range connectAddScopeKeywords {
+		reverse[scope] = keyword
+	}
+	keywords := make([]string, 0, len(scopes))
+	for _, scope := range scopes {
+		if keyword, ok := reverse[scope]; ok {
+			keywords = append(keywords, keyword)
+		}
+	}
+	sort.Strings(keywords)
+	return keywords
+}
