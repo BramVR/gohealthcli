@@ -23,9 +23,11 @@ var (
 )
 
 // versionJSON is the on-the-wire shape of `--version --json`. Field order
-// (version, commit, built) is fixed by the json tag declarations so the
-// emitted bytes are stable across builds — downstream tooling can pattern-
-// match without worrying about Go map iteration order.
+// (version, commit, built) follows the struct's declaration order — that
+// is the property `encoding/json` actually guarantees, not the json-tag
+// names themselves — so the emitted bytes are stable across builds.
+// Downstream tooling can pattern-match the keys without worrying about
+// Go map iteration order.
 type versionJSON struct {
 	Version string `json:"version"`
 	Commit  string `json:"commit"`
@@ -51,11 +53,21 @@ func RenderVersion(mode outputMode, stdout io.Writer) {
 		// json.Marshal (not Encoder) so we control the trailing newline
 		// exactly — Encoder always appends its own, but we want the same
 		// single-newline contract as the plain branch.
-		payload, _ := json.Marshal(versionJSON{
+		//
+		// A struct of three strings cannot fail json.Marshal in practice
+		// (no channels, no recursion, no unsupported types). We still
+		// guard the error so a future field change can't silently emit
+		// a partial line — the plain shape is a safe fall-back because
+		// it carries the same three identifiers.
+		payload, err := json.Marshal(versionJSON{
 			Version: version,
 			Commit:  commit,
 			Built:   built,
 		})
+		if err != nil {
+			fmt.Fprintf(stdout, "gohealthcli %s (%s built %s)\n", version, commit, built)
+			return
+		}
 		fmt.Fprintf(stdout, "%s\n", payload)
 		return
 	}
