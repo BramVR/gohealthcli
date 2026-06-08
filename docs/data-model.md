@@ -108,6 +108,16 @@ the latest snapshot of each kind per Connection into queryable columns:
   `onboarding_state`, `enrollment_state`, `last_update_time`. Requires
   the `irn.readonly` OAuth scope granted via `connect --add-scopes irn`.
 
+Per-stage / per-split Normalized Views read structure already present in
+the raw Data Point JSON — no re-sync needed:
+
+- `sleep_stages` — explodes each sleep session's `sleep.stages[]` array
+  into one row per stage (LIGHT / DEEP / REM / AWAKE) with start/end
+  timestamps, civil date, and `duration_seconds`.
+- `exercise_splits` — explodes each exercise session's
+  `exercise.splits[]` array into one row per split with `split_type`
+  and `distance_meters`.
+
 Rows pre-dating migration 7 keep `snapshot_kind='profile'` via the column
 default; no parallel-table-with-view shim was used (PRD #93
 §"identity_snapshots migration: explicit strategy").
