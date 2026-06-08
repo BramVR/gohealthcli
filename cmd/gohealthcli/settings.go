@@ -46,7 +46,7 @@ func runSettingsWithRuntime(args []string, configPath, archivePath string, mode 
 	})
 
 	if err := ParseCommon(flags, common, args); err != nil {
-		return commonFlagsExitCode(err, stderr)
+		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	if flags.NArg() != 0 {

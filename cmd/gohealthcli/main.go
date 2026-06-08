@@ -591,14 +591,21 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 // the binary's failure surface in every mode, plus the slice-3 hint
 // block ("Did you mean: <name>?" when a Levenshtein suggestion exists,
 // and "Run 'gohealthcli --help' for a list of commands.") that lands on
-// stderr regardless of mode. Lives next to runWithRuntime because the
-// writes are tightly coupled to the dispatch switch's default branch.
+// stderr.
+//
+// In --json mode the hint block is suppressed: scripts parsing the
+// stdout envelope shouldn't see human-targeted stderr noise. In
+// default and --plain modes the hint lines stay so terminal users
+// still get the discoverability nudge the slice-3 AC requires.
 func runUnknownCommand(typo string, mode outputMode, stdout, stderr io.Writer) int {
 	exit := ReportFailure(FailureReport{
 		Status:  StatusFlagInvalid,
 		Message: fmt.Sprintf("unknown command: %s", typo),
 		Mode:    mode,
 	}, stdout, stderr)
+	if mode.json {
+		return exit
+	}
 	if suggestions := commandRegistry(commands).Suggest(typo); len(suggestions) > 0 {
 		fmt.Fprintf(stderr, "Did you mean: %s?\n", strings.Join(suggestions, ", "))
 	}
@@ -785,7 +792,7 @@ func runStatus(args []string, configPath, archivePath string, archivePathExplici
 	})
 
 	if err := ParseCommon(flags, common, args); err != nil {
-		return commonFlagsExitCode(err, stderr)
+		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	if flags.NArg() != 0 {
@@ -1047,7 +1054,7 @@ func runIdentityWithRuntime(args []string, configPath, archivePath string, mode 
 	})
 
 	if err := ParseCommon(flags, common, args); err != nil {
-		return commonFlagsExitCode(err, stderr)
+		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	if flags.NArg() != 0 {
@@ -1102,7 +1109,7 @@ func runProfileWithRuntime(args []string, configPath, archivePath string, mode o
 	})
 
 	if err := ParseCommon(flags, common, args); err != nil {
-		return commonFlagsExitCode(err, stderr)
+		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	if flags.NArg() != 0 {
