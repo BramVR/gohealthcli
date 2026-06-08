@@ -4039,13 +4039,23 @@ func applyTier1HealthMetricsViewsMigration(tx *sql.Tx, appliedAt string) error {
 	return err
 }
 
+// applyTier1DailyHydrationViewsMigration installs the four daily/sample
+// Normalized Views for #103: daily_vo2_max, daily_heart_rate_zones,
+// daily_sleep_temperature_derivations, respiratory_rate_sleep_summary.
+// The hydration_log_sessions view is deferred (the connect flow has no
+// `nutrition` keyword in --add-scopes yet, so users can't reach the
+// nutrition.readonly scope); the catalog row still ships at the same
+// migration so the issue's surface lands together. The migration name
+// keeps "_hydration_views" for forward compatibility with the upcoming
+// hydration view follow-up — splitting it now would force a v20 just to
+// register one extra view.
 func applyTier1DailyHydrationViewsMigration(tx *sql.Tx, appliedAt string) error {
 	for _, statement := range normalizedViewsRegistry().MigrationStatements(19) {
 		if _, err := tx.Exec(statement); err != nil {
 			return err
 		}
 	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (19, 'add_tier1_daily_and_respiratory_views', ?)`, appliedAt)
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (19, 'add_tier1_daily_hydration_views', ?)`, appliedAt)
 	return err
 }
 
@@ -4228,7 +4238,7 @@ func expectedSchemaMigrations() map[int]string {
 		16: "add_floors_intervals_view",
 		17: "add_tier1_activity_views",
 		18: "add_tier1_health_metrics_views",
-		19: "add_tier1_daily_and_respiratory_views",
+		19: "add_tier1_daily_hydration_views",
 	}
 }
 
