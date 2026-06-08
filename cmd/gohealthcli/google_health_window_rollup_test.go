@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestGoogleHealthIngestionHourlyHeartRateRollup pins #106 Slice 3:
@@ -154,6 +155,50 @@ func TestGoogleHealthIngestionRollupRejectsUnsupportedDataType(t *testing.T) {
 	}
 	if !strings.Contains(msg, "SupportedEndpoints") || !strings.Contains(msg, "list") {
 		t.Errorf("err = %q, want SupportedEndpoints + 'list' (sleep's actual family)", msg)
+	}
+}
+
+// TestGoogleHealthIngestionHourlyAcceptsCivilDatesViaGate pins PRD #141
+// slice 3 AC 3: civil dates and RFC3339 dates passed to --rollup hourly
+// produce equivalent upstream requests. The seam is the syncPreflightGate:
+// civil input → gate normalizes to RFC3339 → planner builds the same
+// rollUp body bytes a RFC3339 input would have built. The fake provider
+// matches a single page-key, so two inputs producing identical bytes
+// proves the equivalence.
+func TestGoogleHealthIngestionHourlyAcceptsCivilDatesViaGate(t *testing.T) {
+	spec, err := parseSyncRollupSpec("hourly")
+	if err != nil {
+		t.Fatalf("parseSyncRollupSpec hourly: %v", err)
+	}
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+
+	// Civil input → gate-normalized RFC3339
+	civilFrom, civilTo, err := spec.NormalizeRange("2026-06-07", "2026-06-08", now)
+	if err != nil {
+		t.Fatalf("NormalizeRange civil: %v", err)
+	}
+	// RFC3339 input (same instants) → pass-through
+	rfcFrom, rfcTo, err := spec.NormalizeRange("2026-06-07T00:00:00Z", "2026-06-08T00:00:00Z", now)
+	if err != nil {
+		t.Fatalf("NormalizeRange RFC: %v", err)
+	}
+	if civilFrom != rfcFrom || civilTo != rfcTo {
+		t.Fatalf("civil-normalized (%q,%q) != RFC-normalized (%q,%q) — gate must produce equivalent upstream windows",
+			civilFrom, civilTo, rfcFrom, rfcTo)
+	}
+
+	// Drive the planner once and confirm the upstream request body
+	// uses the normalized RFC3339 range.
+	civilReq, err := buildGoogleHealthRollupRawRequest("heart-rate", civilFrom, civilTo, "3600s", 0, "")
+	if err != nil {
+		t.Fatalf("buildGoogleHealthRollupRawRequest civil-normalized: %v", err)
+	}
+	rfcReq, err := buildGoogleHealthRollupRawRequest("heart-rate", rfcFrom, rfcTo, "3600s", 0, "")
+	if err != nil {
+		t.Fatalf("buildGoogleHealthRollupRawRequest rfc-normalized: %v", err)
+	}
+	if string(civilReq.body) != string(rfcReq.body) {
+		t.Errorf("civil-input body != RFC-input body\ncivil: %s\nrfc:   %s", string(civilReq.body), string(rfcReq.body))
 	}
 }
 

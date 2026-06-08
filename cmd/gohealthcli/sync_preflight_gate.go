@@ -75,6 +75,7 @@ const (
 	preflightRuleConnectionLookup           = "connection_lookup"
 	preflightRuleRangeOrderInverted         = "range_order_inverted"
 	preflightRuleRangeZeroWidth             = "range_zero_width"
+	preflightRuleRangeParse                 = "range_parse"
 )
 
 func (f *preflightFailure) Error() string { return f.err.Error() }
@@ -136,6 +137,19 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 	if to == "" {
 		to = gate.defaultTo(options, dataTypes)
 	}
+	// Civil-vs-RFC3339 normalization is owned by syncRollupSpec
+	// (PRD #141 slice 3). Routing both --from and --to through the
+	// same normalizer concentrates the shape contract in ONE parser
+	// so the planner downstream consumes only the normalized values.
+	// When --rollup is empty, there is no upstream-mandated shape; we
+	// pass strings through unchanged and only parse them for the
+	// range-ordering check below — matching the historical executor
+	// default that the planner expects (date-range Data Types get a
+	// civil default --to, others get RFC3339, both via defaultTo).
+	normFrom, normTo, err := gate.normalizeRange(rollupSpec, options.from, to)
+	if err != nil {
+		return preflightPlan{}, newPreflightFailure(preflightRuleRangeParse, err)
+	}
 	// Range ordering: --from > --to and --from == --to are both flag-
 	// shape rejections and must fire before the archive connection
 	// lookup so an operator typo surfaces faster than a disk open.
@@ -145,8 +159,8 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 	// validate against the RESOLVED --to (post-defaultTo) so a future
 	// --from with --to omitted still trips the inverted-range rule
 	// instead of silently producing a plan{from=2099, to=today}.
-	if options.from != "" {
-		if err := validatePreflightRangeOrder(options.from, to); err != nil {
+	if normFrom != "" {
+		if err := validatePreflightRangeOrder(normFrom, normTo); err != nil {
 			return preflightPlan{}, err
 		}
 	}
@@ -165,13 +179,27 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 	}
 	return preflightPlan{
 		dataTypes:  dataTypes,
-		from:       options.from,
-		to:         to,
+		from:       normFrom,
+		to:         normTo,
 		rollup:     options.rollup,
 		rollupSpec: rollupSpec,
 		connection: connection,
 		cursorKeys: cursorKeys,
 	}, nil
+}
+
+// normalizeRange delegates to syncRollupSpec.NormalizeRange when a
+// rollup spec is present. When --rollup is empty there is no upstream-
+// mandated shape, so the gate passes inputs through unchanged: the
+// planner's non-rollup code paths already accept the historical mix
+// (RFC3339 by default; civil for date-range Data Types via defaultTo).
+// This keeps the empty-rollup path byte-identical to slice 2's
+// behaviour and concentrates the shape-shifting in NormalizeRange.
+func (gate syncPreflightGate) normalizeRange(spec *syncRollupSpec, from, to string) (string, string, error) {
+	if spec == nil {
+		return from, to, nil
+	}
+	return spec.NormalizeRange(from, to, gate.ctx.now())
 }
 
 // expandDataTypes resolves --all / --types into the concrete ordered list
@@ -239,22 +267,21 @@ func (gate syncPreflightGate) defaultTo(options syncCommandOptions, dataTypes []
 }
 
 // validatePreflightRangeOrder enforces the two range-ordering rules
-// (inverted range, zero-width window) on a parsed time.Time so that
-// civil-date and RFC3339 inputs compose correctly. Civil dates parse
-// as start-of-UTC-day; RFC3339 keeps its embedded offset. A small
-// local parser lives here on purpose: the unified syncRollupSpec
-// normalizer arrives in a later slice and will supersede or reuse
-// this helper at that time.
+// (inverted range, zero-width window) on a parsed time.Time so civil-
+// date and RFC3339 inputs compose correctly. It reuses the single
+// boundary parser owned by syncRollupSpec (parseSyncRangeBoundary) so
+// there is ONE source of truth for the two-shape acceptance contract.
 //
-// Parse failures DEFER to the downstream code path (which owns the
-// per-rollup civil-date-vs-RFC3339 acceptance ergonomics — for example,
-// --rollup daily requires civil-date and produces its own error
-// shape). Range-ordering only fires when both inputs successfully
-// parse, so this slice does not change error messages for any
-// previously-rejected shape.
+// Parse failures DEFER to the downstream code path: when --rollup is
+// non-empty, the gate has already called NormalizeRange (which authors
+// the per-rollup shape-rejection message) and would have returned
+// earlier; when --rollup is empty, the legacy planner code paths
+// (non-rollup list / reconcile / TCX) own any shape-specific
+// rejections. Range-ordering only fires when both inputs successfully
+// parse here.
 func validatePreflightRangeOrder(from, to string) error {
-	fromTime, fromOK := parsePreflightDateOrTime(from)
-	toTime, toOK := parsePreflightDateOrTime(to)
+	fromTime, fromOK := parseSyncRangeBoundary(from)
+	toTime, toOK := parseSyncRangeBoundary(to)
 	if !fromOK || !toOK {
 		return nil
 	}
@@ -271,24 +298,6 @@ func validatePreflightRangeOrder(from, to string) error {
 		)
 	}
 	return nil
-}
-
-// parsePreflightDateOrTime accepts either civil-date (YYYY-MM-DD,
-// interpreted as start-of-UTC-day) or RFC3339. The two-shape acceptance
-// matches the flag-parsing ergonomics the executor used to enforce
-// downstream; concentrating it here lets the gate compare --from and
-// --to on time.Time values instead of risky string comparisons. The
-// bool reports whether parsing succeeded; the error shape is owned
-// by the downstream code path (e.g. --rollup daily's civil-date-only
-// rule), so the gate never authors a parse-error message here.
-func parsePreflightDateOrTime(value string) (time.Time, bool) {
-	if parsed, err := time.ParseInLocation("2006-01-02", value, time.UTC); err == nil {
-		return parsed, true
-	}
-	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
-		return parsed, true
-	}
-	return time.Time{}, false
 }
 
 // productionSyncPreflightContext wires the gate to the real catalog +

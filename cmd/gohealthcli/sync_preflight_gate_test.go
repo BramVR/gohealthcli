@@ -244,6 +244,163 @@ func TestSyncPreflightGateDefaultsToWhenDailyRollup(t *testing.T) {
 	}
 }
 
+// TestSyncPreflightGateNormalizesRangePerRollupKind pins PRD #141 slice 3:
+// the gate owns the civil-vs-RFC3339 contract by routing both --from and
+// --to through syncRollupSpec.NormalizeRange. The planner downstream
+// consumes the normalized plan.from / plan.to without re-parsing.
+func TestSyncPreflightGateNormalizesRangePerRollupKind(t *testing.T) {
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	conn := archivedConnection{id: "googlehealth:111"}
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
+
+	cases := []struct {
+		name     string
+		rollup   string
+		dataType string
+		from, to string
+		wantFrom string
+		wantTo   string
+	}{
+		{
+			name:     "daily civil pass-through",
+			rollup:   "daily",
+			dataType: "steps",
+			from:     "2026-06-07",
+			to:       "2026-06-08",
+			wantFrom: "2026-06-07",
+			wantTo:   "2026-06-08",
+		},
+		{
+			name:     "daily RFC3339 normalized to civil",
+			rollup:   "daily",
+			dataType: "steps",
+			from:     "2026-06-07T03:00:00Z",
+			to:       "2026-06-08T00:00:00Z",
+			wantFrom: "2026-06-07",
+			wantTo:   "2026-06-08",
+		},
+		{
+			name:     "hourly civil normalized to RFC3339 start-of-UTC-day",
+			rollup:   "hourly",
+			dataType: "heart-rate",
+			from:     "2026-06-07",
+			to:       "2026-06-08",
+			wantFrom: "2026-06-07T00:00:00Z",
+			wantTo:   "2026-06-08T00:00:00Z",
+		},
+		{
+			name:     "weekly civil normalized to RFC3339",
+			rollup:   "weekly",
+			dataType: "steps",
+			from:     "2026-06-01",
+			to:       "2026-06-08",
+			wantFrom: "2026-06-01T00:00:00Z",
+			wantTo:   "2026-06-08T00:00:00Z",
+		},
+		{
+			name:     "window=6h civil normalized to RFC3339",
+			rollup:   "window=6h",
+			dataType: "steps",
+			from:     "2026-06-07",
+			to:       "2026-06-08",
+			wantFrom: "2026-06-07T00:00:00Z",
+			wantTo:   "2026-06-08T00:00:00Z",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			plan, err := gate.Validate(syncCommandOptions{
+				dataTypes: []string{tc.dataType},
+				rollup:    tc.rollup,
+				from:      tc.from,
+				to:        tc.to,
+			})
+			if err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+			if plan.from != tc.wantFrom {
+				t.Errorf("plan.from = %q, want %q", plan.from, tc.wantFrom)
+			}
+			if plan.to != tc.wantTo {
+				t.Errorf("plan.to = %q, want %q", plan.to, tc.wantTo)
+			}
+		})
+	}
+}
+
+// TestSyncPreflightGateRangeParseDistinctFromRollupParse pins the
+// rule-discriminator contract: a malformed --from is a range-shape
+// failure, NOT a rollup-literal failure. Consumers route on
+// preflightFailure.Rule(); collapsing both into preflightRuleRollupParse
+// makes downstream JSON envelopes, logging, and exit-code routing unable
+// to tell "bad --rollup value" from "bad --from boundary" apart.
+func TestSyncPreflightGateRangeParseDistinctFromRollupParse(t *testing.T) {
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	conn := archivedConnection{id: "googlehealth:111"}
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
+
+	_, err := gate.Validate(syncCommandOptions{
+		dataTypes: []string{"steps"},
+		rollup:    "hourly",
+		from:      "garbage",
+		to:        "2026-06-08T00:00:00Z",
+	})
+	if err == nil {
+		t.Fatalf("Validate: want error for garbage --from, got nil")
+	}
+	var failure *preflightFailure
+	if !errors.As(err, &failure) {
+		t.Fatalf("error = %v (%T), want *preflightFailure", err, err)
+	}
+	if failure.Rule() != preflightRuleRangeParse {
+		t.Errorf("rule = %q, want %q", failure.Rule(), preflightRuleRangeParse)
+	}
+	if failure.Rule() == preflightRuleRollupParse {
+		t.Errorf("rule = %q must NOT collapse range-parse into rollup-parse", failure.Rule())
+	}
+}
+
+// TestSyncPreflightGateRejectsBadShapeWithLocalMessage pins AC 4: civil
+// date on --rollup hourly|weekly|window=<dur> no longer surfaces as an
+// opaque upstream HTTP 400. The gate names the supported shapes for
+// the rollup kind in its rejection. Parse failures are now gate failures,
+// not downstream HTTP failures.
+func TestSyncPreflightGateRejectsBadShapeWithLocalMessage(t *testing.T) {
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	conn := archivedConnection{id: "googlehealth:111"}
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
+
+	cases := []struct {
+		name   string
+		rollup string
+	}{
+		{"hourly", "hourly"},
+		{"weekly", "weekly"},
+		{"window=6h", "window=6h"},
+		{"daily", "daily"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := gate.Validate(syncCommandOptions{
+				dataTypes: []string{"steps"},
+				rollup:    tc.rollup,
+				from:      "not-a-date",
+				to:        "2026-06-08T00:00:00Z",
+			})
+			if err == nil {
+				t.Fatalf("Validate: want error for unparseable --from, got nil")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "YYYY-MM-DD") || !strings.Contains(msg, "RFC3339") {
+				t.Errorf("error = %q, want supported shapes (YYYY-MM-DD, RFC3339) named", msg)
+			}
+			if !strings.Contains(msg, tc.rollup) {
+				t.Errorf("error = %q, want rollup kind %q named", msg, tc.rollup)
+			}
+		})
+	}
+}
+
 func TestSyncPreflightGateSkipsRangeOrderCheckOnCursorResume(t *testing.T) {
 	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
 	conn := archivedConnection{id: "googlehealth:111"}

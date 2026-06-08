@@ -4660,11 +4660,23 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("timed rollup sync exit code = %d, want 1\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "--from: expected YYYY-MM-DD") {
-		t.Fatalf("timed rollup stdout = %q, want date-only error", stdout.String())
+	// The gate's preflight message names both supported shapes and the
+	// rollup kind so an operator hears exactly what the rollup will
+	// accept; this replaces the slice-2 planner-stage "expected
+	// YYYY-MM-DD" error with a richer local rejection.
+	if !strings.Contains(stdout.String(), "expected YYYY-MM-DD or RFC3339") {
+		t.Fatalf("timed rollup stdout = %q, want supported-shapes error", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "daily") {
+		t.Fatalf("timed rollup stdout = %q, want rollup kind named", stdout.String())
 	}
 	assertArchiveTableCount(t, archivePath, "rollups", 1)
-	assertSyncRunWithEndpointFamily(t, archivePath, 5, "sync_failed", "dailyRollUp", 0, 0, 0, "--from: expected YYYY-MM-DD")
+	// PRD #141 slice 3: civil-vs-RFC3339 input-shape errors are caught at
+	// the preflight gate before any sync_run row is written. Previously
+	// this scenario produced an audit row from the planner-stage parse
+	// error; the gate now owns the contract so the archive must show
+	// only the 4 rows from the earlier successful invocations.
+	assertArchiveTableCount(t, archivePath, "sync_runs", 4)
 
 	longRangeRequests := installStepDailyRollupFetchFake(t, "connect-access-secret", map[string]string{
 		"2026-01-01/2026-04-01/": `{"rollupDataPoints": [{
@@ -4701,7 +4713,9 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 	assertJSONNumber(t, got, "rollups_seen", 2)
 	assertJSONNumber(t, got, "rollups_new", 2)
 	assertArchiveTableCount(t, archivePath, "rollups", 3)
-	assertSyncRunWithEndpointFamily(t, archivePath, 6, "sync_completed", "dailyRollUp", 2, 2, 0, "")
+	// Sync Run id is 5 (not 6) because the preceding civil-shape failure
+	// is now caught at the gate and does not write a sync_run row.
+	assertSyncRunWithEndpointFamily(t, archivePath, 5, "sync_completed", "dailyRollUp", 2, 2, 0, "")
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
@@ -6768,6 +6782,62 @@ func withStepDailyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAcc
 			body.Range.End.Date.Year,
 			body.Range.End.Date.Month,
 			body.Range.End.Date.Day,
+			body.PageToken,
+		)
+		response, ok := pages[key]
+		if !ok {
+			t.Fatalf("no fake rollup page for key %q", key)
+		}
+		return []byte(response), nil
+	}
+	return runtime, &requests
+}
+
+// withHeartRateHourlyRollupFetchFake routes the runtime's fetchRawProvider
+// to per-page-key canned responses for the hourly heart-rate windowed
+// rollUp endpoint. The page-key shape is "<startTime>/<endTime>/<windowSize>/<pageToken>"
+// where startTime/endTime are taken VERBATIM from the request body, so a
+// test that passes civil dates into the gate-normalized executor proves
+// the executor actually used the normalized RFC3339 form (the gate emits
+// RFC3339 for hourly per PRD #141 slice 3) rather than the raw civil
+// option.from.
+func withHeartRateHourlyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]rawProviderRequest) {
+	t.Helper()
+
+	var requests []rawProviderRequest
+	runtime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		if accessToken != wantAccessToken {
+			t.Fatalf("rollup sync access token = %q, want stored token", accessToken)
+		}
+		if request.endpointName != "dataTypes.heart-rate.rollUp" || request.dataType != "heart-rate" {
+			t.Fatalf("rollup sync request = (%q, %q), want heart-rate rollUp", request.endpointName, request.dataType)
+		}
+		if request.method != http.MethodPost {
+			t.Fatalf("rollup method = %q, want POST", request.method)
+		}
+		parsedURL, err := url.Parse(request.url)
+		if err != nil {
+			t.Fatalf("parse rollup URL: %v", err)
+		}
+		if parsedURL.Path != "/v4/users/me/dataTypes/heart-rate/dataPoints:rollUp" {
+			t.Fatalf("rollup path = %q, want rollUp path", parsedURL.Path)
+		}
+		var body struct {
+			Range struct {
+				StartTime string `json:"startTime"`
+				EndTime   string `json:"endTime"`
+			} `json:"range"`
+			WindowSize string `json:"windowSize"`
+			PageToken  string `json:"pageToken"`
+		}
+		if err := json.Unmarshal(request.body, &body); err != nil {
+			t.Fatalf("rollup body is not valid JSON: %v\nbody: %s", err, string(request.body))
+		}
+		requests = append(requests, request)
+		key := fmt.Sprintf("%s/%s/%s/%s",
+			body.Range.StartTime,
+			body.Range.EndTime,
+			body.WindowSize,
 			body.PageToken,
 		)
 		response, ok := pages[key]
