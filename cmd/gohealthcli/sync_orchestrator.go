@@ -169,10 +169,11 @@ func summarizeSyncFanOut(results []syncResult, requestedFrom, requestedTo string
 }
 
 // fanOutMessage formats the one-line summary the CLI prints after a
-// fan-out finishes. The status passes are counted from `results` so the
-// canceled-message uses "Data Types that actually completed" rather
-// than len(results) — the canceled in-flight run sits in the slice too
-// and would otherwise inflate the count by one.
+// fan-out finishes. Per-status counts are derived from `results` rather
+// than passed in, so the canceled-status arm can report "Data Types
+// that actually completed" instead of len(results) — the canceled
+// in-flight run sits in the slice too and would otherwise inflate the
+// count by one.
 func fanOutMessage(status string, results []syncResult) string {
 	attempted := len(results)
 	switch status {
