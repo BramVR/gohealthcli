@@ -84,6 +84,38 @@ func TestDescribeSchemaJSONIncludesEveryRegisteredView(t *testing.T) {
 	}
 }
 
+// TestDescribeSchemaJSONIncludesCuratedNarrative pins that the
+// hand-curated narrative file (docs/llm-schema.json) is merged into
+// the --json output. Downstream tools rely on the narrative for
+// guidance ("for unit-aware queries JOIN current_settings", etc).
+func TestDescribeSchemaJSONIncludesCuratedNarrative(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"describe-schema", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("describe-schema --json exit code = %d, stderr=%s", code, stderr.String())
+	}
+	var catalog struct {
+		Narrative struct {
+			Guidance                 []string                  `json:"guidance"`
+			PreferredViewsByQueryClass map[string]string `json:"preferred_views_by_query_class"`
+		} `json:"narrative"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &catalog); err != nil {
+		t.Fatalf("--json output is not valid JSON: %v", err)
+	}
+	if len(catalog.Narrative.Guidance) == 0 {
+		t.Fatal("narrative.guidance empty; want hand-curated entries merged in")
+	}
+	if catalog.Narrative.PreferredViewsByQueryClass["daily step totals"] != "daily_steps" {
+		t.Fatalf("narrative.preferred_views_by_query_class['daily step totals'] = %q, want daily_steps",
+			catalog.Narrative.PreferredViewsByQueryClass["daily step totals"])
+	}
+}
+
 // TestDescribeSchemaJSONDriftDetectionFailsWhenViewMissingFromCatalog
 // is the CI guard: a view present in sqlite_master without a
 // corresponding catalog entry causes the test to fail. This pins the

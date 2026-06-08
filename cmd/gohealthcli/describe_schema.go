@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,16 +11,30 @@ import (
 	"sort"
 )
 
+// curatedSchemaCatalogJSON is the hand-curated narrative catalog
+// shipped alongside the binary. Downstream tools may also fetch the
+// file directly from cmd/gohealthcli/llm-schema.json for offline use;
+// the catalog emitted by `describe-schema --json` merges this on top
+// of the Registry- and pragma-sourced data.
+//
+//go:embed llm-schema.json
+var curatedSchemaCatalogJSON []byte
+
 func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, _ runtimeAdapters) int {
 	flags := flag.NewFlagSet("describe-schema", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
 	describeConfigPath := flags.String("config", configPath, "config file path")
 	describeArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
-	describeJSON := flags.Bool("json", mode.json, "emit the curated JSON catalog (view metadata + tables + narrative)")
-	describeSQL := flags.Bool("sql", false, "emit live DDL from sqlite_master")
-	describePlain := flags.Bool("plain", false, "(reserved; not used by describe-schema today)")
-	_ = describePlain
+	// --json defaults to true here because the JSON catalog is the
+	// downstream contract; an explicit --sql overrides. We do NOT
+	// reject the combination — that would mis-fire when the user
+	// passes a global --json flag plus a subcommand-level --sql.
+	flags.Bool("json", true, "emit the curated JSON catalog (default)")
+	describeSQL := flags.Bool("sql", false, "emit live DDL from sqlite_master instead of the JSON catalog")
+	// --no-input matches the common-flag set so the global --no-input
+	// flag doesn't trigger flag.ErrHelp; we don't use it here.
+	flags.Bool("no-input", false, "ignored by describe-schema (kept for common-flag compatibility)")
 
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -31,10 +46,7 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 		fmt.Fprintf(stderr, "unexpected describe-schema argument: %s\n", flags.Arg(0))
 		return 1
 	}
-	if *describeJSON && *describeSQL {
-		fmt.Fprintln(stderr, "describe-schema: pass --json OR --sql, not both")
-		return 1
-	}
+	_ = mode // describe-schema picks JSON or SQL via its own flags, not the global outputMode.
 
 	resolvedPath, err := resolveConfiguredArchivePath(*describeConfigPath, *describeArchivePath, false)
 	if err != nil {
@@ -110,9 +122,10 @@ type schemaCatalogTable struct {
 }
 
 type schemaCatalog struct {
-	Version int                  `json:"version"`
-	Views   []schemaCatalogView  `json:"views"`
-	Tables  []schemaCatalogTable `json:"tables"`
+	Version   int                  `json:"version"`
+	Views     []schemaCatalogView  `json:"views"`
+	Tables    []schemaCatalogTable `json:"tables"`
+	Narrative json.RawMessage      `json:"narrative,omitempty"`
 }
 
 const schemaCatalogVersion = 1
@@ -159,6 +172,13 @@ func writeSchemaJSON(db *sql.DB, stdout io.Writer) error {
 			return err
 		}
 		catalog.Tables = append(catalog.Tables, schemaCatalogTable{Name: name, Columns: columns})
+	}
+
+	// Merge the hand-curated narrative file into the catalog as a
+	// `narrative` sub-object. Downstream tools may also fetch
+	// docs/llm-schema.json directly without running the binary.
+	if json.Valid(curatedSchemaCatalogJSON) {
+		catalog.Narrative = json.RawMessage(curatedSchemaCatalogJSON)
 	}
 
 	encoder := json.NewEncoder(stdout)
