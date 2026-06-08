@@ -641,20 +641,18 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 	flags := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
-	doctorConfigPath := flags.String("config", configPath, "config file path")
-	doctorArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
-	doctorJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
-	doctorPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
+	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
+		ConfigPath:  configPath,
+		ArchivePath: archivePath,
+		JSONOutput:  mode.json,
+		PlainOutput: mode.plain,
+	})
 	doctorOnline := flags.Bool("online", false, "refresh tokens and check provider reachability")
-	flags.Bool("no-input", false, "never prompt, never wait for browser input")
 
-	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 1
+	if err := ParseCommon(flags, common, args); err != nil {
+		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
-	mode = outputMode{json: *doctorJSONOutput, plain: *doctorPlainOutput}
+	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	if flags.NArg() != 0 {
 		return ReportFailure(FailureReport{
 			Command: "doctor",
@@ -664,22 +662,22 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 		}, stdout, stderr)
 	}
 
-	if fileExists(*doctorConfigPath) && fileExists(*doctorArchivePath) {
+	if fileExists(common.ConfigPath) && fileExists(common.ArchivePath) {
 		if *doctorOnline {
-			return runDoctorOnlineWithRuntime(*doctorConfigPath, *doctorArchivePath, mode, stdout, stderr, runtime)
+			return runDoctorOnlineWithRuntime(common.ConfigPath, common.ArchivePath, mode, stdout, stderr, runtime)
 		}
-		config, err := inspectConfig(*doctorConfigPath, *doctorArchivePath)
+		config, err := inspectConfig(common.ConfigPath, common.ArchivePath)
 		if err != nil {
-			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, fmt.Sprintf("config check failed: %v", err), mode, stdout, stderr)
+			return runDoctorInvalid(common.ConfigPath, common.ArchivePath, fmt.Sprintf("config check failed: %v", err), mode, stdout, stderr)
 		}
-		archive, err := (healthArchiveLifecycle{path: *doctorArchivePath}).MigrateAndInspect(true)
+		archive, err := (healthArchiveLifecycle{path: common.ArchivePath}).MigrateAndInspect(true)
 		if err != nil {
-			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, err.Error(), mode, stdout, stderr)
+			return runDoctorInvalid(common.ConfigPath, common.ArchivePath, err.Error(), mode, stdout, stderr)
 		}
 		result := doctorResult{
 			Status:            "ok",
-			ConfigPath:        *doctorConfigPath,
-			ArchivePath:       *doctorArchivePath,
+			ConfigPath:        common.ConfigPath,
+			ArchivePath:       common.ArchivePath,
 			OAuthClientSource: config.oauthClientSource,
 			CredentialStore:   config.credentialStore,
 			SchemaVersion:     &archive.schemaVersion,
@@ -687,15 +685,15 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 			TokenStatus:       archive.tokenStatus,
 			Message:           "local gohealthcli setup is initialized",
 		}
-		attachmentRoot, attachmentMode, attachmentErr := inspectAttachmentRoot(*doctorArchivePath)
+		attachmentRoot, attachmentMode, attachmentErr := inspectAttachmentRoot(common.ArchivePath)
 		if attachmentErr != nil {
-			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, attachmentErr.Error(), mode, stdout, stderr)
+			return runDoctorInvalid(common.ConfigPath, common.ArchivePath, attachmentErr.Error(), mode, stdout, stderr)
 		}
 		result.AttachmentRootPath = attachmentRoot
 		result.AttachmentRootMode = attachmentMode
-		attachments, attachmentsErr := collectAttachmentOrphans(*doctorArchivePath)
+		attachments, attachmentsErr := collectAttachmentOrphans(common.ArchivePath)
 		if attachmentsErr != nil {
-			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, attachmentsErr.Error(), mode, stdout, stderr)
+			return runDoctorInvalid(common.ConfigPath, common.ArchivePath, attachmentsErr.Error(), mode, stdout, stderr)
 		}
 		result.Attachments = attachments
 		if err := writeDoctorResult(result, mode, stdout); err != nil {
@@ -708,14 +706,14 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 		}
 		return 0
 	}
-	if fileExists(*doctorConfigPath) || fileExists(*doctorArchivePath) {
-		return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, "partial local setup found; run `gohealthcli init` after moving existing config or Health Archive", mode, stdout, stderr)
+	if fileExists(common.ConfigPath) || fileExists(common.ArchivePath) {
+		return runDoctorInvalid(common.ConfigPath, common.ArchivePath, "partial local setup found; run `gohealthcli init` after moving existing config or Health Archive", mode, stdout, stderr)
 	}
 
 	result := doctorResult{
 		Status:      "setup_missing",
-		ConfigPath:  *doctorConfigPath,
-		ArchivePath: *doctorArchivePath,
+		ConfigPath:  common.ConfigPath,
+		ArchivePath: common.ArchivePath,
 		TokenStatus: "unknown",
 		Message:     "local gohealthcli setup not found",
 	}
@@ -858,22 +856,20 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 	flags := flag.NewFlagSet("init", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
-	initConfigPath := flags.String("config", configPath, "config file path")
-	initArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
-	initJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
-	initPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
-	flags.Bool("no-input", false, "never prompt, never wait for browser input")
+	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
+		ConfigPath:  configPath,
+		ArchivePath: archivePath,
+		JSONOutput:  mode.json,
+		PlainOutput: mode.plain,
+	})
 	oauthClientFile := flags.String("oauth-client-file", "", "OAuth client JSON file reference")
 	secretProvider := flags.String("secret-provider", "", "Secret Provider name for OAuth client setup")
 	oauthClientItem := flags.String("oauth-client-item", "", "Secret Provider item name for OAuth client setup")
 
-	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 1
+	if err := ParseCommon(flags, common, args); err != nil {
+		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
-	mode = outputMode{json: *initJSONOutput, plain: *initPlainOutput}
+	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	if flags.NArg() != 0 {
 		return ReportFailure(FailureReport{
 			Command: "init",
@@ -883,8 +879,8 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 		}, stdout, stderr)
 	}
 
-	if fileExists(*initConfigPath) && fileExists(*initArchivePath) {
-		if err := validateConfig(*initConfigPath, *initArchivePath); err != nil {
+	if fileExists(common.ConfigPath) && fileExists(common.ArchivePath) {
+		if err := validateConfig(common.ConfigPath, common.ArchivePath); err != nil {
 			return ReportFailure(FailureReport{
 				Command: "init",
 				Status:  StatusOperationFailed,
@@ -892,7 +888,7 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 				Mode:    mode,
 			}, stdout, stderr)
 		}
-		lifecycle := healthArchiveLifecycle{path: *initArchivePath}
+		lifecycle := healthArchiveLifecycle{path: common.ArchivePath}
 		if err := lifecycle.Migrate(); err != nil {
 			return ReportFailure(FailureReport{
 				Command: "init",
@@ -911,8 +907,8 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 		}
 		result := initResult{
 			Status:           "already_initialized",
-			ConfigPath:       *initConfigPath,
-			ArchivePath:      *initArchivePath,
+			ConfigPath:       common.ConfigPath,
+			ArchivePath:      common.ArchivePath,
 			DefaultDataTypes: defaultDataTypes,
 			SchemaVersion:    currentSchemaVersion,
 			Message:          "local gohealthcli setup already exists",
@@ -927,7 +923,7 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 		}
 		return 0
 	}
-	if fileExists(*initConfigPath) || fileExists(*initArchivePath) {
+	if fileExists(common.ConfigPath) || fileExists(common.ArchivePath) {
 		return ReportFailure(FailureReport{
 			Command: "init",
 			Status:  StatusOperationFailed,
@@ -944,7 +940,7 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 		return ReportFailure(FailureReport{Command: "init", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 
-	if err := createConfigFile(*initConfigPath, *initArchivePath, source); err != nil {
+	if err := createConfigFile(common.ConfigPath, common.ArchivePath, source); err != nil {
 		return ReportFailure(FailureReport{
 			Command: "init",
 			Status:  StatusArchiveUnwritable,
@@ -952,9 +948,9 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 			Mode:    mode,
 		}, stdout, stderr)
 	}
-	if err := createArchive(*initArchivePath); err != nil {
-		_ = os.Remove(*initConfigPath)
-		_ = os.Remove(*initArchivePath)
+	if err := createArchive(common.ArchivePath); err != nil {
+		_ = os.Remove(common.ConfigPath)
+		_ = os.Remove(common.ArchivePath)
 		return ReportFailure(FailureReport{
 			Command: "init",
 			Status:  StatusArchiveUnwritable,
@@ -965,8 +961,8 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 
 	result := initResult{
 		Status:            "initialized",
-		ConfigPath:        *initConfigPath,
-		ArchivePath:       *initArchivePath,
+		ConfigPath:        common.ConfigPath,
+		ArchivePath:       common.ArchivePath,
 		OAuthClientSource: source.kind,
 		DefaultDataTypes:  defaultDataTypes,
 		SchemaVersion:     currentSchemaVersion,
@@ -990,20 +986,19 @@ func runConnectWithRuntime(args []string, configPath, archivePath string, global
 	flags := flag.NewFlagSet("connect", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
-	connectConfigPath := flags.String("config", configPath, "config file path")
-	connectArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
-	connectJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
-	connectPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
-	noInput := flags.Bool("no-input", globalNoInput, "never prompt, never wait for browser input")
+	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
+		ConfigPath:  configPath,
+		ArchivePath: archivePath,
+		JSONOutput:  mode.json,
+		PlainOutput: mode.plain,
+		NoInput:     globalNoInput,
+	})
 	connectAddScopes := flags.String("add-scopes", "", "extend the OAuth grant with optional scope keywords (csv): irn, ecg, nutrition, tcx")
 
-	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 1
+	if err := ParseCommon(flags, common, args); err != nil {
+		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
-	mode = outputMode{json: *connectJSONOutput, plain: *connectPlainOutput}
+	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	if flags.NArg() != 0 {
 		return ReportFailure(FailureReport{
 			Command: "connect",
@@ -1023,7 +1018,7 @@ func runConnectWithRuntime(args []string, configPath, archivePath string, global
 		}, stdout, stderr)
 	}
 
-	result, err := connectSetupWithRuntimeAndExtraScopes(*connectConfigPath, *connectArchivePath, *noInput, additionalScopes, runtime)
+	result, err := connectSetupWithRuntimeAndExtraScopes(common.ConfigPath, common.ArchivePath, common.NoInput, additionalScopes, runtime)
 	if err != nil {
 		result.Status = "connect_failed"
 		result.Message = err.Error()
@@ -1166,25 +1161,23 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 	flags := flag.NewFlagSet("sync", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
-	syncConfigPath := flags.String("config", configPath, "config file path")
-	syncArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
-	syncJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
-	syncPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
+	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
+		ConfigPath:  configPath,
+		ArchivePath: archivePath,
+		JSONOutput:  mode.json,
+		PlainOutput: mode.plain,
+	})
 	syncTypes := flags.String("types", "", "comma-separated Data Types; defaults to \"steps\" when neither --types nor --all is set")
 	syncAll := flags.Bool("all", false, "sync every default Data Type")
 	syncFrom := flags.String("from", "", "inclusive sync range start")
 	syncTo := flags.String("to", "", "exclusive sync range end")
 	syncRollup := flags.String("rollup", "", "rollup kind to sync; supported: daily")
 	syncSourceFamily := flags.String("source-family", "", "source family filter; supported: wearable")
-	flags.Bool("no-input", false, "never prompt, never wait for browser input")
 
-	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 1
+	if err := ParseCommon(flags, common, args); err != nil {
+		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
-	mode = outputMode{json: *syncJSONOutput, plain: *syncPlainOutput}
+	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	if flags.NArg() != 0 {
 		return ReportFailure(FailureReport{
 			Command: "sync",
@@ -1201,8 +1194,8 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 		dataTypes = []string{"steps"}
 	}
 	options := syncCommandOptions{
-		configPath:   *syncConfigPath,
-		archivePath:  *syncArchivePath,
+		configPath:   common.ConfigPath,
+		archivePath:  common.ArchivePath,
 		dataTypes:    dataTypes,
 		allTypes:     *syncAll,
 		from:         *syncFrom,
@@ -1302,22 +1295,80 @@ func runRaw(args []string, configPath, archivePath string, mode outputMode, stdo
 }
 
 func runRawWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-	options, err := parseRawCommandOptions(args, configPath, archivePath)
-	if err != nil {
+	flags := flag.NewFlagSet("raw", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	// raw's success output is the provider's raw bytes on stdout — it
+	// does not honour --plain / --json / --no-input. The Common Flag
+	// Set's pre-Parse scan turns those known-global flags into a
+	// targeted "--<flag> is not supported by raw" message when the user
+	// passes them on raw, instead of letting them silently lose values
+	// or fall through to stdlib's generic wording.
+	common := RegisterCommon(flags, CommonFlagSpec{Accepted: []string{"config", "db"}}, CommonFlagValues{
+		ConfigPath:  configPath,
+		ArchivePath: archivePath,
+	})
+	rawFrom := flags.String("from", "", "inclusive time-range start (where supported by the endpoint)")
+	rawTo := flags.String("to", "", "exclusive time-range end (where supported by the endpoint)")
+	rawPageSize := flags.Int64("page-size", 0, "pagination page size (positive integer; where supported by the endpoint)")
+	rawPageToken := flags.String("page-token", "", "pagination page token from a prior response")
+
+	// raw uses a bespoke usage block (`raw endpoint getIdentity` etc.)
+	// rather than the auto-generated stdlib one, because its first
+	// positional is a verb (`endpoint`/`data-type`) — not a flag.
+	// Override fs.Usage so a parse failure or -h prints raw's own
+	// three-line block on stderr instead of the stdlib auto-listing.
+	// On --help we additionally mirror it to stdout below; the duplicate
+	// stderr copy would surface twice otherwise, so we route only on
+	// genuine parse errors here.
+	rawUsage := func(w io.Writer) {
+		fmt.Fprintln(w, "usage: gohealthcli raw endpoint getIdentity")
+		fmt.Fprintln(w, "usage: gohealthcli raw endpoint dataTypes.<data-type>.list --from YYYY-MM-DD [--to YYYY-MM-DD]")
+		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> --from YYYY-MM-DD [--to YYYY-MM-DD]")
+	}
+	// stdlib's flag package calls fs.Usage on BOTH `-h` and a parse
+	// error. Suppress that auto-call entirely and emit the bespoke
+	// block from the error branches below so each failure mode picks
+	// the right destination (stdout for --help, stderr for parse error)
+	// and the user never sees the block twice.
+	flags.Usage = func() {}
+
+	// raw's subverbs (`endpoint <name>`, `data-type <data-type>`) are
+	// positional arguments that may appear BEFORE the flag block —
+	// stdlib's `flag` package stops parsing at the first non-flag, so
+	// `raw endpoint getIdentity --config X` would otherwise leave
+	// `--config X` unread. Reorder the args so flags come first and
+	// positionals trail; the FlagSet then parses everything, and
+	// fs.Args() returns just the trailing positionals.
+	reordered, target := partitionRawFlagArgs(flags, args)
+	if err := ParseCommon(flags, common, reordered); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintln(stdout, "usage: gohealthcli raw endpoint getIdentity")
-			fmt.Fprintln(stdout, "usage: gohealthcli raw endpoint dataTypes.<data-type>.list --from YYYY-MM-DD [--to YYYY-MM-DD]")
-			fmt.Fprintln(stdout, "usage: gohealthcli raw data-type <data-type> --from YYYY-MM-DD [--to YYYY-MM-DD]")
+			// --help / -h flowed through; raw's success output is the
+			// provider's raw bytes on stdout, so the bespoke usage
+			// block follows the same convention when the user
+			// explicitly asks for it.
+			rawUsage(stdout)
 			return 0
 		}
-		// raw: prefix is now produced by ReportFailure's Command field
-		// instead of an inline fmt.Fprintf — the seam (slice 7, #178)
-		// folds the legacy special case into the same writer every
-		// other subcommand uses. raw's SUCCESS output is provider-shaped
-		// (raw JSON body to stdout), but its FAILURE output respects
-		// the global --json / --plain so the unified failure contract
-		// applies even on the one verb whose happy path is provider-shaped.
-		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
+		// Genuine parse failures (unknown flag, malformed value): the
+		// error message went to stderr via fs.SetOutput already; append
+		// the bespoke usage block on the same stream so the user sees
+		// "what to use instead" without a second copy on stdout.
+		if errors.Is(err, ErrFlagParseFailed) {
+			rawUsage(stderr)
+		}
+		return commonFlagsExitCode(flags, err, stdout, stderr)
+	}
+	if *rawPageSize < 0 || (flagWasProvided(flags, "page-size") && *rawPageSize <= 0) {
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: "--page-size must be a positive integer", Mode: mode}, stdout, stderr)
+	}
+	options := rawCommandOptions{
+		configPath:  common.ConfigPath,
+		archivePath: common.ArchivePath,
+		from:        *rawFrom,
+		to:          *rawTo,
+		pageSize:    *rawPageSize,
+		pageToken:   *rawPageToken,
+		target:      target,
 	}
 	request, err := buildGoogleHealthRawRequest(options.target, options.from, options.to, options.pageSize, options.pageToken)
 	if err != nil {
@@ -1336,6 +1387,66 @@ func runRawWithRuntime(args []string, configPath, archivePath string, mode outpu
 		}, stdout, stderr)
 	}
 	return 0
+}
+
+// partitionRawFlagArgs splits raw's argv so flags come first and the
+// subverb-positional tail (e.g. `endpoint getIdentity`,
+// `data-type steps`) trails. stdlib's `flag.Parse` stops at the first
+// non-flag, so without this reorder the legacy invocation
+// `raw endpoint getIdentity --config X` would leave `--config X` unread.
+//
+// The walk respects `--` (end of flags), recognises string flags
+// registered on fs so their value argument is not mistaken for a
+// positional, and leaves bool / unknown flags' subsequent token to be
+// parsed in the usual way. Returns the flag-first arg list and the
+// trailing positional slice (which the caller uses verbatim as raw's
+// `target`, bypassing fs.Args() so an early `--` still surfaces the
+// subverb).
+func partitionRawFlagArgs(fs *flag.FlagSet, args []string) ([]string, []string) {
+	flagArgs := make([]string, 0, len(args))
+	positionals := make([]string, 0, len(args))
+	endOfFlags := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if endOfFlags {
+			positionals = append(positionals, arg)
+			continue
+		}
+		if arg == "--" {
+			endOfFlags = true
+			flagArgs = append(flagArgs, arg)
+			continue
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			positionals = append(positionals, arg)
+			continue
+		}
+		flagArgs = append(flagArgs, arg)
+		// If the flag is registered as a non-bool on fs, the next arg
+		// is its value — pull it along (unless this is the `--name=value`
+		// form, which is self-contained).
+		name := strings.TrimLeft(arg, "-")
+		if eq := strings.IndexByte(name, '='); eq >= 0 {
+			continue
+		}
+		f := fs.Lookup(name)
+		if f == nil {
+			continue
+		}
+		if bf, ok := f.Value.(boolFlag); ok && bf.IsBoolFlag() {
+			continue
+		}
+		if i+1 < len(args) {
+			i++
+			flagArgs = append(flagArgs, args[i])
+		}
+	}
+	// fs.Parse consumes only the leading flag block; appending the
+	// positionals lets fs.Args() report them too, while the explicit
+	// `positionals` return survives even if a future change pre-trims
+	// args before fs.Parse sees them.
+	out := append(flagArgs, positionals...)
+	return out, positionals
 }
 
 func connectSetup(configPath, archivePath string, noInput bool) (connectResult, error) {
@@ -1768,77 +1879,6 @@ func requireConnectionScopes(metadata string, requiredScopes []string) error {
 			return fmt.Errorf("Connection token is missing required Google Health scope %s; run `gohealthcli connect --add-scopes %s`", missing[0], strings.Join(keywords, ","))
 		}
 		return fmt.Errorf("Connection token is missing required Google Health scope %s; run `gohealthcli connect` again", missing[0])
-	}
-	return nil
-}
-
-func parseRawCommandOptions(args []string, configPath, archivePath string) (rawCommandOptions, error) {
-	options := rawCommandOptions{configPath: configPath, archivePath: archivePath}
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		switch {
-		case arg == "-h" || arg == "--help":
-			return rawCommandOptions{}, flag.ErrHelp
-		case arg == "--json" || arg == "--plain" || arg == "--no-input":
-		case arg == "--config" || arg == "--db" || arg == "--from" || arg == "--to" || arg == "--page-size" || arg == "--page-token":
-			index++
-			if index >= len(args) {
-				return rawCommandOptions{}, fmt.Errorf("%s requires a value", arg)
-			}
-			if err := setRawCommandOption(&options, arg, args[index]); err != nil {
-				return rawCommandOptions{}, err
-			}
-		case strings.HasPrefix(arg, "--config="):
-			if err := setRawCommandOption(&options, "--config", strings.TrimPrefix(arg, "--config=")); err != nil {
-				return rawCommandOptions{}, err
-			}
-		case strings.HasPrefix(arg, "--db="):
-			if err := setRawCommandOption(&options, "--db", strings.TrimPrefix(arg, "--db=")); err != nil {
-				return rawCommandOptions{}, err
-			}
-		case strings.HasPrefix(arg, "--from="):
-			if err := setRawCommandOption(&options, "--from", strings.TrimPrefix(arg, "--from=")); err != nil {
-				return rawCommandOptions{}, err
-			}
-		case strings.HasPrefix(arg, "--to="):
-			if err := setRawCommandOption(&options, "--to", strings.TrimPrefix(arg, "--to=")); err != nil {
-				return rawCommandOptions{}, err
-			}
-		case strings.HasPrefix(arg, "--page-size="):
-			if err := setRawCommandOption(&options, "--page-size", strings.TrimPrefix(arg, "--page-size=")); err != nil {
-				return rawCommandOptions{}, err
-			}
-		case strings.HasPrefix(arg, "--page-token="):
-			if err := setRawCommandOption(&options, "--page-token", strings.TrimPrefix(arg, "--page-token=")); err != nil {
-				return rawCommandOptions{}, err
-			}
-		case strings.HasPrefix(arg, "-"):
-			return rawCommandOptions{}, fmt.Errorf("unknown flag %s", arg)
-		default:
-			options.target = append(options.target, arg)
-		}
-	}
-	return options, nil
-}
-
-func setRawCommandOption(options *rawCommandOptions, name, value string) error {
-	switch name {
-	case "--config":
-		options.configPath = value
-	case "--db":
-		options.archivePath = value
-	case "--from":
-		options.from = value
-	case "--to":
-		options.to = value
-	case "--page-size":
-		parsed, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || parsed <= 0 {
-			return errors.New("--page-size must be a positive integer")
-		}
-		options.pageSize = parsed
-	case "--page-token":
-		options.pageToken = value
 	}
 	return nil
 }

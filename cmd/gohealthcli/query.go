@@ -22,19 +22,17 @@ func runQuery(args []string, configPath, archivePath string, archivePathExplicit
 	flags := flag.NewFlagSet("query", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
-	queryConfigPath := flags.String("config", configPath, "config file path")
-	queryArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
-	queryJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
-	queryPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
-	flags.Bool("no-input", false, "never prompt, never wait for browser input")
+	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
+		ConfigPath:  configPath,
+		ArchivePath: archivePath,
+		JSONOutput:  mode.json,
+		PlainOutput: mode.plain,
+	})
 
-	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 1
+	if err := ParseCommon(flags, common, args); err != nil {
+		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
-	mode = outputMode{json: *queryJSONOutput, plain: *queryPlainOutput}
+	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	if flags.NArg() != 1 {
 		return ReportFailure(FailureReport{
 			Command: "query",
@@ -44,9 +42,9 @@ func runQuery(args []string, configPath, archivePath string, archivePathExplicit
 		}, stdout, stderr)
 	}
 
-	resolvedArchivePath, err := resolveConfiguredArchivePath(*queryConfigPath, *queryArchivePath, archivePathExplicit || flagWasProvided(flags, "db"))
+	resolvedArchivePath, err := resolveConfiguredArchivePath(common.ConfigPath, common.ArchivePath, archivePathExplicit || common.ArchivePathExplicit)
 	if err != nil {
-		result := queryResult{Status: "query_failed", ArchivePath: *queryArchivePath, Message: err.Error()}
+		result := queryResult{Status: "query_failed", ArchivePath: common.ArchivePath, Message: err.Error()}
 		if writeErr := writeQueryResult(result, mode, stdout); writeErr != nil {
 			return ReportFailure(FailureReport{
 				Command: "query",
