@@ -336,6 +336,13 @@ func (ingestion googleHealthIngestion) executeDataPointPages(archive googleHealt
 //     page; nothing to address the export endpoint at).
 //   - Upstream returned HTTP 404 (no TCX route for this Data Point — the
 //     exercise might be manually entered or lack GPS/route data).
+//   - Upstream returned HTTP 403 (the granted scope does not authorize
+//     TCX export). Live-observed on accounts whose
+//     `activity_and_fitness.readonly` scope does not extend to
+//     exportExerciseTcx. The exercise Data Point itself is already
+//     archived; tanking the whole sync because the optional TCX
+//     sidecar is forbidden would be wrong. A follow-up issue tracks
+//     whether TCX should sit behind an opt-in `--add-scopes tcx`.
 //   - Upstream returned HTTP 200 with an empty body (no bytes to archive).
 //
 // All other errors (5xx, transport failure, 401) are propagated so the
@@ -354,8 +361,11 @@ func (ingestion googleHealthIngestion) attachExerciseTcxIfAvailable(archive goog
 	body, err := ingestion.provider.Fetch(tcxRequest, request.accessToken, request.cancelCh)
 	if err != nil {
 		var httpErr *googleHealthHTTPError
-		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
-			// No TCX available for this exercise — graceful skip.
+		if errors.As(err, &httpErr) && (httpErr.StatusCode == http.StatusNotFound || httpErr.StatusCode == http.StatusForbidden) {
+			// 404: no TCX route for this exercise.
+			// 403: granted scope does not authorize TCX export.
+			// Either way the exercise Data Point itself is already
+			// archived; the missing sidecar should not fail the sync.
 			return nil
 		}
 		return syncProviderRequestError(err)

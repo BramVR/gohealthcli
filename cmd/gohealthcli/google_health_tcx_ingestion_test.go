@@ -109,6 +109,50 @@ func TestGoogleHealthIngestionSkipsTcxWhenUpstream404(t *testing.T) {
 	}
 }
 
+// TestGoogleHealthIngestionSkipsTcxWhenUpstream403 pins the
+// scope-mismatch case observed live: with only
+// `activity_and_fitness.readonly` granted, Google returns HTTP 403 on
+// `exportExerciseTcx`. The exercise Data Point itself is already
+// archived; tanking the whole sync because the optional sidecar is
+// forbidden is wrong. Skip the sidecar, keep sync green.
+func TestGoogleHealthIngestionSkipsTcxWhenUpstream403(t *testing.T) {
+	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"": `{
+			"dataPoints": [{
+				"name": "users/me/dataTypes/exercise/dataPoints/forbidden",
+				"dataSource": {"platform": "FITBIT"},
+				"exercise": {
+					"interval": {
+						"startTime": "2026-01-01T08:00:00Z",
+						"endTime": "2026-01-01T08:30:00Z"
+					},
+					"exerciseType": "RUNNING"
+				}
+			}]
+		}`,
+	})
+	provider.errorByPageKey = map[string]error{
+		"users/me/dataTypes/exercise/dataPoints/forbidden:exportExerciseTcx": &googleHealthHTTPError{StatusCode: 403},
+	}
+	ingestion := fakeGoogleHealthIngestion(provider)
+
+	result, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+		dataType: "exercise",
+		from:     "2026-01-01",
+		to:       "2026-01-02",
+	}))
+	if err != nil {
+		t.Fatalf("ingest must remain green on 403 TCX export, got %v", err)
+	}
+	if result.dataPointsSeen != 1 || result.dataPointsNew != 1 {
+		t.Fatalf("data point counts = (seen=%d, new=%d), want (1, 1)", result.dataPointsSeen, result.dataPointsNew)
+	}
+	if len(archive.attachments) != 0 {
+		t.Fatalf("attachment count = %d, want 0 on 403; archive = %#v", len(archive.attachments), archive.attachments)
+	}
+}
+
 // TestGoogleHealthIngestionSkipsTcxWhenUpstreamEmpty pins the
 // degenerate case where Google returns HTTP 200 with an empty body —
 // nothing meaningful to archive, sync stays green, no row inserted.
