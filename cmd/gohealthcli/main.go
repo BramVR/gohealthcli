@@ -28,7 +28,7 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 10
+const currentSchemaVersion = 11
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
@@ -3746,7 +3746,10 @@ func applyMigrations(db *sql.DB) error {
 	if err := applyCurrentIRNProfileViewMigration(tx, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 10`); err != nil {
+	if err := applySleepExerciseViewsMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 11`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -3764,7 +3767,7 @@ func applyPendingMigrations(db *sql.DB) error {
 	switch userVersion {
 	case currentSchemaVersion:
 		return nil
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10:
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -3816,7 +3819,12 @@ func applyPendingMigrations(db *sql.DB) error {
 				return err
 			}
 		}
-		if _, err := tx.Exec(`PRAGMA user_version = 10`); err != nil {
+		if userVersion <= 10 {
+			if err := applySleepExerciseViewsMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(`PRAGMA user_version = 11`); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -3873,6 +3881,16 @@ func applySyncCursorsMigration(tx *sql.Tx, appliedAt string) error {
 		}
 	}
 	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (6, 'add_sync_cursors', ?)`, appliedAt)
+	return err
+}
+
+func applySleepExerciseViewsMigration(tx *sql.Tx, appliedAt string) error {
+	for _, statement := range normalizedViewsRegistry().MigrationStatements(11) {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (11, 'add_sleep_stages_and_exercise_splits_views', ?)`, appliedAt)
 	return err
 }
 
@@ -3956,6 +3974,7 @@ func expectedSchemaMigrations() map[int]string {
 		8: "add_current_settings_view",
 		9:  "add_paired_devices_view",
 		10: "add_current_irn_profile_view",
+		11: "add_sleep_stages_and_exercise_splits_views",
 	}
 }
 
