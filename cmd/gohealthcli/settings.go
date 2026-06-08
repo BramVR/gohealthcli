@@ -38,16 +38,18 @@ func runSettingsWithRuntime(args []string, configPath, archivePath string, mode 
 	flags := flag.NewFlagSet("settings", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
-	settingsConfigPath := flags.String("config", configPath, "config file path")
-	settingsArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
-	settingsJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
-	settingsPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
-	flags.Bool("no-input", false, "never prompt, never wait for browser input")
+	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
+		ConfigPath:  configPath,
+		ArchivePath: archivePath,
+		JSONOutput:  mode.json,
+		PlainOutput: mode.plain,
+	})
 
-	if err := flags.Parse(args); err != nil {
+	if err := ParseCommon(flags, common, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
+		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	if flags.NArg() != 0 {
@@ -55,8 +57,8 @@ func runSettingsWithRuntime(args []string, configPath, archivePath string, mode 
 		return 1
 	}
 
-	mode = outputMode{json: *settingsJSONOutput, plain: *settingsPlainOutput}
-	result, err := settingsSetupWithRuntime(*settingsConfigPath, *settingsArchivePath, runtime)
+	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
+	result, err := settingsSetupWithRuntime(common.ConfigPath, common.ArchivePath, runtime)
 	if err != nil {
 		if result.Status == "" {
 			result.Status = "settings_failed"
