@@ -8,7 +8,7 @@ read_when:
 ---
 # Data Point Attachments Stored as Sidecar Files
 
-`exportExerciseTcx` and any future byte-shaped Google Health API export return binary payloads (TCX XML, possibly ECG waveforms) that do not fit `data_points.raw_json TEXT NOT NULL`. Rather than introducing a BLOB column on `data_points`, attachment bytes live as owner-only sidecar files at `<archive-path>.attachments/<kind>/<sha256>.<ext>`, tracked by a `data_point_attachments` table `(data_point_id, kind, sha256, path_relative, byte_size, fetched_at)`.
+`exportExerciseTcx` and any future byte-shaped Google Health API export return binary payloads (TCX XML, possibly ECG waveforms) that do not fit `data_points.raw_json TEXT NOT NULL`. Rather than introducing a BLOB column on `data_points`, attachment bytes live as owner-only sidecar files at `<archive-path>.attachments/<kind>/<sha256[0:2]>/<sha256>.<ext>`, tracked by a `data_point_attachments` table `(data_point_id, kind, sha256, path_relative, byte_size, fetched_at)`. The two-character SHA prefix shards the tree so a single kind directory doesn't grow to tens of thousands of entries; `path_relative` is stored with forward slashes so an archive moved between POSIX and Windows resolves consistently.
 
 The trade-off vs an on-row BLOB:
 

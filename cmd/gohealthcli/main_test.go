@@ -419,8 +419,8 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("schema migration rows: %v", err)
 	}
-	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter,4:add_daily_steps_view,5:add_first_release_normalized_views,6:add_sync_cursors,7:rename_profile_snapshots_to_identity_snapshots,8:add_current_settings_view,9:add_paired_devices_view,10:add_current_irn_profile_view,11:add_sleep_stages_and_exercise_splits_views,12:fix_exercise_splits_real_shape,13:add_searchable_text_view,14:fix_searchable_text_latest_profile_and_empty_filter" {
-		t.Fatalf("migrations = %v, want all migrations 1..14", migrations)
+	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter,4:add_daily_steps_view,5:add_first_release_normalized_views,6:add_sync_cursors,7:rename_profile_snapshots_to_identity_snapshots,8:add_current_settings_view,9:add_paired_devices_view,10:add_current_irn_profile_view,11:add_sleep_stages_and_exercise_splits_views,12:fix_exercise_splits_real_shape,13:add_searchable_text_view,14:fix_searchable_text_latest_profile_and_empty_filter,15:add_data_point_attachments" {
+		t.Fatalf("migrations = %v, want all migrations 1..15", migrations)
 	}
 
 	for _, table := range []string{
@@ -557,7 +557,7 @@ func TestDoctorPlainReportsOfflineHealthCheck(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 
-	want := fmt.Sprintf("status: ok\nconfig_path: %s\narchive_path: %s\noauth_client_source: file\ncredential_store: %s\nschema_version: %d\nconnection_count: 0\ntoken_status: not_connected\nmessage: local gohealthcli setup is initialized\n", configPath, archivePath, expectedDefaultCredentialStoreKind(), currentSchemaVersion)
+	want := fmt.Sprintf("status: ok\nconfig_path: %s\narchive_path: %s\noauth_client_source: file\ncredential_store: %s\nschema_version: %d\nconnection_count: 0\ntoken_status: not_connected\nattachment_root_path: %s.attachments\nattachment_root_mode: 0700\nmessage: local gohealthcli setup is initialized\n", configPath, archivePath, expectedDefaultCredentialStoreKind(), currentSchemaVersion, archivePath)
 	if stdout.String() != want {
 		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 	}

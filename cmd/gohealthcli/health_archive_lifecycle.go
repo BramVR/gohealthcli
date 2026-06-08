@@ -93,7 +93,12 @@ func (lifecycle healthArchiveLifecycle) Migrate() error {
 		return err
 	}
 	defer db.Close()
-	return applyPendingMigrations(db)
+	if err := applyPendingMigrations(db); err != nil {
+		return err
+	}
+	// Backfill the attachment root for archives that predate #107 /
+	// migration 15. Idempotent — no-op when the dir already exists.
+	return ensureOwnerOnlyDir(attachmentRootDirForArchive(lifecycle.path))
 }
 
 func (lifecycle healthArchiveLifecycle) MigrateAndInspect(validateTokens bool) (archiveCheck, error) {
