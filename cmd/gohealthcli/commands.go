@@ -7,14 +7,20 @@ package main
 // downstream tooling reads.
 //
 // Fields on the published JSON contract:
-//   - name           (string)              — the subcommand's invocation name
-//   - short          (string)              — one-line description for the index
-//   - long           (string)              — full prose for the per-page body
-//   - hidden         (bool)                — hidden from --help and reference
-//   - positional_args (string, optional)   — usage hint for trailing positional
-//                                            arguments (e.g. "<SQL>"); omitted
-//                                            entirely when empty
-//   - flags          (array of flagSpec)   — flag specifications
+//   - name            (string)              — the subcommand's invocation name
+//   - short           (string)              — one-line description for the index
+//   - long            (string)              — full prose for the per-page body
+//   - hidden          (bool)                — hidden from --help and reference
+//   - positional_args (string, optional)    — usage hint for trailing positional
+//                                             arguments (e.g. "<SQL>"); omitted
+//                                             entirely when empty
+//   - flags           (array of flagSpec)   — flag specifications
+//   - common_flags    (array of strings, optional) — subset of the five shared
+//                                             flag names that the subcommand
+//                                             accepts via the runtime
+//                                             CommonFlagSet module (issue #166).
+//                                             Omitted entirely when empty so
+//                                             the wire shape stays additive.
 type commandDef struct {
 	Name           string     `json:"name"`
 	Short          string     `json:"short"`
@@ -22,6 +28,7 @@ type commandDef struct {
 	Hidden         bool       `json:"hidden"`
 	PositionalArgs string     `json:"positional_args,omitempty"`
 	Flags          []flagSpec `json:"flags"`
+	CommonFlags    []string   `json:"common_flags,omitempty"`
 }
 
 // flagSpec describes one flag accepted by a subcommand. The string-typed
@@ -81,6 +88,19 @@ func withCommon(extra ...flagSpec) []flagSpec {
 	return out
 }
 
+// commonFlagNames returns the five shared flag names in their canonical
+// commonFlags order. Registry entries for subcommands whose runtime flag
+// setup goes through the CommonFlagSet module (issue #166) carry this
+// slice as their `common_flags` schema field, so downstream tooling can
+// see at a glance which subset of shared flags each subcommand accepts.
+func commonFlagNames() []string {
+	names := make([]string, 0, len(commonFlags))
+	for _, f := range commonFlags {
+		names = append(names, f.Name)
+	}
+	return names
+}
+
 // commands is the registry of every subcommand the binary exposes. The
 // dispatch switch and the --help formatter continue to source their data
 // inline for now; subsequent slices fold them onto this registry.
@@ -115,34 +135,39 @@ var commands = []commandDef{
 		),
 	},
 	{
-		Name:  "identity",
-		Short: "Refresh the archived Google Identity metadata.",
-		Long:  "Re-fetch the upstream Google Identity payload (Google Health user ID and legacy Fitbit user ID when present) and update the metadata stored alongside the Connection.\n\n`identity` does not change the OAuth tokens or move the Connection between archives — use `connect` for those. It is a low-cost, read-only operation against the provider.",
-		Flags: withCommon(),
+		Name:        "identity",
+		Short:       "Refresh the archived Google Identity metadata.",
+		Long:        "Re-fetch the upstream Google Identity payload (Google Health user ID and legacy Fitbit user ID when present) and update the metadata stored alongside the Connection.\n\n`identity` does not change the OAuth tokens or move the Connection between archives — use `connect` for those. It is a low-cost, read-only operation against the provider.",
+		Flags:       withCommon(),
+		CommonFlags: commonFlagNames(),
 	},
 	{
-		Name:  "profile",
-		Short: "Archive a Profile Snapshot from the provider.",
-		Long:  "Fetch the upstream profile blob (units, time zone, demographic settings as exposed by the Google Health API) and append it to the Health Archive as a new Profile Snapshot. Each invocation creates a new dated snapshot rather than overwriting the prior one, so historical settings drift is preserved.\n\nA Profile Snapshot is not a Data Point. It is metadata about the consenting user's account and the unit conventions in force at the time of fetch.",
-		Flags: withCommon(),
+		Name:        "profile",
+		Short:       "Archive a Profile Snapshot from the provider.",
+		Long:        "Fetch the upstream profile blob (units, time zone, demographic settings as exposed by the Google Health API) and append it to the Health Archive as a new Profile Snapshot. Each invocation creates a new dated snapshot rather than overwriting the prior one, so historical settings drift is preserved.\n\nA Profile Snapshot is not a Data Point. It is metadata about the consenting user's account and the unit conventions in force at the time of fetch.",
+		Flags:       withCommon(),
+		CommonFlags: commonFlagNames(),
 	},
 	{
-		Name:  "settings",
-		Short: "Archive a Settings Snapshot from the provider.",
-		Long:  "Fetch the upstream `users.getSettings` payload and append it to the Health Archive as a new Identity Snapshot of kind `settings`. The `current_settings` Normalized View projects the latest snapshot's measurement system, timezone, and stride-length type into columns for `query` and `export`.\n\n`settings` is read-only against the provider and writes the raw response to the archive; the JSON shape stays the source of truth, so new fields can be projected into the view without a re-sync.",
-		Flags: withCommon(),
+		Name:        "settings",
+		Short:       "Archive a Settings Snapshot from the provider.",
+		Long:        "Fetch the upstream `users.getSettings` payload and append it to the Health Archive as a new Identity Snapshot of kind `settings`. The `current_settings` Normalized View projects the latest snapshot's measurement system, timezone, and stride-length type into columns for `query` and `export`.\n\n`settings` is read-only against the provider and writes the raw response to the archive; the JSON shape stays the source of truth, so new fields can be projected into the view without a re-sync.",
+		Flags:       withCommon(),
+		CommonFlags: commonFlagNames(),
 	},
 	{
-		Name:  "devices",
-		Short: "Archive a Paired Devices Snapshot from the provider.",
-		Long:  "Fetch the upstream `users.pairedDevices.list` payload and append it to the Health Archive as a new Identity Snapshot of kind `paired-devices`. The `paired_devices` Normalized View explodes the latest snapshot via `json_each`, returning one row per device with `device_type`, `model`, `manufacturer`, `battery_percentage`, `last_sync_time`, and `features`.\n\nThis is the LLM's path to questions like \"which Pixel Watch synced last?\" or \"what's my Fitbit battery?\" — every projection is read-only against the raw snapshot, so new fields can be added without re-syncing.",
-		Flags: withCommon(),
+		Name:        "devices",
+		Short:       "Archive a Paired Devices Snapshot from the provider.",
+		Long:        "Fetch the upstream `users.pairedDevices.list` payload and append it to the Health Archive as a new Identity Snapshot of kind `paired-devices`. The `paired_devices` Normalized View explodes the latest snapshot via `json_each`, returning one row per device with `device_type`, `model`, `manufacturer`, `battery_percentage`, `last_sync_time`, and `features`.\n\nThis is the LLM's path to questions like \"which Pixel Watch synced last?\" or \"what's my Fitbit battery?\" — every projection is read-only against the raw snapshot, so new fields can be added without re-syncing.",
+		Flags:       withCommon(),
+		CommonFlags: commonFlagNames(),
 	},
 	{
-		Name:  "irn-profile",
-		Short: "Archive an IRN Profile Snapshot from the provider.",
-		Long:  "Fetch the upstream `users.getIrnProfile` payload (onboarding state, enrollment state for Google's irregular-rhythm-notification feature) and append it to the Health Archive as a new Identity Snapshot of kind `irn-profile`. The `current_irn_profile` Normalized View projects the latest snapshot as columns.\n\nRequires the `irn.readonly` OAuth scope — run `gohealthcli connect --add-scopes irn` once to grant it. If the scope is not granted, `irn-profile` exits with a clear reconnect instruction and does **not** trigger the browser flow.",
-		Flags: withCommon(),
+		Name:        "irn-profile",
+		Short:       "Archive an IRN Profile Snapshot from the provider.",
+		Long:        "Fetch the upstream `users.getIrnProfile` payload (onboarding state, enrollment state for Google's irregular-rhythm-notification feature) and append it to the Health Archive as a new Identity Snapshot of kind `irn-profile`. The `current_irn_profile` Normalized View projects the latest snapshot as columns.\n\nRequires the `irn.readonly` OAuth scope — run `gohealthcli connect --add-scopes irn` once to grant it. If the scope is not granted, `irn-profile` exits with a clear reconnect instruction and does **not** trigger the browser flow.",
+		Flags:       withCommon(),
+		CommonFlags: commonFlagNames(),
 	},
 	{
 		Name:  "sync",
@@ -158,10 +183,11 @@ var commands = []commandDef{
 		),
 	},
 	{
-		Name:  "status",
-		Short: "Summarise archive counts and newest synced timestamps.",
-		Long:  "Print a per-Data-Type summary of the Health Archive: how many Data Points are stored, the newest synced timestamp, and the most recent Sync Run status. Useful as a quick health check before or after a long sync.\n\nAlso reports identity-metadata freshness: a `paired_device_count` line (when a `paired-devices` snapshot is archived) and an `identity_snapshot.<kind>.fetched_at` line per Identity Snapshot kind that has at least one row (`profile`, `settings`, `paired-devices`, `irn-profile`). In `--json` these surface under an `identity_snapshots_freshness` block — omitted entirely when no snapshots exist.\n\nAlso reports Tier 2 coverage: `electrocardiogram_event_count` and `irregular_rhythm_notification_count` (plain) appear only when the corresponding scope has been granted via `connect --add-scopes ecg,irn`. In `--json` these surface under a `tier_2` block alongside `electrocardiogram_scope_granted` / `irregular_rhythm_notification_scope_granted` flags, both counts defaulting to 0 when the scope is not granted.\n\n`status` does no provider I/O — it reads only the local Health Archive.",
-		Flags: withCommon(),
+		Name:        "status",
+		Short:       "Summarise archive counts and newest synced timestamps.",
+		Long:        "Print a per-Data-Type summary of the Health Archive: how many Data Points are stored, the newest synced timestamp, and the most recent Sync Run status. Useful as a quick health check before or after a long sync.\n\nAlso reports identity-metadata freshness: a `paired_device_count` line (when a `paired-devices` snapshot is archived) and an `identity_snapshot.<kind>.fetched_at` line per Identity Snapshot kind that has at least one row (`profile`, `settings`, `paired-devices`, `irn-profile`). In `--json` these surface under an `identity_snapshots_freshness` block — omitted entirely when no snapshots exist.\n\nAlso reports Tier 2 coverage: `electrocardiogram_event_count` and `irregular_rhythm_notification_count` (plain) appear only when the corresponding scope has been granted via `connect --add-scopes ecg,irn`. In `--json` these surface under a `tier_2` block alongside `electrocardiogram_scope_granted` / `irregular_rhythm_notification_scope_granted` flags, both counts defaulting to 0 when the scope is not granted.\n\n`status` does no provider I/O — it reads only the local Health Archive.",
+		Flags:       withCommon(),
+		CommonFlags: commonFlagNames(),
 	},
 	{
 		Name:           "query",

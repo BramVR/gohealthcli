@@ -722,27 +722,25 @@ func runStatus(args []string, configPath, archivePath string, archivePathExplici
 	flags := flag.NewFlagSet("status", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
-	statusConfigPath := flags.String("config", configPath, "config file path")
-	statusArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
-	statusJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
-	statusPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
-	flags.Bool("no-input", false, "never prompt, never wait for browser input")
+	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
+		ConfigPath:  configPath,
+		ArchivePath: archivePath,
+		JSONOutput:  mode.json,
+		PlainOutput: mode.plain,
+	})
 
-	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 1
+	if err := ParseCommon(flags, common, args); err != nil {
+		return commonFlagsExitCode(err, stderr)
 	}
 	if flags.NArg() != 0 {
 		fmt.Fprintf(stderr, "unexpected status argument: %s\n", flags.Arg(0))
 		return 1
 	}
 
-	mode = outputMode{json: *statusJSONOutput, plain: *statusPlainOutput}
-	resolvedArchivePath, err := resolveConfiguredArchivePath(*statusConfigPath, *statusArchivePath, archivePathExplicit || flagWasProvided(flags, "db"))
+	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
+	resolvedArchivePath, err := resolveConfiguredArchivePath(common.ConfigPath, common.ArchivePath, archivePathExplicit || common.ArchivePathExplicit)
 	if err != nil {
-		result := statusResult{Status: "status_failed", ArchivePath: *statusArchivePath, Message: err.Error()}
+		result := statusResult{Status: "status_failed", ArchivePath: common.ArchivePath, Message: err.Error()}
 		if writeErr := writeStatusResult(result, mode, stdout); writeErr != nil {
 			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
 			return 1
@@ -920,25 +918,23 @@ func runIdentityWithRuntime(args []string, configPath, archivePath string, mode 
 	flags := flag.NewFlagSet("identity", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
-	identityConfigPath := flags.String("config", configPath, "config file path")
-	identityArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
-	identityJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
-	identityPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
-	flags.Bool("no-input", false, "never prompt, never wait for browser input")
+	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
+		ConfigPath:  configPath,
+		ArchivePath: archivePath,
+		JSONOutput:  mode.json,
+		PlainOutput: mode.plain,
+	})
 
-	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 1
+	if err := ParseCommon(flags, common, args); err != nil {
+		return commonFlagsExitCode(err, stderr)
 	}
 	if flags.NArg() != 0 {
 		fmt.Fprintf(stderr, "unexpected identity argument: %s\n", flags.Arg(0))
 		return 1
 	}
 
-	mode = outputMode{json: *identityJSONOutput, plain: *identityPlainOutput}
-	result, err := identitySetupWithRuntime(*identityConfigPath, *identityArchivePath, runtime)
+	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
+	result, err := identitySetupWithRuntime(common.ConfigPath, common.ArchivePath, runtime)
 	if err != nil {
 		if result.Status == "" {
 			result.Status = "identity_failed"
@@ -965,25 +961,23 @@ func runProfileWithRuntime(args []string, configPath, archivePath string, mode o
 	flags := flag.NewFlagSet("profile", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
-	profileConfigPath := flags.String("config", configPath, "config file path")
-	profileArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
-	profileJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
-	profilePlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
-	flags.Bool("no-input", false, "never prompt, never wait for browser input")
+	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
+		ConfigPath:  configPath,
+		ArchivePath: archivePath,
+		JSONOutput:  mode.json,
+		PlainOutput: mode.plain,
+	})
 
-	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 1
+	if err := ParseCommon(flags, common, args); err != nil {
+		return commonFlagsExitCode(err, stderr)
 	}
 	if flags.NArg() != 0 {
 		fmt.Fprintf(stderr, "unexpected profile argument: %s\n", flags.Arg(0))
 		return 1
 	}
 
-	mode = outputMode{json: *profileJSONOutput, plain: *profilePlainOutput}
-	result, err := profileSetupWithRuntime(*profileConfigPath, *profileArchivePath, runtime)
+	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
+	result, err := profileSetupWithRuntime(common.ConfigPath, common.ArchivePath, runtime)
 	if err != nil {
 		if result.Status == "" {
 			result.Status = "profile_failed"
