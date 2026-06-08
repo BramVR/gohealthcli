@@ -471,8 +471,13 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 	}
 
 	if flags.NArg() == 0 {
-		fmt.Fprintln(stderr, "missing command")
-		return 1
+		// PRD #143 slice 3: a bare `gohealthcli` invocation prints the
+		// top-level help to stdout and exits 0, matching git / kubectl /
+		// docker discoverability conventions. Explicit `--help` continues
+		// to write to stderr via flags.Usage (stdlib flag-package
+		// convention), so the two paths intentionally diverge by stream.
+		printTopLevelUsage(flags, stdout)
+		return 0
 	}
 
 	// `help` verb dispatch sits BEFORE the subcommand switch so it doesn't
@@ -547,9 +552,28 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 	case "schema":
 		return runSchema(flags.Args()[1:], stdout, stderr)
 	default:
-		fmt.Fprintf(stderr, "unknown command: %s\n", flags.Arg(0))
+		// PRD #143 slice 3: every unknown-command exit prints the canonical
+		// help hint so users always know how to discover the catalog. The
+		// "Did you mean" line (when a Levenshtein suggestion exists) lives
+		// between the two and is handled by the runUnknownCommand helper.
+		runUnknownCommand(flags.Arg(0), stderr)
 		return 1
 	}
+}
+
+// runUnknownCommand renders the unknown-command stderr block: the
+// "unknown command: <typo>" line, an optional Levenshtein-driven "Did you
+// mean: <name>?" suggestion sourced from commandRegistry.Suggest, and the
+// canonical "Run 'gohealthcli --help' for a list of commands." hint. Lives
+// next to runWithRuntime because the writes are tightly coupled to the
+// dispatch switch's default branch — extracting it keeps the switch body
+// readable and gives slice-3 tests a single seam to lock the shape down.
+func runUnknownCommand(typo string, stderr io.Writer) {
+	fmt.Fprintf(stderr, "unknown command: %s\n", typo)
+	if suggestions := commandRegistry(commands).Suggest(typo); len(suggestions) > 0 {
+		fmt.Fprintf(stderr, "Did you mean: %s?\n", strings.Join(suggestions, ", "))
+	}
+	fmt.Fprintln(stderr, "Run 'gohealthcli --help' for a list of commands.")
 }
 
 type outputMode struct {

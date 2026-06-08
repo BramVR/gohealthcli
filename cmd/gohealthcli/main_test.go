@@ -256,6 +256,72 @@ func TestVersionDoesNotCheckSetup(t *testing.T) {
 	}
 }
 
+// TestNoArgsPrintsHelpToStdout pins the PRD #143 slice 3 behaviour: a bare
+// `gohealthcli` invocation now exits 0 and prints the top-level help (the
+// "Subcommands:" listing) to stdout, matching `git` / `kubectl` / `docker`
+// discoverability conventions. The explicit `--help` path is unchanged and
+// keeps writing to stderr per stdlib flag-package convention — see
+// TestHelpExitsSuccessfully below.
+func TestNoArgsPrintsHelpToStdout(t *testing.T) {
+	code, stdout, stderr := runCommand(t)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Subcommands:") {
+		t.Fatalf("stdout missing 'Subcommands:' help block; got:\n%s", stdout.String())
+	}
+	if strings.Contains(stderr.String(), "missing command") {
+		t.Fatalf("stderr still emits 'missing command'; got: %q", stderr.String())
+	}
+}
+
+// TestUnknownCommandPrintsHintAndExitsNonZero covers the unknown-command
+// path for an input that has no close Levenshtein match: stderr must carry
+// both the "unknown command" line (preserved from the pre-slice-3 shape) and
+// the canonical "Run 'gohealthcli --help'" hint introduced by slice 3, and
+// the process must exit 1. We deliberately choose "bogus-cmd" because it is
+// far from every registered command, ensuring no "Did you mean" line
+// interleaves and the hint line is the sole new addition under test.
+func TestUnknownCommandPrintsHintAndExitsNonZero(t *testing.T) {
+	code, _, stderr := runCommand(t, "bogus-cmd")
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	out := stderr.String()
+	if !strings.Contains(out, "unknown command: bogus-cmd") {
+		t.Fatalf("stderr missing 'unknown command: bogus-cmd'; got: %q", out)
+	}
+	if !strings.Contains(out, "Run 'gohealthcli --help' for a list of commands.") {
+		t.Fatalf("stderr missing canonical help hint; got: %q", out)
+	}
+	if strings.Contains(out, "Did you mean") {
+		t.Fatalf("stderr should not suggest for unrelated typo; got: %q", out)
+	}
+}
+
+// TestUnknownCommandSuggestsCloseMatch closes the loop on the suggestion
+// pipeline: when the typo lands within the Levenshtein cutoff, stderr must
+// carry a "Did you mean: <name>?" line between the unknown-command banner
+// and the help hint. We assert on the full sentence so a future tweak to
+// the suggestion phrasing trips this test rather than silently shipping a
+// regression in UX.
+func TestUnknownCommandSuggestsCloseMatch(t *testing.T) {
+	code, _, stderr := runCommand(t, "stauts")
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	out := stderr.String()
+	if !strings.Contains(out, "Did you mean: status?") {
+		t.Fatalf("stderr missing 'Did you mean: status?'; got: %q", out)
+	}
+	if !strings.Contains(out, "Run 'gohealthcli --help' for a list of commands.") {
+		t.Fatalf("stderr missing canonical help hint; got: %q", out)
+	}
+}
+
 func TestHelpExitsSuccessfully(t *testing.T) {
 	for _, args := range [][]string{
 		{"--help"},

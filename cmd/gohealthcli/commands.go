@@ -219,3 +219,119 @@ var commands = []commandDef{
 		},
 	},
 }
+
+// commandRegistry is the typed view over the package-level commands slice that
+// owns lookup behaviours such as `Suggest`. Defining it as a named slice type
+// (rather than a wrapping struct) lets call sites pass the existing global in
+// directly — `commandRegistry(commands).Suggest(typo)` — without copying
+// entries or maintaining a parallel data structure.
+type commandRegistry []commandDef
+
+// suggestMaxDistance is the Levenshtein cutoff for "did you mean" suggestions.
+// PRD #143 fixes this at 2: enough to catch a single transposition or two
+// character edits ("stauts" → "status"), tight enough to avoid noisy matches
+// when the user typed something genuinely unrelated ("xyz" → nothing).
+const suggestMaxDistance = 2
+
+// Suggest returns at most two non-hidden command names whose Levenshtein
+// distance from `typo` is ≤ suggestMaxDistance, ordered by ascending distance
+// and then by registry order for deterministic output. Hidden commands (the
+// build-time `schema` entry) are filtered so they never surface to end users.
+// An empty result means the unknown-command path should print no `Did you mean`
+// line; the caller still prints the canonical help hint.
+func (r commandRegistry) Suggest(typo string) []string {
+	type candidate struct {
+		name     string
+		distance int
+		order    int
+	}
+	var candidates []candidate
+	for i, cmd := range r {
+		if cmd.Hidden {
+			continue
+		}
+		d := levenshteinDistance(typo, cmd.Name)
+		if d <= suggestMaxDistance {
+			candidates = append(candidates, candidate{name: cmd.Name, distance: d, order: i})
+		}
+	}
+	if len(candidates) == 0 {
+		// Return an empty slice rather than nil so callers (and the AC's
+		// direct unit test) see a consistent shape regardless of input:
+		// `json.Marshal(nil)` → `null` whereas `json.Marshal([]string{})`
+		// → `[]`, and any downstream consumer that range-iterates is
+		// untouched either way.
+		return []string{}
+	}
+	// Sort by (distance asc, registry-order asc). The candidate slice is
+	// bounded by the number of non-hidden commands (~14 today), so an
+	// in-place insertion sort is dependency-free, easy to audit, and
+	// trivially correct for that working-set size.
+	for i := 1; i < len(candidates); i++ {
+		for j := i; j > 0; j-- {
+			a, b := candidates[j-1], candidates[j]
+			if a.distance < b.distance || (a.distance == b.distance && a.order < b.order) {
+				break
+			}
+			candidates[j-1], candidates[j] = b, a
+		}
+	}
+	top := candidates
+	if len(top) > 2 {
+		top = top[:2]
+	}
+	out := make([]string, 0, len(top))
+	for _, c := range top {
+		out = append(out, c.name)
+	}
+	return out
+}
+
+// levenshteinDistance returns the classic edit distance between a and b
+// using the two-row dynamic-programming variant (O(len(a)*len(b)) time,
+// O(min(len(a),len(b))) space). Sub/insert/delete each cost 1; this is the
+// metric the PRD specifies, so the helper stays local rather than pulling in
+// a third-party module for a 25-line algorithm.
+func levenshteinDistance(a, b string) int {
+	if a == b {
+		return 0
+	}
+	ar, br := []rune(a), []rune(b)
+	if len(ar) == 0 {
+		return len(br)
+	}
+	if len(br) == 0 {
+		return len(ar)
+	}
+	// Keep the smaller dimension as the row width.
+	if len(ar) < len(br) {
+		ar, br = br, ar
+	}
+	prev := make([]int, len(br)+1)
+	curr := make([]int, len(br)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ar); i++ {
+		curr[0] = i
+		for j := 1; j <= len(br); j++ {
+			cost := 1
+			if ar[i-1] == br[j-1] {
+				cost = 0
+			}
+			del := prev[j] + 1
+			ins := curr[j-1] + 1
+			sub := prev[j-1] + cost
+			m := del
+			if ins < m {
+				m = ins
+			}
+			if sub < m {
+				m = sub
+			}
+			curr[j] = m
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(br)]
+}
