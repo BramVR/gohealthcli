@@ -3192,19 +3192,24 @@ func googleSampleTimezoneMetadataJSON(utcOffset string) (string, error) {
 	return string(content), nil
 }
 
+// googleDailyRollupTimeMetadataJSON is Data Type-agnostic: callers
+// wrap the returned error with the active Data Type so the message
+// reflects the row that failed (steps vs floors vs …). Keeping the
+// helper itself generic avoids stringly-typed plumbing of the Data
+// Type through one more layer.
 func googleDailyRollupTimeMetadataJSON(civilStartTime, civilEndTime json.RawMessage) (string, error) {
 	metadata := map[string]json.RawMessage{}
 	if len(civilStartTime) != 0 && string(civilStartTime) != "null" {
 		start, err := compactJSONString(civilStartTime)
 		if err != nil {
-			return "", errors.New("Google Health steps daily Rollup civilStartTime is not valid JSON")
+			return "", errors.New("daily Rollup civilStartTime is not valid JSON")
 		}
 		metadata["civil_start_time"] = json.RawMessage(start)
 	}
 	if len(civilEndTime) != 0 && string(civilEndTime) != "null" {
 		end, err := compactJSONString(civilEndTime)
 		if err != nil {
-			return "", errors.New("Google Health steps daily Rollup civilEndTime is not valid JSON")
+			return "", errors.New("daily Rollup civilEndTime is not valid JSON")
 		}
 		metadata["civil_end_time"] = json.RawMessage(end)
 	}

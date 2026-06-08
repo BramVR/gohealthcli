@@ -205,7 +205,7 @@ func (ingestion googleHealthIngestion) executeDailyRollupPages(archive googleHea
 				break
 			}
 			if _, ok := seenPageTokens[page.nextPageToken]; ok {
-				return errors.New("Google Health steps dailyRollUp returned a repeated page token")
+				return fmt.Errorf("Google Health %s dailyRollUp returned a repeated page token", request.dataType)
 			}
 			seenPageTokens[page.nextPageToken] = struct{}{}
 			pageToken = page.nextPageToken

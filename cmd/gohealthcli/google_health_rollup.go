@@ -132,7 +132,7 @@ func parseGoogleHealthDailyRollupCivilShape(valueType string, rawRollup json.Raw
 	}
 	timezoneMetadata, err := googleDailyRollupTimeMetadataJSON(raw.CivilStartTime, raw.CivilEndTime)
 	if err != nil {
-		return err
+		return fmt.Errorf("Google Health %s %w", rollup.dataType, err)
 	}
 	rollup.civilDate = civilDate
 	rollup.timezoneMetadataJSON = timezoneMetadata
