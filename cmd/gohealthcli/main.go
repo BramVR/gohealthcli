@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -16,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -188,10 +190,15 @@ type syncCommandOptions struct {
 	configPath   string
 	archivePath  string
 	dataTypes    []string
+	allTypes     bool
 	from         string
 	to           string
 	rollup       string
 	sourceFamily string
+	// cancelCh, when closed, asks the Sync Run to stop cleanly between
+	// pagination pages. Closed by the orchestrator's SIGINT handler. nil
+	// disables cancellation (legacy single-type entry point).
+	cancelCh <-chan struct{}
 }
 
 type oauthClientSource struct {
@@ -825,7 +832,8 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 	syncArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
 	syncJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
 	syncPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
-	syncTypes := flags.String("types", "steps", "comma-separated Data Types")
+	syncTypes := flags.String("types", "", "comma-separated Data Types; defaults to \"steps\" when neither --types nor --all is set")
+	syncAll := flags.Bool("all", false, "sync every default Data Type")
 	syncFrom := flags.String("from", "", "inclusive sync range start")
 	syncTo := flags.String("to", "", "exclusive sync range end")
 	syncRollup := flags.String("rollup", "", "rollup kind to sync; supported: daily")
@@ -844,31 +852,78 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 	}
 
 	mode = outputMode{json: *syncJSONOutput, plain: *syncPlainOutput}
-	result, err := syncSetupWithRuntime(syncCommandOptions{
+	dataTypes := parseCommaList(*syncTypes)
+	if !*syncAll && len(dataTypes) == 0 {
+		// Preserve the historical default for single-type invocations
+		// (`gohealthcli sync` with no flags).
+		dataTypes = []string{"steps"}
+	}
+	options := syncCommandOptions{
 		configPath:   *syncConfigPath,
 		archivePath:  *syncArchivePath,
-		dataTypes:    parseCommaList(*syncTypes),
+		dataTypes:    dataTypes,
+		allTypes:     *syncAll,
 		from:         *syncFrom,
 		to:           *syncTo,
 		rollup:       *syncRollup,
 		sourceFamily: *syncSourceFamily,
-	}, runtime)
+	}
+	cancelCh, stopSignalHandler := installSyncCancelChannel()
+	defer stopSignalHandler()
+	options.cancelCh = cancelCh
+
+	orchestrator := newSyncOrchestrator(runtime, cancelCh)
+	results, err := orchestrator.Sync(options)
 	if err != nil {
-		if result.Status == "" {
-			result.Status = "sync_failed"
-		}
-		result.Message = err.Error()
-		if writeErr := writeSyncResult(result, mode, stdout); writeErr != nil {
+		fallback := syncResult{Status: "sync_failed", DataTypes: dataTypes, Message: err.Error()}
+		if writeErr := writeSyncResult(fallback, mode, stdout); writeErr != nil {
 			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
 			return 1
 		}
 		return 1
 	}
-	if err := writeSyncResult(result, mode, stdout); err != nil {
-		fmt.Fprintf(stderr, "write output: %v\n", err)
+	// Shape is determined by what the user requested, not by how many
+	// results came back: --all and --types csv (more than one) always
+	// emit the wrapped fan-out shape so downstream tooling can rely on
+	// the envelope being predictable from the invocation flags. Bare
+	// single-type sync (--types steps, or no flags) keeps the legacy
+	// flat shape for backwards compatibility.
+	fanOut := options.allTypes || len(dataTypes) > 1
+	if !fanOut {
+		single := syncResult{Status: "sync_failed", DataTypes: dataTypes, Message: "sync produced no results"}
+		if len(results) > 0 {
+			single = results[0]
+		}
+		if writeErr := writeSyncResult(single, mode, stdout); writeErr != nil {
+			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
+			return 1
+		}
+		if single.Status != "sync_completed" {
+			return 1
+		}
+		return 0
+	}
+	if writeErr := writeSyncFanOutResult(results, options, mode, stdout); writeErr != nil {
+		fmt.Fprintf(stderr, "write output: %v\n", writeErr)
 		return 1
 	}
+	for _, result := range results {
+		if result.Status != "sync_completed" {
+			return 1
+		}
+	}
 	return 0
+}
+
+// installSyncCancelChannel wires a SIGINT handler whose cancellation is
+// delivered via the returned read-only channel. The channel closes when
+// SIGINT fires or when the returned stop function is called (whichever
+// is first); the stop function is idempotent and races cleanly with an
+// in-flight signal. Tests construct the channel directly and pass nil
+// as the runtime stop.
+func installSyncCancelChannel() (<-chan struct{}, func()) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	return ctx.Done(), stop
 }
 
 func runRaw(args []string, configPath, archivePath string, _ outputMode, stdout, stderr io.Writer) int {
@@ -4510,6 +4565,122 @@ func writeSyncResult(result syncResult, mode outputMode, stdout io.Writer) error
 		return err
 	}
 	_, err := fmt.Fprintf(stdout, "Message: %s\n", result.Message)
+	return err
+}
+
+// syncFanOutResult is the JSON/Plain wire shape for a multi-Data-Type
+// sync. Single-type syncs keep emitting a flat syncResult to preserve
+// backwards compatibility for downstream tooling that parses sync output.
+type syncFanOutResult struct {
+	Status  string            `json:"status"`
+	Summary syncFanOutSummary `json:"summary"`
+	Results []syncResult      `json:"results"`
+	Message string            `json:"message"`
+}
+
+func writeSyncFanOutResult(results []syncResult, options syncCommandOptions, mode outputMode, stdout io.Writer) error {
+	summary := summarizeSyncFanOut(results, options.from, options.to)
+	status := fanOutStatus(results)
+	message := fanOutMessage(status, len(results))
+	if mode.json {
+		envelope := syncFanOutResult{
+			Status:  status,
+			Summary: summary,
+			Results: results,
+			Message: message,
+		}
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(envelope)
+	}
+	if mode.plain {
+		if _, err := fmt.Fprintf(stdout, "status: %s\n", status); err != nil {
+			return err
+		}
+		for index, result := range results {
+			prefix := fmt.Sprintf("results.%d.", index)
+			if _, err := fmt.Fprintf(stdout, "%sstatus: %s\n", prefix, result.Status); err != nil {
+				return err
+			}
+			if len(result.DataTypes) > 0 {
+				if _, err := fmt.Fprintf(stdout, "%sdata_type: %s\n", prefix, result.DataTypes[0]); err != nil {
+					return err
+				}
+			}
+			if result.SyncRunID != 0 {
+				if _, err := fmt.Fprintf(stdout, "%ssync_run_id: %d\n", prefix, result.SyncRunID); err != nil {
+					return err
+				}
+			}
+			for _, counter := range []struct {
+				key   string
+				value int
+			}{
+				{"data_points_seen", result.DataPointsSeen},
+				{"data_points_new", result.DataPointsNew},
+				{"data_points_updated", result.DataPointsUpdated},
+				{"rollups_seen", result.RollupsSeen},
+				{"rollups_new", result.RollupsNew},
+				{"rollups_updated", result.RollupsUpdated},
+			} {
+				if _, err := fmt.Fprintf(stdout, "%s%s: %d\n", prefix, counter.key, counter.value); err != nil {
+					return err
+				}
+			}
+			if result.Message != "" {
+				if _, err := fmt.Fprintf(stdout, "%smessage: %s\n", prefix, result.Message); err != nil {
+					return err
+				}
+			}
+		}
+		if _, err := fmt.Fprintf(stdout, "totals.data_points_seen: %d\n", summary.DataPointsSeen); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(stdout, "totals.data_points_new: %d\n", summary.DataPointsNew); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(stdout, "totals.data_points_updated: %d\n", summary.DataPointsUpdated); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(stdout, "totals.rollups_seen: %d\n", summary.RollupsSeen); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(stdout, "totals.rollups_new: %d\n", summary.RollupsNew); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(stdout, "totals.rollups_updated: %d\n", summary.RollupsUpdated); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintf(stdout, "message: %s\n", message)
+		return err
+	}
+	switch status {
+	case "sync_completed":
+		if _, err := fmt.Fprintf(stdout, "Sync Run fan-out completed across %d Data Types\n", len(results)); err != nil {
+			return err
+		}
+	case "sync_canceled":
+		if _, err := fmt.Fprintf(stdout, "Sync Run fan-out canceled across %d Data Types\n", len(results)); err != nil {
+			return err
+		}
+	default:
+		if _, err := fmt.Fprintf(stdout, "Sync Run fan-out failed across %d Data Types\n", len(results)); err != nil {
+			return err
+		}
+	}
+	for _, result := range results {
+		dataType := "?"
+		if len(result.DataTypes) > 0 {
+			dataType = result.DataTypes[0]
+		}
+		if _, err := fmt.Fprintf(stdout, "- %s: %s — Data Points new=%d updated=%d, Rollups new=%d updated=%d\n", dataType, result.Status, result.DataPointsNew, result.DataPointsUpdated, result.RollupsNew, result.RollupsUpdated); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(stdout, "Totals: Data Points seen=%d new=%d updated=%d, Rollups seen=%d new=%d updated=%d\n", summary.DataPointsSeen, summary.DataPointsNew, summary.DataPointsUpdated, summary.RollupsSeen, summary.RollupsNew, summary.RollupsUpdated); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(stdout, message)
 	return err
 }
 
