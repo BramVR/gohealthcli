@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -21,7 +22,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -882,8 +882,18 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 		}
 		return 1
 	}
-	if len(results) == 1 {
-		single := results[0]
+	// Shape is determined by what the user requested, not by how many
+	// results came back: --all and --types csv (more than one) always
+	// emit the wrapped fan-out shape so downstream tooling can rely on
+	// the envelope being predictable from the invocation flags. Bare
+	// single-type sync (--types steps, or no flags) keeps the legacy
+	// flat shape for backwards compatibility.
+	fanOut := options.allTypes || len(dataTypes) > 1
+	if !fanOut {
+		single := syncResult{Status: "sync_failed", DataTypes: dataTypes, Message: "sync produced no results"}
+		if len(results) > 0 {
+			single = results[0]
+		}
 		if writeErr := writeSyncResult(single, mode, stdout); writeErr != nil {
 			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
 			return 1
@@ -905,27 +915,15 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 	return 0
 }
 
-// installSyncCancelChannel wires a SIGINT handler that closes the
-// returned channel exactly once. Returns the channel and a stop function
-// that releases the signal handler. Calling this in production wraps the
-// orchestrator in cooperative cancellation; tests construct the channel
-// directly.
+// installSyncCancelChannel wires a SIGINT handler whose cancellation is
+// delivered via the returned read-only channel. The channel closes when
+// SIGINT fires or when the returned stop function is called (whichever
+// is first); the stop function is idempotent and races cleanly with an
+// in-flight signal. Tests construct the channel directly and pass nil
+// as the runtime stop.
 func installSyncCancelChannel() (<-chan struct{}, func()) {
-	cancelCh := make(chan struct{})
-	signalCh := make(chan os.Signal, 1)
-	signal.Notify(signalCh, os.Interrupt)
-	var once sync.Once
-	go func() {
-		_, ok := <-signalCh
-		if !ok {
-			return
-		}
-		once.Do(func() { close(cancelCh) })
-	}()
-	return cancelCh, func() {
-		signal.Stop(signalCh)
-		close(signalCh)
-	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	return ctx.Done(), stop
 }
 
 func runRaw(args []string, configPath, archivePath string, _ outputMode, stdout, stderr io.Writer) int {
@@ -4582,19 +4580,21 @@ type syncFanOutResult struct {
 
 func writeSyncFanOutResult(results []syncResult, options syncCommandOptions, mode outputMode, stdout io.Writer) error {
 	summary := summarizeSyncFanOut(results, options.from, options.to)
+	status := fanOutStatus(results)
+	message := fanOutMessage(status, len(results))
 	if mode.json {
 		envelope := syncFanOutResult{
-			Status:  summary.Status,
+			Status:  status,
 			Summary: summary,
 			Results: results,
-			Message: summary.Message,
+			Message: message,
 		}
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(envelope)
 	}
 	if mode.plain {
-		if _, err := fmt.Fprintf(stdout, "status: %s\n", summary.Status); err != nil {
+		if _, err := fmt.Fprintf(stdout, "status: %s\n", status); err != nil {
 			return err
 		}
 		for index, result := range results {
@@ -4642,10 +4642,10 @@ func writeSyncFanOutResult(results []syncResult, options syncCommandOptions, mod
 		if _, err := fmt.Fprintf(stdout, "totals.rollups_updated: %d\n", summary.RollupsUpdated); err != nil {
 			return err
 		}
-		_, err := fmt.Fprintf(stdout, "message: %s\n", summary.Message)
+		_, err := fmt.Fprintf(stdout, "message: %s\n", message)
 		return err
 	}
-	switch summary.Status {
+	switch status {
 	case "sync_completed":
 		if _, err := fmt.Fprintf(stdout, "Sync Run fan-out completed across %d Data Types\n", len(results)); err != nil {
 			return err
@@ -4671,7 +4671,7 @@ func writeSyncFanOutResult(results []syncResult, options syncCommandOptions, mod
 	if _, err := fmt.Fprintf(stdout, "Totals: Data Points seen=%d new=%d updated=%d, Rollups seen=%d new=%d updated=%d\n", summary.DataPointsSeen, summary.DataPointsNew, summary.DataPointsUpdated, summary.RollupsSeen, summary.RollupsNew, summary.RollupsUpdated); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintln(stdout, summary.Message)
+	_, err := fmt.Fprintln(stdout, message)
 	return err
 }
 

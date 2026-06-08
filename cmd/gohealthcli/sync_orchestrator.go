@@ -40,15 +40,11 @@ func (orchestrator syncOrchestrator) Sync(options syncCommandOptions) ([]syncRes
 	for _, dataType := range dataTypes {
 		if ingestionCanceled(orchestrator.cancelCh) {
 			// Orchestrator received SIGINT after a prior Data Type finished
-			// and before this one started. Record a skipped-via-cancel
-			// result so the user can see which types didn't run; no
-			// sync_runs row is created because the executor never ran.
-			results = append(results, syncResult{
-				Status:    "sync_canceled",
-				DataTypes: []string{dataType},
-				Message:   "Sync Run skipped: cancellation received before this Data Type started",
-			})
-			continue
+			// and before this one started. Stop the loop cleanly rather
+			// than emitting skipped-result rows that would inflate the
+			// summary's "N attempted" count; the in-flight type (if any)
+			// already wrote its own sync_canceled result.
+			break
 		}
 		perType := options
 		perType.dataTypes = []string{dataType}
@@ -57,24 +53,30 @@ func (orchestrator syncOrchestrator) Sync(options syncCommandOptions) ([]syncRes
 		if execErr != nil && result.Message == "" {
 			result.Message = execErr.Error()
 		}
-		if execErr != nil && result.Status == "" {
-			result.Status = "sync_failed"
-		}
 		results = append(results, result)
 	}
 	return results, nil
 }
 
 // expandDataTypes resolves --all / --types into the concrete ordered list
-// the orchestrator iterates. --all wins over --types (the CLI rejects
-// passing both before this point); when --all is set the catalog's
-// DefaultConfigType=true Data Types are used.
+// the orchestrator iterates. --all expands to the catalog's
+// DefaultConfigType=true Data Types that actually support a sync endpoint
+// (SupportsSyncDataPoint=true); Tier-1 entries reserved in the catalog
+// without a parser shape are skipped so `sync --all` never produces
+// guaranteed-failing rows. --types is taken as-given so an explicit
+// `--types unsupported` still surfaces the per-type error.
 func (orchestrator syncOrchestrator) expandDataTypes(options syncCommandOptions) ([]string, error) {
 	if options.allTypes {
 		if len(options.dataTypes) != 0 {
 			return nil, errors.New("sync --all cannot be combined with --types")
 		}
-		return append([]string(nil), defaultDataTypes...), nil
+		var syncable []string
+		for _, dataType := range defaultDataTypes {
+			if syncDataPointDataTypeSupported(dataType) {
+				syncable = append(syncable, dataType)
+			}
+		}
+		return syncable, nil
 	}
 	if len(options.dataTypes) == 0 {
 		return nil, errors.New("sync requires --types or --all")
@@ -91,26 +93,46 @@ func (orchestrator syncOrchestrator) expandDataTypes(options syncCommandOptions)
 	return resolved, nil
 }
 
-// aggregateSyncResults reduces a fan-out's per-type results to one
-// summary row. Status is the worst outcome present (failed > canceled >
-// completed); counts sum across the whole fan-out.
+// syncFanOutSummary is the aggregate envelope rendered for multi-Data-Type
+// invocations. Status lives on the wrapping syncFanOutResult, not here,
+// so downstream tooling reads one canonical status field. Counts sum
+// across the whole fan-out; DataTypes lists only the runs the executor
+// actually attempted (cancellation between Data Types omits skipped
+// types from the result slice, so they do not appear here either).
 type syncFanOutSummary struct {
-	Status            string `json:"status"`
 	DataTypes         []string `json:"data_types,omitempty"`
-	From              string `json:"from,omitempty"`
-	To                string `json:"to,omitempty"`
-	DataPointsSeen    int    `json:"data_points_seen"`
-	DataPointsNew     int    `json:"data_points_new"`
-	DataPointsUpdated int    `json:"data_points_updated"`
-	RollupsSeen       int    `json:"rollups_seen"`
-	RollupsNew        int    `json:"rollups_new"`
-	RollupsUpdated    int    `json:"rollups_updated"`
-	Message           string `json:"message"`
+	From              string   `json:"from,omitempty"`
+	To                string   `json:"to,omitempty"`
+	DataPointsSeen    int      `json:"data_points_seen"`
+	DataPointsNew     int      `json:"data_points_new"`
+	DataPointsUpdated int      `json:"data_points_updated"`
+	RollupsSeen       int      `json:"rollups_seen"`
+	RollupsNew        int      `json:"rollups_new"`
+	RollupsUpdated    int      `json:"rollups_updated"`
+}
+
+// fanOutStatus returns the worst outcome present across results
+// (failed > canceled > completed). An empty result set is reported as
+// canceled — the orchestrator only produces zero results when SIGINT
+// arrived before the first Data Type started.
+func fanOutStatus(results []syncResult) string {
+	if len(results) == 0 {
+		return "sync_canceled"
+	}
+	status := "sync_completed"
+	for _, result := range results {
+		switch result.Status {
+		case "sync_failed":
+			return "sync_failed"
+		case "sync_canceled":
+			status = "sync_canceled"
+		}
+	}
+	return status
 }
 
 func summarizeSyncFanOut(results []syncResult, requestedFrom, requestedTo string) syncFanOutSummary {
 	summary := syncFanOutSummary{
-		Status:    "sync_completed",
 		DataTypes: make([]string, 0, len(results)),
 		From:      requestedFrom,
 		To:        requestedTo,
@@ -125,22 +147,17 @@ func summarizeSyncFanOut(results []syncResult, requestedFrom, requestedTo string
 		if len(result.DataTypes) > 0 {
 			summary.DataTypes = append(summary.DataTypes, result.DataTypes[0])
 		}
-		switch result.Status {
-		case "sync_failed":
-			summary.Status = "sync_failed"
-		case "sync_canceled":
-			if summary.Status != "sync_failed" {
-				summary.Status = "sync_canceled"
-			}
-		}
-	}
-	switch summary.Status {
-	case "sync_failed":
-		summary.Message = fmt.Sprintf("Sync Run summary: %d Data Types attempted, at least one failed", len(results))
-	case "sync_canceled":
-		summary.Message = fmt.Sprintf("Sync Run summary: %d Data Types attempted, canceled mid-run", len(results))
-	default:
-		summary.Message = fmt.Sprintf("Sync Run summary: %d Data Types archived", len(results))
 	}
 	return summary
+}
+
+func fanOutMessage(status string, attempted int) string {
+	switch status {
+	case "sync_failed":
+		return fmt.Sprintf("Sync Run summary: %d Data Types attempted, at least one failed", attempted)
+	case "sync_canceled":
+		return fmt.Sprintf("Sync Run summary: %d Data Types completed before cancellation", attempted)
+	default:
+		return fmt.Sprintf("Sync Run summary: %d Data Types archived", attempted)
+	}
 }

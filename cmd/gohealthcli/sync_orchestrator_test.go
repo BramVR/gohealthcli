@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -158,14 +159,14 @@ func TestSyncOrchestratorRespectsCancellationBetweenDataTypes(t *testing.T) {
 	if !stepsCalled {
 		t.Fatal("expected steps fetch before cancellation")
 	}
-	if len(results) != 2 {
-		t.Fatalf("results len = %d, want 2", len(results))
+	if len(results) != 1 {
+		t.Fatalf("results len = %d, want 1 (heart-rate must be skipped silently rather than emit a misleading skipped row)", len(results))
 	}
 	if results[0].Status != "sync_completed" {
 		t.Fatalf("steps status = %q, want sync_completed (cancellation arrives between Data Types)", results[0].Status)
 	}
-	if results[1].Status != "sync_canceled" {
-		t.Fatalf("heart-rate status = %q, want sync_canceled", results[1].Status)
+	if got := results[0].DataTypes; len(got) != 1 || got[0] != "steps" {
+		t.Fatalf("results[0] DataTypes = %v, want [steps]", got)
 	}
 
 	// No heart-rate sync_runs row should exist — orchestrator never invoked the executor.
@@ -207,7 +208,8 @@ func TestSyncOrchestratorCancelsActiveDataTypeMidPagination(t *testing.T) {
 		pageCount++
 		if pageCount == 1 {
 			// First page succeeds with one Data Point and signals more pages.
-			// Close cancel BEFORE the executor checks at the top of the next iteration.
+			// Close cancel before returning so the executor's between-pages
+			// check at the top of the next iteration observes it.
 			close(cancelCh)
 			return []byte(`{
 				"dataPoints": [{
@@ -218,7 +220,8 @@ func TestSyncOrchestratorCancelsActiveDataTypeMidPagination(t *testing.T) {
 				"nextPageToken": "next-page"
 			}`), nil
 		}
-		return nil, errors.New("unexpected upstream call after cancellation")
+		t.Fatalf("upstream Fetch called %d times after cancellation; executor must stop at page boundary", pageCount)
+		return nil, errors.New("unreachable")
 	}
 
 	orchestrator := newSyncOrchestrator(testRuntime, cancelCh)
@@ -276,22 +279,65 @@ func TestSyncOrchestratorRejectsAllAndTypesTogether(t *testing.T) {
 	}
 }
 
-func TestSyncOrchestratorAllExpandsToDefaultDataTypes(t *testing.T) {
-	wantTypes := defaultDataTypes
-	if len(wantTypes) == 0 {
-		t.Skip("no default Data Types in catalog")
+func TestInstallSyncCancelChannelClosesOnSIGINT(t *testing.T) {
+	cancelCh, stop := installSyncCancelChannel()
+	defer stop()
+
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGINT); err != nil {
+		t.Fatalf("send SIGINT to self: %v", err)
 	}
+
+	select {
+	case <-cancelCh:
+		// expected — signal handler closed the channel
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelCh did not close within 2s after SIGINT")
+	}
+}
+
+func TestInstallSyncCancelChannelClosesOnStop(t *testing.T) {
+	cancelCh, stop := installSyncCancelChannel()
+	stop()
+
+	select {
+	case <-cancelCh:
+		// expected — stop cancels the underlying context
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelCh did not close within 2s after stop()")
+	}
+	// stop is idempotent — calling it again must not panic.
+	stop()
+}
+
+func TestSyncOrchestratorAllExpandsToSyncableDefaultDataTypes(t *testing.T) {
 	orchestrator := newSyncOrchestrator(runtimeAdapters{}, nil)
 	got, err := orchestrator.expandDataTypes(syncCommandOptions{allTypes: true})
 	if err != nil {
 		t.Fatalf("expandDataTypes(--all): %v", err)
 	}
-	if len(got) != len(wantTypes) {
-		t.Fatalf("expanded len = %d, want %d", len(got), len(wantTypes))
+	if len(got) == 0 {
+		t.Fatal("expanded list is empty; --all needs at least one syncable Data Type")
 	}
-	for index, want := range wantTypes {
-		if got[index] != want {
-			t.Fatalf("expanded[%d] = %q, want %q", index, got[index], want)
+	// Filter must keep only catalog entries with SupportsSyncDataPoint=true.
+	// "total-calories" is a reserved default in the catalog without a parser
+	// (Tier-1 catalog growth lands the shape later); it MUST NOT appear in
+	// the --all fan-out today, otherwise every `sync --all` would book a
+	// guaranteed sync_failed row.
+	for _, dataType := range got {
+		if !syncDataPointDataTypeSupported(dataType) {
+			t.Errorf("--all included %q which has no sync parser; would produce a guaranteed sync_failed", dataType)
+		}
+	}
+	for _, want := range []string{"steps", "heart-rate", "weight"} {
+		found := false
+		for _, dataType := range got {
+			if dataType == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("--all missing core syncable Data Type %q (got %v)", want, got)
 		}
 	}
 }
