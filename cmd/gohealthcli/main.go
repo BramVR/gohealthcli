@@ -2478,6 +2478,12 @@ func buildGoogleHealthRawRequest(target []string, from, to string, pageSize int6
 		if target[1] == "getIdentity" {
 			return rawProviderRequest{endpointName: "getIdentity", url: googleHealthIdentityURL}, nil
 		}
+		if target[1] == "getProfile" {
+			return rawProviderRequest{endpointName: "getProfile", url: googleHealthProfileURL, requiredScopes: []string{googleHealthProfileReadonlyScope}}, nil
+		}
+		if target[1] == "getSettings" {
+			return rawProviderRequest{endpointName: "getSettings", url: googleHealthSettingsURL, requiredScopes: []string{googleHealthProfileReadonlyScope}}, nil
+		}
 		if strings.HasPrefix(target[1], "dataTypes.") && strings.HasSuffix(target[1], ".list") {
 			dataType := strings.TrimSuffix(strings.TrimPrefix(target[1], "dataTypes."), ".list")
 			return buildGoogleHealthDataTypeListRawRequest(dataType, from, to, pageSize, pageToken)
