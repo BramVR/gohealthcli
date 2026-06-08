@@ -165,8 +165,13 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 		}
 		return result, cause
 	}
-	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{options.configPath, options.archivePath}, runtime).
-		WithAutoRefresh(config.oauthClient, archive)
+	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{options.configPath, options.archivePath}, runtime)
+	if config.oauthClient.kind == "file" {
+		// Only the file OAuth client source can drive a refresh today;
+		// for other sources, keep the historical fail-on-expired error
+		// shape instead of wrapping a "needs file source" message.
+		connectionAccess = connectionAccess.WithAutoRefresh(config.oauthClient, archive)
+	}
 	accessToken, err := connectionAccess.AccessToken(googleHealthScopesForDataType(dataType))
 	if err != nil {
 		return finalize(syncRunOutcomeFailed, err)

@@ -87,12 +87,12 @@ func (access currentConnectionAccess) AccessToken(requiredScopes []string) (stri
 }
 
 func (access currentConnectionAccess) refreshAndPersistAccessToken() (string, error) {
+	// RefreshableAccessToken always performs an OAuth refresh on success
+	// and returns the new token in refreshedToken, so there is no
+	// "refresh-not-needed" branch to handle here.
 	check, err := access.RefreshableAccessToken(access.autoRefresh.oauthClient)
 	if err != nil {
 		return "", wrapAutoRefreshFailure(err)
-	}
-	if check.refreshedToken == nil {
-		return check.accessToken, nil
 	}
 	if err := persistDoctorOnlineRefreshedTokenWithRuntime(
 		access.autoRefresh.archive,
