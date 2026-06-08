@@ -116,17 +116,29 @@ func (provider runtimeGoogleHealthIngestionProvider) Fetch(request rawProviderRe
 
 func (ingestion googleHealthIngestion) Plan(request googleHealthIngestionRequest) (googleHealthIngestionPlan, error) {
 	entry, ok := googleHealthDataTypes.Lookup(request.dataType)
-	if !ok || !entry.SupportsSyncDataPoint {
+	if !ok {
+		return googleHealthIngestionPlan{}, fmt.Errorf("sync Data Type %q is not supported yet", request.dataType)
+	}
+	_, hasList := entry.SupportedEndpoints[endpointFamilyList]
+	_, hasReconcile := entry.SupportedEndpoints[endpointFamilyReconcile]
+	_, hasDailyRollup := entry.SupportedEndpoints[endpointFamilyDailyRollUp]
+	if !hasList && !hasReconcile {
 		return googleHealthIngestionPlan{}, fmt.Errorf("sync Data Type %q is not supported yet", request.dataType)
 	}
 	if request.rollup == "daily" {
-		if !entry.SupportsDailyRollup {
+		// The daily-rollup parser still hard-codes steps shapes
+		// (parseGoogleHealthStepsDailyRollup). Any Data Type whose
+		// SupportedEndpoints map carries dailyRollUp would otherwise
+		// route through that steps-specific parser and mis-archive.
+		// #106 introduces the generic rollup parser; until then,
+		// gate daily-rollup support on the actual implementation.
+		if !hasDailyRollup || request.dataType != "steps" {
 			return googleHealthIngestionPlan{}, errors.New("sync --rollup currently supports only Data Type steps")
 		}
 		return googleHealthIngestionPlan{endpointFamily: "dailyRollUp"}, nil
 	}
 	if request.sourceFamily != "" {
-		if !entry.SupportsReconcile {
+		if !hasReconcile {
 			return googleHealthIngestionPlan{}, fmt.Errorf("sync Data Type %q does not support source-family filtering", request.dataType)
 		}
 		return googleHealthIngestionPlan{endpointFamily: "reconcile"}, nil

@@ -161,17 +161,25 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			if !slices.Equal(entry.RequiredScopes, tt.wantScopes) {
 				t.Fatalf("RequiredScopes = %v, want %v", entry.RequiredScopes, tt.wantScopes)
 			}
-			if entry.ListFilterField != tt.wantListFilterField {
-				t.Fatalf("ListFilterField = %q, want %q", entry.ListFilterField, tt.wantListFilterField)
+			list, hasList := entry.SupportedEndpoints[endpointFamilyList]
+			gotFilter := ""
+			if hasList {
+				gotFilter = list.FilterField
 			}
-			if entry.SupportsSyncDataPoint != tt.wantSyncDataPoint {
-				t.Fatalf("SupportsSyncDataPoint = %v, want %v", entry.SupportsSyncDataPoint, tt.wantSyncDataPoint)
+			if gotFilter != tt.wantListFilterField {
+				t.Fatalf("ListFilterField = %q, want %q", gotFilter, tt.wantListFilterField)
 			}
-			if entry.SupportsReconcile != tt.wantReconcile {
-				t.Fatalf("SupportsReconcile = %v, want %v", entry.SupportsReconcile, tt.wantReconcile)
+			gotSyncDataPoint := syncDataPointDataTypeSupported(tt.dataType)
+			if gotSyncDataPoint != tt.wantSyncDataPoint {
+				t.Fatalf("syncDataPointDataTypeSupported = %v, want %v", gotSyncDataPoint, tt.wantSyncDataPoint)
 			}
-			if entry.SupportsDailyRollup != tt.wantDailyRollup {
-				t.Fatalf("SupportsDailyRollup = %v, want %v", entry.SupportsDailyRollup, tt.wantDailyRollup)
+			gotReconcile := reconcileDataTypeSupported(tt.dataType)
+			if gotReconcile != tt.wantReconcile {
+				t.Fatalf("reconcileDataTypeSupported = %v, want %v", gotReconcile, tt.wantReconcile)
+			}
+			gotDailyRollup := dailyRollupDataTypeSupported(tt.dataType)
+			if gotDailyRollup != tt.wantDailyRollup {
+				t.Fatalf("dailyRollupDataTypeSupported = %v, want %v", gotDailyRollup, tt.wantDailyRollup)
 			}
 			if entry.Parser != tt.wantParser {
 				t.Fatalf("Parser = %q, want %q", entry.Parser, tt.wantParser)
