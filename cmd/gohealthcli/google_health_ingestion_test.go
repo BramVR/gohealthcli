@@ -223,7 +223,7 @@ func (provider *fakeGoogleHealthIngestionProvider) Fetch(request rawProviderRequ
 
 func (provider *fakeGoogleHealthIngestionProvider) pageKey(request rawProviderRequest) string {
 	provider.t.Helper()
-	if request.endpointName == "dataTypes.steps.dailyRollUp" {
+	if strings.HasSuffix(request.endpointName, ".dailyRollUp") {
 		var body struct {
 			Range struct {
 				Start struct {
@@ -253,6 +253,25 @@ func (provider *fakeGoogleHealthIngestionProvider) pageKey(request rawProviderRe
 			body.Range.End.Date.Year,
 			body.Range.End.Date.Month,
 			body.Range.End.Date.Day,
+			body.PageToken,
+		)
+	}
+	if strings.HasSuffix(request.endpointName, ".rollUp") {
+		var body struct {
+			Range struct {
+				StartTime string `json:"startTime"`
+				EndTime   string `json:"endTime"`
+			} `json:"range"`
+			WindowSize string `json:"windowSize"`
+			PageToken  string `json:"pageToken"`
+		}
+		if err := json.Unmarshal(request.body, &body); err != nil {
+			provider.t.Fatalf("rollUp body JSON: %v", err)
+		}
+		return fmt.Sprintf("%s/%s/%s/%s",
+			body.Range.StartTime,
+			body.Range.EndTime,
+			body.WindowSize,
 			body.PageToken,
 		)
 	}

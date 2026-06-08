@@ -68,6 +68,7 @@ func ingestionCanceled(cancelCh <-chan struct{}) bool {
 
 type googleHealthIngestionPlan struct {
 	endpointFamily string
+	rollupSpec     syncRollupSpec
 }
 
 type googleHealthIngestionResult struct {
@@ -121,21 +122,18 @@ func (ingestion googleHealthIngestion) Plan(request googleHealthIngestionRequest
 	}
 	_, hasList := entry.SupportedEndpoints[endpointFamilyList]
 	_, hasReconcile := entry.SupportedEndpoints[endpointFamilyReconcile]
-	_, hasDailyRollup := entry.SupportedEndpoints[endpointFamilyDailyRollUp]
 	if !hasList && !hasReconcile {
 		return googleHealthIngestionPlan{}, fmt.Errorf("sync Data Type %q is not supported yet", request.dataType)
 	}
-	if request.rollup == "daily" {
-		// The daily-rollup parser still hard-codes steps shapes
-		// (parseGoogleHealthStepsDailyRollup). Any Data Type whose
-		// SupportedEndpoints map carries dailyRollUp would otherwise
-		// route through that steps-specific parser and mis-archive.
-		// #106 introduces the generic rollup parser; until then,
-		// gate daily-rollup support on the actual implementation.
-		if !hasDailyRollup || request.dataType != "steps" {
-			return googleHealthIngestionPlan{}, errors.New("sync --rollup currently supports only Data Type steps")
+	if request.rollup != "" {
+		spec, err := parseSyncRollupSpec(request.rollup)
+		if err != nil {
+			return googleHealthIngestionPlan{}, err
 		}
-		return googleHealthIngestionPlan{endpointFamily: "dailyRollUp"}, nil
+		if err := validateSyncRollupAgainstDataType(spec, request.dataType); err != nil {
+			return googleHealthIngestionPlan{}, err
+		}
+		return googleHealthIngestionPlan{endpointFamily: string(spec.endpointFamily), rollupSpec: spec}, nil
 	}
 	if request.sourceFamily != "" {
 		if !hasReconcile {
@@ -152,9 +150,12 @@ func (ingestion googleHealthIngestion) Execute(archive googleHealthIngestionArch
 		return googleHealthIngestionResult{}, err
 	}
 	result := googleHealthIngestionResult{endpointFamily: plan.endpointFamily}
-	if plan.endpointFamily == "dailyRollUp" {
+	switch plan.endpointFamily {
+	case "dailyRollUp":
 		err = ingestion.executeDailyRollupPages(archive, request, &result)
-	} else {
+	case "rollUp":
+		err = ingestion.executeWindowRollupPages(archive, request, plan.rollupSpec, &result)
+	default:
 		err = ingestion.executeDataPointPages(archive, request, &result)
 	}
 	return result, err
@@ -184,7 +185,7 @@ func (ingestion googleHealthIngestion) executeDailyRollupPages(archive googleHea
 				return err
 			}
 			for _, rawRollup := range page.rollups {
-				rollup, err := parseGoogleHealthStepsDailyRollup(request.connection, rawRollup)
+				rollup, err := parseGoogleHealthRollup(request.connection, request.dataType, "dailyRollUp", rawRollup)
 				if err != nil {
 					return err
 				}
@@ -204,11 +205,64 @@ func (ingestion googleHealthIngestion) executeDailyRollupPages(archive googleHea
 				break
 			}
 			if _, ok := seenPageTokens[page.nextPageToken]; ok {
-				return errors.New("Google Health steps dailyRollUp returned a repeated page token")
+				return fmt.Errorf("Google Health %s dailyRollUp returned a repeated page token", request.dataType)
 			}
 			seenPageTokens[page.nextPageToken] = struct{}{}
 			pageToken = page.nextPageToken
 		}
+	}
+	return nil
+}
+
+// executeWindowRollupPages drives the windowed rollUp endpoint
+// (hourly / weekly / window=<duration>). Unlike dailyRollUp the
+// upstream takes an RFC3339 range and a windowSize Duration string,
+// returns rollupDataPoints with RFC3339 startTime/endTime, and does
+// not need the 90-day client-side window split that dailyRollUp does.
+func (ingestion googleHealthIngestion) executeWindowRollupPages(archive googleHealthIngestionArchive, request googleHealthIngestionRequest, spec syncRollupSpec, result *googleHealthIngestionResult) error {
+	windowSize := fmt.Sprintf("%ds", int64(spec.windowSize.Seconds()))
+	seenPageTokens := map[string]struct{}{}
+	for pageToken := ""; ; {
+		if ingestionCanceled(request.cancelCh) {
+			return errSyncCanceled
+		}
+		rawRequest, err := buildGoogleHealthRollupRawRequest(request.dataType, request.from, request.to, windowSize, 0, pageToken)
+		if err != nil {
+			return err
+		}
+		body, err := ingestion.provider.Fetch(rawRequest, request.accessToken, request.cancelCh)
+		if err != nil {
+			return syncProviderRequestError(err)
+		}
+		page, err := parseGoogleHealthRollupList(body)
+		if err != nil {
+			return err
+		}
+		for _, rawRollup := range page.rollups {
+			rollup, err := parseGoogleHealthRollup(request.connection, request.dataType, spec.cursorKind, rawRollup)
+			if err != nil {
+				return err
+			}
+			status, err := archive.UpsertRollup(rollup, ingestion.now().UTC().Format(time.RFC3339))
+			if err != nil {
+				return err
+			}
+			result.rollupsSeen++
+			switch status {
+			case "new":
+				result.rollupsNew++
+			case "updated":
+				result.rollupsUpdated++
+			}
+		}
+		if page.nextPageToken == "" {
+			break
+		}
+		if _, ok := seenPageTokens[page.nextPageToken]; ok {
+			return fmt.Errorf("Google Health %s rollUp returned a repeated page token", request.dataType)
+		}
+		seenPageTokens[page.nextPageToken] = struct{}{}
+		pageToken = page.nextPageToken
 	}
 	return nil
 }
@@ -258,6 +312,58 @@ func (ingestion googleHealthIngestion) executeDataPointPages(archive googleHealt
 		pageToken = page.nextPageToken
 	}
 	return nil
+}
+
+// buildGoogleHealthRollupRawRequest builds the POST body for the
+// windowed rollUp endpoint (hourly / weekly / window=<duration>).
+// Google's rollUp endpoint takes an RFC3339 range plus a windowSize
+// Duration string (e.g. "3600s") and returns rollupDataPoints with
+// RFC3339 startTime/endTime. dailyRollUp is a separate endpoint
+// (buildGoogleHealthDailyRollupRawRequest) because Google's API
+// distinguishes them — they take different range shapes.
+func buildGoogleHealthRollupRawRequest(dataType, from, to, windowSize string, pageSize int64, pageToken string) (rawProviderRequest, error) {
+	if err := validateRawGoogleHealthDataType(dataType); err != nil {
+		return rawProviderRequest{}, err
+	}
+	if from == "" {
+		return rawProviderRequest{}, errors.New("windowed Rollup calls require --from")
+	}
+	if to == "" {
+		return rawProviderRequest{}, errors.New("windowed Rollup calls require --to")
+	}
+	if windowSize == "" {
+		return rawProviderRequest{}, errors.New("windowed Rollup calls require a windowSize")
+	}
+	rangeJSON, err := json.Marshal(struct {
+		StartTime string `json:"startTime"`
+		EndTime   string `json:"endTime"`
+	}{StartTime: from, EndTime: to})
+	if err != nil {
+		return rawProviderRequest{}, err
+	}
+	body := struct {
+		Range      json.RawMessage `json:"range"`
+		WindowSize string          `json:"windowSize"`
+		PageSize   int64           `json:"pageSize,omitempty"`
+		PageToken  string          `json:"pageToken,omitempty"`
+	}{
+		Range:      rangeJSON,
+		WindowSize: windowSize,
+		PageSize:   pageSize,
+		PageToken:  pageToken,
+	}
+	bodyJSON, err := json.Marshal(body)
+	if err != nil {
+		return rawProviderRequest{}, err
+	}
+	return rawProviderRequest{
+		endpointName:   "dataTypes." + dataType + ".rollUp",
+		dataType:       dataType,
+		method:         http.MethodPost,
+		url:            googleHealthBaseURL + "/users/me/dataTypes/" + url.PathEscape(dataType) + "/dataPoints:rollUp",
+		body:           bodyJSON,
+		requiredScopes: googleHealthScopesForDataType(dataType),
+	}, nil
 }
 
 func buildGoogleHealthDailyRollupRawRequest(dataType, from, to string, pageSize int64, pageToken string) (rawProviderRequest, error) {
