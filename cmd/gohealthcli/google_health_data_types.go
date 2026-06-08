@@ -431,6 +431,30 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		UsesDateRangeDefault: true,
 		SupportedEndpoints:   listEndpoint("hydration_log.interval.civil_start_time"),
 	},
+	// Tier 2 ECG + IRN Data Types (#104). Both are list-only session
+	// shapes, gated behind opt-in scopes the user grants via
+	// `connect --add-scopes ecg,irn`. Filter fields mirror the sleep
+	// / exercise pattern (civil_start_time) — the live probe step
+	// confirms the upstream shape before any user flips
+	// DefaultConfigType for these.
+	{
+		DataType:             "electrocardiogram",
+		RequiredScopes:       []string{googleHealthEcgReadonlyScope},
+		Parser:               "session",
+		JSONField:            "electrocardiogram",
+		RecordKind:           "session",
+		UsesDateRangeDefault: true,
+		SupportedEndpoints:   listEndpoint("electrocardiogram.interval.civil_start_time"),
+	},
+	{
+		DataType:             "irregular-rhythm-notification",
+		RequiredScopes:       []string{googleHealthIrnReadonlyScope},
+		Parser:               "session",
+		JSONField:            "irregularRhythmNotification",
+		RecordKind:           "session",
+		UsesDateRangeDefault: true,
+		SupportedEndpoints:   listEndpoint("irregular_rhythm_notification.interval.civil_start_time"),
+	},
 })
 
 var defaultDataTypes = googleHealthDataTypes.DefaultDataTypes()

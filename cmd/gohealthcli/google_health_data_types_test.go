@@ -239,6 +239,28 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantRecordKind:       "session",
 			wantDateRangeDefault: true,
 		},
+		// Tier 2 ECG + IRN Data Types (#104). List-only Data Types
+		// guarded by opt-in scopes (`connect --add-scopes ecg,irn`).
+		// Neither is DefaultConfigType — users opt in via --types
+		// once the scope is granted.
+		{
+			dataType:             "electrocardiogram",
+			wantScopes:           []string{googleHealthEcgReadonlyScope},
+			wantListFilterField:  "electrocardiogram.interval.civil_start_time",
+			wantSyncDataPoint:    true,
+			wantParser:           "session",
+			wantRecordKind:       "session",
+			wantDateRangeDefault: true,
+		},
+		{
+			dataType:             "irregular-rhythm-notification",
+			wantScopes:           []string{googleHealthIrnReadonlyScope},
+			wantListFilterField:  "irregular_rhythm_notification.interval.civil_start_time",
+			wantSyncDataPoint:    true,
+			wantParser:           "session",
+			wantRecordKind:       "session",
+			wantDateRangeDefault: true,
+		},
 	}
 
 	for _, tt := range tests {

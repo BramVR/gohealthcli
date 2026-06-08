@@ -35,6 +35,15 @@ const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/
 const googleHealthSleepReadonlyScope = "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
 const googleHealthNutritionReadonlyScope = "https://www.googleapis.com/auth/googlehealth.nutrition.readonly"
 const googleHealthProfileReadonlyScope = "https://www.googleapis.com/auth/googlehealth.profile.readonly"
+
+// Tier 2 opt-in scopes (#104). Users grant these via
+// `gohealthcli connect --add-scopes ecg,irn`. String literals match
+// connectAddScopeKeywords["ecg"/"irn"]; connect_add_scopes.go owns
+// the keyword→scope mapping, this file owns the constant the
+// catalog references.
+const googleHealthEcgReadonlyScope = "https://www.googleapis.com/auth/googlehealth.electrocardiogram.readonly"
+const googleHealthIrnReadonlyScope = "https://www.googleapis.com/auth/googlehealth.irn.readonly"
+
 const googleHealthBaseURL = "https://health.googleapis.com/v4"
 const googleHealthIdentityURL = "https://health.googleapis.com/v4/users/me/identity"
 const googleHealthProfileURL = "https://health.googleapis.com/v4/users/me/profile"
