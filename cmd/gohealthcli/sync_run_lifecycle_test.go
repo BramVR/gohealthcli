@@ -601,13 +601,33 @@ func TestSyncRunLifecycleCanceledOutcomePreservedThroughRecovery(t *testing.T) {
 	}
 
 	// Drive ingestion to surface errSyncCanceled so the lifecycle calls
-	// finalize with syncRunOutcomeCanceled. A pre-closed cancelCh trips
-	// the ingestion check before the first page fetch.
+	// finalize with syncRunOutcomeCanceled. PRD #141 slice 5 adds a
+	// pre-StartSyncRun cancel check at the top of syncRunLifecycle.Run,
+	// so a pre-closed cancelCh now short-circuits before any audit row
+	// is written — that path is the no-audit-row branch, not the
+	// canceled-after-StartSyncRun branch this test exercises. To land
+	// in finalize with the canceled outcome we close cancelCh inside
+	// the fetch fake after StartSyncRun has run; the page loop's next
+	// top-of-iteration check then observes the closed channel and
+	// returns errSyncCanceled, sending the lifecycle into finalize
+	// with syncRunOutcomeCanceled.
 	cancelCh := make(chan struct{})
-	close(cancelCh)
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
-		"": `{"dataPoints":[]}`,
+		"":           `{"dataPoints":[],"nextPageToken":"page-2"}`,
+		"page-2":     `{"dataPoints":[]}`,
 	})
+	wrappedFetch := testRuntime.fetchRawProvider
+	testRuntime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		body, err := wrappedFetch(request, accessToken)
+		// Close the channel after page 1 returns — the next iteration's
+		// top-of-loop check observes it and returns errSyncCanceled.
+		select {
+		case <-cancelCh:
+		default:
+			close(cancelCh)
+		}
+		return body, err
+	}
 	result, _ := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
