@@ -173,6 +173,16 @@ type fakeGoogleHealthIngestionArchive struct {
 	rollupStatuses    []string
 	dataPoints        []archivedDataPoint
 	rollups           []archivedRollup
+	attachments       []fakeIngestionAttachment
+}
+
+// fakeIngestionAttachment captures one StoreAttachment call so tests
+// can assert the (point, kind, bytes) shape the ingestion handed off.
+type fakeIngestionAttachment struct {
+	point     archivedDataPoint
+	kind      string
+	payload   []byte
+	fetchedAt string
 }
 
 func (archive *fakeGoogleHealthIngestionArchive) UpsertDataPoint(point archivedDataPoint, now string) (string, error) {
@@ -195,11 +205,29 @@ func (archive *fakeGoogleHealthIngestionArchive) UpsertRollup(rollup archivedRol
 	return status, nil
 }
 
+// StoreAttachment records the call so TCX-ingestion tests can assert
+// the wiring: which Data Point the bytes attach to, what kind, the
+// payload, and the fetchedAt stamp.
+func (archive *fakeGoogleHealthIngestionArchive) StoreAttachment(point archivedDataPoint, kind string, payload []byte, fetchedAt string) error {
+	archive.attachments = append(archive.attachments, fakeIngestionAttachment{
+		point:     point,
+		kind:      kind,
+		payload:   append([]byte(nil), payload...),
+		fetchedAt: fetchedAt,
+	})
+	return nil
+}
+
 type fakeGoogleHealthIngestionProvider struct {
 	t               *testing.T
 	wantAccessToken string
 	pages           map[string]string
 	requests        []rawProviderRequest
+	// errorByPageKey overrides the page body with an error response keyed
+	// by the same page key the fixture map uses. Lets TCX tests force a
+	// 404 or transport error on a specific resource without leaking error
+	// shape into unrelated tests.
+	errorByPageKey map[string]error
 }
 
 func newFakeGoogleHealthIngestionProvider(t *testing.T, wantAccessToken string, pages map[string]string) *fakeGoogleHealthIngestionProvider {
@@ -214,6 +242,9 @@ func (provider *fakeGoogleHealthIngestionProvider) Fetch(request rawProviderRequ
 	}
 	provider.requests = append(provider.requests, request)
 	key := provider.pageKey(request)
+	if err, ok := provider.errorByPageKey[key]; ok {
+		return nil, err
+	}
 	body, ok := provider.pages[key]
 	if !ok {
 		provider.t.Fatalf("no fake provider page for key %q", key)
@@ -274,6 +305,12 @@ func (provider *fakeGoogleHealthIngestionProvider) pageKey(request rawProviderRe
 			body.WindowSize,
 			body.PageToken,
 		)
+	}
+	if strings.HasSuffix(request.endpointName, ".exportExerciseTcx") {
+		// TCX export keys on the data point resource path (the suffix of
+		// the URL after the base prefix). e.g.
+		// "users/me/dataTypes/exercise/dataPoints/run-1:exportExerciseTcx".
+		return strings.TrimPrefix(request.url, googleHealthBaseURL+"/")
 	}
 	parsedURL, err := url.Parse(request.url)
 	if err != nil {

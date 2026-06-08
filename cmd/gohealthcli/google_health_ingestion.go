@@ -14,6 +14,13 @@ import (
 type googleHealthIngestionArchive interface {
 	UpsertDataPoint(point archivedDataPoint, now string) (string, error)
 	UpsertRollup(rollup archivedRollup, now string) (string, error)
+	// StoreAttachment is invoked by the TCX-ingestion hook for #107
+	// slice D: after upserting an exercise Data Point, the ingestion
+	// calls this with the just-upserted point + the bytes returned by
+	// `users.dataTypes.dataPoints.exportExerciseTcx`. The archive impl
+	// resolves the data_point row id from the point's identity columns
+	// and writes the sidecar via the Attachment Store (ADR-0009).
+	StoreAttachment(point archivedDataPoint, kind string, payload []byte, fetchedAt string) error
 }
 
 type googleHealthIngestionProvider interface {
@@ -290,7 +297,8 @@ func (ingestion googleHealthIngestion) executeDataPointPages(archive googleHealt
 			if err != nil {
 				return err
 			}
-			status, err := archive.UpsertDataPoint(point, ingestion.now().UTC().Format(time.RFC3339))
+			now := ingestion.now().UTC().Format(time.RFC3339)
+			status, err := archive.UpsertDataPoint(point, now)
 			if err != nil {
 				return err
 			}
@@ -300,6 +308,9 @@ func (ingestion googleHealthIngestion) executeDataPointPages(archive googleHealt
 				result.dataPointsNew++
 			case "updated":
 				result.dataPointsUpdated++
+			}
+			if err := ingestion.attachExerciseTcxIfAvailable(archive, request, point, now); err != nil {
+				return err
 			}
 		}
 		if page.nextPageToken == "" {
@@ -312,6 +323,47 @@ func (ingestion googleHealthIngestion) executeDataPointPages(archive googleHealt
 		pageToken = page.nextPageToken
 	}
 	return nil
+}
+
+// attachExerciseTcxIfAvailable is the #107 slice D hook: after the
+// exercise Data Point is upserted, attempt the byte-shaped
+// `users.dataTypes.dataPoints.exportExerciseTcx` export and Store the
+// bytes as a `tcx`-kind Attachment (ADR-0009).
+//
+// Skipped cases — sync stays successful:
+//   - data type is not "exercise" (TCX is exercise-only today).
+//   - point.upstreamResourceName is empty (no `name` field on the list
+//     page; nothing to address the export endpoint at).
+//   - Upstream returned HTTP 404 (no TCX route for this Data Point — the
+//     exercise might be manually entered or lack GPS/route data).
+//   - Upstream returned HTTP 200 with an empty body (no bytes to archive).
+//
+// All other errors (5xx, transport failure, 401) are propagated so the
+// Sync Cursor stays put and the user can retry.
+func (ingestion googleHealthIngestion) attachExerciseTcxIfAvailable(archive googleHealthIngestionArchive, request googleHealthIngestionRequest, point archivedDataPoint, fetchedAt string) error {
+	if request.dataType != "exercise" {
+		return nil
+	}
+	if point.upstreamResourceName == "" {
+		return nil
+	}
+	tcxRequest, err := buildGoogleHealthExportExerciseTcxRawRequest(point.upstreamResourceName)
+	if err != nil {
+		return err
+	}
+	body, err := ingestion.provider.Fetch(tcxRequest, request.accessToken, request.cancelCh)
+	if err != nil {
+		var httpErr *googleHealthHTTPError
+		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
+			// No TCX available for this exercise — graceful skip.
+			return nil
+		}
+		return syncProviderRequestError(err)
+	}
+	if len(body) == 0 {
+		return nil
+	}
+	return archive.StoreAttachment(point, "tcx", body, fetchedAt)
 }
 
 // buildGoogleHealthRollupRawRequest builds the POST body for the

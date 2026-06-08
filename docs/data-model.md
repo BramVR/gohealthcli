@@ -150,9 +150,17 @@ The Attachment Store module exposes `Store(dataPointID, kind, bytes)
 → {sha256, path}` (content-addressed; same bytes → same path,
 idempotent insert), `Resolve(sha256) → path`, and `Walk(fn)` for
 orphan detection (row with no sidecar, sidecar with no row — `doctor`
-will surface these in a follow-up slice). TCX ingestion during
-exercise sync is gated behind a follow-up live-API exploration to
-nail the upstream payload shape before wiring.
+surfaces these via `--archive-integrity`).
+
+Exercise sync (Data Type `exercise`) drives the only Attachment
+producer today (#107): after each upserted exercise Data Point, the
+ingestion calls `users.dataTypes.dataPoints.exportExerciseTcx` and, on
+HTTP 200 with a non-empty body, Stores the bytes as a `tcx`-kind
+Attachment linked by `data_point_id`. HTTP 404 (no TCX route for that
+exercise — manually entered, no GPS) and HTTP 200 with empty body are
+silent skips; the Sync Run stays `sync_completed`. 5xx, 401, and
+transport errors are surfaced so the Sync Cursor stays put and the
+user can retry.
 
 ## LLM-facing schema discovery
 
