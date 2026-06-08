@@ -285,7 +285,7 @@ var exportDatasetDefinitions = []exportDatasetSpec{
 		name:             "floors-intervals",
 		view:             "floors_intervals",
 		migrationVersion: 16,
-		orderBy:          "start_time_utc, source_family_filter, upstream_resource_name",
+		orderBy:          "start_time_utc, provider_name, connection_id, source_family_filter, upstream_resource_name",
 		viewSQL: `SELECT
 			provider_name,
 			connection_id,

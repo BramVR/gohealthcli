@@ -126,7 +126,13 @@ func (ingestion googleHealthIngestion) Plan(request googleHealthIngestionRequest
 		return googleHealthIngestionPlan{}, fmt.Errorf("sync Data Type %q is not supported yet", request.dataType)
 	}
 	if request.rollup == "daily" {
-		if !hasDailyRollup {
+		// The daily-rollup parser still hard-codes steps shapes
+		// (parseGoogleHealthStepsDailyRollup). Any Data Type whose
+		// SupportedEndpoints map carries dailyRollUp would otherwise
+		// route through that steps-specific parser and mis-archive.
+		// #106 introduces the generic rollup parser; until then,
+		// gate daily-rollup support on the actual implementation.
+		if !hasDailyRollup || request.dataType != "steps" {
 			return googleHealthIngestionPlan{}, errors.New("sync --rollup currently supports only Data Type steps")
 		}
 		return googleHealthIngestionPlan{endpointFamily: "dailyRollUp"}, nil

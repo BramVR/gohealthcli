@@ -222,7 +222,6 @@ func TestGoogleHealthDataTypeCatalogDefaultDataTypes(t *testing.T) {
 		"distance",
 		"total-calories",
 		"weight",
-		"floors",
 	}
 	if !slices.Equal(defaultDataTypes, want) {
 		t.Fatalf("defaultDataTypes = %v, want %v", defaultDataTypes, want)

@@ -192,12 +192,17 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		// floors is the first Tier 1 Data Type to land via the new
 		// SupportedEndpoints shape (#100). Interval-shaped, same
 		// endpoint surface as steps (list + reconcile + dailyRollUp).
+		//
+		// Not yet a DefaultConfigType: the live API returns HTTP 400
+		// against the assumed filter field, so including it in
+		// `sync --all` would break that command for users. Add the
+		// flag once the upstream endpoint shape is confirmed and the
+		// floors sync runs cleanly end-to-end.
 		DataType:           "floors",
 		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
 		Parser:             "interval",
 		JSONField:          "floors",
 		RecordKind:         "interval",
-		DefaultConfigType:  true,
 		SupportedEndpoints: listReconcileDailyRollupEndpoints("floors.interval.start_time", "floorsCount"),
 	},
 })
