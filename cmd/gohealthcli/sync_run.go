@@ -157,7 +157,7 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 			if cause != nil {
 				finalErr = fmt.Errorf("%w; %v", cause, finalErr)
 			}
-			if outcome == syncRunOutcomeCompleted {
+			if outcome.AdvancesCursor() {
 				if recoveryErr := archive.FinishSyncRun(syncRunID, "sync_failed", seen, newCount, updated, now, result.Message); recoveryErr != nil {
 					finalErr = fmt.Errorf("%v; mark Sync Run failed: %w", finalErr, recoveryErr)
 				}

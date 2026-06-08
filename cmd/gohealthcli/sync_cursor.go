@@ -29,6 +29,15 @@ const (
 	syncRunOutcomeCanceled  syncRunOutcome = "sync_canceled"
 )
 
+// AdvancesCursor expresses the ADR-0008 invariant at the seam where the
+// outcome value is defined: only sync_completed advances a Sync Cursor.
+// Callers route every terminal outcome through one path and ask the
+// outcome whether it warrants a cursor write, instead of duplicating
+// the rule at each call site.
+func (outcome syncRunOutcome) AdvancesCursor() bool {
+	return outcome == syncRunOutcomeCompleted
+}
+
 type syncCursorKey struct {
 	connectionID       string
 	dataType           string
@@ -85,7 +94,7 @@ func commitSyncCursorTx(tx *sql.Tx, key syncCursorKey, outcome syncRunOutcome, t
 }
 
 func commitSyncCursorExec(executor sqlExecutor, key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error {
-	if outcome != syncRunOutcomeCompleted {
+	if !outcome.AdvancesCursor() {
 		return nil
 	}
 	if to == "" {

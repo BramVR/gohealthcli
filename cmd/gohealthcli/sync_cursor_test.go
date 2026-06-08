@@ -371,6 +371,27 @@ func TestSyncRunExecutorRoundTripsCursorThroughExactToString(t *testing.T) {
 	}
 }
 
+// TestSyncRunOutcomeAdvancesCursorOnlyOnSyncCompleted pins the ADR-0008
+// invariant on the outcome type itself: the rule lives next to the
+// values it constrains, not buried in commitSyncCursorExec. Removing or
+// inverting the method now fails this test before any storage-layer test
+// has a chance to mask the regression.
+func TestSyncRunOutcomeAdvancesCursorOnlyOnSyncCompleted(t *testing.T) {
+	cases := []struct {
+		outcome syncRunOutcome
+		want    bool
+	}{
+		{syncRunOutcomeCompleted, true},
+		{syncRunOutcomeFailed, false},
+		{syncRunOutcomeCanceled, false},
+	}
+	for _, tc := range cases {
+		if got := tc.outcome.AdvancesCursor(); got != tc.want {
+			t.Errorf("(%s).AdvancesCursor() = %v, want %v", tc.outcome, got, tc.want)
+		}
+	}
+}
+
 var errSimulatedCommitFailure = errSimulated("simulated cursor commit failure")
 
 type errSimulated string
