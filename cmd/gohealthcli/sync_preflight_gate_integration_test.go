@@ -63,6 +63,22 @@ func TestRunSyncPreflightFailuresDoNotWriteAuditRow(t *testing.T) {
 			args:          []string{"--types", "steps,steps", "--from", "2026-01-01", "--to", "2026-01-02T00:00:00Z", "--json"},
 			wantErrSubstr: "more than once",
 		},
+		{
+			// Range-ordering invariants live in the gate (#153); fake-
+			// provider integration confirms an inverted --from/--to
+			// never reaches an upstream HTTP call AND never writes a
+			// sync_runs row. The runtime here uses the connect fake's
+			// HTTP transport; if the gate let this through, the
+			// downstream Plan call would touch it.
+			name:          "range_order_inverted",
+			args:          []string{"--types", "steps", "--from", "2026-06-08", "--to", "2026-06-01", "--json"},
+			wantErrSubstr: "from must be earlier than to",
+		},
+		{
+			name:          "range_zero_width",
+			args:          []string{"--types", "steps", "--from", "2026-06-01", "--to", "2026-06-01", "--json"},
+			wantErrSubstr: "zero-width sync window",
+		},
 	}
 
 	for _, tc := range cases {
