@@ -29,7 +29,6 @@ import (
 
 const setupMissingExitCode = 2
 const currentSchemaVersion = 20
-const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
 const googleHealthSleepReadonlyScope = "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
@@ -465,8 +464,20 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 		return 1
 	}
 
+	// Mutual exclusion of --plain and --json applies to every top-level
+	// invocation that emits structured output, --version included. The
+	// Common Flag Set module owns the same check for the subcommand
+	// surface (see common_flags.go ParseCommon); enforcing it here keeps
+	// the top-level parse consistent without routing the global flags
+	// through ParseCommon (the global flag set has --version, which the
+	// Common spec deliberately does not). PRD #143 slice 5 (issue #174).
+	if *plainOutput && *jsonOutput {
+		fmt.Fprintln(stderr, "--plain and --json are mutually exclusive")
+		return 1
+	}
+
 	if *versionOutput {
-		fmt.Fprintf(stdout, "gohealthcli %s\n", version)
+		RenderVersion(outputMode{json: *jsonOutput, plain: *plainOutput}, stdout)
 		return 0
 	}
 
