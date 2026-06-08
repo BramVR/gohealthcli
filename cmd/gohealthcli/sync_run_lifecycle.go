@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -232,9 +233,32 @@ func (lifecycle syncRunLifecycle) finalize(archive healthArchiveWriter, result s
 	if cause != nil {
 		finalErr = fmt.Errorf("%w (after upstream cause: %v)", finalErr, cause)
 	}
-	result = syncResultFromOutcome(syncRunOutcomeFailed, result)
-	if recoveryErr := archive.FinishSyncRun(syncRunID, "sync_failed", seen, newCount, updated, now, result.Message); recoveryErr != nil {
-		finalErr = fmt.Errorf("%v; mark Sync Run failed: %w", finalErr, recoveryErr)
+	// Finding 5: preserve sync_canceled through the recovery write so
+	// the audit trail does not misrepresent a user cancellation as a
+	// contention failure. sync_completed always becomes sync_failed
+	// (slice 1 behavior: cursor cannot be atomically advanced after a
+	// rolled-back finalize). sync_canceled stays sync_canceled —
+	// Canceled.AdvancesCursor() returns false anyway so the cursor
+	// invariant is preserved either way.
+	recoveryStatus := "sync_failed"
+	envelopeOutcome := syncRunOutcomeFailed
+	if outcome == syncRunOutcomeCanceled {
+		recoveryStatus = string(syncRunOutcomeCanceled)
+		envelopeOutcome = syncRunOutcomeCanceled
+	}
+	result = syncResultFromOutcome(envelopeOutcome, result)
+	// Finding 2: the recovery write itself runs under the same retry
+	// budget+backoff because if the original finalize lost the lock,
+	// the recovery write almost certainly hits the same contention.
+	recoveryErr := retryFinalizeSyncRunOnBusyWithSleep(finalizeSyncRunRetryBudget, finalizeSyncRunSleeper, func() error {
+		return archive.FinishSyncRun(syncRunID, recoveryStatus, seen, newCount, updated, now, result.Message)
+	})
+	if recoveryErr != nil {
+		// Finding 3: errors.Join preserves BOTH typed chains —
+		// errFinalizeSyncRunBusyExhausted from the finalize side AND
+		// the typed error from the recovery side — so callers using
+		// errors.As on either can still branch on contention.
+		finalErr = errors.Join(finalErr, fmt.Errorf("mark Sync Run %s (recovery): %w", recoveryStatus, recoveryErr))
 	}
 	return result, finalErr
 }
@@ -263,7 +287,20 @@ const finalizeSyncRunRetryBudget = 8
 // error so the lifecycle module can branch via errors.As. Non-busy
 // errors short-circuit on the first occurrence so unrelated failures
 // (constraint violations, IO errors) surface immediately.
+//
+// The wrapper sleeps between busy attempts via finalizeSyncRunSleeper.
+// retryFinalizeSyncRunOnBusyWithSleep is the seam tests use to swap in
+// a no-op sleeper without consuming wallclock time.
 func retryFinalizeSyncRunOnBusy(budget int, attempt func() error) error {
+	return retryFinalizeSyncRunOnBusyWithSleep(budget, finalizeSyncRunSleeper, attempt)
+}
+
+// retryFinalizeSyncRunOnBusyWithSleep is the injectable-sleep variant
+// of retryFinalizeSyncRunOnBusy. Production callers use the wrapper
+// above which threads finalizeSyncRunSleeper through. Tests pass a
+// recording or no-op sleep so they neither block on wallclock time nor
+// silently turn the loop into a hot-loop.
+func retryFinalizeSyncRunOnBusyWithSleep(budget int, sleep func(time.Duration), attempt func() error) error {
 	var lastErr error
 	for i := 0; i < budget; i++ {
 		lastErr = attempt()
@@ -273,9 +310,42 @@ func retryFinalizeSyncRunOnBusy(budget int, attempt func() error) error {
 		if !isSQLiteBusy(lastErr) {
 			return lastErr
 		}
+		// Skip the trailing sleep after the final attempt — no point
+		// waiting if there's no retry left.
+		if i < budget-1 {
+			sleep(finalizeSyncRunBackoff(i))
+		}
 	}
 	return &errFinalizeSyncRunBusyExhausted{attempts: budget, cause: lastErr}
 }
+
+// finalizeSyncRunBackoff returns the backoff duration before the
+// (attempt+1)-th retry, given that attempt index `attempt` (zero-based)
+// just observed SQLITE_BUSY. The shape is exponential with full
+// jitter, capped at finalizeSyncRunBackoffCap. A pure exponential
+// without jitter would cause two contending writers to keep colliding
+// in lockstep; jitter desynchronizes them.
+func finalizeSyncRunBackoff(attempt int) time.Duration {
+	base := finalizeSyncRunBackoffBase << attempt
+	if base <= 0 || base > finalizeSyncRunBackoffCap {
+		base = finalizeSyncRunBackoffCap
+	}
+	// Full jitter: a uniform random in (0, base]. The +1 ensures the
+	// minimum is one nanosecond so callers never observe a zero-sleep
+	// hot-loop dressed up as "backoff".
+	jittered := rand.Int63n(int64(base)) + 1
+	return time.Duration(jittered)
+}
+
+const (
+	finalizeSyncRunBackoffBase = 50 * time.Millisecond
+	finalizeSyncRunBackoffCap  = 1 * time.Second
+)
+
+// finalizeSyncRunSleeper is the package-level sleeper the production
+// retry loop calls between busy attempts. Tests swap this for a no-op
+// to keep suite runtime bounded.
+var finalizeSyncRunSleeper = time.Sleep
 
 // isSQLiteBusy returns true when err originates from the SQLite
 // adapter reporting SQLITE_BUSY (or its extended variants). The
