@@ -380,16 +380,20 @@ func attachStatusSyncCursors(db *sql.DB, dataTypes []statusDataType) ([]statusDa
 
 // readStatusSnapshotFreshness reads the latest fetched_at per
 // snapshot_kind and (if a paired-devices snapshot exists) counts the
-// devices in its raw JSON. Returns nil when there are no snapshots at
-// all so the JSON shape omits the block entirely.
+// devices in its raw JSON. Uses ROW_NUMBER() OVER for the per-kind
+// newest pick — same window-function pattern as paired_devices and
+// current_settings, both clearer and avoids O(n²) growth as snapshots
+// accumulate. Returns nil when no snapshots exist at all so the JSON
+// shape omits the block entirely.
 func readStatusSnapshotFreshness(db *sql.DB) (*statusSnapshotFreshness, error) {
-	rows, err := db.Query(`SELECT snapshot_kind, fetched_at, raw_json
-		FROM identity_snapshots is_outer
-		WHERE id = (
-			SELECT id FROM identity_snapshots is_inner
-			WHERE is_inner.snapshot_kind = is_outer.snapshot_kind
-			ORDER BY fetched_at DESC, id DESC LIMIT 1
-		)`)
+	rows, err := db.Query(`SELECT snapshot_kind, fetched_at, raw_json FROM (
+		SELECT
+			snapshot_kind,
+			fetched_at,
+			raw_json,
+			ROW_NUMBER() OVER (PARTITION BY snapshot_kind ORDER BY fetched_at DESC, id DESC) AS rank
+		FROM identity_snapshots
+	) WHERE rank = 1`)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +406,11 @@ func readStatusSnapshotFreshness(db *sql.DB) (*statusSnapshotFreshness, error) {
 		}
 		freshness.LatestFetchedAt[kind] = fetchedAt
 		if kind == "paired-devices" {
-			freshness.PairedDeviceCount = countPairedDevicesIn(rawJSON)
+			count, err := countPairedDevicesIn(rawJSON)
+			if err != nil {
+				return nil, fmt.Errorf("status paired-devices snapshot: %w", err)
+			}
+			freshness.PairedDeviceCount = count
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -414,14 +422,19 @@ func readStatusSnapshotFreshness(db *sql.DB) (*statusSnapshotFreshness, error) {
 	return freshness, nil
 }
 
-func countPairedDevicesIn(rawJSON string) int {
+// countPairedDevicesIn parses a paired-devices snapshot payload and
+// returns the number of devices it lists. Invalid JSON surfaces as an
+// error so callers (status) can fail loudly instead of silently
+// reporting 0 — paired-devices rows in identity_snapshots are
+// supposed to be valid JSON the snapshot writer just persisted.
+func countPairedDevicesIn(rawJSON string) (int, error) {
 	var envelope struct {
 		Devices []json.RawMessage `json:"devices"`
 	}
 	if err := json.Unmarshal([]byte(rawJSON), &envelope); err != nil {
-		return 0
+		return 0, fmt.Errorf("paired-devices raw_json is not valid JSON: %w", err)
 	}
-	return len(envelope.Devices)
+	return len(envelope.Devices), nil
 }
 
 func readStatusSyncRun(db *sql.DB, syncStatus string) (*statusSyncRun, error) {

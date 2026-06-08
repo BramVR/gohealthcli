@@ -7,11 +7,30 @@ import (
 	"testing"
 )
 
-// TestStatusJSONReportsIdentitySnapshotsBlock is the tracer for the
-// snapshot-freshness slice of #111: status --json carries an
-// identity_snapshots block with the latest fetched_at per kind plus
-// paired_device_count from the most recent paired-devices snapshot.
-func TestStatusJSONReportsIdentitySnapshotsBlock(t *testing.T) {
+// TestStatusJSONOmitsFreshnessBlockWhenNoSnapshots pins the
+// omitempty contract: a clean archive with no identity_snapshots rows
+// produces no `identity_snapshots_freshness` JSON field at all.
+func TestStatusJSONOmitsFreshnessBlockWhenNoSnapshots(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"status", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("status exit = %d, stderr=%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "identity_snapshots_freshness") {
+		t.Fatalf("--json includes identity_snapshots_freshness on a clean archive; want omitted\n%s", stdout.String())
+	}
+}
+
+// TestStatusJSONReportsIdentitySnapshotsFreshnessBlock is the tracer
+// for the snapshot-freshness slice of #111: status --json carries an
+// identity_snapshots_freshness block with the latest fetched_at per
+// kind plus paired_device_count from the most recent paired-devices
+// snapshot.
+func TestStatusJSONReportsIdentitySnapshotsFreshnessBlock(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	installConnectFakes(t, fakeConnectConfig{
