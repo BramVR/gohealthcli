@@ -205,6 +205,102 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		RecordKind:         "interval",
 		SupportedEndpoints: listReconcileDailyRollupEndpoints("floors.interval.start_time", "floorsCount"),
 	},
+	// Tier 1 Activity & fitness Data Types (#101). Each carries a
+	// hopeful filter field based on the existing pattern (snake-case
+	// data-type prefix + .interval.start_time for interval or
+	// .sample_time.physical_time for sample); the live probe step
+	// flips DefaultConfigType once the response shape is confirmed.
+	{
+		DataType:           "active-energy-burned",
+		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		Parser:             "interval",
+		JSONField:          "activeEnergyBurned",
+		RecordKind:         "interval",
+		SupportedEndpoints: listReconcileEndpoints("active_energy_burned.interval.start_time"),
+	},
+	{
+		DataType:           "active-minutes",
+		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		Parser:             "interval",
+		JSONField:          "activeMinutes",
+		RecordKind:         "interval",
+		SupportedEndpoints: listReconcileEndpoints("active_minutes.interval.start_time"),
+	},
+	{
+		DataType:           "active-zone-minutes",
+		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		Parser:             "interval",
+		JSONField:          "activeZoneMinutes",
+		RecordKind:         "interval",
+		SupportedEndpoints: listReconcileEndpoints("active_zone_minutes.interval.start_time"),
+	},
+	{
+		DataType:           "altitude",
+		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		Parser:             "interval",
+		JSONField:          "altitude",
+		RecordKind:         "interval",
+		SupportedEndpoints: listReconcileEndpoints("altitude.interval.start_time"),
+	},
+	{
+		DataType:           "sedentary-period",
+		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		Parser:             "interval",
+		JSONField:          "sedentaryPeriod",
+		RecordKind:         "interval",
+		SupportedEndpoints: listReconcileEndpoints("sedentary_period.interval.start_time"),
+	},
+	{
+		// calories-in-heart-rate-zone: live API returns HTTP 400 against
+		// the assumed filter field; deferred until the upstream shape
+		// is confirmed. Catalog row stays for future debugging.
+		DataType:           "calories-in-heart-rate-zone",
+		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		Parser:             "interval",
+		JSONField:          "caloriesInHeartRateZone",
+		RecordKind:         "interval",
+		SupportedEndpoints: listReconcileEndpoints("calories_in_heart_rate_zone.interval.start_time"),
+	},
+	{
+		DataType:           "time-in-heart-rate-zone",
+		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		Parser:             "interval",
+		JSONField:          "timeInHeartRateZone",
+		RecordKind:         "interval",
+		SupportedEndpoints: listReconcileEndpoints("time_in_heart_rate_zone.interval.start_time"),
+	},
+	{
+		DataType:           "activity-level",
+		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		Parser:             "interval",
+		JSONField:          "activityLevel",
+		RecordKind:         "interval",
+		SupportedEndpoints: listReconcileEndpoints("activity_level.interval.start_time"),
+	},
+	{
+		DataType:           "vo2-max",
+		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		Parser:             "sample",
+		JSONField:          "vo2Max",
+		RecordKind:         "sample",
+		SupportedEndpoints: listReconcileEndpoints("vo2_max.sample_time.physical_time"),
+	},
+	{
+		DataType:           "run-vo2-max",
+		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		Parser:             "sample",
+		JSONField:          "runVo2Max",
+		RecordKind:         "sample",
+		SupportedEndpoints: listReconcileEndpoints("run_vo2_max.sample_time.physical_time"),
+	},
+	{
+		DataType:           "swim-lengths-data",
+		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		Parser:             "interval",
+		JSONField:          "swimLengthsData",
+		RecordKind:         "interval",
+		SupportedEndpoints: listReconcileEndpoints("swim_lengths_data.interval.start_time"),
+	},
 })
 
 var defaultDataTypes = googleHealthDataTypes.DefaultDataTypes()
