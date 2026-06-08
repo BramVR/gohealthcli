@@ -95,8 +95,10 @@ var commands = []commandDef{
 	{
 		Name:  "connect",
 		Short: "Run the browser OAuth flow and anchor one Google Identity.",
-		Long:  "Open the system browser, run the installed-app OAuth flow against the OAuth client supplied at `init`, and store the resulting tokens in the OS-native Credential Store (Keychain on macOS, Credential Manager on Windows, Secret Service on Linux).\n\nA Health Archive holds exactly one Connection. Running `connect` against an archive that already has a Connection refreshes the token material in place rather than adding a second identity.\n\n`--no-input` makes the command fail with a non-zero exit code if the browser flow would block (useful in CI smoke tests after the tokens are already provisioned).",
-		Flags: withCommon(),
+		Long:  "Open the system browser, run the installed-app OAuth flow against the OAuth client supplied at `init`, and store the resulting tokens in the OS-native Credential Store (Keychain on macOS, Credential Manager on Windows, Secret Service on Linux).\n\nA Health Archive holds exactly one Connection. Running `connect` against an archive that already has a Connection refreshes the token material in place rather than adding a second identity.\n\n`--add-scopes` extends an existing grant with optional scope keywords (`irn`, `ecg`) without re-running setup; Google's `include_granted_scopes=true` makes the resulting token cover the union of prior + new scopes. Use `connect --add-scopes irn` to unlock `gohealthcli irn-profile` and Tier 2 ECG / IRN Data Types.\n\n`--no-input` makes the command fail with a non-zero exit code if the browser flow would block (useful in CI smoke tests after the tokens are already provisioned).",
+		Flags: withCommon(
+			flagSpec{Name: "add-scopes", Type: "string", Default: "", Usage: "extend the OAuth grant with optional scope keywords (csv): irn, ecg"},
+		),
 	},
 	{
 		Name:  "identity",
@@ -120,6 +122,12 @@ var commands = []commandDef{
 		Name:  "devices",
 		Short: "Archive a Paired Devices Snapshot from the provider.",
 		Long:  "Fetch the upstream `users.pairedDevices.list` payload and append it to the Health Archive as a new Identity Snapshot of kind `paired-devices`. The `paired_devices` Normalized View explodes the latest snapshot via `json_each`, returning one row per device with `device_type`, `model`, `manufacturer`, `battery_percentage`, `last_sync_time`, and `features`.\n\nThis is the LLM's path to questions like \"which Pixel Watch synced last?\" or \"what's my Fitbit battery?\" — every projection is read-only against the raw snapshot, so new fields can be added without re-syncing.",
+		Flags: withCommon(),
+	},
+	{
+		Name:  "irn-profile",
+		Short: "Archive an IRN Profile Snapshot from the provider.",
+		Long:  "Fetch the upstream `users.getIrnProfile` payload (onboarding state, enrollment state for Google's irregular-rhythm-notification feature) and append it to the Health Archive as a new Identity Snapshot of kind `irn-profile`. The `current_irn_profile` Normalized View projects the latest snapshot as columns.\n\nRequires the `irn.readonly` OAuth scope — run `gohealthcli connect --add-scopes irn` once to grant it. If the scope is not granted, `irn-profile` exits with a clear reconnect instruction and does **not** trigger the browser flow.",
 		Flags: withCommon(),
 	},
 	{

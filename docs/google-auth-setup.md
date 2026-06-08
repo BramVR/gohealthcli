@@ -14,11 +14,18 @@ Use the target Google Cloud project, then configure:
 - Google Auth Platform: finish app branding, audience, and data access.
 - Audience: keep app in Testing while unverified, and add the Google account as
   a test user.
-- Data Access scopes:
+- Data Access scopes (base set, required for every `gohealthcli connect`):
   - `https://www.googleapis.com/auth/googlehealth.profile.readonly`
   - `https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly`
   - `https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly`
   - `https://www.googleapis.com/auth/googlehealth.sleep.readonly`
+- Optional Data Access scopes (only needed for `connect --add-scopes` and
+  the matching opt-in features):
+  - `https://www.googleapis.com/auth/googlehealth.irn.readonly` — required
+    by `gohealthcli irn-profile` and Tier 2 irregular-rhythm-notification
+    Data Types.
+  - `https://www.googleapis.com/auth/googlehealth.electrocardiogram.readonly`
+    — required by Tier 2 ECG Data Types (see #104).
 - OAuth client: create a Desktop app client from Google Auth Platform >
   Clients, then download its JSON.
 

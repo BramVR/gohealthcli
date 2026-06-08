@@ -279,6 +279,43 @@ var exportDatasetDefinitions = []exportDatasetSpec{
 		},
 	},
 	{
+		// current_irn_profile projects the latest kind='irn-profile'
+		// snapshot per Connection (onboarding state, enrollment state,
+		// last update time). Behind the same Identity Snapshot pattern
+		// as current_settings.
+		name:             "current-irn-profile",
+		view:             "current_irn_profile",
+		migrationVersion: 10,
+		orderBy:          "connection_id",
+		viewSQL: `WITH latest AS (
+			SELECT
+				provider_name,
+				connection_id,
+				raw_json,
+				fetched_at,
+				ROW_NUMBER() OVER (PARTITION BY connection_id ORDER BY fetched_at DESC, id DESC) AS rank
+			FROM identity_snapshots
+			WHERE snapshot_kind = 'irn-profile'
+		)
+		SELECT
+			provider_name,
+			connection_id,
+			IFNULL(json_extract(raw_json, '$.onboardingState'), '') AS onboarding_state,
+			IFNULL(json_extract(raw_json, '$.enrollmentState'), '') AS enrollment_state,
+			IFNULL(json_extract(raw_json, '$.lastUpdateTime'), '') AS last_update_time,
+			fetched_at
+		FROM latest
+		WHERE rank = 1`,
+		fields: []exportFieldSpec{
+			{name: "provider_name"},
+			{name: "connection_id"},
+			{name: "onboarding_state"},
+			{name: "enrollment_state"},
+			{name: "last_update_time"},
+			{name: "fetched_at"},
+		},
+	},
+	{
 		// paired_devices explodes the device list inside the latest
 		// kind='paired-devices' Identity Snapshot via json_each. One
 		// row per device with the contracted columns; new fields land

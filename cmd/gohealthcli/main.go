@@ -28,7 +28,7 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 9
+const currentSchemaVersion = 10
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
@@ -399,6 +399,8 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 		return runSettingsWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
 	case "devices":
 		return runDevicesWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
+	case "irn-profile":
+		return runIRNProfileWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
 	case "sync":
 		return runSyncWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
 	case "status":
@@ -705,6 +707,7 @@ func runConnectWithRuntime(args []string, configPath, archivePath string, global
 	connectJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
 	connectPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
 	noInput := flags.Bool("no-input", globalNoInput, "never prompt, never wait for browser input")
+	connectAddScopes := flags.String("add-scopes", "", "extend the OAuth grant with optional scope keywords (csv): irn, ecg")
 
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -717,8 +720,14 @@ func runConnectWithRuntime(args []string, configPath, archivePath string, global
 		return 1
 	}
 
+	additionalScopes, err := expandConnectAddScopes(parseCommaList(*connectAddScopes))
+	if err != nil {
+		fmt.Fprintf(stderr, "connect --add-scopes: %v\n", err)
+		return 1
+	}
+
 	mode = outputMode{json: *connectJSONOutput, plain: *connectPlainOutput}
-	result, err := connectSetupWithRuntime(*connectConfigPath, *connectArchivePath, *noInput, runtime)
+	result, err := connectSetupWithRuntimeAndExtraScopes(*connectConfigPath, *connectArchivePath, *noInput, additionalScopes, runtime)
 	if err != nil {
 		result.Status = "connect_failed"
 		result.Message = err.Error()
@@ -969,6 +978,10 @@ func connectSetup(configPath, archivePath string, noInput bool) (connectResult, 
 }
 
 func connectSetupWithRuntime(configPath, archivePath string, noInput bool, runtime runtimeAdapters) (connectResult, error) {
+	return connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, noInput, nil, runtime)
+}
+
+func connectSetupWithRuntimeAndExtraScopes(configPath, archivePath string, noInput bool, extraScopes []string, runtime runtimeAdapters) (connectResult, error) {
 	runtime = runtime.withDefaults()
 	config, err := inspectFullConfig(configPath, archivePath)
 	if err != nil {
@@ -995,7 +1008,8 @@ func connectSetupWithRuntime(configPath, archivePath string, noInput bool, runti
 	if err != nil {
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
-	token, err := runtime.runOAuthFlow(client, oauthScopesForDataTypes(config.defaultDataTypes), noInput)
+	requestedScopes := unionScopes(oauthScopesForDataTypes(config.defaultDataTypes), extraScopes)
+	token, err := runtime.runOAuthFlow(client, requestedScopes, noInput)
 	if err != nil {
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
@@ -2166,6 +2180,11 @@ func buildOAuthAuthURL(client oauthClientConfig, redirectURI string, scopes []st
 	query.Set("response_type", "code")
 	query.Set("scope", strings.Join(scopes, " "))
 	query.Set("access_type", "offline")
+	// include_granted_scopes=true tells Google to grant the union of the
+	// requested scopes and any scopes the user has previously consented
+	// to under this client, so `connect --add-scopes irn` extends an
+	// existing grant rather than replacing it.
+	query.Set("include_granted_scopes", "true")
 	query.Set("prompt", "consent")
 	query.Set("state", state)
 	query.Set("code_challenge", challenge)
@@ -3724,7 +3743,10 @@ func applyMigrations(db *sql.DB) error {
 	if err := applyPairedDevicesViewMigration(tx, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 9`); err != nil {
+	if err := applyCurrentIRNProfileViewMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 10`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -3742,7 +3764,7 @@ func applyPendingMigrations(db *sql.DB) error {
 	switch userVersion {
 	case currentSchemaVersion:
 		return nil
-	case 1, 2, 3, 4, 5, 6, 7, 8:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9:
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -3789,7 +3811,12 @@ func applyPendingMigrations(db *sql.DB) error {
 				return err
 			}
 		}
-		if _, err := tx.Exec(`PRAGMA user_version = 9`); err != nil {
+		if userVersion <= 9 {
+			if err := applyCurrentIRNProfileViewMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(`PRAGMA user_version = 10`); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -3846,6 +3873,16 @@ func applySyncCursorsMigration(tx *sql.Tx, appliedAt string) error {
 		}
 	}
 	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (6, 'add_sync_cursors', ?)`, appliedAt)
+	return err
+}
+
+func applyCurrentIRNProfileViewMigration(tx *sql.Tx, appliedAt string) error {
+	for _, statement := range normalizedViewsRegistry().MigrationStatements(10) {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (10, 'add_current_irn_profile_view', ?)`, appliedAt)
 	return err
 }
 
@@ -3917,7 +3954,8 @@ func expectedSchemaMigrations() map[int]string {
 		6: "add_sync_cursors",
 		7: "rename_profile_snapshots_to_identity_snapshots",
 		8: "add_current_settings_view",
-		9: "add_paired_devices_view",
+		9:  "add_paired_devices_view",
+		10: "add_current_irn_profile_view",
 	}
 }
 
