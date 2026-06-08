@@ -28,11 +28,12 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 18
+const currentSchemaVersion = 19
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
 const googleHealthSleepReadonlyScope = "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
+const googleHealthNutritionReadonlyScope = "https://www.googleapis.com/auth/googlehealth.nutrition.readonly"
 const googleHealthProfileReadonlyScope = "https://www.googleapis.com/auth/googlehealth.profile.readonly"
 const googleHealthBaseURL = "https://health.googleapis.com/v4"
 const googleHealthIdentityURL = "https://health.googleapis.com/v4/users/me/identity"
@@ -2169,6 +2170,7 @@ func oauthScopesForDataTypes(dataTypes []string) []string {
 		googleHealthActivityReadonlyScope,
 		googleHealthHealthMetricsReadonlyScope,
 		googleHealthSleepReadonlyScope,
+		googleHealthNutritionReadonlyScope,
 		googleHealthProfileReadonlyScope,
 	}
 	scopes := make([]string, 0, len(needed))
@@ -3817,7 +3819,10 @@ func applyMigrations(db *sql.DB) error {
 	if err := applyTier1HealthMetricsViewsMigration(tx, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 18`); err != nil {
+	if err := applyTier1DailyHydrationViewsMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 19`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -3837,7 +3842,7 @@ func applyPendingMigrations(db *sql.DB) error {
 	switch userVersion {
 	case currentSchemaVersion:
 		return nil
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18:
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -3924,10 +3929,15 @@ func applyPendingMigrations(db *sql.DB) error {
 				return err
 			}
 		}
-		if err := applyTier1HealthMetricsViewsMigration(tx, now); err != nil {
+		if userVersion <= 17 {
+			if err := applyTier1HealthMetricsViewsMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if err := applyTier1DailyHydrationViewsMigration(tx, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`PRAGMA user_version = 18`); err != nil {
+		if _, err := tx.Exec(`PRAGMA user_version = 19`); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -4004,6 +4014,26 @@ func applyTier1HealthMetricsViewsMigration(tx *sql.Tx, appliedAt string) error {
 		}
 	}
 	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (18, 'add_tier1_health_metrics_views', ?)`, appliedAt)
+	return err
+}
+
+// applyTier1DailyHydrationViewsMigration installs the four daily/sample
+// Normalized Views for #103: daily_vo2_max, daily_heart_rate_zones,
+// daily_sleep_temperature_derivations, respiratory_rate_sleep_summary.
+// The hydration_log_sessions view is deferred (the connect flow has no
+// `nutrition` keyword in --add-scopes yet, so users can't reach the
+// nutrition.readonly scope); the catalog row still ships at the same
+// migration so the issue's surface lands together. The migration name
+// keeps "_hydration_views" for forward compatibility with the upcoming
+// hydration view follow-up — splitting it now would force a v20 just to
+// register one extra view.
+func applyTier1DailyHydrationViewsMigration(tx *sql.Tx, appliedAt string) error {
+	for _, statement := range normalizedViewsRegistry().MigrationStatements(19) {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (19, 'add_tier1_daily_hydration_views', ?)`, appliedAt)
 	return err
 }
 
@@ -4186,6 +4216,7 @@ func expectedSchemaMigrations() map[int]string {
 		16: "add_floors_intervals_view",
 		17: "add_tier1_activity_views",
 		18: "add_tier1_health_metrics_views",
+		19: "add_tier1_daily_hydration_views",
 	}
 }
 

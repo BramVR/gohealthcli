@@ -379,6 +379,58 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		RecordKind:         "sample",
 		SupportedEndpoints: listReconcileEndpoints("height.sample_time.physical_time"),
 	},
+	// Tier 1 Daily + hydration Data Types (#103). Four reuse the
+	// existing daily parser shape (one row per civil date); one is
+	// sample-shaped (sleep-window respiratory rate) and one is
+	// session-shaped (hydration log). None are DefaultConfigType yet —
+	// users opt in via --types until each has run cleanly across
+	// multiple weeks of real data.
+	{
+		DataType:             "daily-vo2-max",
+		RequiredScopes:       []string{googleHealthActivityReadonlyScope},
+		Parser:               "daily",
+		JSONField:            "dailyVo2Max",
+		RecordKind:           "daily",
+		UsesDateRangeDefault: true,
+		SupportedEndpoints:   listReconcileEndpoints("daily_vo2_max.date"),
+	},
+	{
+		DataType:             "daily-heart-rate-zones",
+		RequiredScopes:       []string{googleHealthHealthMetricsReadonlyScope},
+		Parser:               "daily",
+		JSONField:            "dailyHeartRateZones",
+		RecordKind:           "daily",
+		UsesDateRangeDefault: true,
+		SupportedEndpoints:   listReconcileEndpoints("daily_heart_rate_zones.date"),
+	},
+	{
+		DataType:             "daily-sleep-temperature-derivations",
+		RequiredScopes:       []string{googleHealthSleepReadonlyScope},
+		Parser:               "daily",
+		JSONField:            "dailySleepTemperatureDerivations",
+		RecordKind:           "daily",
+		UsesDateRangeDefault: true,
+		SupportedEndpoints:   listReconcileEndpoints("daily_sleep_temperature_derivations.date"),
+	},
+	{
+		DataType:           "respiratory-rate-sleep-summary",
+		RequiredScopes:     []string{googleHealthSleepReadonlyScope},
+		Parser:             "sample",
+		JSONField:          "respiratoryRateSleepSummary",
+		RecordKind:         "sample",
+		SupportedEndpoints: listReconcileEndpoints("respiratory_rate_sleep_summary.sample_time.physical_time"),
+	},
+	{
+		// hydration-log lives under the nutrition.readonly scope.
+		// Session-shaped: the user logs a volume over a civil window.
+		DataType:             "hydration-log",
+		RequiredScopes:       []string{googleHealthNutritionReadonlyScope},
+		Parser:               "session",
+		JSONField:            "hydrationLog",
+		RecordKind:           "session",
+		UsesDateRangeDefault: true,
+		SupportedEndpoints:   listEndpoint("hydration_log.interval.civil_start_time"),
+	},
 })
 
 var defaultDataTypes = googleHealthDataTypes.DefaultDataTypes()

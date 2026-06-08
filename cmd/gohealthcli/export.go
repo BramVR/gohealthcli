@@ -519,6 +519,134 @@ var exportDatasetDefinitions = []exportDatasetSpec{
 		},
 	},
 	{
+		// daily_vo2_max projects archived daily-vo2-max Data Points into
+		// one row per civil date with the principal vo2Max scalar, the
+		// cardio-fitness-level enum, and the covariance scalar. vo2Max
+		// stored as TEXT to preserve floating-point precision; the raw
+		// JSON path lives at $.dailyVo2Max.vo2Max (Google's repeated
+		// data-type name nesting).
+		name:             "daily-vo2-max",
+		view:             "daily_vo2_max",
+		migrationVersion: 19,
+		orderBy:          "civil_date, provider_name, connection_id",
+		viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			provider_civil_date AS civil_date,
+			CAST(json_extract(raw_json, '$.dailyVo2Max.vo2Max') AS TEXT) AS vo2_max,
+			IFNULL(json_extract(raw_json, '$.dailyVo2Max.cardioFitnessLevel'), '') AS cardio_fitness_level,
+			CAST(json_extract(raw_json, '$.dailyVo2Max.vo2MaxCovariance') AS TEXT) AS vo2_max_covariance,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'daily-vo2-max'
+			AND record_kind = 'daily'
+			AND provider_civil_date IS NOT NULL
+			AND json_extract(raw_json, '$.dailyVo2Max.vo2Max') IS NOT NULL`,
+		fields: []exportFieldSpec{
+			{name: "provider_name"}, {name: "connection_id"},
+			{name: "civil_date"},
+			{name: "vo2_max"}, {name: "cardio_fitness_level"}, {name: "vo2_max_covariance"},
+			{name: "source_family_filter"}, {name: "upstream_resource_name"},
+		},
+	},
+	{
+		// daily_heart_rate_zones explodes the heartRateZones[] array
+		// Google returns under $.dailyHeartRateZones — one row per
+		// per-day zone slice with the enum and the min/max BPM scalars
+		// (the live API returns those as strings, hence the CAST).
+		name:             "daily-heart-rate-zones",
+		view:             "daily_heart_rate_zones",
+		migrationVersion: 19,
+		orderBy:          "civil_date, provider_name, connection_id, heart_rate_zone_type",
+		viewSQL: `SELECT
+			data_points.provider_name,
+			data_points.connection_id,
+			data_points.provider_civil_date AS civil_date,
+			IFNULL(json_extract(zone.value, '$.heartRateZoneType'), '') AS heart_rate_zone_type,
+			CAST(json_extract(zone.value, '$.minBeatsPerMinute') AS INTEGER) AS min_beats_per_minute,
+			CAST(json_extract(zone.value, '$.maxBeatsPerMinute') AS INTEGER) AS max_beats_per_minute,
+			IFNULL(data_points.source_family_filter, '') AS source_family_filter,
+			IFNULL(data_points.upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points, json_each(data_points.raw_json, '$.dailyHeartRateZones.heartRateZones') AS zone
+		WHERE data_points.data_type = 'daily-heart-rate-zones'
+			AND data_points.record_kind = 'daily'
+			AND data_points.provider_civil_date IS NOT NULL
+			AND json_extract(data_points.raw_json, '$.dailyHeartRateZones.heartRateZones') IS NOT NULL`,
+		fields: []exportFieldSpec{
+			{name: "provider_name"}, {name: "connection_id"},
+			{name: "civil_date"},
+			{name: "heart_rate_zone_type"}, {name: "min_beats_per_minute"}, {name: "max_beats_per_minute"},
+			{name: "source_family_filter"}, {name: "upstream_resource_name"},
+		},
+	},
+	{
+		// daily_sleep_temperature_derivations projects the nightly
+		// temperature, the baseline, and the relative stddev (all
+		// Celsius) for each archived daily Data Point. All scalars
+		// stored as TEXT to preserve floating-point precision.
+		name:             "daily-sleep-temperature-derivations",
+		view:             "daily_sleep_temperature_derivations",
+		migrationVersion: 19,
+		orderBy:          "civil_date, provider_name, connection_id",
+		viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			provider_civil_date AS civil_date,
+			CAST(json_extract(raw_json, '$.dailySleepTemperatureDerivations.nightlyTemperatureCelsius') AS TEXT) AS nightly_temperature_celsius,
+			CAST(json_extract(raw_json, '$.dailySleepTemperatureDerivations.baselineTemperatureCelsius') AS TEXT) AS baseline_temperature_celsius,
+			CAST(json_extract(raw_json, '$.dailySleepTemperatureDerivations.relativeNightlyStddev30dCelsius') AS TEXT) AS relative_nightly_stddev_30d_celsius,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'daily-sleep-temperature-derivations'
+			AND record_kind = 'daily'
+			AND provider_civil_date IS NOT NULL
+			AND json_extract(raw_json, '$.dailySleepTemperatureDerivations.nightlyTemperatureCelsius') IS NOT NULL`,
+		fields: []exportFieldSpec{
+			{name: "provider_name"}, {name: "connection_id"},
+			{name: "civil_date"},
+			{name: "nightly_temperature_celsius"}, {name: "baseline_temperature_celsius"}, {name: "relative_nightly_stddev_30d_celsius"},
+			{name: "source_family_filter"}, {name: "upstream_resource_name"},
+		},
+	},
+	{
+		// respiratory_rate_sleep_summary projects the principal
+		// full-sleep breathsPerMinute scalar plus the per-stage
+		// (deep/light/REM) scalars Google returns under
+		// $.respiratoryRateSleepSummary. All scalars stored as TEXT to
+		// preserve floating-point precision.
+		name:             "respiratory-rate-sleep-summary",
+		view:             "respiratory_rate_sleep_summary",
+		migrationVersion: 19,
+		orderBy:          "sample_time_utc, provider_name, connection_id",
+		viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			start_time_utc AS sample_time_utc,
+			IFNULL(start_civil_time, '') AS sample_civil_time,
+			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
+			CAST(json_extract(raw_json, '$.respiratoryRateSleepSummary.fullSleepStats.breathsPerMinute') AS TEXT) AS full_sleep_breaths_per_minute,
+			CAST(json_extract(raw_json, '$.respiratoryRateSleepSummary.deepSleepStats.breathsPerMinute') AS TEXT) AS deep_sleep_breaths_per_minute,
+			CAST(json_extract(raw_json, '$.respiratoryRateSleepSummary.lightSleepStats.breathsPerMinute') AS TEXT) AS light_sleep_breaths_per_minute,
+			CAST(json_extract(raw_json, '$.respiratoryRateSleepSummary.remSleepStats.breathsPerMinute') AS TEXT) AS rem_sleep_breaths_per_minute,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'respiratory-rate-sleep-summary'
+			AND record_kind = 'sample'
+			AND start_time_utc IS NOT NULL`,
+		fields: []exportFieldSpec{
+			{name: "provider_name"}, {name: "connection_id"},
+			{name: "sample_time_utc"}, {name: "sample_civil_time"}, {name: "civil_date"},
+			{name: "full_sleep_breaths_per_minute"},
+			{name: "deep_sleep_breaths_per_minute"},
+			{name: "light_sleep_breaths_per_minute"},
+			{name: "rem_sleep_breaths_per_minute"},
+			{name: "source_family_filter"}, {name: "upstream_resource_name"},
+		},
+	},
+	{
 		// floors_intervals projects archived floors interval Data Points
 		// into one row per source-interval with civil_date, count, and
 		// source attribution. Same pattern as the steps interval flow.

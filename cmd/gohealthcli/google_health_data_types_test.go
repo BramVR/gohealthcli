@@ -188,6 +188,57 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantParser:          "sample",
 			wantRecordKind:      "sample",
 		},
+		// Tier 1 Daily + hydration Data Types (#103). None are
+		// DefaultConfigType yet — users opt in via --types until each
+		// has run cleanly against real data over multiple weeks.
+		{
+			dataType:             "daily-vo2-max",
+			wantScopes:           []string{googleHealthActivityReadonlyScope},
+			wantListFilterField:  "daily_vo2_max.date",
+			wantSyncDataPoint:    true,
+			wantReconcile:        true,
+			wantParser:           "daily",
+			wantRecordKind:       "daily",
+			wantDateRangeDefault: true,
+		},
+		{
+			dataType:             "daily-heart-rate-zones",
+			wantScopes:           []string{googleHealthHealthMetricsReadonlyScope},
+			wantListFilterField:  "daily_heart_rate_zones.date",
+			wantSyncDataPoint:    true,
+			wantReconcile:        true,
+			wantParser:           "daily",
+			wantRecordKind:       "daily",
+			wantDateRangeDefault: true,
+		},
+		{
+			dataType:             "daily-sleep-temperature-derivations",
+			wantScopes:           []string{googleHealthSleepReadonlyScope},
+			wantListFilterField:  "daily_sleep_temperature_derivations.date",
+			wantSyncDataPoint:    true,
+			wantReconcile:        true,
+			wantParser:           "daily",
+			wantRecordKind:       "daily",
+			wantDateRangeDefault: true,
+		},
+		{
+			dataType:            "respiratory-rate-sleep-summary",
+			wantScopes:          []string{googleHealthSleepReadonlyScope},
+			wantListFilterField: "respiratory_rate_sleep_summary.sample_time.physical_time",
+			wantSyncDataPoint:   true,
+			wantReconcile:       true,
+			wantParser:          "sample",
+			wantRecordKind:      "sample",
+		},
+		{
+			dataType:             "hydration-log",
+			wantScopes:           []string{googleHealthNutritionReadonlyScope},
+			wantListFilterField:  "hydration_log.interval.civil_start_time",
+			wantSyncDataPoint:    true,
+			wantParser:           "session",
+			wantRecordKind:       "session",
+			wantDateRangeDefault: true,
+		},
 	}
 
 	for _, tt := range tests {
