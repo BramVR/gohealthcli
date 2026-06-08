@@ -146,6 +146,30 @@ func TestSyncPreflightGateRulesTable(t *testing.T) {
 			wantRule:   preflightRuleRangeZeroWidth,
 			wantErrSub: "zero-width sync window",
 		},
+		{
+			// Cross-shape collision: civil from + start-of-UTC-day RFC3339 to
+			// normalize to the same instant. Earlier drafts of slice 2 missed
+			// this because the table only covered same-shape and one
+			// asymmetric mix. The error message names both inputs verbatim
+			// so the user sees why two visually-different strings collided.
+			name:       "civil from collides with start-of-UTC-day RFC3339 to as zero-width",
+			options:    syncCommandOptions{dataTypes: []string{"steps"}, from: "2026-06-01", to: "2026-06-01T00:00:00Z"},
+			wantRule:   preflightRuleRangeZeroWidth,
+			wantErrSub: "zero-width sync window",
+		},
+		{
+			// Regression for the empty-to bypass: when --to is omitted, the
+			// gate defaults it to now() and validates the resolved value
+			// against --from. A future --from with no --to therefore still
+			// trips inverted-range instead of silently producing a
+			// from>to plan that downstream then fails opaquely.
+			// Uses the fake clock's "now" (2026-01-05) — anything later than
+			// that as --from must be rejected here.
+			name:       "future from with empty to rejected against defaulted now",
+			options:    syncCommandOptions{dataTypes: []string{"steps"}, from: "2099-01-01"},
+			wantRule:   preflightRuleRangeOrderInverted,
+			wantErrSub: "from must be earlier than to",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

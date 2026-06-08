@@ -132,20 +132,23 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 			}
 		}
 	}
+	to := options.to
+	if to == "" {
+		to = gate.defaultTo(options, dataTypes)
+	}
 	// Range ordering: --from > --to and --from == --to are both flag-
 	// shape rejections and must fire before the archive connection
 	// lookup so an operator typo surfaces faster than a disk open.
 	// --from "" is the cursor-resume case (lifecycle fills it from the
 	// Sync Cursor later) and the executor's resume path covers that
-	// separately, so skip the check entirely when --from is empty.
-	if options.from != "" && options.to != "" {
-		if err := validatePreflightRangeOrder(options.from, options.to); err != nil {
+	// separately, so skip the check entirely when --from is empty. We
+	// validate against the RESOLVED --to (post-defaultTo) so a future
+	// --from with --to omitted still trips the inverted-range rule
+	// instead of silently producing a plan{from=2099, to=today}.
+	if options.from != "" {
+		if err := validatePreflightRangeOrder(options.from, to); err != nil {
 			return preflightPlan{}, err
 		}
-	}
-	to := options.to
-	if to == "" {
-		to = gate.defaultTo(options, dataTypes)
 	}
 	connection, err := gate.ctx.currentConnection()
 	if err != nil {
@@ -258,7 +261,7 @@ func validatePreflightRangeOrder(from, to string) error {
 	if fromTime.Equal(toTime) {
 		return newPreflightFailure(
 			preflightRuleRangeZeroWidth,
-			fmt.Errorf("sync --from and --to are equal (%s); zero-width sync window is not useful", from),
+			fmt.Errorf("sync --from %s and --to %s normalize to the same instant; zero-width sync window is not useful", from, to),
 		)
 	}
 	if fromTime.After(toTime) {
