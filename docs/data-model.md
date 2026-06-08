@@ -96,10 +96,15 @@ correction behavior warrants it.
 - raw provider JSON
 - fetched timestamp
 
-Identity Snapshots are append-only and kind-tagged. The `current_settings`
-Normalized View projects the latest snapshot of kind=`settings` per Connection
-into columns (measurement system, timezone, stride length type); follow-up
-slices add `current_profile`, `paired_devices`, and `current_irn_profile`.
+Identity Snapshots are append-only and kind-tagged. Normalized Views project
+the latest snapshot of each kind per Connection into queryable columns:
+
+- `current_settings` — `kind='settings'` projected as measurement system,
+  timezone, stride length type.
+- `paired_devices` — `kind='paired-devices'` exploded via `json_each` into
+  one row per device with `device_type`, `model`, `manufacturer`,
+  `battery_percentage`, `last_sync_time`, and `features`.
+- Follow-up slices add `current_profile` and `current_irn_profile`.
 
 Rows pre-dating migration 7 keep `snapshot_kind='profile'` via the column
 default; no parallel-table-with-view shim was used (PRD #93
