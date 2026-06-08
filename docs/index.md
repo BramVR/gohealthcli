@@ -22,15 +22,15 @@ gohealthcli status --plain
 
 ## What you can archive
 
-Raw Data Points across the Tier 1 Activity & Fitness, Health Metrics, and Daily catalogs — steps, heart rate, HRV, oxygen saturation, distance, sleep, exercise, weight, body fat, height, VO2 max, blood glucose, core body temperature, floors, and their daily Rollups. Tier 2 adds ECG sessions and irregular-rhythm notifications behind opt-in scopes. Exercise sessions can archive the upstream TCX route as a Data Point Attachment when the TCX scope is granted. Wearable-only filtering is available for Data Types backed by the Google Health reconcile path; `sync` orchestrates `--all` or `--types csv` into per-Data-Type runs with backoff/retry on 429/5xx and an outcome-aware Sync Cursor. Identity snapshots, paired devices, settings, and the IRN profile each have their own verb.
+Raw Data Points across the Google Health Tier 1 and Tier 2 catalogs and their Rollups, plus identity, device, settings, and profile snapshots. Wearable-only filtering is available for Data Types backed by the Google Health reconcile path. `sync` orchestrates `--all` or `--types csv` into per-Data-Type runs with backoff/retry on 429/5xx and an outcome-aware Sync Cursor; expired access tokens auto-refresh from the stored refresh token. Exercise sessions can archive the upstream TCX route as a Data Point Attachment when the TCX scope is granted.
 
-Normalised exports cover 33 datasets across activity, heart rate, heart rhythm, sleep, exercise, body measurements, VO2 max, biomarkers, and device/account metadata — written as CSV or JSONL, on demand, to a path you choose. Rollups widen to `hourly`, `weekly`, or `window=<dur>`. The full list lives in the [README](https://github.com/BramVR/gohealthcli#readme) and is drift-guarded against the binary.
+Normalised CSV or JSONL exports cover every Data Type the catalog supports. Rollups widen to `hourly`, `weekly`, or `window=<dur>`. The [README](https://github.com/BramVR/gohealthcli#readme) is the canonical catalog and export list — drift-guarded against the binary — and the [commands reference](commands.html) covers every verb and flag.
 
 ## Where to start
 
 - **Install** — pick a path that works today: `go install`, source build, or the upcoming Homebrew tap.
 - **Quickstart** — walk through OAuth setup and your first sync.
-- **Reference** — every subcommand and flag at a stable URL, including `devices`, `settings`, `irn-profile`, and `describe-schema`.
+- **Reference** — every subcommand and flag at a stable URL.
 
 ## What it isn't
 
