@@ -57,7 +57,7 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 		}
 	}
 
-	config, err := inspectFullConfig(options.configPath, options.archivePath)
+	config, err := inspectIdentityConfig(options.configPath, options.archivePath)
 	if err != nil {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, fmt.Errorf("config check failed: %w", err)
 	}

@@ -1723,7 +1723,14 @@ func inspectIdentityConfig(configPath, archivePath string) (fullConfigCheck, err
 	return fullConfigCheck{
 		archivePath:      config.archivePath,
 		defaultDataTypes: config.defaultDataTypes,
-		credentialStore:  config.credentialStore,
+		// oauthClient is returned unvalidated so the sync auto-refresh
+		// path can reach it without forcing every identity-only command
+		// to validate the OAuth client file. validateOAuthClientFile is
+		// still triggered inside loadOAuthClientConfig when a refresh
+		// actually runs, so an invalid file fails the refresh, not the
+		// happy-path read.
+		oauthClient:     config.oauthClient,
+		credentialStore: config.credentialStore,
 	}, nil
 }
 
