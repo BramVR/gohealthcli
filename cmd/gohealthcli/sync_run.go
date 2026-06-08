@@ -35,11 +35,20 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	if !syncDataPointDataTypeSupported(dataType) {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, fmt.Errorf("sync Data Type %q is not supported yet", dataType)
 	}
-	if options.rollup != "" && options.rollup != "daily" {
-		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync --rollup currently supports only daily")
-	}
-	if options.rollup != "" && !dailyRollupDataTypeSupported(dataType) {
-		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync --rollup currently supports only Data Type steps")
+	// Validate --rollup up front so we surface the parse / catalog
+	// error verbatim (the #106 AC requires the SupportedEndpoints map
+	// keys be quoted) without reaching the upstream provider. The
+	// Plan() call below re-runs the same validation; pre-flighting it
+	// here keeps the audit-row-not-written semantic for preflight
+	// failures intact.
+	if options.rollup != "" {
+		spec, err := parseSyncRollupSpec(options.rollup)
+		if err != nil {
+			return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, err
+		}
+		if err := validateSyncRollupAgainstDataType(spec, dataType); err != nil {
+			return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, err
+		}
 	}
 	if options.sourceFamily != "" {
 		if _, err := googleHealthSourceFamilyFilterName(dataType, options.sourceFamily); err != nil {
@@ -188,8 +197,8 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 		}
 		return finalize(syncRunOutcomeFailed, err)
 	}
-	if options.rollup == "daily" {
-		result.Message = "Sync Run archived steps daily Rollups"
+	if options.rollup != "" {
+		result.Message = fmt.Sprintf("Sync Run archived %s %s Rollups", dataType, options.rollup)
 	} else if options.sourceFamily != "" {
 		result.Message = fmt.Sprintf("Sync Run archived %s Data Points with source-family filter", dataType)
 	} else {
