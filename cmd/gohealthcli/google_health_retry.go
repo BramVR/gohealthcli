@@ -3,7 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"time"
 )
 
@@ -139,10 +139,17 @@ func backoffDelay(attempt int, retryAfter time.Duration) time.Duration {
 // fleet of clients doesn't stampede after a shared rate-limit window.
 // gohealthcli is a single-user CLI, but the jitter is cheap and keeps
 // the behavior right if the binary is ever scripted to run in parallel.
+// math/rand/v2 is auto-seeded, so the sequence varies across runs.
 func defaultRetryJitter(delay time.Duration) time.Duration {
 	if delay <= 0 {
 		return 0
 	}
-	jitter := time.Duration(rand.Int63n(int64(delay) / 4))
-	return delay + jitter
+	// Sub-4ns delays would make the window collapse to zero and panic
+	// rand.IntN; the constants today never produce such small values but
+	// guard so a future tweak to googleHealthRetryBaseDelay can't bite.
+	window := int64(delay) / 4
+	if window <= 0 {
+		return delay
+	}
+	return delay + time.Duration(rand.Int64N(window))
 }

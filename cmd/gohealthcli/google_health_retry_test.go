@@ -276,3 +276,14 @@ func TestDefaultRetryJitterStaysWithinExpectedWindow(t *testing.T) {
 	}
 }
 
+func TestDefaultRetryJitterDoesNotPanicOnTinyDelays(t *testing.T) {
+	// delay/4 < 1 would feed 0 to rand.Int64N and panic; guard returns
+	// the delay unchanged for these sub-window cases.
+	for _, delay := range []time.Duration{1, 2, 3} {
+		got := defaultRetryJitter(delay)
+		if got != delay {
+			t.Errorf("defaultRetryJitter(%v) = %v, want delay unchanged when window collapses", delay, got)
+		}
+	}
+}
+
