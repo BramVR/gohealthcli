@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	_ "embed"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -24,29 +23,35 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 	flags := flag.NewFlagSet("describe-schema", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
-	describeConfigPath := flags.String("config", configPath, "config file path")
-	describeArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
-	// --json defaults to true here because the JSON catalog is the
-	// downstream contract; an explicit --sql overrides. We do NOT
-	// reject the combination — that would mis-fire when the user
-	// passes a global --json flag plus a subcommand-level --sql.
-	flags.Bool("json", true, "emit the curated JSON catalog (default)")
+	// describe-schema accepts the full Common Flag Set ({config, db, json,
+	// plain, no-input}) so the "every subcommand accepts the same global
+	// flags" invariant (PRD #143) holds. The schema catalog has no key/value
+	// plain shape, so --plain is a documented no-op: when set without
+	// --json, we still emit the JSON catalog and surface a `// note: …`
+	// comment line on stderr so the catalog itself stays uncluttered for
+	// users redirecting stdout to a file. --json remains the implicit
+	// default mode; --sql is the explicit override below.
+	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
+		ConfigPath:  configPath,
+		ArchivePath: archivePath,
+		JSONOutput:  mode.json,
+		PlainOutput: mode.plain,
+	})
+	// --sql is a describe-schema-specific override that wins over the JSON
+	// catalog default. We register it AFTER RegisterCommon so the Common
+	// Flag Set seam keeps owning the shared invariants; the override is
+	// applied locally below.
 	describeSQL := flags.Bool("sql", false, "emit live DDL from sqlite_master instead of the JSON catalog")
-	// --no-input matches the common-flag set so the global --no-input
-	// flag doesn't trigger flag.ErrHelp; we don't use it here.
-	flags.Bool("no-input", false, "ignored by describe-schema (kept for common-flag compatibility)")
 
-	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 1
+	if err := ParseCommon(flags, common, args); err != nil {
+		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	// describe-schema's success output is determined by its own --sql /
 	// --json flags, not the global outputMode. Its FAILURE output still
 	// honours the global outputMode so the unified failure contract
 	// (slice 7, #178) applies uniformly: `--json describe-schema bogus`
 	// gets the JSON envelope on stdout like every other subcommand.
+	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	if flags.NArg() != 0 {
 		return ReportFailure(FailureReport{
 			Command: "describe-schema",
@@ -56,7 +61,7 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 		}, stdout, stderr)
 	}
 
-	resolvedPath, err := resolveConfiguredArchivePath(*describeConfigPath, *describeArchivePath, false)
+	resolvedPath, err := resolveConfiguredArchivePath(common.ConfigPath, common.ArchivePath, common.ArchivePathExplicit)
 	if err != nil {
 		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
@@ -68,6 +73,17 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	defer db.Close()
+
+	// --plain is a no-op on describe-schema (the schema catalog has no
+	// key/value plain shape). Emit a comment line on stderr so the user
+	// knows their flag was honoured as a best-effort fallback; stdout
+	// stays the catalog so redirecting it to a file still produces valid
+	// JSON. The ParseCommon mutual-exclusion check already rejects
+	// `--plain --json`, so this branch only fires when --plain is the
+	// only output-mode flag set.
+	if common.PlainOutput {
+		fmt.Fprintln(stderr, "// note: --plain is a no-op on describe-schema; emitting JSON catalog")
+	}
 
 	if *describeSQL {
 		if err := writeSchemaSQL(db, stdout); err != nil {
