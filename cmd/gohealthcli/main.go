@@ -3778,8 +3778,10 @@ func applyPendingMigrations(db *sql.DB) error {
 				return err
 			}
 		}
-		if err := applyCurrentSettingsViewMigration(tx, now); err != nil {
-			return err
+		if userVersion <= 7 {
+			if err := applyCurrentSettingsViewMigration(tx, now); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(`PRAGMA user_version = 8`); err != nil {
 			return err

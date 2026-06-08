@@ -285,7 +285,7 @@ var exportDatasetDefinitions = []exportDatasetSpec{
 				snapshot_kind,
 				raw_json,
 				fetched_at,
-				ROW_NUMBER() OVER (PARTITION BY connection_id ORDER BY id DESC) AS rank
+				ROW_NUMBER() OVER (PARTITION BY connection_id ORDER BY fetched_at DESC, id DESC) AS rank
 			FROM identity_snapshots
 			WHERE snapshot_kind = 'settings'
 		)

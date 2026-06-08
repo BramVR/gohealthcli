@@ -53,7 +53,7 @@ func (archive *identitySnapshotArchive) CurrentConnection() (archivedConnection,
 // silently produce kind-empty rows.
 func (archive *identitySnapshotArchive) Insert(connection archivedConnection, kind, rawJSON, fetchedAt string) (int64, error) {
 	if kind == "" {
-		return 0, errors.New("Identity Snapshot kind must not be empty")
+		return 0, errors.New("identity snapshot kind must not be empty")
 	}
 	result, err := archive.db.Exec(`INSERT INTO identity_snapshots (
 		provider_name,
@@ -77,7 +77,7 @@ func (archive *identitySnapshotArchive) Latest(connection archivedConnection, ki
 	err := archive.db.QueryRow(`SELECT id, snapshot_kind, raw_json, fetched_at
 		FROM identity_snapshots
 		WHERE connection_id = ? AND snapshot_kind = ?
-		ORDER BY id DESC
+		ORDER BY fetched_at DESC, id DESC
 		LIMIT 1`, connection.id, kind).Scan(&record.ID, &record.Kind, &record.RawJSON, &record.FetchedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return identitySnapshotRecord{}, false, nil

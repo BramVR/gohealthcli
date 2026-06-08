@@ -319,6 +319,52 @@ func TestCurrentSettingsViewProjectsLatestSnapshot(t *testing.T) {
 	}
 }
 
+// TestIdentitySnapshotArchiveLatestUsesFetchedAtForRecency guards against
+// id-order vs fetched_at-order divergence. Insert order is id=1 (newer
+// fetched_at) then id=2 (older fetched_at); a naive ORDER BY id DESC
+// would surface id=2 as "latest" — wrong. Latest must read the row
+// that was fetched most recently, not the row inserted most recently.
+func TestIdentitySnapshotArchiveLatestUsesFetchedAtForRecency(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d", code)
+	}
+
+	archive, err := openIdentitySnapshotArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer archive.Close()
+	connection, err := archive.CurrentConnection()
+	if err != nil {
+		t.Fatalf("CurrentConnection: %v", err)
+	}
+
+	// id=1, fetched_at=2026-06-08 (the actually-newest)
+	if _, err := archive.Insert(connection, "settings", `{"newest":true}`, "2026-06-08T00:00:00Z"); err != nil {
+		t.Fatalf("Insert newer: %v", err)
+	}
+	// id=2, fetched_at=2026-05-01 (older, even though inserted later)
+	if _, err := archive.Insert(connection, "settings", `{"newest":false}`, "2026-05-01T00:00:00Z"); err != nil {
+		t.Fatalf("Insert older: %v", err)
+	}
+
+	latest, found, err := archive.Latest(connection, "settings")
+	if err != nil || !found {
+		t.Fatalf("Latest: found=%v err=%v", found, err)
+	}
+	if latest.RawJSON != `{"newest":true}` {
+		t.Fatalf("Latest.RawJSON = %q, want the row with the latest fetched_at (id ordering would have given the wrong answer)", latest.RawJSON)
+	}
+}
+
 // TestV6ArchiveMigratesProfileSnapshotsWithKindDefault drives behavior 2
 // of slice A: a v6 archive that contains profile_snapshots rows must
 // migrate forward so those rows surface as identity_snapshots rows with
