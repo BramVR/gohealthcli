@@ -29,6 +29,10 @@ In the Google Cloud console:
    - `https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly`
    - `https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly`
    - `https://www.googleapis.com/auth/googlehealth.sleep.readonly`
+
+   Optionally add these too if you plan to use `connect --add-scopes`:
+   - `https://www.googleapis.com/auth/googlehealth.irn.readonly` — needed by `gohealthcli irn-profile`.
+   - `https://www.googleapis.com/auth/googlehealth.electrocardiogram.readonly` — needed by Tier 2 ECG Data Types.
 6. Create an OAuth client with application type **Desktop app**.
 7. Download the client JSON.
 
