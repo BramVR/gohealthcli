@@ -25,18 +25,29 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 
 	// describe-schema accepts the full Common Flag Set ({config, db, json,
 	// plain, no-input}) so the "every subcommand accepts the same global
-	// flags" invariant (PRD #143) holds. The schema catalog has no key/value
-	// plain shape, so --plain is a documented no-op: when set without
-	// --json, we still emit the JSON catalog and surface a `// note: …`
-	// comment line on stderr so the catalog itself stays uncluttered for
-	// users redirecting stdout to a file. --json remains the implicit
-	// default mode; --sql is the explicit override below.
+	// flags" invariant (PRD #143) holds. The schema catalog is always the
+	// success-mode output (the only override is the explicit `--sql`
+	// flag); the Common Flag Set `--json` flag is therefore accepted for
+	// uniformity but does not change behaviour. `--plain` is a documented
+	// no-op (the schema catalog has no key/value plain shape): when set
+	// without --json, we still emit the JSON catalog and surface a
+	// `// note: …` comment line on stderr so the catalog itself stays
+	// uncluttered for users redirecting stdout to a file. `--no-input` is
+	// likewise accepted but ignored — describe-schema does no prompting.
 	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
 		ConfigPath:  configPath,
 		ArchivePath: archivePath,
 		JSONOutput:  mode.json,
 		PlainOutput: mode.plain,
 	})
+	// Override the generic CommonFlagSet Usage strings for the flags
+	// whose meaning is describe-schema-specific. `describe-schema --help`
+	// now reflects the documented no-op / accepted-but-ignored semantics
+	// instead of the misleading "write stable JSON to stdout" wording
+	// inherited from the shared module.
+	flags.Lookup("json").Usage = "accepted for uniformity; the JSON catalog is the success-mode default"
+	flags.Lookup("plain").Usage = "no-op (schema catalog has no plain shape); emits JSON catalog + stderr note"
+	flags.Lookup("no-input").Usage = "accepted for uniformity; describe-schema does no prompting"
 	// --sql is a describe-schema-specific override that wins over the JSON
 	// catalog default. We register it AFTER RegisterCommon so the Common
 	// Flag Set seam keeps owning the shared invariants; the override is
@@ -46,8 +57,9 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 	if err := ParseCommon(flags, common, args); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
-	// describe-schema's success output is determined by its own --sql /
-	// --json flags, not the global outputMode. Its FAILURE output still
+	// describe-schema's success output is always the JSON catalog unless
+	// `--sql` overrides — the Common Flag Set `--json` flag is accepted
+	// only for the uniform-flag contract. Its FAILURE output still
 	// honours the global outputMode so the unified failure contract
 	// (slice 7, #178) applies uniformly: `--json describe-schema bogus`
 	// gets the JSON envelope on stdout like every other subcommand.
@@ -93,7 +105,9 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 		}
 		return 0
 	}
-	// Default is --json.
+	// JSON catalog is the success-mode default; --sql above is the only
+	// override. The Common Flag Set `--json` flag does not change
+	// behaviour here — it's accepted for the uniform-flag contract.
 	if err := writeSchemaJSON(db, stdout); err != nil {
 		return ReportFailure(FailureReport{Command: "describe-schema --json", Status: StatusArchiveUnwritable, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}

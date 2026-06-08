@@ -1211,6 +1211,13 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 		ConfigPath:  configPath,
 		ArchivePath: archivePath,
 	})
+	// Override the generic CommonFlagSet Usage strings for the flags
+	// whose meaning is export-specific. `export --help` now reflects the
+	// documented synonym semantics instead of the misleading "write
+	// stable JSON to stdout" wording inherited from the shared module.
+	flags.Lookup("json").Usage = "synonym for --format jsonl"
+	flags.Lookup("plain").Usage = "synonym for --format csv"
+	flags.Lookup("no-input").Usage = "accepted for uniformity; export does no prompting"
 	exportFormat := flags.String("format", "csv", "export format: csv or jsonl (synonyms: --json → jsonl, --plain → csv)")
 	exportOutputPath := flags.String("output", "", "write export to path")
 	exportStdout := flags.Bool("stdout", false, "write export data to stdout")
