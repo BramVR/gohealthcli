@@ -151,6 +151,19 @@ func TestGoogleHealthIngestionSkipsTcxWhenUpstream403(t *testing.T) {
 	if len(archive.attachments) != 0 {
 		t.Fatalf("attachment count = %d, want 0 on 403; archive = %#v", len(archive.attachments), archive.attachments)
 	}
+	// Sanity: the test only proves 403-handling if exportExerciseTcx
+	// was actually attempted. Without this, an unrelated regression
+	// that silently skipped the hook would still pass.
+	tcxRequested := false
+	for _, req := range provider.requests {
+		if strings.Contains(req.url, ":exportExerciseTcx") {
+			tcxRequested = true
+			break
+		}
+	}
+	if !tcxRequested {
+		t.Fatalf("expected the hook to call exportExerciseTcx; requests=%+v", provider.requests)
+	}
 }
 
 // TestGoogleHealthIngestionSkipsTcxWhenUpstreamEmpty pins the
