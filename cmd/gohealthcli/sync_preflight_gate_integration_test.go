@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// preflightFailureAssertExpect captures the AC-level contract: a preflight
+// preflightFailureExpectation captures the AC-level contract: a preflight
 // rejection must (a) exit non-zero from the CLI surface and (b) leave the
 // sync_runs row count unchanged. The JSON envelope must carry
 // status="sync_failed" (never the empty string, AC #5) and MUST NOT

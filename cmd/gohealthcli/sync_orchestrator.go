@@ -45,10 +45,13 @@ func (orchestrator syncOrchestrator) Sync(options syncCommandOptions) ([]syncRes
 		// The gate's missing-types rule fires before we get here for the
 		// no-flags path; an empty post-expansion list now only happens if
 		// --all expanded to zero catalog entries (degenerate catalog).
-		return nil, &preflightFailure{
-			rule: preflightRuleMissingDataTypes,
-			err:  fmt.Errorf("sync requires at least one Data Type"),
-		}
+		// Use a dedicated discriminator so downstream Rule()-based routing
+		// can tell "no flags provided" apart from "the catalog has no
+		// syncable Data Types right now".
+		return nil, newPreflightFailure(
+			preflightRuleAllExpandedEmpty,
+			fmt.Errorf("sync --all expanded to zero supported Data Types; catalog has no syncable entries"),
+		)
 	}
 	results := make([]syncResult, 0, len(dataTypes))
 	for _, dataType := range dataTypes {

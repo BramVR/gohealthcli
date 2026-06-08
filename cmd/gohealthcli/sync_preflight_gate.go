@@ -64,6 +64,7 @@ type preflightFailure struct {
 // here; existing constants are stable so downstream tests can pin them.
 const (
 	preflightRuleMissingDataTypes          = "missing_data_types"
+	preflightRuleAllExpandedEmpty          = "all_expanded_empty"
 	preflightRuleAllVsTypesConflict        = "all_vs_types_conflict"
 	preflightRuleDuplicateDataType         = "duplicate_data_type"
 	preflightRuleUnsupportedDataType       = "unsupported_data_type"
