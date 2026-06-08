@@ -28,13 +28,22 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 19
+const currentSchemaVersion = 20
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
 const googleHealthSleepReadonlyScope = "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
 const googleHealthNutritionReadonlyScope = "https://www.googleapis.com/auth/googlehealth.nutrition.readonly"
 const googleHealthProfileReadonlyScope = "https://www.googleapis.com/auth/googlehealth.profile.readonly"
+
+// Tier 2 opt-in scopes (#104). Users grant these via
+// `gohealthcli connect --add-scopes ecg,irn`. String literals match
+// connectAddScopeKeywords["ecg"/"irn"]; connect_add_scopes.go owns
+// the keyword→scope mapping, this file owns the constant the
+// catalog references.
+const googleHealthEcgReadonlyScope = "https://www.googleapis.com/auth/googlehealth.electrocardiogram.readonly"
+const googleHealthIrnReadonlyScope = "https://www.googleapis.com/auth/googlehealth.irn.readonly"
+
 const googleHealthBaseURL = "https://health.googleapis.com/v4"
 const googleHealthIdentityURL = "https://health.googleapis.com/v4/users/me/identity"
 const googleHealthProfileURL = "https://health.googleapis.com/v4/users/me/profile"
@@ -1434,10 +1443,26 @@ func requireConnectionScopes(metadata string, requiredScopes []string) error {
 	for _, scope := range grantedScopes {
 		granted[scope] = struct{}{}
 	}
+	// Collect every required scope that is not granted so the hint
+	// path below can decide whether all missing scopes are
+	// `--add-scopes` keywords (and therefore worth combining into a
+	// single `ecg,irn`-style recovery hint). The error message itself
+	// still names the first missing scope; the keyword join is what
+	// changes between single-scope and multi-scope misses.
+	var missing []string
 	for _, requiredScope := range requiredScopes {
 		if _, ok := granted[requiredScope]; !ok {
-			return fmt.Errorf("Connection token is missing required Google Health scope %s; run `gohealthcli connect` again", requiredScope)
+			missing = append(missing, requiredScope)
 		}
+	}
+	if len(missing) > 0 {
+		if keywords := addScopeKeywordsForScopes(missing); len(keywords) == len(missing) {
+			// Every missing scope is an opt-in Tier 2 scope — point
+			// the user at the lightweight `connect --add-scopes` flow
+			// rather than re-running the full base-set connect.
+			return fmt.Errorf("Connection token is missing required Google Health scope %s; run `gohealthcli connect --add-scopes %s`", missing[0], strings.Join(keywords, ","))
+		}
+		return fmt.Errorf("Connection token is missing required Google Health scope %s; run `gohealthcli connect` again", missing[0])
 	}
 	return nil
 }
@@ -3822,7 +3847,10 @@ func applyMigrations(db *sql.DB) error {
 	if err := applyTier1DailyHydrationViewsMigration(tx, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 19`); err != nil {
+	if err := applyTier2EcgIrnViewsMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 20`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -3842,7 +3870,7 @@ func applyPendingMigrations(db *sql.DB) error {
 	switch userVersion {
 	case currentSchemaVersion:
 		return nil
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19:
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -3934,10 +3962,15 @@ func applyPendingMigrations(db *sql.DB) error {
 				return err
 			}
 		}
-		if err := applyTier1DailyHydrationViewsMigration(tx, now); err != nil {
+		if userVersion <= 18 {
+			if err := applyTier1DailyHydrationViewsMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if err := applyTier2EcgIrnViewsMigration(tx, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`PRAGMA user_version = 19`); err != nil {
+		if _, err := tx.Exec(`PRAGMA user_version = 20`); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -4034,6 +4067,22 @@ func applyTier1DailyHydrationViewsMigration(tx *sql.Tx, appliedAt string) error 
 		}
 	}
 	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (19, 'add_tier1_daily_hydration_views', ?)`, appliedAt)
+	return err
+}
+
+// applyTier2EcgIrnViewsMigration registers the Tier 2 ECG and IRN
+// Normalized Views (#104) — electrocardiogram_sessions and
+// irregular_rhythm_notifications. The view SQL itself lives in the
+// shared exportDatasetDefinitions registry; this migration just
+// runs the registered CREATE VIEW statements pinned to schema
+// version 20 and records the migration row.
+func applyTier2EcgIrnViewsMigration(tx *sql.Tx, appliedAt string) error {
+	for _, statement := range normalizedViewsRegistry().MigrationStatements(20) {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (20, 'add_tier2_ecg_irn_views', ?)`, appliedAt)
 	return err
 }
 
@@ -4217,6 +4266,7 @@ func expectedSchemaMigrations() map[int]string {
 		17: "add_tier1_activity_views",
 		18: "add_tier1_health_metrics_views",
 		19: "add_tier1_daily_hydration_views",
+		20: "add_tier2_ecg_irn_views",
 	}
 }
 

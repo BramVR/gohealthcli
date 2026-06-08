@@ -22,10 +22,10 @@ Use the target Google Cloud project, then configure:
 - Optional Data Access scopes (only needed for `connect --add-scopes` and
   the matching opt-in features):
   - `https://www.googleapis.com/auth/googlehealth.irn.readonly` — required
-    by `gohealthcli irn-profile` and Tier 2 irregular-rhythm-notification
-    Data Types.
+    by `gohealthcli irn-profile` and the Tier 2 `irregular-rhythm-notification`
+    Data Type (#104).
   - `https://www.googleapis.com/auth/googlehealth.electrocardiogram.readonly`
-    — required by Tier 2 ECG Data Types (see #104).
+    — required by the Tier 2 `electrocardiogram` Data Type (#104).
 - OAuth client: create a Desktop app client from Google Auth Platform >
   Clients, then download its JSON.
 
@@ -102,3 +102,31 @@ gohealthcli sync --types steps --from 2026-01-01 --to 2026-01-02 --plain
 gohealthcli status --plain
 gohealthcli export daily-steps --format jsonl --stdout
 ```
+
+## Tier 2 Opt-in Scopes (ECG + IRN)
+
+After enabling `electrocardiogram.readonly` and `irn.readonly` in
+the Google Cloud Data Access page, extend the existing local grant
+without re-running setup:
+
+```bash
+gohealthcli connect --add-scopes ecg,irn --plain
+```
+
+`include_granted_scopes=true` makes the browser flow re-issue tokens
+covering the union of currently-granted scopes and the two new ones,
+so the base set stays untouched. Once `status: connected` prints, the
+Tier 2 syncs unlock:
+
+```bash
+gohealthcli sync --types electrocardiogram --from 2026-01-01 --plain
+gohealthcli sync --types irregular-rhythm-notification --from 2026-01-01 --plain
+gohealthcli status --plain  # per-Data-Type newest_data_point_timestamp lands
+```
+
+If a Tier 2 sync is called without the matching scope on the stored
+Connection, the command exits with a recovery hint pointing at the
+keywords for the missing scopes specifically: `--add-scopes ecg` when
+only the ECG scope is missing, `--add-scopes irn` for IRN, and
+`--add-scopes ecg,irn` when both are. Run that exact line to fix it.
+No second base-set browser sign-in is needed.

@@ -44,6 +44,54 @@ func TestCurrentConnectionAccessTokenRequiresScopesBeforeCredentialStore(t *test
 	}
 }
 
+// TestRequireConnectionScopesAddScopesHint pins the AC for #104:
+// when the required scope is one of the opt-in Tier 2 scopes
+// (.ecg.readonly or .irn.readonly), the error message points the
+// user at `connect --add-scopes ecg,irn` instead of the generic
+// "run `gohealthcli connect` again". The keyword list is sorted so
+// the message is deterministic regardless of which missing scope
+// surfaces first.
+func TestRequireConnectionScopesAddScopesHint(t *testing.T) {
+	metadata := tokenMetadataJSON(t, time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope})
+	tests := []struct {
+		name           string
+		requiredScopes []string
+		wantContains   string
+	}{
+		{
+			name:           "ecg only",
+			requiredScopes: []string{googleHealthEcgReadonlyScope},
+			wantContains:   "run `gohealthcli connect --add-scopes ecg`",
+		},
+		{
+			name:           "irn only",
+			requiredScopes: []string{googleHealthIrnReadonlyScope},
+			wantContains:   "run `gohealthcli connect --add-scopes irn`",
+		},
+		{
+			name:           "ecg and irn",
+			requiredScopes: []string{googleHealthEcgReadonlyScope, googleHealthIrnReadonlyScope},
+			wantContains:   "run `gohealthcli connect --add-scopes ecg,irn`",
+		},
+		{
+			name:           "non opt-in scope keeps generic hint",
+			requiredScopes: []string{googleHealthSleepReadonlyScope},
+			wantContains:   "run `gohealthcli connect` again",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := requireConnectionScopes(metadata, tt.requiredScopes)
+			if err == nil {
+				t.Fatalf("requireConnectionScopes returned nil, want missing-scope error")
+			}
+			if !strings.Contains(err.Error(), tt.wantContains) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tt.wantContains)
+			}
+		})
+	}
+}
+
 func TestCurrentConnectionAccessFetchVerifiedIdentityNormalizesUnauthorized(t *testing.T) {
 	runtime := productionRuntimeAdapters()
 	runtime.fetchIdentity = func(accessToken string) (googleIdentity, error) {

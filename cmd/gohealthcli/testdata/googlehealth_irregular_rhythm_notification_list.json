@@ -1,0 +1,44 @@
+{
+  "dataPoints": [
+    {
+      "name": "users/me/dataTypes/irregular-rhythm-notification/dataPoints/irn-2026-01-01",
+      "dataSource": {
+        "platform": "FITBIT",
+        "device": {
+          "manufacturer": "Google",
+          "model": "Pixel Watch"
+        }
+      },
+      "irregularRhythmNotification": {
+        "interval": {
+          "startTime": "2026-01-01T09:00:00+01:00",
+          "startUtcOffset": "3600s",
+          "endTime": "2026-01-01T09:00:30+01:00",
+          "endUtcOffset": "3600s",
+          "civilStartTime": {
+            "date": {
+              "year": 2026,
+              "month": 1,
+              "day": 1
+            },
+            "time": {
+              "hours": 9
+            }
+          },
+          "civilEndTime": {
+            "date": {
+              "year": 2026,
+              "month": 1,
+              "day": 1
+            },
+            "time": {
+              "hours": 9,
+              "seconds": 30
+            }
+          }
+        },
+        "classification": "ATRIAL_FIBRILLATION_SUGGESTED"
+      }
+    }
+  ]
+}
