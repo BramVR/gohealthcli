@@ -472,8 +472,14 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 	// through ParseCommon (the global flag set has --version, which the
 	// Common spec deliberately does not). PRD #143 slice 5 (issue #174).
 	if *plainOutput && *jsonOutput {
-		fmt.Fprintln(stderr, "--plain and --json are mutually exclusive")
-		return 1
+		// Default mode is the only safe one: the user asked for both shapes
+		// at once, so we cannot honor either — the bare `gohealthcli: <msg>`
+		// line on stderr is unambiguous about the binary rejecting the
+		// invocation. Slice 7 PRD #143 (issue #178).
+		return ReportFailure(FailureReport{
+			Status:  StatusFlagInvalid,
+			Message: "--plain and --json are mutually exclusive",
+		}, stdout, stderr)
 	}
 
 	if *versionOutput {
@@ -497,13 +503,18 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 	// `<cmd> --help` (with the registry's `Long` prose prepended). Slice 2 of
 	// PRD #143.
 	if flags.Arg(0) == "help" {
+		globalMode := outputMode{json: *jsonOutput, plain: *plainOutput}
 		if flags.NArg() == 1 || flags.Arg(1) == "--help" || flags.Arg(1) == "-help" {
 			// Top-level help form rejects trailing positionals so a typo like
 			// `gohealthcli help --help status` fails loudly instead of being
 			// silently dropped.
 			if flags.NArg() > 2 {
-				fmt.Fprintf(stderr, "help: unexpected arguments: %s\n", strings.Join(flags.Args()[2:], " "))
-				return 1
+				return ReportFailure(FailureReport{
+					Command: "help",
+					Status:  StatusUnexpectedArgument,
+					Message: fmt.Sprintf("unexpected arguments: %s", strings.Join(flags.Args()[2:], " ")),
+					Mode:    globalMode,
+				}, stdout, stderr)
 			}
 			printTopLevelUsage(flags, stderr)
 			return 0
@@ -511,14 +522,21 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 		// Per-command help takes exactly one positional (the subcommand). Reject
 		// extras so `help status extra` fails fast like every other subcommand.
 		if flags.NArg() > 2 {
-			fmt.Fprintf(stderr, "help: unexpected arguments after %s: %s\n", flags.Arg(1), strings.Join(flags.Args()[2:], " "))
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "help",
+				Status:  StatusUnexpectedArgument,
+				Message: fmt.Sprintf("unexpected arguments after %s: %s", flags.Arg(1), strings.Join(flags.Args()[2:], " ")),
+				Mode:    globalMode,
+			}, stdout, stderr)
 		}
 		target := flags.Arg(1)
 		def, ok := lookupCommand(target)
 		if !ok {
-			fmt.Fprintf(stderr, "unknown command: %s\n", target)
-			return 1
+			return ReportFailure(FailureReport{
+				Status:  StatusFlagInvalid,
+				Message: fmt.Sprintf("unknown command: %s", target),
+				Mode:    globalMode,
+			}, stdout, stderr)
 		}
 		// Print the registry Long prose, then re-dispatch through the runtime
 		// with `--help` so the flag-set portion is identical to the bytes a
@@ -557,8 +575,7 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 		// help hint so users always know how to discover the catalog. The
 		// "Did you mean" line (when a Levenshtein suggestion exists) lives
 		// between the two and is handled by the runUnknownCommand helper.
-		runUnknownCommand(flags.Arg(0), stderr)
-		return 1
+		return runUnknownCommand(flags.Arg(0), outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	}
 	if cmd.Run == nil {
 		// Defensive guard: TestEveryCommandHasRunAdapter pins the invariant
@@ -573,19 +590,32 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 	return cmd.Run(flags.Args()[1:], common, stdout, stderr, runtime)
 }
 
-// runUnknownCommand renders the unknown-command stderr block: the
-// "unknown command: <typo>" line, an optional Levenshtein-driven "Did you
-// mean: <name>?" suggestion sourced from commandRegistry.Suggest, and the
-// canonical "Run 'gohealthcli --help' for a list of commands." hint. Lives
-// next to runWithRuntime because the writes are tightly coupled to the
-// dispatch switch's default branch — extracting it keeps the switch body
-// readable and gives slice-3 tests a single seam to lock the shape down.
-func runUnknownCommand(typo string, stderr io.Writer) {
-	fmt.Fprintf(stderr, "unknown command: %s\n", typo)
+// runUnknownCommand renders the unknown-command failure: the canonical
+// `gohealthcli: unknown command: <typo>` line routed through the unified
+// Failure Reporter (slice 7, issue #178) so the bytes match the rest of
+// the binary's failure surface in every mode, plus the slice-3 hint
+// block ("Did you mean: <name>?" when a Levenshtein suggestion exists,
+// and "Run 'gohealthcli --help' for a list of commands.") that lands on
+// stderr.
+//
+// In --json mode the hint block is suppressed: scripts parsing the
+// stdout envelope shouldn't see human-targeted stderr noise. In
+// default and --plain modes the hint lines stay so terminal users
+// still get the discoverability nudge the slice-3 AC requires.
+func runUnknownCommand(typo string, mode outputMode, stdout, stderr io.Writer) int {
+	exit := ReportFailure(FailureReport{
+		Status:  StatusFlagInvalid,
+		Message: fmt.Sprintf("unknown command: %s", typo),
+		Mode:    mode,
+	}, stdout, stderr)
+	if mode.json {
+		return exit
+	}
 	if suggestions := commandRegistry(commands).Suggest(typo); len(suggestions) > 0 {
 		fmt.Fprintf(stderr, "Did you mean: %s?\n", strings.Join(suggestions, ", "))
 	}
 	fmt.Fprintln(stderr, "Run 'gohealthcli --help' for a list of commands.")
+	return exit
 }
 
 type outputMode struct {
@@ -624,12 +654,16 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 		}
 		return 1
 	}
+	mode = outputMode{json: *doctorJSONOutput, plain: *doctorPlainOutput}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "unexpected doctor argument: %s\n", flags.Arg(0))
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "doctor",
+			Status:  StatusUnexpectedArgument,
+			Message: fmt.Sprintf("unexpected doctor argument: %s", flags.Arg(0)),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 
-	mode = outputMode{json: *doctorJSONOutput, plain: *doctorPlainOutput}
 	if fileExists(*doctorConfigPath) && fileExists(*doctorArchivePath) {
 		if *doctorOnline {
 			return runDoctorOnlineWithRuntime(*doctorConfigPath, *doctorArchivePath, mode, stdout, stderr, runtime)
@@ -665,8 +699,12 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 		}
 		result.Attachments = attachments
 		if err := writeDoctorResult(result, mode, stdout); err != nil {
-			fmt.Fprintf(stderr, "write output: %v\n", err)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "doctor",
+				Status:  StatusArchiveUnwritable,
+				Message: fmt.Sprintf("write output: %v", err),
+				Mode:    mode,
+			}, stdout, stderr)
 		}
 		return 0
 	}
@@ -683,12 +721,22 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 	}
 
 	if err := writeDoctorResult(result, mode, stdout); err != nil {
-		fmt.Fprintf(stderr, "write output: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "doctor",
+			Status:  StatusArchiveUnwritable,
+			Message: fmt.Sprintf("write output: %v", err),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 
+	// The structured envelope already landed on stdout via
+	// writeDoctorResult above; the hint line stays as a plain stderr
+	// write so JSON-mode callers get the envelope on stdout AND the
+	// human hint on stderr. failureExitCode routes through the
+	// Failure Reporter module's status→exit-code map so no site
+	// references setupMissingExitCode directly (#178).
 	fmt.Fprintln(stderr, "run `gohealthcli init` to create local config and Health Archive")
-	return setupMissingExitCode
+	return failureExitCode(StatusSetupMissing)
 }
 
 func runDoctorInvalid(configPath, archivePath, message string, mode outputMode, stdout, stderr io.Writer) int {
@@ -700,8 +748,12 @@ func runDoctorInvalid(configPath, archivePath, message string, mode outputMode, 
 		Message:     message,
 	}
 	if err := writeDoctorResult(result, mode, stdout); err != nil {
-		fmt.Fprintf(stderr, "write output: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "doctor",
+			Status:  StatusArchiveUnwritable,
+			Message: fmt.Sprintf("write output: %v", err),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 	return 1
 }
@@ -718,14 +770,22 @@ func runDoctorOnlineWithRuntime(configPath, archivePath string, mode outputMode,
 		}
 		result.Message = err.Error()
 		if writeErr := writeDoctorResult(result, mode, stdout); writeErr != nil {
-			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "doctor",
+				Status:  StatusArchiveUnwritable,
+				Message: fmt.Sprintf("write output: %v", writeErr),
+				Mode:    mode,
+			}, stdout, stderr)
 		}
 		return 1
 	}
 	if err := writeDoctorResult(result, mode, stdout); err != nil {
-		fmt.Fprintf(stderr, "write output: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "doctor",
+			Status:  StatusArchiveUnwritable,
+			Message: fmt.Sprintf("write output: %v", err),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 	return 0
 }
@@ -742,20 +802,28 @@ func runStatus(args []string, configPath, archivePath string, archivePathExplici
 	})
 
 	if err := ParseCommon(flags, common, args); err != nil {
-		return commonFlagsExitCode(err, stderr)
+		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
+	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "unexpected status argument: %s\n", flags.Arg(0))
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "status",
+			Status:  StatusUnexpectedArgument,
+			Message: fmt.Sprintf("unexpected status argument: %s", flags.Arg(0)),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 
-	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	resolvedArchivePath, err := resolveConfiguredArchivePath(common.ConfigPath, common.ArchivePath, archivePathExplicit || common.ArchivePathExplicit)
 	if err != nil {
 		result := statusResult{Status: "status_failed", ArchivePath: common.ArchivePath, Message: err.Error()}
 		if writeErr := writeStatusResult(result, mode, stdout); writeErr != nil {
-			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "status",
+				Status:  StatusArchiveUnwritable,
+				Message: fmt.Sprintf("write output: %v", writeErr),
+				Mode:    mode,
+			}, stdout, stderr)
 		}
 		return 1
 	}
@@ -766,14 +834,22 @@ func runStatus(args []string, configPath, archivePath string, archivePathExplici
 		}
 		result.Message = err.Error()
 		if writeErr := writeStatusResult(result, mode, stdout); writeErr != nil {
-			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "status",
+				Status:  StatusArchiveUnwritable,
+				Message: fmt.Sprintf("write output: %v", writeErr),
+				Mode:    mode,
+			}, stdout, stderr)
 		}
 		return 1
 	}
 	if err := writeStatusResult(result, mode, stdout); err != nil {
-		fmt.Fprintf(stderr, "write output: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "status",
+			Status:  StatusArchiveUnwritable,
+			Message: fmt.Sprintf("write output: %v", err),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 	return 0
 }
@@ -797,25 +873,41 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 		}
 		return 1
 	}
+	mode = outputMode{json: *initJSONOutput, plain: *initPlainOutput}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "unexpected init argument: %s\n", flags.Arg(0))
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "init",
+			Status:  StatusUnexpectedArgument,
+			Message: fmt.Sprintf("unexpected init argument: %s", flags.Arg(0)),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 
-	mode = outputMode{json: *initJSONOutput, plain: *initPlainOutput}
 	if fileExists(*initConfigPath) && fileExists(*initArchivePath) {
 		if err := validateConfig(*initConfigPath, *initArchivePath); err != nil {
-			fmt.Fprintf(stderr, "existing config is not initialized: %v\n", err)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "init",
+				Status:  StatusOperationFailed,
+				Message: fmt.Sprintf("existing config is not initialized: %v", err),
+				Mode:    mode,
+			}, stdout, stderr)
 		}
 		lifecycle := healthArchiveLifecycle{path: *initArchivePath}
 		if err := lifecycle.Migrate(); err != nil {
-			fmt.Fprintf(stderr, "existing Health Archive is not initialized: %v\n", err)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "init",
+				Status:  StatusOperationFailed,
+				Message: fmt.Sprintf("existing Health Archive is not initialized: %v", err),
+				Mode:    mode,
+			}, stdout, stderr)
 		}
 		if _, err := lifecycle.Inspect(false); err != nil {
-			fmt.Fprintf(stderr, "existing Health Archive is not initialized: %v\n", err)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "init",
+				Status:  StatusOperationFailed,
+				Message: fmt.Sprintf("existing Health Archive is not initialized: %v", err),
+				Mode:    mode,
+			}, stdout, stderr)
 		}
 		result := initResult{
 			Status:           "already_initialized",
@@ -826,35 +918,49 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 			Message:          "local gohealthcli setup already exists",
 		}
 		if err := writeInitResult(result, mode, stdout); err != nil {
-			fmt.Fprintf(stderr, "write output: %v\n", err)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "init",
+				Status:  StatusArchiveUnwritable,
+				Message: fmt.Sprintf("write output: %v", err),
+				Mode:    mode,
+			}, stdout, stderr)
 		}
 		return 0
 	}
 	if fileExists(*initConfigPath) || fileExists(*initArchivePath) {
-		fmt.Fprintln(stderr, "refusing to overwrite partial local setup; move existing config or Health Archive first")
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "init",
+			Status:  StatusOperationFailed,
+			Message: "refusing to overwrite partial local setup; move existing config or Health Archive first",
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 
 	source, err := parseOAuthClientSource(*oauthClientFile, *secretProvider, *oauthClientItem)
 	if err != nil {
-		fmt.Fprintf(stderr, "init: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{Command: "init", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	if err := validateOAuthClientConfig(source); err != nil {
-		fmt.Fprintf(stderr, "init: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{Command: "init", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 
 	if err := createConfigFile(*initConfigPath, *initArchivePath, source); err != nil {
-		fmt.Fprintf(stderr, "create config: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "init",
+			Status:  StatusArchiveUnwritable,
+			Message: fmt.Sprintf("create config: %v", err),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 	if err := createArchive(*initArchivePath); err != nil {
 		_ = os.Remove(*initConfigPath)
 		_ = os.Remove(*initArchivePath)
-		fmt.Fprintf(stderr, "create Health Archive: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "init",
+			Status:  StatusArchiveUnwritable,
+			Message: fmt.Sprintf("create Health Archive: %v", err),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 
 	result := initResult{
@@ -866,8 +972,12 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 		SchemaVersion:     currentSchemaVersion,
 	}
 	if err := writeInitResult(result, mode, stdout); err != nil {
-		fmt.Fprintf(stderr, "write output: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "init",
+			Status:  StatusArchiveUnwritable,
+			Message: fmt.Sprintf("write output: %v", err),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 	return 0
 }
@@ -893,31 +1003,47 @@ func runConnectWithRuntime(args []string, configPath, archivePath string, global
 		}
 		return 1
 	}
+	mode = outputMode{json: *connectJSONOutput, plain: *connectPlainOutput}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "unexpected connect argument: %s\n", flags.Arg(0))
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "connect",
+			Status:  StatusUnexpectedArgument,
+			Message: fmt.Sprintf("unexpected connect argument: %s", flags.Arg(0)),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 
 	additionalScopes, err := expandConnectAddScopes(parseCommaList(*connectAddScopes))
 	if err != nil {
-		fmt.Fprintf(stderr, "connect --add-scopes: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "connect --add-scopes",
+			Status:  StatusFlagInvalid,
+			Message: err.Error(),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 
-	mode = outputMode{json: *connectJSONOutput, plain: *connectPlainOutput}
 	result, err := connectSetupWithRuntimeAndExtraScopes(*connectConfigPath, *connectArchivePath, *noInput, additionalScopes, runtime)
 	if err != nil {
 		result.Status = "connect_failed"
 		result.Message = err.Error()
 		if writeErr := writeConnectResult(result, mode, stdout); writeErr != nil {
-			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "connect",
+				Status:  StatusArchiveUnwritable,
+				Message: fmt.Sprintf("write output: %v", writeErr),
+				Mode:    mode,
+			}, stdout, stderr)
 		}
 		return 1
 	}
 	if err := writeConnectResult(result, mode, stdout); err != nil {
-		fmt.Fprintf(stderr, "write output: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "connect",
+			Status:  StatusArchiveUnwritable,
+			Message: fmt.Sprintf("write output: %v", err),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 	return 0
 }
@@ -938,14 +1064,18 @@ func runIdentityWithRuntime(args []string, configPath, archivePath string, mode 
 	})
 
 	if err := ParseCommon(flags, common, args); err != nil {
-		return commonFlagsExitCode(err, stderr)
+		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
+	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "unexpected identity argument: %s\n", flags.Arg(0))
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "identity",
+			Status:  StatusUnexpectedArgument,
+			Message: fmt.Sprintf("unexpected identity argument: %s", flags.Arg(0)),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 
-	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	result, err := identitySetupWithRuntime(common.ConfigPath, common.ArchivePath, runtime)
 	if err != nil {
 		if result.Status == "" {
@@ -953,14 +1083,22 @@ func runIdentityWithRuntime(args []string, configPath, archivePath string, mode 
 		}
 		result.Message = err.Error()
 		if writeErr := writeIdentityResult(result, mode, stdout); writeErr != nil {
-			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "identity",
+				Status:  StatusArchiveUnwritable,
+				Message: fmt.Sprintf("write output: %v", writeErr),
+				Mode:    mode,
+			}, stdout, stderr)
 		}
 		return 1
 	}
 	if err := writeIdentityResult(result, mode, stdout); err != nil {
-		fmt.Fprintf(stderr, "write output: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "identity",
+			Status:  StatusArchiveUnwritable,
+			Message: fmt.Sprintf("write output: %v", err),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 	return 0
 }
@@ -981,14 +1119,18 @@ func runProfileWithRuntime(args []string, configPath, archivePath string, mode o
 	})
 
 	if err := ParseCommon(flags, common, args); err != nil {
-		return commonFlagsExitCode(err, stderr)
+		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
+	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "unexpected profile argument: %s\n", flags.Arg(0))
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "profile",
+			Status:  StatusUnexpectedArgument,
+			Message: fmt.Sprintf("unexpected profile argument: %s", flags.Arg(0)),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 
-	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	result, err := profileSetupWithRuntime(common.ConfigPath, common.ArchivePath, runtime)
 	if err != nil {
 		if result.Status == "" {
@@ -996,14 +1138,22 @@ func runProfileWithRuntime(args []string, configPath, archivePath string, mode o
 		}
 		result.Message = err.Error()
 		if writeErr := writeProfileResult(result, mode, stdout); writeErr != nil {
-			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "profile",
+				Status:  StatusArchiveUnwritable,
+				Message: fmt.Sprintf("write output: %v", writeErr),
+				Mode:    mode,
+			}, stdout, stderr)
 		}
 		return 1
 	}
 	if err := writeProfileResult(result, mode, stdout); err != nil {
-		fmt.Fprintf(stderr, "write output: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "profile",
+			Status:  StatusArchiveUnwritable,
+			Message: fmt.Sprintf("write output: %v", err),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 	return 0
 }
@@ -1034,12 +1184,16 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 		}
 		return 1
 	}
+	mode = outputMode{json: *syncJSONOutput, plain: *syncPlainOutput}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "unexpected sync argument: %s\n", flags.Arg(0))
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "sync",
+			Status:  StatusUnexpectedArgument,
+			Message: fmt.Sprintf("unexpected sync argument: %s", flags.Arg(0)),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 
-	mode = outputMode{json: *syncJSONOutput, plain: *syncPlainOutput}
 	dataTypes := parseCommaList(*syncTypes)
 	if !*syncAll && len(dataTypes) == 0 {
 		// Preserve the historical default for single-type invocations
@@ -1077,8 +1231,12 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 			Message:   err.Error(),
 		}
 		if writeErr := writeSyncResult(fallback, mode, stdout); writeErr != nil {
-			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "sync",
+				Status:  StatusArchiveUnwritable,
+				Message: fmt.Sprintf("write output: %v", writeErr),
+				Mode:    mode,
+			}, stdout, stderr)
 		}
 		return 1
 	}
@@ -1099,8 +1257,12 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 			single = results[0]
 		}
 		if writeErr := writeSyncResult(single, mode, stdout); writeErr != nil {
-			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "sync",
+				Status:  StatusArchiveUnwritable,
+				Message: fmt.Sprintf("write output: %v", writeErr),
+				Mode:    mode,
+			}, stdout, stderr)
 		}
 		if single.Status != "sync_completed" {
 			return 1
@@ -1108,8 +1270,12 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 		return 0
 	}
 	if writeErr := writeSyncFanOutResult(results, options, mode, stdout); writeErr != nil {
-		fmt.Fprintf(stderr, "write output: %v\n", writeErr)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "sync",
+			Status:  StatusArchiveUnwritable,
+			Message: fmt.Sprintf("write output: %v", writeErr),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 	// fanOutStatus folds the same empty-results case to sync_canceled
 	// (see fanOutStatus), so an empty fan-out should also exit non-zero
@@ -1131,11 +1297,11 @@ func installSyncCancelChannel() (<-chan struct{}, func()) {
 	return ctx.Done(), stop
 }
 
-func runRaw(args []string, configPath, archivePath string, _ outputMode, stdout, stderr io.Writer) int {
-	return runRawWithRuntime(args, configPath, archivePath, outputMode{}, stdout, stderr, productionRuntimeAdapters())
+func runRaw(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
+	return runRawWithRuntime(args, configPath, archivePath, mode, stdout, stderr, productionRuntimeAdapters())
 }
 
-func runRawWithRuntime(args []string, configPath, archivePath string, _ outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+func runRawWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	options, err := parseRawCommandOptions(args, configPath, archivePath)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -1144,22 +1310,30 @@ func runRawWithRuntime(args []string, configPath, archivePath string, _ outputMo
 			fmt.Fprintln(stdout, "usage: gohealthcli raw data-type <data-type> --from YYYY-MM-DD [--to YYYY-MM-DD]")
 			return 0
 		}
-		fmt.Fprintf(stderr, "raw: %v\n", err)
-		return 1
+		// raw: prefix is now produced by ReportFailure's Command field
+		// instead of an inline fmt.Fprintf — the seam (slice 7, #178)
+		// folds the legacy special case into the same writer every
+		// other subcommand uses. raw's SUCCESS output is provider-shaped
+		// (raw JSON body to stdout), but its FAILURE output respects
+		// the global --json / --plain so the unified failure contract
+		// applies even on the one verb whose happy path is provider-shaped.
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	request, err := buildGoogleHealthRawRequest(options.target, options.from, options.to, options.pageSize, options.pageToken)
 	if err != nil {
-		fmt.Fprintf(stderr, "raw: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	body, err := rawSetupWithRuntime(options.configPath, options.archivePath, request, runtime)
 	if err != nil {
-		fmt.Fprintf(stderr, "raw: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	if _, err := stdout.Write(body); err != nil {
-		fmt.Fprintf(stderr, "write output: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "raw",
+			Status:  StatusArchiveUnwritable,
+			Message: fmt.Sprintf("write output: %v", err),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 	return 0
 }

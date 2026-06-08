@@ -61,14 +61,18 @@ func runDevicesWithRuntime(args []string, configPath, archivePath string, mode o
 	})
 
 	if err := ParseCommon(flags, common, args); err != nil {
-		return commonFlagsExitCode(err, stderr)
+		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
+	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "unexpected devices argument: %s\n", flags.Arg(0))
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "devices",
+			Status:  StatusUnexpectedArgument,
+			Message: fmt.Sprintf("unexpected devices argument: %s", flags.Arg(0)),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 
-	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	result, err := devicesSetupWithRuntime(common.ConfigPath, common.ArchivePath, runtime)
 	if err != nil {
 		if result.Status == "" {
@@ -76,14 +80,22 @@ func runDevicesWithRuntime(args []string, configPath, archivePath string, mode o
 		}
 		result.Message = err.Error()
 		if writeErr := writeDevicesResult(result, mode, stdout); writeErr != nil {
-			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "devices",
+				Status:  StatusArchiveUnwritable,
+				Message: fmt.Sprintf("write output: %v", writeErr),
+				Mode:    mode,
+			}, stdout, stderr)
 		}
 		return 1
 	}
 	if err := writeDevicesResult(result, mode, stdout); err != nil {
-		fmt.Fprintf(stderr, "write output: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "devices",
+			Status:  StatusArchiveUnwritable,
+			Message: fmt.Sprintf("write output: %v", err),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 	return 0
 }

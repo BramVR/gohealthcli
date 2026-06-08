@@ -137,22 +137,33 @@ func ParseCommon(fs *flag.FlagSet, values *CommonFlagValues, args []string) erro
 // commonFlagsExitCode collapses the four ParseCommon error shapes the
 // migrated subcommands all handle identically into one helper:
 //
-//   - flag.ErrHelp     → exit 0 (fs.Parse already wrote the usage block)
-//   - ErrFlagParseFailed → exit 1 (fs.Parse already wrote error + usage)
-//   - any other error  → print to stderr, exit 1 (custom invariant errors)
+//   - flag.ErrHelp        → exit 0 (fs.Parse already wrote the usage block)
+//   - ErrFlagParseFailed  → exit 1 (fs.Parse already wrote error + usage)
+//   - any other error     → route through the unified Failure Reporter
+//                           (slice 7, issue #178) so the custom invariant
+//                           errors (mutual exclusion, unsupported global)
+//                           land in the same `<cmd>: <msg>` shape every
+//                           other failure path uses.
 //
-// Returning a single helper keeps the six migrated subcommands' top-of-
-// function shape uniform and means a future ParseCommon error variant
-// only needs to be wired up here, not in every caller.
-func commonFlagsExitCode(err error, stderr io.Writer) int {
+// fs.Name() supplies the Command prefix; callers do not pass it in. The
+// reporter sees no Mode here because the in-flight `--plain` / `--json`
+// values are exactly what the mutual-exclusion error is about — default
+// mode is the only safe rendering for that branch. Subcommands' own
+// `unexpected <cmd> argument` checks run AFTER ParseCommon returns, so
+// those failures (which have a known Mode) go through ReportFailure
+// directly.
+func commonFlagsExitCode(fs *flag.FlagSet, err error, stdout, stderr io.Writer) int {
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
 	if errors.Is(err, ErrFlagParseFailed) {
 		return 1
 	}
-	fmt.Fprintln(stderr, err)
-	return 1
+	return ReportFailure(FailureReport{
+		Command: fs.Name(),
+		Status:  StatusFlagInvalid,
+		Message: err.Error(),
+	}, stdout, stderr)
 }
 
 // preScanUnknownButKnownGlobal walks args BEFORE fs.Parse and returns a

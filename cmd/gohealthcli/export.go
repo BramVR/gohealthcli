@@ -1208,8 +1208,7 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 
 	dataset, parseArgs, err := splitExportArgs(args)
 	if err != nil {
-		fmt.Fprintf(stderr, "export: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: err.Error()}, stdout, stderr)
 	}
 
 	if err := flags.Parse(parseArgs); err != nil {
@@ -1219,48 +1218,51 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 		return 1
 	}
 	if dataset == "" || flags.NArg() != 0 {
-		fmt.Fprintln(stderr, "export requires exactly one dataset")
-		return 1
+		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: "export requires exactly one dataset"}, stdout, stderr)
 	}
 	spec, ok := exportDatasetSpecs[dataset]
 	if !ok {
-		fmt.Fprintf(stderr, "export dataset %q is not supported\n", dataset)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "export",
+			Status:  StatusFlagInvalid,
+			Message: fmt.Sprintf("export dataset %q is not supported", dataset),
+		}, stdout, stderr)
 	}
 	if *exportOutputPath == "" && !*exportStdout {
-		fmt.Fprintln(stderr, "export requires --output PATH or --stdout")
-		return 1
+		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: "export requires --output PATH or --stdout"}, stdout, stderr)
 	}
 	if *exportOutputPath != "" && *exportStdout {
-		fmt.Fprintln(stderr, "export accepts only one destination: --output or --stdout")
-		return 1
+		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: "export accepts only one destination: --output or --stdout"}, stdout, stderr)
 	}
 	if err := validateExportFormat(*exportFormat); err != nil {
-		fmt.Fprintf(stderr, "export: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: err.Error()}, stdout, stderr)
 	}
 
 	resolvedArchivePath, err := resolveConfiguredArchivePath(*exportConfigPath, *exportArchivePath, archivePathExplicit || flagWasProvided(flags, "db"))
 	if err != nil {
-		fmt.Fprintf(stderr, "export: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{Command: "export", Status: StatusOperationFailed, Message: err.Error()}, stdout, stderr)
 	}
 	rows, err := exportRows(resolvedArchivePath, spec)
 	if err != nil {
-		fmt.Fprintf(stderr, "export: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{Command: "export", Status: StatusOperationFailed, Message: err.Error()}, stdout, stderr)
 	}
 
 	if *exportStdout {
 		if err := writeExport(rows, spec, *exportFormat, stdout); err != nil {
-			fmt.Fprintf(stderr, "write output: %v\n", err)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "export",
+				Status:  StatusArchiveUnwritable,
+				Message: fmt.Sprintf("write output: %v", err),
+			}, stdout, stderr)
 		}
 		return 0
 	}
 	if err := writeExportFile(rows, spec, *exportFormat, *exportOutputPath); err != nil {
-		fmt.Fprintf(stderr, "write export: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "export",
+			Status:  StatusArchiveUnwritable,
+			Message: fmt.Sprintf("write export: %v", err),
+		}, stdout, stderr)
 	}
 	return 0
 }

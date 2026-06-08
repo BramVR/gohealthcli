@@ -34,18 +34,26 @@ func runQuery(args []string, configPath, archivePath string, archivePathExplicit
 		}
 		return 1
 	}
+	mode = outputMode{json: *queryJSONOutput, plain: *queryPlainOutput}
 	if flags.NArg() != 1 {
-		fmt.Fprintln(stderr, "query requires exactly one SQL statement")
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "query",
+			Status:  StatusFlagInvalid,
+			Message: "query requires exactly one SQL statement",
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 
-	mode = outputMode{json: *queryJSONOutput, plain: *queryPlainOutput}
 	resolvedArchivePath, err := resolveConfiguredArchivePath(*queryConfigPath, *queryArchivePath, archivePathExplicit || flagWasProvided(flags, "db"))
 	if err != nil {
 		result := queryResult{Status: "query_failed", ArchivePath: *queryArchivePath, Message: err.Error()}
 		if writeErr := writeQueryResult(result, mode, stdout); writeErr != nil {
-			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "query",
+				Status:  StatusArchiveUnwritable,
+				Message: fmt.Sprintf("write output: %v", writeErr),
+				Mode:    mode,
+			}, stdout, stderr)
 		}
 		return 1
 	}
@@ -54,14 +62,22 @@ func runQuery(args []string, configPath, archivePath string, archivePathExplicit
 		result.Status = "query_failed"
 		result.Message = err.Error()
 		if writeErr := writeQueryResult(result, mode, stdout); writeErr != nil {
-			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "query",
+				Status:  StatusArchiveUnwritable,
+				Message: fmt.Sprintf("write output: %v", writeErr),
+				Mode:    mode,
+			}, stdout, stderr)
 		}
 		return 1
 	}
 	if err := writeQueryResult(result, mode, stdout); err != nil {
-		fmt.Fprintf(stderr, "write output: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "query",
+			Status:  StatusArchiveUnwritable,
+			Message: fmt.Sprintf("write output: %v", err),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 	return 0
 }
