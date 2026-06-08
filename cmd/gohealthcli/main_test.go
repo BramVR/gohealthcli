@@ -2752,6 +2752,71 @@ func TestStatusRejectsExplicitDefaultArchiveMismatch(t *testing.T) {
 	}
 }
 
+// TestStatusReportsNewestElectrocardiogramEventTimestamp pins the
+// AC for #104: once any electrocardiogram session is archived, the
+// per-Data-Type status entry projects the latest event timestamp
+// through the existing readStatusDataTypes loop. No new code path
+// is added — the test catches a regression that strips ECG (or any
+// future opt-in Data Type) from the per-Data-Type rollup.
+func TestStatusReportsNewestElectrocardiogramEventTimestamp(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO data_points (
+		provider_name,
+		connection_id,
+		data_type,
+		upstream_resource_name,
+		record_kind,
+		start_time_utc,
+		end_time_utc,
+		data_source_json,
+		raw_json,
+		inserted_at,
+		updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"googlehealth",
+		"googlehealth:111111256096816351",
+		"electrocardiogram",
+		"users/me/dataTypes/electrocardiogram/dataPoints/ecg-2026-05-20",
+		"session",
+		"2026-05-20T10:30:00Z",
+		"2026-05-20T10:30:30Z",
+		"{}",
+		`{"electrocardiogram":{"classification":"SINUS_RHYTHM"}}`,
+		"2026-05-21T00:00:00Z",
+		"2026-05-21T00:00:00Z",
+	); err != nil {
+		db.Close()
+		t.Fatalf("insert ECG fixture: %v", err)
+	}
+	db.Close()
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"status",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("status exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	ecgStatus := statusDataTypeFromJSON(t, got, "electrocardiogram")
+	assertJSONNumber(t, ecgStatus, "data_point_count", 1)
+	assertJSONString(t, ecgStatus, "newest_data_point_timestamp", "2026-05-20T10:30:30Z")
+}
+
 func TestStatusReportsMigrationFailureForUnsupportedSchema(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
