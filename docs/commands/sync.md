@@ -25,11 +25,10 @@ Preflight failures exit before contacting the provider and do NOT write a `sync_
 - Zero-width range (`--from == --to`).
 - Unsupported `--rollup` kind (parse failure).
 - `--rollup <kind>` requested for a Data Type whose catalog entry does not support that kind (e.g. `--rollup hourly --types daily-resting-heart-rate`).
-- Unsupported Data Type (not in the catalog).
+- Unsupported Data Type (not syncable yet).
 - Source-family vs Data Type mismatch.
 - `--rollup` combined with `--source-family` (mutually exclusive).
 - No Connection on file (connection lookup failure).
-- Missing inputs: neither `--types` nor `--all` set.
 - `--all` combined with `--types` (mutually exclusive).
 - Duplicate entries in `--types`.
 - `--all` expanding to zero supported Data Types.
