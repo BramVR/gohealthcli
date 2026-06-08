@@ -28,7 +28,7 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 8
+const currentSchemaVersion = 9
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
@@ -397,6 +397,8 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 		return runProfileWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
 	case "settings":
 		return runSettingsWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
+	case "devices":
+		return runDevicesWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
 	case "sync":
 		return runSyncWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
 	case "status":
@@ -3719,7 +3721,10 @@ func applyMigrations(db *sql.DB) error {
 	if err := applyCurrentSettingsViewMigration(tx, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 8`); err != nil {
+	if err := applyPairedDevicesViewMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 9`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -3737,7 +3742,7 @@ func applyPendingMigrations(db *sql.DB) error {
 	switch userVersion {
 	case currentSchemaVersion:
 		return nil
-	case 1, 2, 3, 4, 5, 6, 7:
+	case 1, 2, 3, 4, 5, 6, 7, 8:
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -3779,7 +3784,12 @@ func applyPendingMigrations(db *sql.DB) error {
 				return err
 			}
 		}
-		if _, err := tx.Exec(`PRAGMA user_version = 8`); err != nil {
+		if userVersion <= 8 {
+			if err := applyPairedDevicesViewMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(`PRAGMA user_version = 9`); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -3836,6 +3846,16 @@ func applySyncCursorsMigration(tx *sql.Tx, appliedAt string) error {
 		}
 	}
 	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (6, 'add_sync_cursors', ?)`, appliedAt)
+	return err
+}
+
+func applyPairedDevicesViewMigration(tx *sql.Tx, appliedAt string) error {
+	for _, statement := range normalizedViewsRegistry().MigrationStatements(9) {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (9, 'add_paired_devices_view', ?)`, appliedAt)
 	return err
 }
 
@@ -3897,6 +3917,7 @@ func expectedSchemaMigrations() map[int]string {
 		6: "add_sync_cursors",
 		7: "rename_profile_snapshots_to_identity_snapshots",
 		8: "add_current_settings_view",
+		9: "add_paired_devices_view",
 	}
 }
 
