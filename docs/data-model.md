@@ -136,6 +136,18 @@ reserved so prompts can stay stable across the API change.
 The view name is the stable contract — the backing can swap to FTS5
 later without changing prompts.
 
+## LLM-facing schema discovery
+
+`gohealthcli describe-schema --json` emits the curated JSON catalog
+(view metadata, table/column shape, hand-curated narrative, version
+field) that downstream tools (a Claude skill, an MCP server, a
+dashboard) read as the contract. The narrative companion file lives
+at `cmd/gohealthcli/llm-schema.json` — downstream tools can fetch it
+directly without running the binary. `--sql` dumps live DDL straight
+from `sqlite_master`. A drift test in CI fails when a public view in
+`sqlite_master` has no matching catalog entry, so the contract and
+the live schema cannot diverge silently.
+
 Rows pre-dating migration 7 keep `snapshot_kind='profile'` via the column
 default; no parallel-table-with-view shim was used (PRD #93
 §"identity_snapshots migration: explicit strategy").

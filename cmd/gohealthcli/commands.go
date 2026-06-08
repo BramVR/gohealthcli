@@ -185,6 +185,17 @@ var commands = []commandDef{
 		},
 	},
 	{
+		Name:  "describe-schema",
+		Short: "Self-describe the Health Archive for LLM consumption.",
+		Long:  "Emit the archive's schema in one of two modes.\n\n`--sql` dumps live DDL straight from `sqlite_master`, excluding internal `sqlite_*` objects. Use this when you want the actual truth of what tables and views exist right now.\n\n`--json` (default) emits a curated catalog combining the Normalized Views Registry's per-view metadata (name, migration version, declared columns), the live table+column shape from `pragma_table_info`, the merged hand-curated narrative file, and a stable wire-shape version field. Downstream tools (a Claude skill, an MCP server, a dashboard) read the JSON catalog as the contract.\n\nA drift test in CI fails when a public view exists in `sqlite_master` without a matching catalog entry — the JSON shape and the live schema cannot diverge silently.",
+		Flags: []flagSpec{
+			{Name: "config", Type: "string", Default: "", Usage: "config file path"},
+			{Name: "db", Type: "string", Default: "", Usage: "SQLite Health Archive path"},
+			{Name: "json", Type: "bool", Default: "true", Usage: "emit the curated JSON catalog (default)"},
+			{Name: "sql", Type: "bool", Default: "false", Usage: "dump live DDL from sqlite_master (excludes internal sqlite_* objects)"},
+		},
+	},
+	{
 		Name:   "schema",
 		Short:  "Emit the command registry as JSON (hidden — used by the Project Site build).",
 		Long:   "Emit the binary's command registry as a stable JSON document. The Project Site's command-reference pages are generated from this output, so the JSON shape is part of the published contract.\n\nThe subcommand is hidden from `gohealthcli --help` because it is a build-time tool, not an end-user surface. Pass `--json` (the default and only mode) to receive the document on stdout.",

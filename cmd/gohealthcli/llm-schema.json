@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "description": "Hand-curated narrative companion to `gohealthcli describe-schema --json`. Merged into the live catalog at command invocation time; downstream tools (Claude skill, MCP server, dashboard) can also fetch this file directly without running the binary.",
+  "guidance": [
+    "For unit-aware queries, JOIN current_settings on connection_id to get the user's measurement system (METRIC | IMPERIAL) and timezone.",
+    "For free-text needles like a device model or app name, query searchable_text WHERE text LIKE '%needle%' instead of guessing which underlying column to read.",
+    "Raw Data Points stay the source of truth — Normalized Views recompute on read. Never write to a view.",
+    "Sleep Data Points (record_kind='session') carry the session interval at the top level and an optional `sleep.stages` array projected through sleep_stages.",
+    "Exercise distance is exposed via exercise_splits in BOTH meters (distance_meters) and millimeters (distance_millimeters). Use millimeters when sub-meter precision matters."
+  ],
+  "tables": {
+    "data_points": {
+      "purpose": "Every raw Data Point archived from the Google Health provider. Always JOIN on connection_id and filter by data_type.",
+      "columns": {
+        "raw_json": "The verbatim provider response; query via json_extract paths. The Normalized Views project the most-asked-for fields.",
+        "record_kind": "One of `interval`, `sample`, `daily`, or `session`. Different parsers; different time fields populated.",
+        "source_family_filter": "Empty string when the row came from a default `list` sync; `wearable` when sourced via `reconcile` with a source-family filter."
+      }
+    },
+    "rollups": {
+      "purpose": "Provider-computed aggregates (daily, hourly, custom-window). Use only when you need provider's own summary instead of computing from data_points.",
+      "columns": {
+        "rollup_kind": "Provider endpoint family that produced the row. `dailyRollUp` is what `sync --rollup daily` writes."
+      }
+    },
+    "identity_snapshots": {
+      "purpose": "Kind-tagged identity-level metadata (profile, settings, paired-devices, irn-profile). Append-only; query through the current_* views or paired_devices instead of joining raw rows.",
+      "columns": {
+        "snapshot_kind": "Discriminator. The four current values: `profile`, `settings`, `paired-devices`, `irn-profile`."
+      }
+    },
+    "sync_runs": {
+      "purpose": "Audit trail of every sync attempt. `status` ∈ {sync_running, sync_completed, sync_failed, sync_canceled}. Don't use this as a resume cursor — that's sync_cursors."
+    },
+    "sync_cursors": {
+      "purpose": "Durable resume highwater per (connection, data_type, source_family_filter, rollup_kind). Advances only on sync_completed (ADR-0008)."
+    }
+  },
+  "preferred_views_by_query_class": {
+    "daily step totals": "daily_steps",
+    "heart-rate intervals": "heart_rate_samples",
+    "resting heart rate trends": "resting_heart_rate_by_day",
+    "sleep session totals": "sleep_sessions",
+    "per-stage sleep breakdown": "sleep_stages",
+    "exercise sessions": "exercise_sessions",
+    "per-split exercise breakdown": "exercise_splits",
+    "weight trends": "weight_samples",
+    "current units / timezone": "current_settings",
+    "currently paired devices": "paired_devices",
+    "IRN onboarding status": "current_irn_profile",
+    "free-text needles (device, app, exercise name)": "searchable_text"
+  }
+}
