@@ -11,13 +11,18 @@ import (
 // Types" picks `ecg` (electrocardiogram) and `irn`
 // (irregular-rhythm-notification) as the two opt-in expansions;
 // `nutrition` covers hydration-log (#103) and any future
-// nutrition.readonly Data Types. Values reference the
-// `googleHealth*ReadonlyScope` constants so the URL string lives in
-// exactly one place.
+// nutrition.readonly Data Types; `tcx` (#140) unlocks the
+// `location.readonly` scope that Google requires on top of
+// `activity_and_fitness.readonly` for the `exportExerciseTcx`
+// endpoint. The `tcx` keyword diverges from Google's bucket name on
+// purpose: users think in terms of TCX exports, not GPS location
+// telemetry. Values reference the `googleHealth*ReadonlyScope`
+// constants so the URL string lives in exactly one place.
 var connectAddScopeKeywords = map[string]string{
 	"irn":       googleHealthIrnReadonlyScope,
 	"ecg":       googleHealthEcgReadonlyScope,
 	"nutrition": googleHealthNutritionReadonlyScope,
+	"tcx":       googleHealthLocationReadonlyScope,
 }
 
 // expandConnectAddScopes turns the CLI-side keyword list into the

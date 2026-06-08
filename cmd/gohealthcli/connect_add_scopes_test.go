@@ -36,6 +36,20 @@ func TestExpandConnectAddScopesMapsKeywordsToScopeStrings(t *testing.T) {
 		t.Fatalf("scopes = %v, want one nutrition.readonly scope URL", scopes)
 	}
 
+	// `tcx` unlocks the location.readonly scope that Google's
+	// exportExerciseTcx endpoint requires on top of
+	// activity_and_fitness.readonly (#140). User-facing keyword and the
+	// Google bucket name diverge here because Google buckets the GPS
+	// route bytes under "location", not "tcx" — the keyword reflects
+	// the user's intent ("I want TCX exports").
+	scopes, err = expandConnectAddScopes([]string{"tcx"})
+	if err != nil {
+		t.Fatalf("expand tcx: %v", err)
+	}
+	if len(scopes) != 1 || !strings.Contains(scopes[0], "location.readonly") {
+		t.Fatalf("scopes = %v, want one location.readonly scope URL", scopes)
+	}
+
 	if _, err := expandConnectAddScopes([]string{"typo"}); err == nil {
 		t.Fatal("expand unknown keyword: err = nil, want unknown-keyword failure")
 	} else if !strings.Contains(err.Error(), "typo") {

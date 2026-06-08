@@ -44,6 +44,17 @@ type googleHealthIngestionRequest struct {
 	rollup       string
 	sourceFamily string
 	accessToken  string
+	// grantedScopes mirrors the granted scope set on the stored
+	// Connection token. Sync wires it from
+	// `connectionTokenExpiryAndScopes(connection.tokenMetadataJSON)`
+	// before calling Execute. Optional ingestion hooks (today: the
+	// TCX archival in attachExerciseTcxIfAvailable, #140) gate on
+	// this to skip endpoints whose scope was not granted, avoiding
+	// a guaranteed-403 round-trip. The gate fails closed: a nil or
+	// empty slice means the optional hook does NOT fire. Tests that
+	// want to exercise the hook must inject the granting scope
+	// explicitly.
+	grantedScopes []string
 	// cancelCh, when closed, asks pagination to stop cleanly between pages.
 	// Returns errSyncCanceled. The in-flight Fetch (if any) is not aborted —
 	// SIGINT during a sync stops at the next page boundary, not mid-HTTP.
@@ -325,6 +336,25 @@ func (ingestion googleHealthIngestion) executeDataPointPages(archive googleHealt
 	return nil
 }
 
+// grantedScopesAuthoriseTcxExport returns true when the stored
+// Connection token grants `googlehealth.location.readonly` (#140).
+// Google's `exportExerciseTcx` endpoint requires both
+// `activity_and_fitness.readonly` (already granted by anyone hitting
+// exercise sync — `requireConnectionScopes` enforces that earlier in
+// the call path) and `location.readonly`. The TCX hook gates on the
+// second so we don't burn an HTTP round-trip per exercise Data Point
+// against an endpoint guaranteed to 403. An empty/nil scope slice
+// returns false: the gate must fail closed, otherwise users without
+// the scope would still see every exercise round-trip 403.
+func grantedScopesAuthoriseTcxExport(grantedScopes []string) bool {
+	for _, scope := range grantedScopes {
+		if scope == googleHealthLocationReadonlyScope {
+			return true
+		}
+	}
+	return false
+}
+
 // attachExerciseTcxIfAvailable is the #107 slice D hook: after the
 // exercise Data Point is upserted, attempt the byte-shaped
 // `users.dataTypes.dataPoints.exportExerciseTcx` export and Store the
@@ -334,15 +364,24 @@ func (ingestion googleHealthIngestion) executeDataPointPages(archive googleHealt
 //   - data type is not "exercise" (TCX is exercise-only today).
 //   - point.upstreamResourceName is empty (no `name` field on the list
 //     page; nothing to address the export endpoint at).
+//   - Stored Connection token does not include the
+//     `googlehealth.location.readonly` scope (#140). Google requires
+//     both `activity_and_fitness.readonly` AND `location.readonly` on
+//     the access token for `exportExerciseTcx` to succeed — without
+//     the second scope every call returns 403. Users opt in via
+//     `gohealthcli connect --add-scopes tcx`; until then skip the
+//     hook entirely so sync doesn't waste an HTTP round-trip per
+//     exercise Data Point. A nil/empty grantedScopes slice disables
+//     the gate (test fakes that don't exercise it).
 //   - Upstream returned HTTP 404 (no TCX route for this Data Point — the
 //     exercise might be manually entered or lack GPS/route data).
-//   - Upstream returned HTTP 403 (the granted scope does not authorize
-//     TCX export). Live-observed on accounts whose
-//     `activity_and_fitness.readonly` scope does not extend to
+//   - Upstream returned HTTP 403 (belt-and-suspenders against the
+//     scope-gate above: the access token did not authorise TCX
+//     export). Live-observed on accounts whose
+//     `activity_and_fitness.readonly` scope alone does not extend to
 //     exportExerciseTcx. The exercise Data Point itself is already
 //     archived; tanking the whole sync because the optional TCX
-//     sidecar is forbidden would be wrong. A follow-up issue tracks
-//     whether TCX should sit behind an opt-in `--add-scopes tcx`.
+//     sidecar is forbidden would be wrong.
 //   - Upstream returned HTTP 200 with an empty body (no bytes to archive).
 //
 // All other errors (5xx, transport failure, 401) are propagated so the
@@ -352,6 +391,9 @@ func (ingestion googleHealthIngestion) attachExerciseTcxIfAvailable(archive goog
 		return nil
 	}
 	if point.upstreamResourceName == "" {
+		return nil
+	}
+	if !grantedScopesAuthoriseTcxExport(request.grantedScopes) {
 		return nil
 	}
 	tcxRequest, err := buildGoogleHealthExportExerciseTcxRawRequest(point.upstreamResourceName)

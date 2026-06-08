@@ -98,14 +98,25 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 		resumedFromCursor = true
 	}
 	ingestion := newGoogleHealthIngestionWithRuntime(runtime)
+	// grantedScopes feeds the optional-scope gate inside the TCX
+	// archival hook (#140). connectionTokenExpiryAndScopes already
+	// validates the metadata blob earlier in the call chain (via
+	// requireConnectionScopes / AccessToken), so an error here would
+	// be surprising; surface it so the Sync Run fails loudly rather
+	// than silently de-gating the hook.
+	_, grantedScopes, err := connectionTokenExpiryAndScopes(connection.tokenMetadataJSON)
+	if err != nil {
+		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, err
+	}
 	ingestionRequest := googleHealthIngestionRequest{
-		connection:   connection,
-		dataType:     dataType,
-		from:         options.from,
-		to:           options.to,
-		rollup:       options.rollup,
-		sourceFamily: options.sourceFamily,
-		cancelCh:     options.cancelCh,
+		connection:    connection,
+		dataType:      dataType,
+		from:          options.from,
+		to:            options.to,
+		rollup:        options.rollup,
+		sourceFamily:  options.sourceFamily,
+		grantedScopes: grantedScopes,
+		cancelCh:      options.cancelCh,
 	}
 	ingestionPlan, err := ingestion.Plan(ingestionRequest)
 	if err != nil {
