@@ -282,15 +282,26 @@ func TestTopLevelHelpListsVisibleSubcommandsFromRegistry(t *testing.T) {
 	}
 
 	out := stderr.String()
+	// Assert each visible command appears on its OWN dedicated line of the form
+	// "  <name>   <short>". A bare strings.Contains check would false-pass when
+	// the command name shows up inside another command's Short (e.g. "raw" is
+	// substring of the "raw" command's own Short "Print raw provider JSON ...").
+	lines := strings.Split(out, "\n")
 	for _, cmd := range commands {
 		if cmd.Hidden {
 			continue
 		}
-		if !strings.Contains(out, cmd.Name) {
-			t.Errorf("--help missing subcommand name %q\noutput:\n%s", cmd.Name, out)
+		found := false
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			fields := strings.SplitN(trimmed, " ", 2)
+			if len(fields) == 2 && fields[0] == cmd.Name && strings.Contains(line, cmd.Short) {
+				found = true
+				break
+			}
 		}
-		if !strings.Contains(out, cmd.Short) {
-			t.Errorf("--help missing short for %q (%q)\noutput:\n%s", cmd.Name, cmd.Short, out)
+		if !found {
+			t.Errorf("--help missing dedicated line for %q (%q)\noutput:\n%s", cmd.Name, cmd.Short, out)
 		}
 	}
 }

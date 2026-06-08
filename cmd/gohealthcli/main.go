@@ -423,18 +423,24 @@ func run(args []string, stdout, stderr io.Writer) int {
 // sourced from the registry (hidden entries filtered out) followed by the
 // standard FlagSet defaults. The "Usage of gohealthcli:" header matches Go's
 // default flag output so that callers (and tests) keying off it keep working.
-func printTopLevelUsage(flags *flag.FlagSet, stderr io.Writer) {
-	fmt.Fprintln(stderr, "Usage of gohealthcli:")
-	fmt.Fprintln(stderr)
-	fmt.Fprintln(stderr, "Subcommands:")
+// flags.PrintDefaults writes to the FlagSet's configured output, so we point
+// it at w for the duration of the call to keep the whole block on one stream.
+func printTopLevelUsage(flags *flag.FlagSet, w io.Writer) {
+	prev := flags.Output()
+	flags.SetOutput(w)
+	defer flags.SetOutput(prev)
+
+	fmt.Fprintln(w, "Usage of gohealthcli:")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Subcommands:")
 	for _, cmd := range commands {
 		if cmd.Hidden {
 			continue
 		}
-		fmt.Fprintf(stderr, "  %-16s %s\n", cmd.Name, cmd.Short)
+		fmt.Fprintf(w, "  %-16s %s\n", cmd.Name, cmd.Short)
 	}
-	fmt.Fprintln(stderr)
-	fmt.Fprintln(stderr, "Global flags:")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Global flags:")
 	flags.PrintDefaults()
 }
 
