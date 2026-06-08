@@ -371,8 +371,9 @@ func grantedScopesAuthoriseTcxExport(grantedScopes []string) bool {
 //     the second scope every call returns 403. Users opt in via
 //     `gohealthcli connect --add-scopes tcx`; until then skip the
 //     hook entirely so sync doesn't waste an HTTP round-trip per
-//     exercise Data Point. A nil/empty grantedScopes slice disables
-//     the gate (test fakes that don't exercise it).
+//     exercise Data Point. The gate fails closed: a nil/empty
+//     grantedScopes slice means the hook is skipped (no TCX call),
+//     so test fakes that don't care about TCX simply omit the field.
 //   - Upstream returned HTTP 404 (no TCX route for this Data Point — the
 //     exercise might be manually entered or lack GPS/route data).
 //   - Upstream returned HTTP 403 (belt-and-suspenders against the
