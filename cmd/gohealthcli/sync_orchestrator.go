@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 )
 
@@ -43,7 +42,13 @@ func (orchestrator syncOrchestrator) Sync(options syncCommandOptions) ([]syncRes
 		return nil, err
 	}
 	if len(dataTypes) == 0 {
-		return nil, errors.New("sync requires at least one Data Type")
+		// The gate's missing-types rule fires before we get here for the
+		// no-flags path; an empty post-expansion list now only happens if
+		// --all expanded to zero catalog entries (degenerate catalog).
+		return nil, &preflightFailure{
+			rule: preflightRuleMissingDataTypes,
+			err:  fmt.Errorf("sync requires at least one Data Type"),
+		}
 	}
 	results := make([]syncResult, 0, len(dataTypes))
 	for _, dataType := range dataTypes {
@@ -76,38 +81,28 @@ func (orchestrator syncOrchestrator) Sync(options syncCommandOptions) ([]syncRes
 }
 
 // expandDataTypes resolves --all / --types into the concrete ordered list
-// the orchestrator iterates. --all expands to the catalog's
-// DefaultConfigType=true Data Types that actually support a sync endpoint
-// (SupportsSyncDataPoint=true); Tier-1 entries reserved in the catalog
-// without a parser shape are skipped so `sync --all` never produces
-// guaranteed-failing rows. --types is taken as-given so an explicit
-// `--types unsupported` still surfaces the per-type error.
+// the orchestrator iterates. Delegates to syncPreflightGate so the
+// --all / --types mutual-exclusion + duplicate-detection rules live in
+// ONE place across the codebase; this method survives as a thin shim so
+// existing orchestrator tests continue to exercise the fan-out rules
+// without reaching into the gate's internals.
 func (orchestrator syncOrchestrator) expandDataTypes(options syncCommandOptions) ([]string, error) {
-	if options.allTypes {
-		if len(options.dataTypes) != 0 {
-			return nil, errors.New("sync --all cannot be combined with --types")
-		}
-		var syncable []string
-		for _, dataType := range defaultDataTypes {
-			if syncDataPointDataTypeSupported(dataType) {
-				syncable = append(syncable, dataType)
-			}
-		}
-		return syncable, nil
+	gate := syncPreflightGate{ctx: orchestratorPreflightContextForExpansion(orchestrator.executor.runtime)}
+	return gate.expandDataTypes(options)
+}
+
+// orchestratorPreflightContextForExpansion is the minimal gate context
+// expandDataTypes needs: only the catalog + default list are consulted,
+// so the other adapters can stay nil. Kept separate from
+// productionSyncPreflightContext (which also needs config/archive paths)
+// because the orchestrator does not have a single per-call configPath at
+// hand for the fan-out-level expansion step.
+func orchestratorPreflightContextForExpansion(runtime runtimeAdapters) syncPreflightContext {
+	return syncPreflightContext{
+		now:                 runtime.now,
+		dataTypeSupported:   syncDataPointDataTypeSupported,
+		defaultAllDataTypes: func() []string { return append([]string(nil), defaultDataTypes...) },
 	}
-	if len(options.dataTypes) == 0 {
-		return nil, errors.New("sync requires --types or --all")
-	}
-	seen := make(map[string]struct{}, len(options.dataTypes))
-	resolved := make([]string, 0, len(options.dataTypes))
-	for _, dataType := range options.dataTypes {
-		if _, ok := seen[dataType]; ok {
-			return nil, fmt.Errorf("sync --types lists %q more than once", dataType)
-		}
-		seen[dataType] = struct{}{}
-		resolved = append(resolved, dataType)
-	}
-	return resolved, nil
 }
 
 // syncFanOutSummary is the aggregate envelope rendered for multi-Data-Type

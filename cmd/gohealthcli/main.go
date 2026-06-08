@@ -967,7 +967,19 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 	orchestrator := newSyncOrchestrator(runtime, cancelCh)
 	results, err := orchestrator.Sync(options)
 	if err != nil {
-		fallback := syncResult{Status: "sync_failed", DataTypes: dataTypes, Message: err.Error()}
+		// Preflight rejections from the orchestrator (gate-routed) surface
+		// here. status is always sync_failed (never the empty string),
+		// SyncRunID is unset so the JSON envelope omits sync_run_id, and
+		// the user-supplied --from/--to round-trip so tooling that pivots
+		// on the failed-range can still see what was attempted. The
+		// no-audit-row contract is preserved upstream of this branch.
+		fallback := syncResult{
+			Status:    "sync_failed",
+			DataTypes: dataTypes,
+			From:      options.from,
+			To:        options.to,
+			Message:   err.Error(),
+		}
 		if writeErr := writeSyncResult(fallback, mode, stdout); writeErr != nil {
 			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
 			return 1
