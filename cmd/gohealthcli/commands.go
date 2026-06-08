@@ -242,11 +242,17 @@ func (r commandRegistry) Suggest(typo string) []string {
 		}
 	}
 	if len(candidates) == 0 {
-		return nil
+		// Return an empty slice rather than nil so callers (and the AC's
+		// direct unit test) see a consistent shape regardless of input:
+		// `json.Marshal(nil)` → `null` whereas `json.Marshal([]string{})`
+		// → `[]`, and any downstream consumer that range-iterates is
+		// untouched either way.
+		return []string{}
 	}
-	// Sort by (distance asc, registry-order asc). Sort.Slice would pull in
-	// the sort package for a 5-element max slice; an insertion sort is
-	// cheaper, dependency-free, and easy to audit.
+	// Sort by (distance asc, registry-order asc). The candidate slice is
+	// bounded by the number of non-hidden commands (~14 today), so an
+	// in-place insertion sort is dependency-free, easy to audit, and
+	// trivially correct for that working-set size.
 	for i := 1; i < len(candidates); i++ {
 		for j := i; j > 0; j-- {
 			a, b := candidates[j-1], candidates[j]
