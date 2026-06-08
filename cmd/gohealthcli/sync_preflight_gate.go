@@ -75,6 +75,7 @@ const (
 	preflightRuleConnectionLookup           = "connection_lookup"
 	preflightRuleRangeOrderInverted         = "range_order_inverted"
 	preflightRuleRangeZeroWidth             = "range_zero_width"
+	preflightRuleRangeParse                 = "range_parse"
 )
 
 func (f *preflightFailure) Error() string { return f.err.Error() }
@@ -147,7 +148,7 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 	// civil default --to, others get RFC3339, both via defaultTo).
 	normFrom, normTo, err := gate.normalizeRange(rollupSpec, options.from, to)
 	if err != nil {
-		return preflightPlan{}, newPreflightFailure(preflightRuleRollupParse, err)
+		return preflightPlan{}, newPreflightFailure(preflightRuleRangeParse, err)
 	}
 	// Range ordering: --from > --to and --from == --to are both flag-
 	// shape rejections and must fire before the archive connection

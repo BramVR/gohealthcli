@@ -328,6 +328,38 @@ func TestSyncPreflightGateNormalizesRangePerRollupKind(t *testing.T) {
 	}
 }
 
+// TestSyncPreflightGateRangeParseDistinctFromRollupParse pins the
+// rule-discriminator contract: a malformed --from is a range-shape
+// failure, NOT a rollup-literal failure. Consumers route on
+// preflightFailure.Rule(); collapsing both into preflightRuleRollupParse
+// makes downstream JSON envelopes, logging, and exit-code routing unable
+// to tell "bad --rollup value" from "bad --from boundary" apart.
+func TestSyncPreflightGateRangeParseDistinctFromRollupParse(t *testing.T) {
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	conn := archivedConnection{id: "googlehealth:111"}
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
+
+	_, err := gate.Validate(syncCommandOptions{
+		dataTypes: []string{"steps"},
+		rollup:    "hourly",
+		from:      "garbage",
+		to:        "2026-06-08T00:00:00Z",
+	})
+	if err == nil {
+		t.Fatalf("Validate: want error for garbage --from, got nil")
+	}
+	var failure *preflightFailure
+	if !errors.As(err, &failure) {
+		t.Fatalf("error = %v (%T), want *preflightFailure", err, err)
+	}
+	if failure.Rule() != preflightRuleRangeParse {
+		t.Errorf("rule = %q, want %q", failure.Rule(), preflightRuleRangeParse)
+	}
+	if failure.Rule() == preflightRuleRollupParse {
+		t.Errorf("rule = %q must NOT collapse range-parse into rollup-parse", failure.Rule())
+	}
+}
+
 // TestSyncPreflightGateRejectsBadShapeWithLocalMessage pins AC 4: civil
 // date on --rollup hourly|weekly|window=<dur> no longer surfaces as an
 // opaque upstream HTTP 400. The gate names the supported shapes for

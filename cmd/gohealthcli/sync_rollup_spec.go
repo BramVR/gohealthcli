@@ -92,17 +92,22 @@ func parseSyncRollupSpec(value string) (syncRollupSpec, error) {
 // Parse failures surface a local message naming both supported
 // shapes for this rollup kind so the operator no longer sees an
 // opaque upstream HTTP 400 for civil-on-hourly etc.
-func (spec syncRollupSpec) NormalizeRange(from, to string, now time.Time) (string, string, error) {
+func (spec syncRollupSpec) NormalizeRange(from, to string, now time.Time) (normFrom string, normTo string, err error) {
 	_ = now // now is reserved for future relative-input ergonomics (e.g. "yesterday").
-	rfcFrom, err := spec.normalizeBoundary(from, "--from")
+	// Local names use the generic "norm" prefix because the emitted shape
+	// is per-rollup-kind: daily emits civil dates (YYYY-MM-DD), the
+	// windowed family emits RFC3339. Naming the locals rfcFrom/rfcTo
+	// (an earlier draft) misleadingly implied RFC3339 was always the
+	// output, hiding the daily-civil branch from readers.
+	normFrom, err = spec.normalizeBoundary(from, "--from")
 	if err != nil {
 		return "", "", err
 	}
-	rfcTo, err := spec.normalizeBoundary(to, "--to")
+	normTo, err = spec.normalizeBoundary(to, "--to")
 	if err != nil {
 		return "", "", err
 	}
-	return rfcFrom, rfcTo, nil
+	return normFrom, normTo, nil
 }
 
 // normalizeBoundary handles one end of the range. The shape it accepts
