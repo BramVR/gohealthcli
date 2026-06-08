@@ -279,6 +279,42 @@ var exportDatasetDefinitions = []exportDatasetSpec{
 		},
 	},
 	{
+		// floors_intervals projects archived floors interval Data Points
+		// into one row per source-interval with civil_date, count, and
+		// source attribution. Same pattern as the steps interval flow.
+		name:             "floors-intervals",
+		view:             "floors_intervals",
+		migrationVersion: 16,
+		orderBy:          "start_time_utc, source_family_filter, upstream_resource_name",
+		viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			start_time_utc,
+			end_time_utc,
+			IFNULL(start_civil_time, '') AS start_civil_time,
+			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
+			CAST(json_extract(raw_json, '$.floors.count') AS INTEGER) AS count,
+			IFNULL(json_extract(data_source_json, '$.platform'), '') AS source_platform,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'floors'
+			AND start_time_utc IS NOT NULL
+			AND json_extract(raw_json, '$.floors.count') IS NOT NULL`,
+		fields: []exportFieldSpec{
+			{name: "provider_name"},
+			{name: "connection_id"},
+			{name: "start_time_utc"},
+			{name: "end_time_utc"},
+			{name: "start_civil_time"},
+			{name: "civil_date"},
+			{name: "count"},
+			{name: "source_platform"},
+			{name: "source_family_filter"},
+			{name: "upstream_resource_name"},
+		},
+	},
+	{
 		// searchable_text is the LLM's one-target free-text needle path.
 		// UNIONs categorical text from paired devices, Data Point data
 		// source JSON, the latest profile snapshot, and exercise labels,

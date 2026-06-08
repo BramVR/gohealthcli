@@ -2,18 +2,39 @@ package main
 
 import "fmt"
 
+// endpointFamily identifies the Google Health API endpoint family a
+// Data Type catalog entry supports. Per the architecture review on
+// PRD #93, parallel boolean fields are gone — the SupportedEndpoints
+// map is the single source of truth for "which endpoints this Data
+// Type exposes".
+type endpointFamily string
+
+const (
+	endpointFamilyList        endpointFamily = "list"
+	endpointFamilyReconcile   endpointFamily = "reconcile"
+	endpointFamilyRollUp      endpointFamily = "rollUp"
+	endpointFamilyDailyRollUp endpointFamily = "dailyRollUp"
+)
+
+// endpointSupport carries the per-family metadata callers need (filter
+// field for list/reconcile, rollup value type for rollUp/dailyRollUp).
+// Adding a new endpoint family for a Data Type is one map entry — no
+// new struct field.
+type endpointSupport struct {
+	FilterField         string   // for list / reconcile — e.g. "steps.interval.start_time"
+	RollupValueType     string   // for rollUp / dailyRollUp — drives the generic rollup parser
+	WindowGranularities []string // for rollUp — e.g. ["1h","1d","7d"]; nil for fixed-window families
+}
+
 type googleHealthDataTypeCatalogEntry struct {
-	DataType              string
-	RequiredScopes        []string
-	ListFilterField       string
-	SupportsSyncDataPoint bool
-	SupportsReconcile     bool
-	SupportsDailyRollup   bool
-	Parser                string
-	JSONField             string
-	RecordKind            string
-	UsesDateRangeDefault  bool
-	DefaultConfigType     bool
+	DataType             string
+	RequiredScopes       []string
+	Parser               string
+	JSONField            string
+	RecordKind           string
+	UsesDateRangeDefault bool
+	DefaultConfigType    bool
+	SupportedEndpoints   map[endpointFamily]endpointSupport
 }
 
 type googleHealthDataTypeCatalog struct {
@@ -21,147 +42,163 @@ type googleHealthDataTypeCatalog struct {
 	order   []string
 }
 
+// listEndpoints / listReconcile constructors keep entry definitions
+// terse. The previous parallel-boolean layout had ~7 fields per entry;
+// using these helpers preserves that brevity while reading from one
+// canonical source.
+func listEndpoint(filterField string) map[endpointFamily]endpointSupport {
+	return map[endpointFamily]endpointSupport{
+		endpointFamilyList: {FilterField: filterField},
+	}
+}
+
+func listReconcileEndpoints(filterField string) map[endpointFamily]endpointSupport {
+	return map[endpointFamily]endpointSupport{
+		endpointFamilyList:      {FilterField: filterField},
+		endpointFamilyReconcile: {FilterField: filterField},
+	}
+}
+
+func listReconcileDailyRollupEndpoints(filterField, rollupValueType string) map[endpointFamily]endpointSupport {
+	return map[endpointFamily]endpointSupport{
+		endpointFamilyList:        {FilterField: filterField},
+		endpointFamilyReconcile:   {FilterField: filterField},
+		endpointFamilyDailyRollUp: {RollupValueType: rollupValueType},
+	}
+}
+
 var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTypeCatalogEntry{
 	{
-		DataType:              "steps",
-		RequiredScopes:        []string{googleHealthActivityReadonlyScope},
-		ListFilterField:       "steps.interval.start_time",
-		SupportsSyncDataPoint: true,
-		SupportsReconcile:     true,
-		SupportsDailyRollup:   true,
-		Parser:                "steps",
-		RecordKind:            "interval",
-		DefaultConfigType:     true,
+		DataType:           "steps",
+		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		Parser:             "steps",
+		RecordKind:         "interval",
+		DefaultConfigType:  true,
+		SupportedEndpoints: listReconcileDailyRollupEndpoints("steps.interval.start_time", "stepsCount"),
 	},
 	{
-		DataType:              "heart-rate",
-		RequiredScopes:        []string{googleHealthHealthMetricsReadonlyScope},
-		ListFilterField:       "heart_rate.sample_time.physical_time",
-		SupportsSyncDataPoint: true,
-		SupportsReconcile:     true,
-		Parser:                "sample",
-		JSONField:             "heartRate",
-		RecordKind:            "sample",
-		DefaultConfigType:     true,
+		DataType:           "heart-rate",
+		RequiredScopes:     []string{googleHealthHealthMetricsReadonlyScope},
+		Parser:             "sample",
+		JSONField:          "heartRate",
+		RecordKind:         "sample",
+		DefaultConfigType:  true,
+		SupportedEndpoints: listReconcileEndpoints("heart_rate.sample_time.physical_time"),
 	},
 	{
-		DataType:              "daily-resting-heart-rate",
-		RequiredScopes:        []string{googleHealthHealthMetricsReadonlyScope},
-		ListFilterField:       "daily_resting_heart_rate.date",
-		SupportsSyncDataPoint: true,
-		SupportsReconcile:     true,
-		Parser:                "daily",
-		JSONField:             "dailyRestingHeartRate",
-		RecordKind:            "daily",
-		UsesDateRangeDefault:  true,
-		DefaultConfigType:     true,
+		DataType:             "daily-resting-heart-rate",
+		RequiredScopes:       []string{googleHealthHealthMetricsReadonlyScope},
+		Parser:               "daily",
+		JSONField:            "dailyRestingHeartRate",
+		RecordKind:           "daily",
+		UsesDateRangeDefault: true,
+		DefaultConfigType:    true,
+		SupportedEndpoints:   listReconcileEndpoints("daily_resting_heart_rate.date"),
 	},
 	{
-		DataType:              "heart-rate-variability",
-		RequiredScopes:        []string{googleHealthHealthMetricsReadonlyScope},
-		ListFilterField:       "heart_rate_variability.sample_time.physical_time",
-		SupportsSyncDataPoint: true,
-		SupportsReconcile:     true,
-		Parser:                "sample",
-		JSONField:             "heartRateVariability",
-		RecordKind:            "sample",
-		DefaultConfigType:     true,
+		DataType:           "heart-rate-variability",
+		RequiredScopes:     []string{googleHealthHealthMetricsReadonlyScope},
+		Parser:             "sample",
+		JSONField:          "heartRateVariability",
+		RecordKind:         "sample",
+		DefaultConfigType:  true,
+		SupportedEndpoints: listReconcileEndpoints("heart_rate_variability.sample_time.physical_time"),
 	},
 	{
-		DataType:              "daily-heart-rate-variability",
-		RequiredScopes:        []string{googleHealthHealthMetricsReadonlyScope},
-		ListFilterField:       "daily_heart_rate_variability.date",
-		SupportsSyncDataPoint: true,
-		SupportsReconcile:     true,
-		Parser:                "daily",
-		JSONField:             "dailyHeartRateVariability",
-		RecordKind:            "daily",
-		UsesDateRangeDefault:  true,
-		DefaultConfigType:     true,
+		DataType:             "daily-heart-rate-variability",
+		RequiredScopes:       []string{googleHealthHealthMetricsReadonlyScope},
+		Parser:               "daily",
+		JSONField:            "dailyHeartRateVariability",
+		RecordKind:           "daily",
+		UsesDateRangeDefault: true,
+		DefaultConfigType:    true,
+		SupportedEndpoints:   listReconcileEndpoints("daily_heart_rate_variability.date"),
 	},
 	{
-		DataType:              "oxygen-saturation",
-		RequiredScopes:        []string{googleHealthHealthMetricsReadonlyScope},
-		ListFilterField:       "oxygen_saturation.sample_time.physical_time",
-		SupportsSyncDataPoint: true,
-		SupportsReconcile:     true,
-		Parser:                "sample",
-		JSONField:             "oxygenSaturation",
-		RecordKind:            "sample",
-		DefaultConfigType:     true,
+		DataType:           "oxygen-saturation",
+		RequiredScopes:     []string{googleHealthHealthMetricsReadonlyScope},
+		Parser:             "sample",
+		JSONField:          "oxygenSaturation",
+		RecordKind:         "sample",
+		DefaultConfigType:  true,
+		SupportedEndpoints: listReconcileEndpoints("oxygen_saturation.sample_time.physical_time"),
 	},
 	{
-		DataType:              "daily-oxygen-saturation",
-		RequiredScopes:        []string{googleHealthHealthMetricsReadonlyScope},
-		ListFilterField:       "daily_oxygen_saturation.date",
-		SupportsSyncDataPoint: true,
-		SupportsReconcile:     true,
-		Parser:                "daily",
-		JSONField:             "dailyOxygenSaturation",
-		RecordKind:            "daily",
-		UsesDateRangeDefault:  true,
-		DefaultConfigType:     true,
+		DataType:             "daily-oxygen-saturation",
+		RequiredScopes:       []string{googleHealthHealthMetricsReadonlyScope},
+		Parser:               "daily",
+		JSONField:            "dailyOxygenSaturation",
+		RecordKind:           "daily",
+		UsesDateRangeDefault: true,
+		DefaultConfigType:    true,
+		SupportedEndpoints:   listReconcileEndpoints("daily_oxygen_saturation.date"),
 	},
 	{
-		DataType:              "daily-respiratory-rate",
-		RequiredScopes:        []string{googleHealthHealthMetricsReadonlyScope},
-		ListFilterField:       "daily_respiratory_rate.date",
-		SupportsSyncDataPoint: true,
-		SupportsReconcile:     true,
-		Parser:                "daily",
-		JSONField:             "dailyRespiratoryRate",
-		RecordKind:            "daily",
-		UsesDateRangeDefault:  true,
-		DefaultConfigType:     true,
+		DataType:             "daily-respiratory-rate",
+		RequiredScopes:       []string{googleHealthHealthMetricsReadonlyScope},
+		Parser:               "daily",
+		JSONField:            "dailyRespiratoryRate",
+		RecordKind:           "daily",
+		UsesDateRangeDefault: true,
+		DefaultConfigType:    true,
+		SupportedEndpoints:   listReconcileEndpoints("daily_respiratory_rate.date"),
 	},
 	{
-		DataType:              "sleep",
-		RequiredScopes:        []string{googleHealthSleepReadonlyScope},
-		ListFilterField:       "sleep.interval.civil_end_time",
-		SupportsSyncDataPoint: true,
-		Parser:                "session",
-		JSONField:             "sleep",
-		RecordKind:            "session",
-		UsesDateRangeDefault:  true,
-		DefaultConfigType:     true,
+		DataType:             "sleep",
+		RequiredScopes:       []string{googleHealthSleepReadonlyScope},
+		Parser:               "session",
+		JSONField:            "sleep",
+		RecordKind:           "session",
+		UsesDateRangeDefault: true,
+		DefaultConfigType:    true,
+		SupportedEndpoints:   listEndpoint("sleep.interval.civil_end_time"),
 	},
 	{
-		DataType:              "exercise",
-		RequiredScopes:        []string{googleHealthActivityReadonlyScope},
-		ListFilterField:       "exercise.interval.civil_start_time",
-		SupportsSyncDataPoint: true,
-		Parser:                "session",
-		JSONField:             "exercise",
-		RecordKind:            "session",
-		UsesDateRangeDefault:  true,
-		DefaultConfigType:     true,
+		DataType:             "exercise",
+		RequiredScopes:       []string{googleHealthActivityReadonlyScope},
+		Parser:               "session",
+		JSONField:            "exercise",
+		RecordKind:           "session",
+		UsesDateRangeDefault: true,
+		DefaultConfigType:    true,
+		SupportedEndpoints:   listEndpoint("exercise.interval.civil_start_time"),
 	},
 	{
-		DataType:              "distance",
-		RequiredScopes:        []string{googleHealthActivityReadonlyScope},
-		ListFilterField:       "distance.interval.start_time",
-		SupportsSyncDataPoint: true,
-		SupportsReconcile:     true,
-		Parser:                "interval",
-		JSONField:             "distance",
-		RecordKind:            "interval",
-		DefaultConfigType:     true,
+		DataType:           "distance",
+		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		Parser:             "interval",
+		JSONField:          "distance",
+		RecordKind:         "interval",
+		DefaultConfigType:  true,
+		SupportedEndpoints: listReconcileEndpoints("distance.interval.start_time"),
 	},
 	{
 		DataType:          "total-calories",
 		RequiredScopes:    []string{googleHealthActivityReadonlyScope},
 		DefaultConfigType: true,
+		// total-calories has no parser shape yet — reserved Tier 1 entry.
+		// SupportedEndpoints stays nil; sync would error 'not supported'.
 	},
 	{
-		DataType:              "weight",
-		RequiredScopes:        []string{googleHealthHealthMetricsReadonlyScope},
-		ListFilterField:       "weight.sample_time.physical_time",
-		SupportsSyncDataPoint: true,
-		SupportsReconcile:     true,
-		Parser:                "sample",
-		JSONField:             "weight",
-		RecordKind:            "sample",
-		DefaultConfigType:     true,
+		DataType:           "weight",
+		RequiredScopes:     []string{googleHealthHealthMetricsReadonlyScope},
+		Parser:             "sample",
+		JSONField:          "weight",
+		RecordKind:         "sample",
+		DefaultConfigType:  true,
+		SupportedEndpoints: listReconcileEndpoints("weight.sample_time.physical_time"),
+	},
+	{
+		// floors is the first Tier 1 Data Type to land via the new
+		// SupportedEndpoints shape (#100). Interval-shaped, same
+		// endpoint surface as steps (list + reconcile + dailyRollUp).
+		DataType:           "floors",
+		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		Parser:             "interval",
+		JSONField:          "floors",
+		RecordKind:         "interval",
+		DefaultConfigType:  true,
+		SupportedEndpoints: listReconcileDailyRollupEndpoints("floors.interval.start_time", "floorsCount"),
 	},
 })
 
@@ -216,8 +253,11 @@ func googleHealthScopesForDataType(dataType string) []string {
 
 func googleHealthDataTypeListFilterField(dataType string) (string, error) {
 	entry, ok := googleHealthDataTypes.Lookup(dataType)
-	if ok && entry.ListFilterField != "" {
-		return entry.ListFilterField, nil
+	if !ok {
+		return "", fmt.Errorf("raw Data Type %q is not in the catalog", dataType)
+	}
+	if list, ok := entry.SupportedEndpoints[endpointFamilyList]; ok && list.FilterField != "" {
+		return list.FilterField, nil
 	}
 	return "", fmt.Errorf("raw Data Type %q is not supported by dataPoints.list", dataType)
 }
@@ -248,7 +288,8 @@ func googleHealthDailyDataPointShapeForDataType(dataType string) (googleHealthDa
 	if !ok || entry.Parser != "daily" {
 		return googleHealthDailyDataPointShape{}, false
 	}
-	return googleHealthDailyDataPointShape{jsonField: entry.JSONField, filterField: entry.ListFilterField}, true
+	list := entry.SupportedEndpoints[endpointFamilyList]
+	return googleHealthDailyDataPointShape{jsonField: entry.JSONField, filterField: list.FilterField}, true
 }
 
 func googleHealthDailyDataPointJSONField(dataType string) string {
@@ -266,14 +307,26 @@ func googleHealthSessionDataPointJSONField(dataType string) string {
 	return entry.JSONField
 }
 
+// syncDataPointDataTypeSupported returns true if the catalog has at
+// least one list/reconcile endpoint for the Data Type. Replaces the
+// previous parallel-boolean field SupportsSyncDataPoint.
 func syncDataPointDataTypeSupported(dataType string) bool {
 	entry, ok := googleHealthDataTypes.Lookup(dataType)
-	return ok && entry.SupportsSyncDataPoint
+	if !ok {
+		return false
+	}
+	_, hasList := entry.SupportedEndpoints[endpointFamilyList]
+	_, hasReconcile := entry.SupportedEndpoints[endpointFamilyReconcile]
+	return hasList || hasReconcile
 }
 
 func reconcileDataTypeSupported(dataType string) bool {
 	entry, ok := googleHealthDataTypes.Lookup(dataType)
-	return ok && entry.SupportsReconcile
+	if !ok {
+		return false
+	}
+	_, hasReconcile := entry.SupportedEndpoints[endpointFamilyReconcile]
+	return hasReconcile
 }
 
 func googleHealthSourceFamilyFilterName(dataType, sourceFamily string) (string, error) {
@@ -290,7 +343,11 @@ func googleHealthSourceFamilyFilterName(dataType, sourceFamily string) (string, 
 
 func dailyRollupDataTypeSupported(dataType string) bool {
 	entry, ok := googleHealthDataTypes.Lookup(dataType)
-	return ok && entry.SupportsDailyRollup
+	if !ok {
+		return false
+	}
+	_, hasDaily := entry.SupportedEndpoints[endpointFamilyDailyRollUp]
+	return hasDaily
 }
 
 func syncDataPointUsesDateRange(dataType string) bool {
