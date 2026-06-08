@@ -87,13 +87,23 @@ Rollups are upserted by Data Type, window, and rollup kind. The First Release
 keeps the current raw Rollup only; add Rollup revisions later if provider
 correction behavior warrants it.
 
-`profile_snapshots`
+`identity_snapshots` (renamed from `profile_snapshots` in migration 7)
 
 - local ID
 - provider name
 - connection ID
-- raw profile/settings JSON
+- snapshot kind (`profile` | `settings` | `paired-devices` | `irn-profile`)
+- raw provider JSON
 - fetched timestamp
+
+Identity Snapshots are append-only and kind-tagged. The `current_settings`
+Normalized View projects the latest snapshot of kind=`settings` per Connection
+into columns (measurement system, timezone, stride length type); follow-up
+slices add `current_profile`, `paired_devices`, and `current_irn_profile`.
+
+Rows pre-dating migration 7 keep `snapshot_kind='profile'` via the column
+default; no parallel-table-with-view shim was used (PRD #93
+§"identity_snapshots migration: explicit strategy").
 
 `sync_runs`
 

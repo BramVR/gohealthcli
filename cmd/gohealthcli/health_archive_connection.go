@@ -15,7 +15,6 @@ type healthArchiveConnectionAPI interface {
 	UpsertConnection(connectionID string, identity googleIdentity, token oauthTokenResponse, now time.Time) error
 	UpdateConnectionTokenMetadata(connectionID string, token oauthTokenResponse, now time.Time) error
 	RefreshConnectionIdentity(connection archivedConnection, identity googleIdentity, now time.Time) error
-	InsertProfileSnapshot(connection archivedConnection, rawJSON, fetchedAt string) (int64, error)
 	InspectConnectionTokenMetadata() (int, string, error)
 }
 
@@ -53,10 +52,6 @@ func (archive *sqliteHealthArchiveConnectionAPI) UpdateConnectionTokenMetadata(c
 
 func (archive *sqliteHealthArchiveConnectionAPI) RefreshConnectionIdentity(connection archivedConnection, identity googleIdentity, now time.Time) error {
 	return refreshConnectionIdentity(archive.db, connection, identity, now)
-}
-
-func (archive *sqliteHealthArchiveConnectionAPI) InsertProfileSnapshot(connection archivedConnection, rawJSON, fetchedAt string) (int64, error) {
-	return insertProfileSnapshot(archive.db, connection, rawJSON, fetchedAt)
 }
 
 func (archive *sqliteHealthArchiveConnectionAPI) InspectConnectionTokenMetadata() (int, string, error) {
@@ -124,18 +119,6 @@ func readCurrentConnection(db *sql.DB) (archivedConnection, error) {
 	return connections[0], nil
 }
 
-func insertProfileSnapshot(db *sql.DB, connection archivedConnection, rawJSON, fetchedAt string) (int64, error) {
-	result, err := db.Exec(`INSERT INTO profile_snapshots (
-		provider_name,
-		connection_id,
-		raw_json,
-		fetched_at
-	) VALUES (?, ?, ?, ?)`, connection.providerName, connection.id, rawJSON, fetchedAt)
-	if err != nil {
-		return 0, err
-	}
-	return result.LastInsertId()
-}
 
 func upsertConnection(db *sql.DB, connectionID string, identity googleIdentity, token oauthTokenResponse, now time.Time) error {
 	metadataJSON, err := connectionTokenMetadataJSON(connectionID, token)

@@ -77,12 +77,6 @@ func TestHealthArchiveConnectionAPIManagesConnectionIdentityMetadataAndProfileSn
 	if connection.legacyFitbitUserID != "Z9Y8X7" {
 		t.Fatalf("legacyFitbitUserID = %q, want refreshed", connection.legacyFitbitUserID)
 	}
-
-	snapshotID, err := archive.InsertProfileSnapshot(connection, `{"name":"users/111111256096816351/profile"}`, "2026-06-01T10:30:00Z")
-	if err != nil {
-		t.Fatalf("insert profile snapshot: %v", err)
-	}
-	if snapshotID != 1 {
-		t.Fatalf("snapshotID = %d, want 1", snapshotID)
-	}
+	// Profile-snapshot insertion has moved to identitySnapshotArchive in
+	// slice B of #97; coverage lives in identity_snapshot_archive_test.go.
 }

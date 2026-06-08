@@ -28,7 +28,7 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 6
+const currentSchemaVersion = 8
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
@@ -113,17 +113,18 @@ type syncResult struct {
 }
 
 type statusResult struct {
-	Status               string           `json:"status"`
-	ArchivePath          string           `json:"archive_path"`
-	SchemaVersion        int              `json:"schema_version,omitempty"`
-	DataPointCount       int              `json:"data_point_count"`
-	RollupCount          int              `json:"rollup_count"`
-	ProfileSnapshotCount int              `json:"profile_snapshot_count"`
-	SyncRunCount         int              `json:"sync_run_count"`
-	DataTypes            []statusDataType `json:"data_types,omitempty"`
-	LatestSuccessfulRun  *statusSyncRun   `json:"latest_successful_sync_run,omitempty"`
-	LatestFailedRun      *statusSyncRun   `json:"latest_failed_sync_run,omitempty"`
-	Message              string           `json:"message"`
+	Status                string           `json:"status"`
+	ArchivePath           string           `json:"archive_path"`
+	SchemaVersion         int              `json:"schema_version,omitempty"`
+	DataPointCount        int              `json:"data_point_count"`
+	RollupCount           int              `json:"rollup_count"`
+	ProfileSnapshotCount  int              `json:"profile_snapshot_count"`
+	IdentitySnapshotCount int              `json:"identity_snapshot_count"`
+	SyncRunCount          int              `json:"sync_run_count"`
+	DataTypes             []statusDataType `json:"data_types,omitempty"`
+	LatestSuccessfulRun   *statusSyncRun   `json:"latest_successful_sync_run,omitempty"`
+	LatestFailedRun       *statusSyncRun   `json:"latest_failed_sync_run,omitempty"`
+	Message               string           `json:"message"`
 }
 
 type statusDataType struct {
@@ -394,6 +395,8 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 		return runIdentityWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
 	case "profile":
 		return runProfileWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
+	case "settings":
+		return runSettingsWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
 	case "sync":
 		return runSyncWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
 	case "status":
@@ -1092,7 +1095,14 @@ func profileSetupWithRuntime(configPath, archivePath string, runtime runtimeAdap
 	if err != nil {
 		return profileResult{}, err
 	}
-	defer archive.Close()
+	// archive is closed either by writeIdentitySnapshotHandoff (success
+	// path) or by this deferred guard (any error before handoff).
+	archiveClosed := false
+	defer func() {
+		if !archiveClosed {
+			_ = archive.Close()
+		}
+	}()
 	connection, err := archive.CurrentConnection()
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1131,7 +1141,8 @@ func profileSetupWithRuntime(configPath, archivePath string, runtime runtimeAdap
 		return result, err
 	}
 	fetchedAt := runtime.now().UTC().Format(time.RFC3339)
-	snapshotID, err := archive.InsertProfileSnapshot(connection, profile.rawJSON, fetchedAt)
+	snapshotID, err := writeIdentitySnapshotHandoff(archive, archivePath, connection, "profile", profile.rawJSON, fetchedAt)
+	archiveClosed = true // handoff owns archive's lifecycle now
 	if err != nil {
 		return result, err
 	}
@@ -2463,6 +2474,12 @@ func buildGoogleHealthRawRequest(target []string, from, to string, pageSize int6
 		if target[1] == "getIdentity" {
 			return rawProviderRequest{endpointName: "getIdentity", url: googleHealthIdentityURL}, nil
 		}
+		if target[1] == "getProfile" {
+			return rawProviderRequest{endpointName: "getProfile", url: googleHealthProfileURL, requiredScopes: []string{googleHealthProfileReadonlyScope}}, nil
+		}
+		if target[1] == "getSettings" {
+			return rawProviderRequest{endpointName: "getSettings", url: googleHealthSettingsURL, requiredScopes: []string{googleHealthProfileReadonlyScope}}, nil
+		}
 		if strings.HasPrefix(target[1], "dataTypes.") && strings.HasSuffix(target[1], ".list") {
 			dataType := strings.TrimSuffix(strings.TrimPrefix(target[1], "dataTypes."), ".list")
 			return buildGoogleHealthDataTypeListRawRequest(dataType, from, to, pageSize, pageToken)
@@ -3696,7 +3713,13 @@ func applyMigrations(db *sql.DB) error {
 	if err := applySyncCursorsMigration(tx, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 6`); err != nil {
+	if err := applyIdentitySnapshotsMigration(tx, now); err != nil {
+		return err
+	}
+	if err := applyCurrentSettingsViewMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 8`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -3714,7 +3737,7 @@ func applyPendingMigrations(db *sql.DB) error {
 	switch userVersion {
 	case currentSchemaVersion:
 		return nil
-	case 1, 2, 3, 4, 5:
+	case 1, 2, 3, 4, 5, 6, 7:
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -3741,10 +3764,22 @@ func applyPendingMigrations(db *sql.DB) error {
 				return err
 			}
 		}
-		if err := applySyncCursorsMigration(tx, now); err != nil {
-			return err
+		if userVersion <= 5 {
+			if err := applySyncCursorsMigration(tx, now); err != nil {
+				return err
+			}
 		}
-		if _, err := tx.Exec(`PRAGMA user_version = 6`); err != nil {
+		if userVersion <= 6 {
+			if err := applyIdentitySnapshotsMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if userVersion <= 7 {
+			if err := applyCurrentSettingsViewMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(`PRAGMA user_version = 8`); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -3804,6 +3839,39 @@ func applySyncCursorsMigration(tx *sql.Tx, appliedAt string) error {
 	return err
 }
 
+func applyCurrentSettingsViewMigration(tx *sql.Tx, appliedAt string) error {
+	for _, statement := range normalizedViewsRegistry().MigrationStatements(8) {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (8, 'add_current_settings_view', ?)`, appliedAt)
+	return err
+}
+
+func applyIdentitySnapshotsMigration(tx *sql.Tx, appliedAt string) error {
+	for _, statement := range identitySnapshotsMigrationStatements() {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (7, 'rename_profile_snapshots_to_identity_snapshots', ?)`, appliedAt)
+	return err
+}
+
+// identitySnapshotsMigrationStatements renames profile_snapshots to
+// identity_snapshots and adds the snapshot_kind discriminator. All
+// existing rows keep snapshot_kind = 'profile' via the column default,
+// preserving every prior profile snapshot's identity without a
+// parallel-table-with-view shim (per the PRD §"identity_snapshots
+// migration: explicit strategy").
+func identitySnapshotsMigrationStatements() []string {
+	return []string{
+		`ALTER TABLE profile_snapshots RENAME TO identity_snapshots`,
+		`ALTER TABLE identity_snapshots ADD COLUMN snapshot_kind TEXT NOT NULL DEFAULT 'profile'`,
+	}
+}
+
 func syncCursorsMigrationStatements() []string {
 	return []string{
 		`CREATE TABLE sync_cursors (
@@ -3827,6 +3895,8 @@ func expectedSchemaMigrations() map[int]string {
 		4: "add_daily_steps_view",
 		5: "add_first_release_normalized_views",
 		6: "add_sync_cursors",
+		7: "rename_profile_snapshots_to_identity_snapshots",
+		8: "add_current_settings_view",
 	}
 }
 
@@ -3916,11 +3986,11 @@ func initialMigrationStatements() []string {
 }
 
 func dailyStepsViewMigrationStatements() []string {
-	return exportDatasetViewMigrationStatements(4)
+	return normalizedViewsRegistry().MigrationStatements(4)
 }
 
 func firstReleaseNormalizedViewMigrationStatements() []string {
-	return exportDatasetViewMigrationStatements(5)
+	return normalizedViewsRegistry().MigrationStatements(5)
 }
 
 func writeStatusResult(result statusResult, mode outputMode, stdout io.Writer) error {
@@ -4016,7 +4086,7 @@ func writeStatusResult(result statusResult, mode outputMode, stdout io.Writer) e
 			return err
 		}
 	}
-	if _, err := fmt.Fprintf(stdout, "Counts: %d Data Points, %d Rollups, %d Profile Snapshots, %d Sync Runs\n", result.DataPointCount, result.RollupCount, result.ProfileSnapshotCount, result.SyncRunCount); err != nil {
+	if _, err := fmt.Fprintf(stdout, "Counts: %d Data Points, %d Rollups, %d Identity Snapshots (%d Profile), %d Sync Runs\n", result.DataPointCount, result.RollupCount, result.IdentitySnapshotCount, result.ProfileSnapshotCount, result.SyncRunCount); err != nil {
 		return err
 	}
 	if len(result.DataTypes) != 0 {
@@ -4073,6 +4143,7 @@ func writeStatusCounts(result statusResult, stdout io.Writer) error {
 		{"data_point_count", result.DataPointCount},
 		{"rollup_count", result.RollupCount},
 		{"profile_snapshot_count", result.ProfileSnapshotCount},
+		{"identity_snapshot_count", result.IdentitySnapshotCount},
 		{"sync_run_count", result.SyncRunCount},
 	} {
 		if _, err := fmt.Fprintf(stdout, "%s: %d\n", item.key, item.count); err != nil {

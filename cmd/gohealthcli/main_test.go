@@ -419,8 +419,8 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("schema migration rows: %v", err)
 	}
-	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter,4:add_daily_steps_view,5:add_first_release_normalized_views,6:add_sync_cursors" {
-		t.Fatalf("migrations = %v, want initial + identity + source family + normalized views + sync cursors", migrations)
+	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter,4:add_daily_steps_view,5:add_first_release_normalized_views,6:add_sync_cursors,7:rename_profile_snapshots_to_identity_snapshots,8:add_current_settings_view" {
+		t.Fatalf("migrations = %v, want initial + identity + source family + normalized views + sync cursors + identity_snapshots rename + current_settings view", migrations)
 	}
 
 	for _, table := range []string{
@@ -428,7 +428,7 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 		"data_points",
 		"data_point_revisions",
 		"rollups",
-		"profile_snapshots",
+		"identity_snapshots",
 		"sync_runs",
 		"sync_cursors",
 	} {
@@ -2290,7 +2290,7 @@ func TestProfileArchivesSnapshotAndPrintsSummary(t *testing.T) {
 	}
 	defer db.Close()
 	var providerName, connectionID, rawJSON, fetchedAt string
-	if err := db.QueryRow(`SELECT provider_name, connection_id, raw_json, fetched_at FROM profile_snapshots WHERE id = ?`, 1).Scan(&providerName, &connectionID, &rawJSON, &fetchedAt); err != nil {
+	if err := db.QueryRow(`SELECT provider_name, connection_id, raw_json, fetched_at FROM identity_snapshots WHERE id = ?`, 1).Scan(&providerName, &connectionID, &rawJSON, &fetchedAt); err != nil {
 		t.Fatalf("query profile snapshot: %v", err)
 	}
 	if providerName != "googlehealth" || connectionID != "googlehealth:111111256096816351" {
@@ -2378,7 +2378,7 @@ func TestProfileProviderFailureDoesNotArchiveSnapshot(t *testing.T) {
 	if _, ok := got["snapshot_id"]; ok {
 		t.Fatalf("snapshot_id = %v, want omitted on failure", got["snapshot_id"])
 	}
-	assertArchiveTableCount(t, archivePath, "profile_snapshots", 0)
+	assertArchiveTableCount(t, archivePath, "identity_snapshots", 0)
 	assertArchiveTableCount(t, archivePath, "data_points", 0)
 	assertArchiveTableCount(t, archivePath, "rollups", 0)
 	assertNoSecretWords(t, stdout.String()+stderr.String())
@@ -2424,7 +2424,7 @@ func TestProfileFailsBeforeProviderWhenProfileScopeMissing(t *testing.T) {
 	if !ok || !strings.Contains(message, googleHealthProfileReadonlyScope) || !strings.Contains(message, "connect") {
 		t.Fatalf("message = %T(%v), want profile-scope reconnect guidance", got["message"], got["message"])
 	}
-	assertArchiveTableCount(t, archivePath, "profile_snapshots", 0)
+	assertArchiveTableCount(t, archivePath, "identity_snapshots", 0)
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
@@ -2466,7 +2466,7 @@ func TestProfileRejectsAliasProfileWhenIdentityVerificationDiffers(t *testing.T)
 	if _, ok := got["snapshot_id"]; ok {
 		t.Fatalf("snapshot_id = %v, want omitted on mismatch", got["snapshot_id"])
 	}
-	assertArchiveTableCount(t, archivePath, "profile_snapshots", 0)
+	assertArchiveTableCount(t, archivePath, "identity_snapshots", 0)
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
@@ -2505,7 +2505,7 @@ func TestProfileRejectsDifferentGoogleIdentityWithoutArchiving(t *testing.T) {
 	if _, ok := got["snapshot_id"]; ok {
 		t.Fatalf("snapshot_id = %v, want omitted on mismatch", got["snapshot_id"])
 	}
-	assertArchiveTableCount(t, archivePath, "profile_snapshots", 0)
+	assertArchiveTableCount(t, archivePath, "identity_snapshots", 0)
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
@@ -6536,7 +6536,16 @@ func insertStatusFixtureRows(t *testing.T, archivePath string) {
 	); err != nil {
 		t.Fatalf("insert status fixture Rollup: %v", err)
 	}
-	if _, err := db.Exec(`INSERT INTO profile_snapshots (
+	// Legacy archives (created via createLegacyVxArchive) still carry the
+	// pre-#97 table name; the rename ALTER fires only when the migration
+	// runs. Pick the right name so this helper works for both fresh-v7
+	// and pre-v7 fixtures.
+	snapshotTable := "identity_snapshots"
+	var legacyName string
+	if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='profile_snapshots'`).Scan(&legacyName); err == nil {
+		snapshotTable = "profile_snapshots"
+	}
+	if _, err := db.Exec(`INSERT INTO ` + snapshotTable + ` (
 		provider_name,
 		connection_id,
 		raw_json,
