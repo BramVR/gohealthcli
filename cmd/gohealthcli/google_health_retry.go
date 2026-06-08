@@ -47,6 +47,13 @@ func fetchWithRetry(fetcher googleHealthRetryFetcher, sleeper googleHealthRetryS
 	var lastErr error
 	attempts := 0
 	for attempt := 0; attempt < googleHealthRetryMaxAttempts; attempt++ {
+		// Pre-attempt cancel check: if SIGINT arrived between Data Types
+		// (or any time before this attempt), surface it without spending
+		// the upstream round-trip. The mid-backoff sleep already honors
+		// cancelCh; this just closes the matching entry-side gap.
+		if ingestionCanceled(cancelCh) {
+			return nil, errSyncCanceled
+		}
 		attempts++
 		body, err := fetcher(request, accessToken)
 		if err == nil {
