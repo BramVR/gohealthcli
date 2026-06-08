@@ -96,6 +96,7 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 		to:           options.to,
 		rollup:       options.rollup,
 		sourceFamily: options.sourceFamily,
+		cancelCh:     options.cancelCh,
 	}
 	ingestionPlan, err := ingestion.Plan(ingestionRequest)
 	if err != nil {
@@ -169,6 +170,9 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	ingestionResult, err := ingestion.Execute(archive, ingestionRequest)
 	applyGoogleHealthIngestionCounts(&result, ingestionResult)
 	if err != nil {
+		if errors.Is(err, errSyncCanceled) {
+			return finalize(syncRunOutcomeCanceled, err)
+		}
 		return finalize(syncRunOutcomeFailed, err)
 	}
 	if options.rollup == "daily" {

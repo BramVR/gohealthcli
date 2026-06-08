@@ -33,6 +33,33 @@ type googleHealthIngestionRequest struct {
 	rollup       string
 	sourceFamily string
 	accessToken  string
+	// cancelCh, when closed, asks pagination to stop cleanly between pages.
+	// Returns errSyncCanceled. The in-flight Fetch (if any) is not aborted —
+	// SIGINT during a sync stops at the next page boundary, not mid-HTTP.
+	// nil disables cancellation (used by single-type syncs without SIGINT
+	// instrumentation).
+	cancelCh <-chan struct{}
+}
+
+// errSyncCanceled is the sentinel returned by ingestion when the cancel
+// channel was closed between pages. sync_run.go translates it into the
+// syncRunOutcomeCanceled outcome, which leaves the Sync Cursor un-advanced
+// (ADR-0008).
+var errSyncCanceled = errors.New("Sync Run canceled")
+
+// ingestionCanceled is a non-blocking check for a closed cancel channel.
+// nil channel disables cancellation, matching the single-type CLI path
+// before SIGINT instrumentation was added.
+func ingestionCanceled(cancelCh <-chan struct{}) bool {
+	if cancelCh == nil {
+		return false
+	}
+	select {
+	case <-cancelCh:
+		return true
+	default:
+		return false
+	}
 }
 
 type googleHealthIngestionPlan struct {
@@ -121,6 +148,9 @@ func (ingestion googleHealthIngestion) executeDailyRollupPages(archive googleHea
 	for _, window := range windows {
 		seenPageTokens := map[string]struct{}{}
 		for pageToken := ""; ; {
+			if ingestionCanceled(request.cancelCh) {
+				return errSyncCanceled
+			}
 			rawRequest, err := buildGoogleHealthDailyRollupRawRequest(request.dataType, window.from, window.to, 0, pageToken)
 			if err != nil {
 				return err
@@ -166,6 +196,9 @@ func (ingestion googleHealthIngestion) executeDailyRollupPages(archive googleHea
 func (ingestion googleHealthIngestion) executeDataPointPages(archive googleHealthIngestionArchive, request googleHealthIngestionRequest, result *googleHealthIngestionResult) error {
 	seenPageTokens := map[string]struct{}{}
 	for pageToken := ""; ; {
+		if ingestionCanceled(request.cancelCh) {
+			return errSyncCanceled
+		}
 		rawRequest, err := buildGoogleHealthSyncDataPointRawRequest(request.dataType, request.from, request.to, request.sourceFamily, 0, pageToken)
 		if err != nil {
 			return err
