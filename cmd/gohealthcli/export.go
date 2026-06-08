@@ -279,6 +279,246 @@ var exportDatasetDefinitions = []exportDatasetSpec{
 		},
 	},
 	{
+		// active_minutes_intervals explodes the activeMinutesByActivityLevel
+		// array Google returns under $.activeMinutes — one row per
+		// activity-level slice per parent interval.
+		name:             "active-minutes-intervals",
+		view:             "active_minutes_intervals",
+		migrationVersion: 17,
+		orderBy:          "start_time_utc, provider_name, connection_id, activity_level",
+		viewSQL: `SELECT
+			data_points.provider_name,
+			data_points.connection_id,
+			data_points.start_time_utc,
+			data_points.end_time_utc,
+			COALESCE(data_points.provider_civil_date, substr(data_points.start_civil_time, 1, 10), substr(data_points.start_time_utc, 1, 10), '') AS civil_date,
+			IFNULL(json_extract(level.value, '$.activityLevel'), '') AS activity_level,
+			CAST(json_extract(level.value, '$.activeMinutes') AS INTEGER) AS active_minutes,
+			IFNULL(data_points.source_family_filter, '') AS source_family_filter,
+			IFNULL(data_points.upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points, json_each(data_points.raw_json, '$.activeMinutes.activeMinutesByActivityLevel') AS level
+		WHERE data_points.data_type = 'active-minutes'
+			AND json_extract(data_points.raw_json, '$.activeMinutes.activeMinutesByActivityLevel') IS NOT NULL`,
+		fields: []exportFieldSpec{
+			{name: "provider_name"}, {name: "connection_id"},
+			{name: "start_time_utc"}, {name: "end_time_utc"}, {name: "civil_date"},
+			{name: "activity_level"}, {name: "active_minutes"},
+			{name: "source_family_filter"}, {name: "upstream_resource_name"},
+		},
+	},
+	{
+		// active_zone_minutes_intervals projects $.activeZoneMinutes
+		// (one heart-rate-zone + duration per archived interval).
+		name:             "active-zone-minutes-intervals",
+		view:             "active_zone_minutes_intervals",
+		migrationVersion: 17,
+		orderBy:          "start_time_utc, provider_name, connection_id, heart_rate_zone",
+		viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			start_time_utc,
+			end_time_utc,
+			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
+			IFNULL(json_extract(raw_json, '$.activeZoneMinutes.heartRateZone'), '') AS heart_rate_zone,
+			CAST(json_extract(raw_json, '$.activeZoneMinutes.activeZoneMinutes') AS INTEGER) AS active_zone_minutes,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'active-zone-minutes'
+			AND start_time_utc IS NOT NULL`,
+		fields: []exportFieldSpec{
+			{name: "provider_name"}, {name: "connection_id"},
+			{name: "start_time_utc"}, {name: "end_time_utc"}, {name: "civil_date"},
+			{name: "heart_rate_zone"}, {name: "active_zone_minutes"},
+			{name: "source_family_filter"}, {name: "upstream_resource_name"},
+		},
+	},
+	{
+		// altitude_intervals exposes Google's $.altitude.gainMillimeters
+		// in both raw millimeters and derived meters.
+		name:             "altitude-intervals",
+		view:             "altitude_intervals",
+		migrationVersion: 17,
+		orderBy:          "start_time_utc, provider_name, connection_id",
+		viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			start_time_utc,
+			end_time_utc,
+			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
+			CAST(json_extract(raw_json, '$.altitude.gainMillimeters') AS INTEGER) / 1000 AS gain_meters,
+			CAST(json_extract(raw_json, '$.altitude.gainMillimeters') AS INTEGER) AS gain_millimeters,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'altitude'
+			AND json_extract(raw_json, '$.altitude.gainMillimeters') IS NOT NULL`,
+		fields: []exportFieldSpec{
+			{name: "provider_name"}, {name: "connection_id"},
+			{name: "start_time_utc"}, {name: "end_time_utc"}, {name: "civil_date"},
+			{name: "gain_meters"}, {name: "gain_millimeters"},
+			{name: "source_family_filter"}, {name: "upstream_resource_name"},
+		},
+	},
+	{
+		// activity_level_intervals exposes Google's enum
+		// $.activityLevel.activityLevelType (SEDENTARY/LIGHT/...) plus
+		// a derived duration in seconds.
+		name:             "activity-level-intervals",
+		view:             "activity_level_intervals",
+		migrationVersion: 17,
+		orderBy:          "start_time_utc, provider_name, connection_id",
+		viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			start_time_utc,
+			end_time_utc,
+			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
+			IFNULL(json_extract(raw_json, '$.activityLevel.activityLevelType'), '') AS activity_level_type,
+			CAST((strftime('%s', end_time_utc) - strftime('%s', start_time_utc)) AS INTEGER) AS duration_seconds,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'activity-level'
+			AND start_time_utc IS NOT NULL`,
+		fields: []exportFieldSpec{
+			{name: "provider_name"}, {name: "connection_id"},
+			{name: "start_time_utc"}, {name: "end_time_utc"}, {name: "civil_date"},
+			{name: "activity_level_type"}, {name: "duration_seconds"},
+			{name: "source_family_filter"}, {name: "upstream_resource_name"},
+		},
+	},
+	{
+		// sedentary_period_intervals: no scalar; expose the interval as
+		// a derived duration in seconds.
+		name:             "sedentary-period-intervals",
+		view:             "sedentary_period_intervals",
+		migrationVersion: 17,
+		orderBy:          "start_time_utc, provider_name, connection_id",
+		viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			start_time_utc,
+			end_time_utc,
+			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
+			CAST((strftime('%s', end_time_utc) - strftime('%s', start_time_utc)) AS INTEGER) AS duration_seconds,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'sedentary-period'
+			AND start_time_utc IS NOT NULL`,
+		fields: []exportFieldSpec{
+			{name: "provider_name"}, {name: "connection_id"},
+			{name: "start_time_utc"}, {name: "end_time_utc"}, {name: "civil_date"},
+			{name: "duration_seconds"},
+			{name: "source_family_filter"}, {name: "upstream_resource_name"},
+		},
+	},
+	{
+		// time_in_heart_rate_zone_intervals: heartRateZoneType + derived duration.
+		name:             "time-in-heart-rate-zone-intervals",
+		view:             "time_in_heart_rate_zone_intervals",
+		migrationVersion: 17,
+		orderBy:          "start_time_utc, provider_name, connection_id, heart_rate_zone_type",
+		viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			start_time_utc,
+			end_time_utc,
+			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
+			IFNULL(json_extract(raw_json, '$.timeInHeartRateZone.heartRateZoneType'), '') AS heart_rate_zone_type,
+			CAST((strftime('%s', end_time_utc) - strftime('%s', start_time_utc)) AS INTEGER) AS duration_seconds,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'time-in-heart-rate-zone'
+			AND start_time_utc IS NOT NULL`,
+		fields: []exportFieldSpec{
+			{name: "provider_name"}, {name: "connection_id"},
+			{name: "start_time_utc"}, {name: "end_time_utc"}, {name: "civil_date"},
+			{name: "heart_rate_zone_type"}, {name: "duration_seconds"},
+			{name: "source_family_filter"}, {name: "upstream_resource_name"},
+		},
+	},
+	{
+		// swim_lengths_data_intervals: strokeCount per interval.
+		name:             "swim-lengths-data-intervals",
+		view:             "swim_lengths_data_intervals",
+		migrationVersion: 17,
+		orderBy:          "start_time_utc, provider_name, connection_id",
+		viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			start_time_utc,
+			end_time_utc,
+			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
+			CAST(json_extract(raw_json, '$.swimLengthsData.strokeCount') AS INTEGER) AS stroke_count,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'swim-lengths-data'
+			AND start_time_utc IS NOT NULL`,
+		fields: []exportFieldSpec{
+			{name: "provider_name"}, {name: "connection_id"},
+			{name: "start_time_utc"}, {name: "end_time_utc"}, {name: "civil_date"},
+			{name: "stroke_count"},
+			{name: "source_family_filter"}, {name: "upstream_resource_name"},
+		},
+	},
+	{
+		// vo2_max_samples: the live response stores the scalar as a
+		// floating-point number at $.vo2Max.vo2Max (Google's repeated
+		// data-type name nesting). Stored as TEXT to preserve precision.
+		name:             "vo2-max-samples",
+		view:             "vo2_max_samples",
+		migrationVersion: 17,
+		orderBy:          "start_time_utc, provider_name, connection_id",
+		viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			start_time_utc AS sample_time_utc,
+			IFNULL(start_civil_time, '') AS sample_civil_time,
+			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
+			CAST(json_extract(raw_json, '$.vo2Max.vo2Max') AS TEXT) AS vo2_max,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'vo2-max'
+			AND start_time_utc IS NOT NULL`,
+		fields: []exportFieldSpec{
+			{name: "provider_name"}, {name: "connection_id"},
+			{name: "sample_time_utc"}, {name: "sample_civil_time"}, {name: "civil_date"},
+			{name: "vo2_max"},
+			{name: "source_family_filter"}, {name: "upstream_resource_name"},
+		},
+	},
+	{
+		// run_vo2_max_samples: same shape as vo2-max but the scalar
+		// lives at $.runVo2Max.runVo2Max (run-specific VO₂ max estimate).
+		name:             "run-vo2-max-samples",
+		view:             "run_vo2_max_samples",
+		migrationVersion: 17,
+		orderBy:          "start_time_utc, provider_name, connection_id",
+		viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			start_time_utc AS sample_time_utc,
+			IFNULL(start_civil_time, '') AS sample_civil_time,
+			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
+			CAST(json_extract(raw_json, '$.runVo2Max.runVo2Max') AS TEXT) AS run_vo2_max,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'run-vo2-max'
+			AND start_time_utc IS NOT NULL`,
+		fields: []exportFieldSpec{
+			{name: "provider_name"}, {name: "connection_id"},
+			{name: "sample_time_utc"}, {name: "sample_civil_time"}, {name: "civil_date"},
+			{name: "run_vo2_max"},
+			{name: "source_family_filter"}, {name: "upstream_resource_name"},
+		},
+	},
+	{
 		// floors_intervals projects archived floors interval Data Points
 		// into one row per source-interval with civil_date, count, and
 		// source attribution. Same pattern as the steps interval flow.

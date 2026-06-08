@@ -28,7 +28,7 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 16
+const currentSchemaVersion = 17
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
@@ -3828,7 +3828,10 @@ func applyMigrations(db *sql.DB) error {
 	if err := applyFloorsIntervalsViewMigration(tx, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 16`); err != nil {
+	if err := applyTier1ActivityViewsMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 17`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -3848,7 +3851,7 @@ func applyPendingMigrations(db *sql.DB) error {
 	switch userVersion {
 	case currentSchemaVersion:
 		return nil
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16:
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -3925,10 +3928,15 @@ func applyPendingMigrations(db *sql.DB) error {
 				return err
 			}
 		}
-		if err := applyFloorsIntervalsViewMigration(tx, now); err != nil {
+		if userVersion <= 15 {
+			if err := applyFloorsIntervalsViewMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if err := applyTier1ActivityViewsMigration(tx, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`PRAGMA user_version = 16`); err != nil {
+		if _, err := tx.Exec(`PRAGMA user_version = 17`); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -3985,6 +3993,16 @@ func applySyncCursorsMigration(tx *sql.Tx, appliedAt string) error {
 		}
 	}
 	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (6, 'add_sync_cursors', ?)`, appliedAt)
+	return err
+}
+
+func applyTier1ActivityViewsMigration(tx *sql.Tx, appliedAt string) error {
+	for _, statement := range normalizedViewsRegistry().MigrationStatements(17) {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (17, 'add_tier1_activity_views', ?)`, appliedAt)
 	return err
 }
 
@@ -4165,6 +4183,7 @@ func expectedSchemaMigrations() map[int]string {
 		14: "fix_searchable_text_latest_profile_and_empty_filter",
 		15: "add_data_point_attachments",
 		16: "add_floors_intervals_view",
+		17: "add_tier1_activity_views",
 	}
 }
 
