@@ -54,14 +54,30 @@ Google Health reconcile path. `sync --types steps --rollup daily` archives
 steps daily Rollups. `total-calories` is known to the catalog but is not
 supported by raw Data Point sync because Google exposes it as Rollup data.
 
-Normalized export datasets:
+Normalized export datasets (grouped by domain; `gohealthcli export` accepts
+any of these names as its positional argument):
 
-- `daily-steps`
-- `heart-rate-samples`
-- `resting-heart-rate-by-day`
-- `sleep-sessions`
-- `exercise-sessions`
-- `weight-samples`
+- Activity and steps: `daily-steps`, `active-minutes-intervals`,
+  `active-zone-minutes-intervals`, `activity-level-intervals`,
+  `sedentary-period-intervals`, `floors-intervals`, `altitude-intervals`.
+- Heart rate: `heart-rate-samples`, `resting-heart-rate-by-day`,
+  `daily-heart-rate-zones`, `time-in-heart-rate-zone-intervals`.
+- Heart rhythm (Tier 2): `electrocardiogram-sessions`,
+  `irregular-rhythm-notifications`, `current-irn-profile`.
+- Sleep: `sleep-sessions`, `sleep-stages`, `respiratory-rate-sleep-summary`,
+  `daily-sleep-temperature-derivations`.
+- Exercise: `exercise-sessions`, `exercise-splits`,
+  `swim-lengths-data-intervals`.
+- Body measurements: `weight-samples`, `body-fat-samples`, `height-samples`,
+  `current-height`.
+- VO2 max: `vo2-max-samples`, `run-vo2-max-samples`, `daily-vo2-max`.
+- Other biomarkers: `blood-glucose-samples`, `core-body-temperature-samples`.
+- Device and account metadata: `paired-devices`, `current-settings`,
+  `searchable-text`.
+
+The drift guard in `cmd/gohealthcli/export_test.go`
+(`TestREADMEListsEveryExportDataset`) fails if a dataset is added to the
+`exportDatasetDefinitions` registry without a matching entry here.
 
 ## Install
 

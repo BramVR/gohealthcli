@@ -110,6 +110,27 @@ func TestExportDatasetLookupRejectsMissingNames(t *testing.T) {
 	})
 }
 
+// TestREADMEListsEveryExportDataset is the drift guard for issue #146:
+// the README's "Normalized export datasets" section must enumerate every
+// entry in exportDatasetDefinitions. If a new dataset is added to the
+// registry without a README update, this test fails. Each name must
+// appear as an inline code span (`name`) so the match is unambiguous
+// and not satisfied by prose that happens to contain the substring.
+func TestREADMEListsEveryExportDataset(t *testing.T) {
+	readmePath := filepath.Join("..", "..", "README.md")
+	content, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatalf("read README: %v", err)
+	}
+	readme := string(content)
+	for _, spec := range exportDatasetDefinitions {
+		token := "`" + spec.name + "`"
+		if !strings.Contains(readme, token) {
+			t.Errorf("README missing export dataset %s (looked for %q); update README.md \"Normalized export datasets\" section to match exportDatasetDefinitions", spec.name, token)
+		}
+	}
+}
+
 func TestDailyStepsNormalizedViewPrefersRollupsAndAggregatesDataPoints(t *testing.T) {
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
