@@ -30,12 +30,18 @@ func runSchema(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "unexpected schema argument: %s\n", flags.Arg(0))
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "schema",
+			Status:  StatusUnexpectedArgument,
+			Message: fmt.Sprintf("unexpected schema argument: %s", flags.Arg(0)),
+		}, stdout, stderr)
 	}
 	if !*jsonOutput {
-		fmt.Fprintln(stderr, "schema currently supports --json output only")
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "schema",
+			Status:  StatusFlagInvalid,
+			Message: "schema currently supports --json output only",
+		}, stdout, stderr)
 	}
 
 	doc := schemaDocument{
@@ -46,8 +52,11 @@ func runSchema(args []string, stdout, stderr io.Writer) int {
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(doc); err != nil {
-		fmt.Fprintf(stderr, "schema: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "schema",
+			Status:  StatusArchiveUnwritable,
+			Message: err.Error(),
+		}, stdout, stderr)
 	}
 	return 0
 }

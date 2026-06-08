@@ -46,12 +46,16 @@ func runIRNProfileWithRuntime(args []string, configPath, archivePath string, mod
 	if err := ParseCommon(flags, common, args); err != nil {
 		return commonFlagsExitCode(err, stderr)
 	}
+	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "unexpected irn-profile argument: %s\n", flags.Arg(0))
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "irn-profile",
+			Status:  StatusUnexpectedArgument,
+			Message: fmt.Sprintf("unexpected irn-profile argument: %s", flags.Arg(0)),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 
-	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	result, err := irnProfileSetupWithRuntime(common.ConfigPath, common.ArchivePath, runtime)
 	if err != nil {
 		if result.Status == "" {
@@ -59,14 +63,22 @@ func runIRNProfileWithRuntime(args []string, configPath, archivePath string, mod
 		}
 		result.Message = err.Error()
 		if writeErr := writeIRNProfileResult(result, mode, stdout); writeErr != nil {
-			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "irn-profile",
+				Status:  StatusArchiveUnwritable,
+				Message: fmt.Sprintf("write output: %v", writeErr),
+				Mode:    mode,
+			}, stdout, stderr)
 		}
 		return 1
 	}
 	if err := writeIRNProfileResult(result, mode, stdout); err != nil {
-		fmt.Fprintf(stderr, "write output: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "irn-profile",
+			Status:  StatusArchiveUnwritable,
+			Message: fmt.Sprintf("write output: %v", err),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 	return 0
 }

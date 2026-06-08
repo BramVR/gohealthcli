@@ -48,12 +48,16 @@ func runSettingsWithRuntime(args []string, configPath, archivePath string, mode 
 	if err := ParseCommon(flags, common, args); err != nil {
 		return commonFlagsExitCode(err, stderr)
 	}
+	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "unexpected settings argument: %s\n", flags.Arg(0))
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "settings",
+			Status:  StatusUnexpectedArgument,
+			Message: fmt.Sprintf("unexpected settings argument: %s", flags.Arg(0)),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 
-	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	result, err := settingsSetupWithRuntime(common.ConfigPath, common.ArchivePath, runtime)
 	if err != nil {
 		if result.Status == "" {
@@ -61,14 +65,22 @@ func runSettingsWithRuntime(args []string, configPath, archivePath string, mode 
 		}
 		result.Message = err.Error()
 		if writeErr := writeSettingsResult(result, mode, stdout); writeErr != nil {
-			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
-			return 1
+			return ReportFailure(FailureReport{
+				Command: "settings",
+				Status:  StatusArchiveUnwritable,
+				Message: fmt.Sprintf("write output: %v", writeErr),
+				Mode:    mode,
+			}, stdout, stderr)
 		}
 		return 1
 	}
 	if err := writeSettingsResult(result, mode, stdout); err != nil {
-		fmt.Fprintf(stderr, "write output: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{
+			Command: "settings",
+			Status:  StatusArchiveUnwritable,
+			Message: fmt.Sprintf("write output: %v", err),
+			Mode:    mode,
+		}, stdout, stderr)
 	}
 	return 0
 }

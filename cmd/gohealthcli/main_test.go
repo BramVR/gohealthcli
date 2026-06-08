@@ -5997,11 +5997,18 @@ func TestInitRequiresExactOAuthClientSource(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("exit code = 0, want failure")
 	}
-	if stdout.String() != "" {
-		t.Fatalf("stdout = %q, want empty", stdout.String())
+	// Slice 7 PRD #143 routes --json failures through the Failure
+	// Reporter, which emits a single-line `{"status":...,"message":...}`
+	// envelope on stdout (Failure Reporter contract). Stderr stays
+	// empty in --json mode; pre-slice-7 the message landed on stderr.
+	if !strings.Contains(stdout.String(), "requires --oauth-client-file or --secret-provider") {
+		t.Fatalf("stdout missing source error: %q", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "requires --oauth-client-file or --secret-provider") {
-		t.Fatalf("stderr missing source error: %q", stderr.String())
+	if !strings.Contains(stdout.String(), `"status":"flag_invalid"`) {
+		t.Fatalf("stdout missing flag_invalid status: %q", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty in --json failure mode", stderr.String())
 	}
 	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
 		t.Fatalf("config stat err = %v, want not exist", err)
@@ -6165,14 +6172,16 @@ func TestInitRejectsExistingInvalidArchive(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("exit code = 0, want failure")
 	}
-	if stdout.String() != "" {
-		t.Fatalf("stdout = %q, want empty", stdout.String())
+	// Slice 7 PRD #143: --json failure routes through the Failure
+	// Reporter envelope on stdout; stderr stays empty in --json mode.
+	if !strings.Contains(stdout.String(), "existing Health Archive is not initialized") {
+		t.Fatalf("stdout missing archive validation error: %q", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "existing Health Archive is not initialized") {
-		t.Fatalf("stderr missing archive validation error: %q", stderr.String())
+	if strings.Contains(stdout.String(), "Health Archive check failed") {
+		t.Fatalf("stdout included extra check wrapper: %q", stdout.String())
 	}
-	if strings.Contains(stderr.String(), "Health Archive check failed") {
-		t.Fatalf("stderr included extra check wrapper: %q", stderr.String())
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty in --json failure mode", stderr.String())
 	}
 }
 
@@ -6203,11 +6212,14 @@ func TestInitRejectsExistingInvalidConfig(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("exit code = 0, want failure")
 	}
-	if stdout.String() != "" {
-		t.Fatalf("stdout = %q, want empty", stdout.String())
+	// Slice 7 PRD #143: --plain failure routes the `status:` /
+	// `message:` block to stdout AND keeps the `init: <msg>` line on
+	// stderr. Both streams now carry the error in --plain mode.
+	if !strings.Contains(stdout.String(), "existing config is not initialized") {
+		t.Fatalf("stdout missing config validation error block: %q", stdout.String())
 	}
 	if !strings.Contains(stderr.String(), "existing config is not initialized") {
-		t.Fatalf("stderr missing config validation error: %q", stderr.String())
+		t.Fatalf("stderr missing config validation error line: %q", stderr.String())
 	}
 }
 

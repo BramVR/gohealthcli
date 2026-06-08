@@ -92,27 +92,46 @@ func ReportFailure(report FailureReport, stdout, stderr io.Writer) int {
 			Status:  report.Status,
 			Message: report.Message,
 		})
-		if err != nil {
-			// A struct of one FailureStatus + one string cannot fail
-			// json.Marshal in practice, but if it ever does, fall back
-			// to the default stderr line so the operator still gets a
-			// signal rather than silent stdout.
-			fmt.Fprintf(stderr, "%s: %s\n", prefix, report.Message)
-		} else {
-			fmt.Fprintf(stdout, "%s\n", payload)
+		// If json.Marshal fails (struct of one FailureStatus + one
+		// string — should never happen) OR stdout itself rejects the
+		// write (the broken-stdout failure path migrates `write
+		// output:` errors back through ReportFailure; writing the
+		// envelope to that same broken stdout would also fail
+		// silently), fall back to the bare `<cmd>: <msg>` line on
+		// stderr so the operator still gets a signal.
+		if err == nil {
+			if _, writeErr := fmt.Fprintf(stdout, "%s\n", payload); writeErr == nil {
+				break
+			}
 		}
+		fmt.Fprintf(stderr, "%s: %s\n", prefix, report.Message)
 	case report.Mode.plain:
 		// Two-stream output: terminal users see the `<cmd>: <msg>` line
 		// on stderr exactly like the default mode, AND stdout gets the
 		// parseable status/message block. Scripts pivoting on stdout
 		// can rely on the block shape; tail/grep on stderr still works.
+		// The stderr line is always written even if the stdout block
+		// fails, so a broken-stdout failure path still surfaces.
 		fmt.Fprintf(stderr, "%s: %s\n", prefix, report.Message)
 		fmt.Fprintf(stdout, "status: %s\nmessage: %s\n", report.Status, report.Message)
 	default:
 		fmt.Fprintf(stderr, "%s: %s\n", prefix, report.Message)
 	}
 
-	if report.Status == StatusSetupMissing {
+	return failureExitCode(report.Status)
+}
+
+// failureExitCode is the single source of truth for the status →
+// exit-code mapping. Today only StatusSetupMissing diverges from 1
+// (returning 2 to match the existing `setupMissingExitCode` doctor
+// relied on). Callers that already own their stderr shape (the doctor
+// setup_missing path emits a structured envelope to stdout plus a
+// hint line to stderr that pre-date the reporter) reach for this
+// helper rather than ReportFailure so they get the unified exit-code
+// semantics without a second write pass clobbering their envelope.
+// Every other site uses ReportFailure end-to-end.
+func failureExitCode(status FailureStatus) int {
+	if status == StatusSetupMissing {
 		return setupMissingExitCode
 	}
 	return 1

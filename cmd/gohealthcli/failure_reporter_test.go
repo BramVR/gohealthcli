@@ -188,6 +188,46 @@ func TestReportFailureTableEnumeratesEveryStatusEveryMode(t *testing.T) {
 	}
 }
 
+// TestReportFailureJSONFailsOverToStderrWhenStdoutBroken locks the
+// broken-stdout fallback: the migrated `write output:` paths route
+// failures back through ReportFailure after the result writer already
+// failed once. If --json mode tried the same broken stdout again, the
+// operator would see nothing at all; the fallback writes the bare
+// `<cmd>: <msg>` line on stderr so a write-output failure always
+// surfaces somewhere.
+func TestReportFailureJSONFailsOverToStderrWhenStdoutBroken(t *testing.T) {
+	var stderr bytes.Buffer
+	stdout := failingFailureWriter{}
+	code := ReportFailure(FailureReport{
+		Command: "init",
+		Status:  StatusArchiveUnwritable,
+		Message: "write output: pipe closed",
+		Mode:    outputMode{json: true},
+	}, stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if stderr.String() != "init: write output: pipe closed\n" {
+		t.Fatalf("stderr = %q, want init-prefixed fallback line", stderr.String())
+	}
+}
+
+// failingFailureWriter is the io.Writer that always errors. Used by
+// TestReportFailureJSONFailsOverToStderrWhenStdoutBroken to exercise
+// the broken-stdout fallback without touching anything else.
+type failingFailureWriter struct{}
+
+func (failingFailureWriter) Write(p []byte) (int, error) {
+	return 0, errFailingFailureWriter
+}
+
+var errFailingFailureWriter = errorString("failing failure writer")
+
+type errorString string
+
+func (e errorString) Error() string { return string(e) }
+
 // TestReportFailureJSONEscapesMessageContents guards the JSON branch
 // against unescaped quotes / backslashes in the message: the body uses
 // encoding/json so values containing `"` or `\` produce valid JSON

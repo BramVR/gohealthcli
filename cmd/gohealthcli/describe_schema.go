@@ -42,39 +42,37 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 		}
 		return 1
 	}
-	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "unexpected describe-schema argument: %s\n", flags.Arg(0))
-		return 1
-	}
 	_ = mode // describe-schema picks JSON or SQL via its own flags, not the global outputMode.
+	if flags.NArg() != 0 {
+		return ReportFailure(FailureReport{
+			Command: "describe-schema",
+			Status:  StatusUnexpectedArgument,
+			Message: fmt.Sprintf("unexpected describe-schema argument: %s", flags.Arg(0)),
+		}, stdout, stderr)
+	}
 
 	resolvedPath, err := resolveConfiguredArchivePath(*describeConfigPath, *describeArchivePath, false)
 	if err != nil {
-		fmt.Fprintf(stderr, "describe-schema: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error()}, stdout, stderr)
 	}
 	if err := migrateArchiveIfNeeded(resolvedPath); err != nil {
-		fmt.Fprintf(stderr, "describe-schema: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error()}, stdout, stderr)
 	}
 	db, err := openArchiveReadOnly(resolvedPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "describe-schema: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error()}, stdout, stderr)
 	}
 	defer db.Close()
 
 	if *describeSQL {
 		if err := writeSchemaSQL(db, stdout); err != nil {
-			fmt.Fprintf(stderr, "describe-schema --sql: %v\n", err)
-			return 1
+			return ReportFailure(FailureReport{Command: "describe-schema --sql", Status: StatusArchiveUnwritable, Message: err.Error()}, stdout, stderr)
 		}
 		return 0
 	}
 	// Default is --json.
 	if err := writeSchemaJSON(db, stdout); err != nil {
-		fmt.Fprintf(stderr, "describe-schema --json: %v\n", err)
-		return 1
+		return ReportFailure(FailureReport{Command: "describe-schema --json", Status: StatusArchiveUnwritable, Message: err.Error()}, stdout, stderr)
 	}
 	return 0
 }
