@@ -28,7 +28,7 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 11
+const currentSchemaVersion = 12
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
@@ -3749,7 +3749,10 @@ func applyMigrations(db *sql.DB) error {
 	if err := applySleepExerciseViewsMigration(tx, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 11`); err != nil {
+	if err := applyExerciseSplitsRealShapeMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 12`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -3767,7 +3770,7 @@ func applyPendingMigrations(db *sql.DB) error {
 	switch userVersion {
 	case currentSchemaVersion:
 		return nil
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11:
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -3824,7 +3827,12 @@ func applyPendingMigrations(db *sql.DB) error {
 				return err
 			}
 		}
-		if _, err := tx.Exec(`PRAGMA user_version = 11`); err != nil {
+		if userVersion <= 11 {
+			if err := applyExerciseSplitsRealShapeMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(`PRAGMA user_version = 12`); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -3881,6 +3889,27 @@ func applySyncCursorsMigration(tx *sql.Tx, appliedAt string) error {
 		}
 	}
 	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (6, 'add_sync_cursors', ?)`, appliedAt)
+	return err
+}
+
+// applyExerciseSplitsRealShapeMigration drops the migration-11 view that
+// extracted distance from $.distanceMeters (a path Google Health API
+// does not emit) and recreates it against the real shape:
+// $.metricsSummary.distanceMillimeters in millimeters. Live testing in
+// the original #105 PR returned all-NULL distances; this is the
+// follow-up that pins the view to what the upstream actually returns.
+func applyExerciseSplitsRealShapeMigration(tx *sql.Tx, appliedAt string) error {
+	if _, err := tx.Exec(`DROP VIEW IF EXISTS exercise_splits`); err != nil {
+		return err
+	}
+	spec, ok := normalizedViewsRegistry().View("exercise-splits")
+	if !ok {
+		return fmt.Errorf("exercise-splits view missing from registry; cannot recreate")
+	}
+	if _, err := tx.Exec(exportDatasetViewMigrationStatement(spec)); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (12, 'fix_exercise_splits_real_shape', ?)`, appliedAt)
 	return err
 }
 
@@ -3975,6 +4004,7 @@ func expectedSchemaMigrations() map[int]string {
 		9:  "add_paired_devices_view",
 		10: "add_current_irn_profile_view",
 		11: "add_sleep_stages_and_exercise_splits_views",
+		12: "fix_exercise_splits_real_shape",
 	}
 }
 
