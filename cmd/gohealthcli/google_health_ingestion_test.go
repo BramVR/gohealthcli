@@ -207,7 +207,7 @@ func newFakeGoogleHealthIngestionProvider(t *testing.T, wantAccessToken string, 
 	return &fakeGoogleHealthIngestionProvider{t: t, wantAccessToken: wantAccessToken, pages: pages}
 }
 
-func (provider *fakeGoogleHealthIngestionProvider) Fetch(request rawProviderRequest, accessToken string) ([]byte, error) {
+func (provider *fakeGoogleHealthIngestionProvider) Fetch(request rawProviderRequest, accessToken string, _ <-chan struct{}) ([]byte, error) {
 	provider.t.Helper()
 	if accessToken != provider.wantAccessToken {
 		provider.t.Fatalf("access token = %q, want fixture token", accessToken)

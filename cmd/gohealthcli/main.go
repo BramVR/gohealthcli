@@ -2619,6 +2619,10 @@ type googleHealthHTTPError struct {
 }
 
 func (err *googleHealthHTTPError) Error() string {
+	// Deliberately omit the response body — Google Health echoes the
+	// bearer token in some error responses (covered by
+	// TestFetchGoogleHealthRawUsesBearerAndHidesErrorBody). Callers that
+	// need the body can read err.Body directly.
 	return fmt.Sprintf("Google Health raw request failed with HTTP %d", err.StatusCode)
 }
 

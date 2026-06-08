@@ -17,7 +17,11 @@ type googleHealthIngestionArchive interface {
 }
 
 type googleHealthIngestionProvider interface {
-	Fetch(request rawProviderRequest, accessToken string) ([]byte, error)
+	// Fetch issues one request against the upstream provider. cancelCh,
+	// when closed, asks the implementation to short-circuit any in-flight
+	// retry backoff and surface errSyncCanceled at the next opportunity.
+	// nil disables cancellation.
+	Fetch(request rawProviderRequest, accessToken string, cancelCh <-chan struct{}) ([]byte, error)
 }
 
 type googleHealthIngestion struct {
@@ -106,8 +110,8 @@ type runtimeGoogleHealthIngestionProvider struct {
 	jitter  func(time.Duration) time.Duration
 }
 
-func (provider runtimeGoogleHealthIngestionProvider) Fetch(request rawProviderRequest, accessToken string) ([]byte, error) {
-	return fetchWithRetry(provider.runtime.fetchRawProvider, provider.sleeper, provider.jitter, request, accessToken)
+func (provider runtimeGoogleHealthIngestionProvider) Fetch(request rawProviderRequest, accessToken string, cancelCh <-chan struct{}) ([]byte, error) {
+	return fetchWithRetry(provider.runtime.fetchRawProvider, provider.sleeper, provider.jitter, request, accessToken, cancelCh)
 }
 
 func (ingestion googleHealthIngestion) Plan(request googleHealthIngestionRequest) (googleHealthIngestionPlan, error) {
@@ -159,7 +163,7 @@ func (ingestion googleHealthIngestion) executeDailyRollupPages(archive googleHea
 			if err != nil {
 				return err
 			}
-			body, err := ingestion.provider.Fetch(rawRequest, request.accessToken)
+			body, err := ingestion.provider.Fetch(rawRequest, request.accessToken, request.cancelCh)
 			if err != nil {
 				return syncProviderRequestError(err)
 			}
@@ -207,7 +211,7 @@ func (ingestion googleHealthIngestion) executeDataPointPages(archive googleHealt
 		if err != nil {
 			return err
 		}
-		body, err := ingestion.provider.Fetch(rawRequest, request.accessToken)
+		body, err := ingestion.provider.Fetch(rawRequest, request.accessToken, request.cancelCh)
 		if err != nil {
 			return syncProviderRequestError(err)
 		}

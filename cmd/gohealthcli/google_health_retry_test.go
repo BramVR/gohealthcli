@@ -3,13 +3,25 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
 
-// no-op jitter so deterministic delays are easy to assert. The actual
-// jitter is exercised in defaultRetryJitter's own test below.
+// noopRetryJitter is a deterministic jitter so per-attempt sleep durations
+// are easy to assert. The real jitter is exercised in defaultRetryJitter's
+// own test below.
 var noopRetryJitter = func(d time.Duration) time.Duration { return d }
+
+// recordingSleeper captures the sleep durations the middleware requested
+// without actually sleeping. cancelCh is observed but never closes — the
+// cancel-during-sleep path has its own test below.
+func recordingSleeper(record *[]time.Duration) googleHealthRetrySleeper {
+	return func(d time.Duration, _ <-chan struct{}) bool {
+		*record = append(*record, d)
+		return false
+	}
+}
 
 func TestFetchWithRetryRetriesTransient429ThenSucceeds(t *testing.T) {
 	attempts := 0
@@ -21,9 +33,9 @@ func TestFetchWithRetryRetriesTransient429ThenSucceeds(t *testing.T) {
 		return []byte(`{"ok":true}`), nil
 	}
 	var sleepCalls []time.Duration
-	sleeper := func(d time.Duration) { sleepCalls = append(sleepCalls, d) }
+	sleeper := recordingSleeper(&sleepCalls)
 
-	body, err := fetchWithRetry(fetcher, sleeper, noopRetryJitter, rawProviderRequest{}, "tok")
+	body, err := fetchWithRetry(fetcher, sleeper, noopRetryJitter, rawProviderRequest{}, "tok", nil)
 	if err != nil {
 		t.Fatalf("fetchWithRetry returned err = %v, want success after 3 attempts", err)
 	}
@@ -54,7 +66,8 @@ func TestFetchWithRetryRetries5xxThenSucceeds(t *testing.T) {
 		}
 		return []byte(`{}`), nil
 	}
-	_, err := fetchWithRetry(fetcher, func(time.Duration) {}, noopRetryJitter, rawProviderRequest{}, "tok")
+	var sleepCalls []time.Duration
+	_, err := fetchWithRetry(fetcher, recordingSleeper(&sleepCalls), noopRetryJitter, rawProviderRequest{}, "tok", nil)
 	if err != nil {
 		t.Fatalf("err = %v, want success after one 503 retry", err)
 	}
@@ -63,22 +76,35 @@ func TestFetchWithRetryRetries5xxThenSucceeds(t *testing.T) {
 	}
 }
 
-func TestFetchWithRetryExhaustsBudgetAndReturnsLastError(t *testing.T) {
+func TestFetchWithRetryExhaustsBudgetAndReturnsAttemptedCount(t *testing.T) {
 	attempts := 0
 	fetcher := func(request rawProviderRequest, accessToken string) ([]byte, error) {
 		attempts++
 		return nil, &googleHealthHTTPError{StatusCode: 502}
 	}
-	_, err := fetchWithRetry(fetcher, func(time.Duration) {}, noopRetryJitter, rawProviderRequest{}, "tok")
+	var sleepCalls []time.Duration
+	_, err := fetchWithRetry(fetcher, recordingSleeper(&sleepCalls), noopRetryJitter, rawProviderRequest{}, "tok", nil)
 	if err == nil {
 		t.Fatal("err = nil, want exhausted-retries error")
 	}
 	if attempts != googleHealthRetryMaxAttempts {
 		t.Fatalf("attempts = %d, want %d (the bounded retry budget)", attempts, googleHealthRetryMaxAttempts)
 	}
+	if len(sleepCalls) != googleHealthRetryMaxAttempts-1 {
+		t.Fatalf("sleep calls = %d, want %d (one between each pair of attempts, none after the last)", len(sleepCalls), googleHealthRetryMaxAttempts-1)
+	}
+	// The error message must call out how many attempts ran so an
+	// operator reading "HTTP 502 after 5 attempts" can tell this from a
+	// single-shot 502.
+	wantSnippet := fmt.Sprintf("after %d attempts", googleHealthRetryMaxAttempts)
+	if !errorContains(err, wantSnippet) {
+		t.Fatalf("err = %v, want substring %q", err, wantSnippet)
+	}
+	// The original typed error must still be reachable via errors.As so
+	// callers can pivot on StatusCode.
 	var httpErr *googleHealthHTTPError
 	if !errors.As(err, &httpErr) || httpErr.StatusCode != 502 {
-		t.Fatalf("err = %v, want googleHealthHTTPError{502}", err)
+		t.Fatalf("err = %v, want wrapped googleHealthHTTPError{502}", err)
 	}
 }
 
@@ -88,18 +114,16 @@ func TestFetchWithRetryDoesNotRetry401(t *testing.T) {
 		attempts++
 		return nil, &googleHealthHTTPError{StatusCode: 401}
 	}
-	var sleepCalls int
-	sleeper := func(time.Duration) { sleepCalls++ }
-
-	_, err := fetchWithRetry(fetcher, sleeper, noopRetryJitter, rawProviderRequest{}, "tok")
+	var sleepCalls []time.Duration
+	_, err := fetchWithRetry(fetcher, recordingSleeper(&sleepCalls), noopRetryJitter, rawProviderRequest{}, "tok", nil)
 	if err == nil {
 		t.Fatal("err = nil, want 401 surface")
 	}
 	if attempts != 1 {
 		t.Fatalf("attempts = %d, want 1 (401 must not retry)", attempts)
 	}
-	if sleepCalls != 0 {
-		t.Fatalf("sleep calls = %d, want 0 (401 must not delay)", sleepCalls)
+	if len(sleepCalls) != 0 {
+		t.Fatalf("sleep calls = %d, want 0 (401 must not delay)", len(sleepCalls))
 	}
 }
 
@@ -112,7 +136,8 @@ func TestFetchWithRetryDoesNotRetryOther4xx(t *testing.T) {
 				attempts++
 				return nil, &googleHealthHTTPError{StatusCode: statusCode}
 			}
-			_, err := fetchWithRetry(fetcher, func(time.Duration) {}, noopRetryJitter, rawProviderRequest{}, "tok")
+			var sleepCalls []time.Duration
+			_, err := fetchWithRetry(fetcher, recordingSleeper(&sleepCalls), noopRetryJitter, rawProviderRequest{}, "tok", nil)
 			if err == nil {
 				t.Fatalf("status %d: err = nil, want surface", statusCode)
 			}
@@ -129,7 +154,8 @@ func TestFetchWithRetryDoesNotRetryNonHTTPError(t *testing.T) {
 		attempts++
 		return nil, errors.New("connection refused")
 	}
-	_, err := fetchWithRetry(fetcher, func(time.Duration) {}, noopRetryJitter, rawProviderRequest{}, "tok")
+	var sleepCalls []time.Duration
+	_, err := fetchWithRetry(fetcher, recordingSleeper(&sleepCalls), noopRetryJitter, rawProviderRequest{}, "tok", nil)
 	if err == nil {
 		t.Fatal("err = nil, want surface")
 	}
@@ -149,9 +175,7 @@ func TestFetchWithRetryHonorsRetryAfterAsMinimum(t *testing.T) {
 		return []byte(`{}`), nil
 	}
 	var sleepCalls []time.Duration
-	sleeper := func(d time.Duration) { sleepCalls = append(sleepCalls, d) }
-
-	_, err := fetchWithRetry(fetcher, sleeper, noopRetryJitter, rawProviderRequest{}, "tok")
+	_, err := fetchWithRetry(fetcher, recordingSleeper(&sleepCalls), noopRetryJitter, rawProviderRequest{}, "tok", nil)
 	if err != nil {
 		t.Fatalf("err = %v, want success", err)
 	}
@@ -174,9 +198,7 @@ func TestFetchWithRetryRetryAfterIgnoredIfSmallerThanExponential(t *testing.T) {
 		return []byte(`{}`), nil
 	}
 	var sleepCalls []time.Duration
-	sleeper := func(d time.Duration) { sleepCalls = append(sleepCalls, d) }
-
-	_, err := fetchWithRetry(fetcher, sleeper, noopRetryJitter, rawProviderRequest{}, "tok")
+	_, err := fetchWithRetry(fetcher, recordingSleeper(&sleepCalls), noopRetryJitter, rawProviderRequest{}, "tok", nil)
 	if err != nil {
 		t.Fatalf("err = %v, want success", err)
 	}
@@ -191,6 +213,33 @@ func TestFetchWithRetryRetryAfterIgnoredIfSmallerThanExponential(t *testing.T) {
 	if sleepCalls[1] != 500*time.Millisecond {
 		t.Fatalf("sleep[1] = %v, want 500ms", sleepCalls[1])
 	}
+}
+
+func TestFetchWithRetryShortCircuitsBackoffOnCancel(t *testing.T) {
+	cancelCh := make(chan struct{})
+	close(cancelCh)
+	attempts := 0
+	fetcher := func(rawProviderRequest, string) ([]byte, error) {
+		attempts++
+		return nil, &googleHealthHTTPError{StatusCode: 429, RetryAfter: 10 * time.Second}
+	}
+	// Use the real sleeper so we exercise the select against cancelCh.
+	_, err := fetchWithRetry(fetcher, sleepWithCancel, noopRetryJitter, rawProviderRequest{}, "tok", cancelCh)
+	if !errors.Is(err, errSyncCanceled) {
+		t.Fatalf("err = %v, want errSyncCanceled (cancelled cancelCh must short-circuit the backoff sleep)", err)
+	}
+	// The fetcher returned 429 once; the middleware tried to sleep 10s
+	// but cancel arrived first; the second attempt must NOT have run.
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1 (cancel short-circuits before the next attempt)", attempts)
+	}
+}
+
+func errorContains(err error, want string) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), want)
 }
 
 func TestParseRetryAfterAcceptsDeltaSecondsAndIgnoresHTTPDate(t *testing.T) {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
 	"time"
 )
@@ -23,24 +24,30 @@ const (
 // middleware can sit in front of it without a new interface.
 type googleHealthRetryFetcher func(request rawProviderRequest, accessToken string) ([]byte, error)
 
-// googleHealthRetrySleeper is the time-source seam the tests inject so
-// they do not actually wait between attempts.
-type googleHealthRetrySleeper func(time.Duration)
+// googleHealthRetrySleeper is the time-source seam tests inject. It
+// receives the cancel channel so the production implementation can
+// short-circuit a backoff when SIGINT closes it; tests typically inject
+// a no-op sleeper that records the requested duration.
+type googleHealthRetrySleeper func(d time.Duration, cancelCh <-chan struct{}) (canceled bool)
 
 // fetchWithRetry retries 429 and 5xx responses with bounded exponential
 // backoff plus jitter. Non-transient failures (401, 403, 404, network
 // errors that are not a googleHealthHTTPError) surface immediately so
 // callers see real errors without a multi-second delay. The Retry-After
-// header on 429 is honored as the minimum next-attempt delay.
-func fetchWithRetry(fetcher googleHealthRetryFetcher, sleeper googleHealthRetrySleeper, jitter func(time.Duration) time.Duration, request rawProviderRequest, accessToken string) ([]byte, error) {
+// header on 429 is honored as the minimum next-attempt delay. A closed
+// cancelCh short-circuits an in-flight sleep and surfaces errSyncCanceled,
+// so SIGINT during a 30s backoff does not leave the user waiting.
+func fetchWithRetry(fetcher googleHealthRetryFetcher, sleeper googleHealthRetrySleeper, jitter func(time.Duration) time.Duration, request rawProviderRequest, accessToken string, cancelCh <-chan struct{}) ([]byte, error) {
 	if sleeper == nil {
-		sleeper = time.Sleep
+		sleeper = sleepWithCancel
 	}
 	if jitter == nil {
 		jitter = defaultRetryJitter
 	}
 	var lastErr error
+	attempts := 0
 	for attempt := 0; attempt < googleHealthRetryMaxAttempts; attempt++ {
+		attempts++
 		body, err := fetcher(request, accessToken)
 		if err == nil {
 			return body, nil
@@ -53,9 +60,32 @@ func fetchWithRetry(fetcher googleHealthRetryFetcher, sleeper googleHealthRetryS
 			break
 		}
 		delay := backoffDelay(attempt, retryAfterFromError(err))
-		sleeper(jitter(delay))
+		if canceled := sleeper(jitter(delay), cancelCh); canceled {
+			return nil, errSyncCanceled
+		}
 	}
-	return nil, lastErr
+	return nil, fmt.Errorf("Google Health request failed after %d attempts: %w", attempts, lastErr)
+}
+
+// sleepWithCancel sleeps for d, but returns early (canceled=true) if
+// cancelCh closes first. Production wires this in so SIGINT honored
+// during a multi-second backoff. nil cancelCh degrades to a plain sleep.
+func sleepWithCancel(d time.Duration, cancelCh <-chan struct{}) bool {
+	if d <= 0 {
+		return false
+	}
+	if cancelCh == nil {
+		time.Sleep(d)
+		return false
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return false
+	case <-cancelCh:
+		return true
+	}
 }
 
 // isRetryableHTTPError returns true for 429 and any 5xx response. Other
