@@ -1132,7 +1132,19 @@ func profileSetupWithRuntime(configPath, archivePath string, runtime runtimeAdap
 		return result, err
 	}
 	fetchedAt := runtime.now().UTC().Format(time.RFC3339)
-	snapshotID, err := archive.InsertProfileSnapshot(connection, profile.rawJSON, fetchedAt)
+	// Close the Connection-scoped handle before opening the Identity
+	// Snapshot Archive — both target the same SQLite file in write mode.
+	// SQLite handles this fine in-process, but reusing one writer keeps
+	// the contention surface small.
+	if err := archive.Close(); err != nil {
+		return result, fmt.Errorf("close Connection API: %w", err)
+	}
+	snapshots, err := openIdentitySnapshotArchive(archivePath)
+	if err != nil {
+		return result, err
+	}
+	defer snapshots.Close()
+	snapshotID, err := snapshots.Insert(connection, "profile", profile.rawJSON, fetchedAt)
 	if err != nil {
 		return result, err
 	}

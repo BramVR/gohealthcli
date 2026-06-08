@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -35,6 +36,176 @@ func TestFreshArchiveHasIdentitySnapshotsTable(t *testing.T) {
 	// so rows migrated from a v6 archive keep their identity.
 	if !archiveColumnExists(t, db, "identity_snapshots", "snapshot_kind") {
 		t.Fatal("identity_snapshots.snapshot_kind column missing")
+	}
+}
+
+// TestIdentitySnapshotArchiveInsertAndLatestRoundTrip is the slice B
+// tracer: Insert(kind, raw, fetchedAt) writes a row tagged with the
+// supplied kind, and Latest(kind) returns it. Behaviour is verified
+// through the new module's public interface, not by querying the
+// underlying table directly.
+func TestIdentitySnapshotArchiveInsertAndLatestRoundTrip(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d", code)
+	}
+
+	archive, err := openIdentitySnapshotArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open identity snapshot archive: %v", err)
+	}
+	defer archive.Close()
+
+	connection, err := archive.CurrentConnection()
+	if err != nil {
+		t.Fatalf("CurrentConnection: %v", err)
+	}
+	if _, err := archive.Insert(connection, "settings", `{"unit":"metric"}`, "2026-06-01T00:00:00Z"); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	snapshot, found, err := archive.Latest(connection, "settings")
+	if err != nil {
+		t.Fatalf("Latest: %v", err)
+	}
+	if !found {
+		t.Fatal("Latest(settings) returned not-found after Insert")
+	}
+	if snapshot.RawJSON != `{"unit":"metric"}` {
+		t.Fatalf("RawJSON = %q, want round-tripped payload", snapshot.RawJSON)
+	}
+	if snapshot.FetchedAt != "2026-06-01T00:00:00Z" {
+		t.Fatalf("FetchedAt = %q, want round-tripped timestamp", snapshot.FetchedAt)
+	}
+	if snapshot.Kind != "settings" {
+		t.Fatalf("Kind = %q, want settings", snapshot.Kind)
+	}
+}
+
+// TestIdentitySnapshotArchiveLatestFiltersByKind verifies that
+// Latest(kind) returns the newest row of the requested kind even when
+// other kinds and older rows of the same kind are also present.
+func TestIdentitySnapshotArchiveLatestFiltersByKind(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d", code)
+	}
+
+	archive, err := openIdentitySnapshotArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer archive.Close()
+	connection, err := archive.CurrentConnection()
+	if err != nil {
+		t.Fatalf("CurrentConnection: %v", err)
+	}
+
+	// Three settings snapshots (oldest → newest) plus one profile snapshot
+	// interleaved. Latest('settings') must return the newest settings row;
+	// the profile row must not bleed across kinds.
+	for _, row := range []struct {
+		kind, raw, at string
+	}{
+		{"settings", `{"unit":"imperial"}`, "2026-05-01T00:00:00Z"},
+		{"profile", `{"name":"Old"}`, "2026-05-15T00:00:00Z"},
+		{"settings", `{"unit":"metric"}`, "2026-06-01T00:00:00Z"},
+		{"settings", `{"unit":"metric","timezone":"UTC"}`, "2026-06-10T00:00:00Z"},
+	} {
+		if _, err := archive.Insert(connection, row.kind, row.raw, row.at); err != nil {
+			t.Fatalf("Insert(%s): %v", row.kind, err)
+		}
+	}
+
+	latestSettings, found, err := archive.Latest(connection, "settings")
+	if err != nil || !found {
+		t.Fatalf("Latest(settings): found=%v err=%v", found, err)
+	}
+	if latestSettings.RawJSON != `{"unit":"metric","timezone":"UTC"}` {
+		t.Fatalf("Latest(settings).RawJSON = %q, want newest settings row", latestSettings.RawJSON)
+	}
+	latestProfile, found, err := archive.Latest(connection, "profile")
+	if err != nil || !found {
+		t.Fatalf("Latest(profile): found=%v err=%v", found, err)
+	}
+	if latestProfile.RawJSON != `{"name":"Old"}` {
+		t.Fatalf("Latest(profile).RawJSON = %q, want profile row", latestProfile.RawJSON)
+	}
+	// A kind never inserted must surface as not-found, not as some
+	// accidental cross-kind match.
+	if _, found, _ := archive.Latest(connection, "paired-devices"); found {
+		t.Fatal("Latest(paired-devices) returned a row, want not-found")
+	}
+}
+
+// TestProfileCommandWritesViaIdentitySnapshotArchive verifies the slice B
+// lifting: the `profile` command no longer writes through the Connection
+// API. After `gohealthcli profile`, opening the Identity Snapshot Archive
+// and asking for Latest('profile') must surface the row the command wrote.
+func TestProfileCommandWritesViaIdentitySnapshotArchive(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d", code)
+	}
+
+	// Run the profile command via the existing test surface — same path
+	// the real CLI uses end-to-end.
+	originalFetchProfile := fetchProfile
+	fetchProfile = func(string) (googleProfile, error) {
+		return googleProfile{
+			healthUserID: "111111256096816351",
+			resourceName: "users/111111256096816351/profile",
+			rawJSON:      `{"name":"users/111111256096816351/profile","profile":{"unit":"metric"}}`,
+		}, nil
+	}
+	t.Cleanup(func() { fetchProfile = originalFetchProfile })
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("profile exit code = %d, stderr=%s, stdout=%s", code, stderr.String(), stdout.String())
+	}
+
+	archive, err := openIdentitySnapshotArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open identity snapshot archive: %v", err)
+	}
+	defer archive.Close()
+	connection, err := archive.CurrentConnection()
+	if err != nil {
+		t.Fatalf("CurrentConnection: %v", err)
+	}
+	latest, found, err := archive.Latest(connection, "profile")
+	if err != nil || !found {
+		t.Fatalf("Latest(profile): found=%v err=%v", found, err)
+	}
+	if latest.Kind != "profile" {
+		t.Fatalf("Kind = %q, want profile", latest.Kind)
+	}
+	if latest.RawJSON != `{"name":"users/111111256096816351/profile","profile":{"unit":"metric"}}` {
+		t.Fatalf("RawJSON = %q, want round-tripped profile payload", latest.RawJSON)
 	}
 }
 
