@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -280,6 +281,9 @@ func TestSyncOrchestratorRejectsAllAndTypesTogether(t *testing.T) {
 }
 
 func TestInstallSyncCancelChannelClosesOnSIGINT(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("syscall.Kill(SIGINT) is POSIX-only; the cancel-channel install path itself is exercised by TestInstallSyncCancelChannelClosesOnStop on every platform")
+	}
 	cancelCh, stop := installSyncCancelChannel()
 	defer stop()
 
@@ -307,6 +311,52 @@ func TestInstallSyncCancelChannelClosesOnStop(t *testing.T) {
 	}
 	// stop is idempotent — calling it again must not panic.
 	stop()
+}
+
+// TestFanOutStatusEmptyResultsReportsCanceled pins the contract callers
+// rely on: orchestrator.Sync returns an empty slice only when SIGINT
+// arrived before the first Data Type started. The CLI surface must read
+// that as sync_canceled, not sync_failed, so an interrupted backfill
+// does not surface as a failure in tooling that pivots on status.
+func TestFanOutStatusEmptyResultsReportsCanceled(t *testing.T) {
+	if got := fanOutStatus(nil); got != "sync_canceled" {
+		t.Errorf("fanOutStatus(nil) = %q, want sync_canceled", got)
+	}
+	if got := fanOutStatus([]syncResult{}); got != "sync_canceled" {
+		t.Errorf("fanOutStatus([]) = %q, want sync_canceled", got)
+	}
+}
+
+// TestFanOutMessageCanceledCountsOnlyCompleted closes Copilot's PR #113
+// off-by-one: when one Data Type was canceled mid-run, the message must
+// count Data Types that *actually* completed before the cancel, not
+// len(results) (which includes the canceled in-flight run itself).
+func TestFanOutMessageCanceledCountsOnlyCompleted(t *testing.T) {
+	results := []syncResult{
+		{Status: "sync_completed", DataTypes: []string{"steps"}},
+		{Status: "sync_completed", DataTypes: []string{"heart-rate"}},
+		{Status: "sync_canceled", DataTypes: []string{"sleep"}},
+	}
+	got := fanOutMessage(fanOutStatus(results), results)
+	want := "Sync Run summary: 2 Data Types completed before cancellation"
+	if got != want {
+		t.Errorf("fanOutMessage canceled = %q, want %q (count must exclude the canceled run)", got, want)
+	}
+}
+
+// TestFanOutMessageFailedReportsAttempted keeps the failed-status message
+// at len(results) since "N attempted, at least one failed" is the actual
+// attempted count, not a per-status filter.
+func TestFanOutMessageFailedReportsAttempted(t *testing.T) {
+	results := []syncResult{
+		{Status: "sync_completed", DataTypes: []string{"steps"}},
+		{Status: "sync_failed", DataTypes: []string{"heart-rate"}},
+	}
+	got := fanOutMessage(fanOutStatus(results), results)
+	want := "Sync Run summary: 2 Data Types attempted, at least one failed"
+	if got != want {
+		t.Errorf("fanOutMessage failed = %q, want %q", got, want)
+	}
 }
 
 func TestSyncOrchestratorAllExpandsToSyncableDefaultDataTypes(t *testing.T) {

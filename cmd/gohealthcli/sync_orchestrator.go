@@ -24,9 +24,10 @@ func newSyncOrchestrator(runtime runtimeAdapters, cancelCh <-chan struct{}) sync
 }
 
 // Sync runs every requested Data Type in order and returns one
-// syncResult per Data Type. The aggregate (counts, status) is computed
-// downstream by summarizeSyncFanOut / fanOutStatus when the caller
-// renders multi-type output. The error return is non-nil only when the
+// syncResult per Data Type. Aggregation across the fan-out (totals,
+// overall status, summary line) is the caller's job — summarizeSyncFanOut,
+// fanOutStatus, and fanOutMessage take this slice and derive each piece
+// of the rendered output. The error return is non-nil only when the
 // orchestration itself could not start any run (e.g. --all + --types
 // mutual-exclusion); per-type failures live inside the result slice and
 // the returned error is nil so the caller can render every outcome.
@@ -153,12 +154,24 @@ func summarizeSyncFanOut(results []syncResult, requestedFrom, requestedTo string
 	return summary
 }
 
-func fanOutMessage(status string, attempted int) string {
+// fanOutMessage formats the one-line summary the CLI prints after a
+// fan-out finishes. The status passes are counted from `results` so the
+// canceled-message uses "Data Types that actually completed" rather
+// than len(results) — the canceled in-flight run sits in the slice too
+// and would otherwise inflate the count by one.
+func fanOutMessage(status string, results []syncResult) string {
+	attempted := len(results)
 	switch status {
 	case "sync_failed":
 		return fmt.Sprintf("Sync Run summary: %d Data Types attempted, at least one failed", attempted)
 	case "sync_canceled":
-		return fmt.Sprintf("Sync Run summary: %d Data Types completed before cancellation", attempted)
+		completed := 0
+		for _, result := range results {
+			if result.Status == "sync_completed" {
+				completed++
+			}
+		}
+		return fmt.Sprintf("Sync Run summary: %d Data Types completed before cancellation", completed)
 	default:
 		return fmt.Sprintf("Sync Run summary: %d Data Types archived", attempted)
 	}
