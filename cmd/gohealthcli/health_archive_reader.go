@@ -72,6 +72,10 @@ func (archive *sqliteHealthArchiveReader) StatusSummary() (statusResult, error) 
 	if err != nil {
 		return result, err
 	}
+	result.IdentitySnapshotsFreshness, err = readStatusSnapshotFreshness(archive.db)
+	if err != nil {
+		return result, err
+	}
 	result.LatestSuccessfulRun, err = readStatusSyncRun(archive.db, "sync_completed")
 	if err != nil {
 		return result, err
@@ -372,6 +376,52 @@ func attachStatusSyncCursors(db *sql.DB, dataTypes []statusDataType) ([]statusDa
 		})
 	}
 	return dataTypes, nil
+}
+
+// readStatusSnapshotFreshness reads the latest fetched_at per
+// snapshot_kind and (if a paired-devices snapshot exists) counts the
+// devices in its raw JSON. Returns nil when there are no snapshots at
+// all so the JSON shape omits the block entirely.
+func readStatusSnapshotFreshness(db *sql.DB) (*statusSnapshotFreshness, error) {
+	rows, err := db.Query(`SELECT snapshot_kind, fetched_at, raw_json
+		FROM identity_snapshots is_outer
+		WHERE id = (
+			SELECT id FROM identity_snapshots is_inner
+			WHERE is_inner.snapshot_kind = is_outer.snapshot_kind
+			ORDER BY fetched_at DESC, id DESC LIMIT 1
+		)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	freshness := &statusSnapshotFreshness{LatestFetchedAt: map[string]string{}}
+	for rows.Next() {
+		var kind, fetchedAt, rawJSON string
+		if err := rows.Scan(&kind, &fetchedAt, &rawJSON); err != nil {
+			return nil, err
+		}
+		freshness.LatestFetchedAt[kind] = fetchedAt
+		if kind == "paired-devices" {
+			freshness.PairedDeviceCount = countPairedDevicesIn(rawJSON)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(freshness.LatestFetchedAt) == 0 {
+		return nil, nil
+	}
+	return freshness, nil
+}
+
+func countPairedDevicesIn(rawJSON string) int {
+	var envelope struct {
+		Devices []json.RawMessage `json:"devices"`
+	}
+	if err := json.Unmarshal([]byte(rawJSON), &envelope); err != nil {
+		return 0
+	}
+	return len(envelope.Devices)
 }
 
 func readStatusSyncRun(db *sql.DB, syncStatus string) (*statusSyncRun, error) {

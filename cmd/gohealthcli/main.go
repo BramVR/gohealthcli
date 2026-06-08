@@ -135,18 +135,28 @@ type syncResult struct {
 }
 
 type statusResult struct {
-	Status                string           `json:"status"`
-	ArchivePath           string           `json:"archive_path"`
-	SchemaVersion         int              `json:"schema_version,omitempty"`
-	DataPointCount        int              `json:"data_point_count"`
-	RollupCount           int              `json:"rollup_count"`
-	ProfileSnapshotCount  int              `json:"profile_snapshot_count"`
-	IdentitySnapshotCount int              `json:"identity_snapshot_count"`
-	SyncRunCount          int              `json:"sync_run_count"`
-	DataTypes             []statusDataType `json:"data_types,omitempty"`
-	LatestSuccessfulRun   *statusSyncRun   `json:"latest_successful_sync_run,omitempty"`
-	LatestFailedRun       *statusSyncRun   `json:"latest_failed_sync_run,omitempty"`
-	Message               string           `json:"message"`
+	Status                     string                   `json:"status"`
+	ArchivePath                string                   `json:"archive_path"`
+	SchemaVersion              int                      `json:"schema_version,omitempty"`
+	DataPointCount             int                      `json:"data_point_count"`
+	RollupCount                int                      `json:"rollup_count"`
+	ProfileSnapshotCount       int                      `json:"profile_snapshot_count"`
+	IdentitySnapshotCount      int                      `json:"identity_snapshot_count"`
+	SyncRunCount               int                      `json:"sync_run_count"`
+	DataTypes                  []statusDataType         `json:"data_types,omitempty"`
+	IdentitySnapshotsFreshness *statusSnapshotFreshness `json:"identity_snapshots_freshness,omitempty"`
+	LatestSuccessfulRun        *statusSyncRun           `json:"latest_successful_sync_run,omitempty"`
+	LatestFailedRun            *statusSyncRun           `json:"latest_failed_sync_run,omitempty"`
+	Message                    string                   `json:"message"`
+}
+
+// statusSnapshotFreshness summarises identity-level metadata recency:
+// when each kind's latest snapshot was fetched, and how many devices
+// are in the current paired-devices snapshot. Helps an operator (and
+// an LLM) verify metadata freshness before running analysis.
+type statusSnapshotFreshness struct {
+	PairedDeviceCount int               `json:"paired_device_count"`
+	LatestFetchedAt   map[string]string `json:"latest_fetched_at,omitempty"`
 }
 
 type statusDataType struct {
@@ -4310,6 +4320,21 @@ func writeStatusResult(result statusResult, mode outputMode, stdout io.Writer) e
 						return err
 					}
 					if _, err := fmt.Fprintf(stdout, "%sadvanced_at: %s\n", cursorPrefix, cursor.AdvancedAt); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		if result.IdentitySnapshotsFreshness != nil {
+			if result.IdentitySnapshotsFreshness.PairedDeviceCount > 0 {
+				if _, err := fmt.Fprintf(stdout, "paired_device_count: %d\n", result.IdentitySnapshotsFreshness.PairedDeviceCount); err != nil {
+					return err
+				}
+			}
+			// Emit kinds in a stable order so the output is reproducible.
+			for _, kind := range []string{"profile", "settings", "paired-devices", "irn-profile"} {
+				if ts, ok := result.IdentitySnapshotsFreshness.LatestFetchedAt[kind]; ok {
+					if _, err := fmt.Fprintf(stdout, "identity_snapshot.%s.fetched_at: %s\n", kind, ts); err != nil {
 						return err
 					}
 				}
