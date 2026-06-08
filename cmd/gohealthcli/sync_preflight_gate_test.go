@@ -122,6 +122,54 @@ func TestSyncPreflightGateRulesTable(t *testing.T) {
 			wantRule:   preflightRuleRollupSourceFamilyConflict,
 			wantErrSub: "--source-family cannot be combined with --rollup",
 		},
+		{
+			name:       "from later than to rejected (civil dates)",
+			options:    syncCommandOptions{dataTypes: []string{"steps"}, from: "2026-06-08", to: "2026-06-01"},
+			wantRule:   preflightRuleRangeOrderInverted,
+			wantErrSub: "from must be earlier than to",
+		},
+		{
+			name:       "from later than to rejected (RFC3339 vs civil-date mix)",
+			options:    syncCommandOptions{dataTypes: []string{"steps"}, from: "2026-06-08T00:00:00Z", to: "2026-06-01"},
+			wantRule:   preflightRuleRangeOrderInverted,
+			wantErrSub: "from must be earlier than to",
+		},
+		{
+			name:       "from equal to to rejected as zero-width window (civil dates)",
+			options:    syncCommandOptions{dataTypes: []string{"steps"}, from: "2026-06-01", to: "2026-06-01"},
+			wantRule:   preflightRuleRangeZeroWidth,
+			wantErrSub: "zero-width sync window",
+		},
+		{
+			name:       "from equal to to rejected as zero-width window (RFC3339 vs civil-date mix)",
+			options:    syncCommandOptions{dataTypes: []string{"steps"}, from: "2026-06-01T00:00:00Z", to: "2026-06-01"},
+			wantRule:   preflightRuleRangeZeroWidth,
+			wantErrSub: "zero-width sync window",
+		},
+		{
+			// Cross-shape collision: civil from + start-of-UTC-day RFC3339 to
+			// normalize to the same instant. Earlier drafts of slice 2 missed
+			// this because the table only covered same-shape and one
+			// asymmetric mix. The error message names both inputs verbatim
+			// so the user sees why two visually-different strings collided.
+			name:       "civil from collides with start-of-UTC-day RFC3339 to as zero-width",
+			options:    syncCommandOptions{dataTypes: []string{"steps"}, from: "2026-06-01", to: "2026-06-01T00:00:00Z"},
+			wantRule:   preflightRuleRangeZeroWidth,
+			wantErrSub: "zero-width sync window",
+		},
+		{
+			// Regression for the empty-to bypass: when --to is omitted, the
+			// gate defaults it to now() and validates the resolved value
+			// against --from. A future --from with no --to therefore still
+			// trips inverted-range instead of silently producing a
+			// from>to plan that downstream then fails opaquely.
+			// Uses the fake clock's "now" (2026-01-05) — anything later than
+			// that as --from must be rejected here.
+			name:       "future from with empty to rejected against defaulted now",
+			options:    syncCommandOptions{dataTypes: []string{"steps"}, from: "2099-01-01"},
+			wantRule:   preflightRuleRangeOrderInverted,
+			wantErrSub: "from must be earlier than to",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -193,6 +241,22 @@ func TestSyncPreflightGateDefaultsToWhenDailyRollup(t *testing.T) {
 	}
 	if want := now.UTC().Format("2006-01-02"); plan.to != want {
 		t.Errorf("plan.to = %q, want %q (daily rollup defaults to civil date)", plan.to, want)
+	}
+}
+
+func TestSyncPreflightGateSkipsRangeOrderCheckOnCursorResume(t *testing.T) {
+	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
+	conn := archivedConnection{id: "googlehealth:111"}
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
+
+	// --from empty means "resume from Sync Cursor"; the lifecycle resolves
+	// --from later, so the gate must NOT reject on range-ordering here.
+	// --to alone is fine.
+	if _, err := gate.Validate(syncCommandOptions{
+		dataTypes: []string{"steps"},
+		to:        "2026-01-02T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("Validate(cursor-resume): %v", err)
 	}
 }
 
