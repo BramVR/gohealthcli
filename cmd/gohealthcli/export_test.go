@@ -692,6 +692,217 @@ func insertExportDataPoint(t *testing.T, archivePath string, point exportDataPoi
 	}
 }
 
+// TestResolveExportFormat pins the small export-specific validator that
+// maps the Common Flag Set synonyms onto the export-specific --format
+// value. The mutual exclusion of --plain and --json itself is enforced
+// at the Common Flag Set seam (covered by
+// TestExportPlainAndJSONMutuallyExclusive); this table covers the
+// synonym ↔ --format interactions.
+func TestResolveExportFormat(t *testing.T) {
+	cases := []struct {
+		name           string
+		format         string
+		formatExplicit bool
+		jsonSynonym    bool
+		plainSynonym   bool
+		want           string
+		wantErr        string
+	}{
+		{name: "default", format: "csv", want: "csv"},
+		{name: "explicit-format-csv", format: "csv", formatExplicit: true, want: "csv"},
+		{name: "explicit-format-jsonl", format: "jsonl", formatExplicit: true, want: "jsonl"},
+		{name: "json-synonym-no-format", format: "csv", jsonSynonym: true, want: "jsonl"},
+		{name: "plain-synonym-no-format", format: "csv", plainSynonym: true, want: "csv"},
+		{name: "json-synonym-with-jsonl-format-is-redundant-not-conflict", format: "jsonl", formatExplicit: true, jsonSynonym: true, want: "jsonl"},
+		{name: "plain-synonym-with-csv-format-is-redundant-not-conflict", format: "csv", formatExplicit: true, plainSynonym: true, want: "csv"},
+		{name: "json-vs-explicit-csv-conflicts", format: "csv", formatExplicit: true, jsonSynonym: true, wantErr: "--json conflicts with --format csv"},
+		{name: "plain-vs-explicit-jsonl-conflicts", format: "jsonl", formatExplicit: true, plainSynonym: true, wantErr: "--plain conflicts with --format jsonl"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveExportFormat(tc.format, tc.formatExplicit, tc.jsonSynonym, tc.plainSynonym)
+			if tc.wantErr != "" {
+				if err == nil || err.Error() != tc.wantErr {
+					t.Fatalf("err = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected err = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestExportJSONFlagSynonymousWithFormatJSONL is the tracer for PRD #143
+// slice 9 (#184): `export --json` is the documented Common Flag Set
+// synonym for `--format jsonl`. Both invocations must emit the exact
+// same payload on stdout.
+func TestExportJSONFlagSynonymousWithFormatJSONL(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	jsonStdout := new(bytes.Buffer)
+	jsonStderr := new(bytes.Buffer)
+	jsonCode := run([]string{
+		"export",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+		"daily-steps",
+		"--stdout",
+	}, jsonStdout, jsonStderr)
+	if jsonCode != 0 {
+		t.Fatalf("export --json exit code = %d, want 0\nstderr=%s", jsonCode, jsonStderr.String())
+	}
+
+	formatStdout := new(bytes.Buffer)
+	formatStderr := new(bytes.Buffer)
+	formatCode := run([]string{
+		"export",
+		"--config", configPath,
+		"--db", archivePath,
+		"--format", "jsonl",
+		"daily-steps",
+		"--stdout",
+	}, formatStdout, formatStderr)
+	if formatCode != 0 {
+		t.Fatalf("export --format jsonl exit code = %d, want 0\nstderr=%s", formatCode, formatStderr.String())
+	}
+	if jsonStdout.String() != formatStdout.String() {
+		t.Fatalf("--json stdout differs from --format jsonl stdout\n--json:\n%s\n--format jsonl:\n%s", jsonStdout.String(), formatStdout.String())
+	}
+}
+
+// TestExportPlainFlagSynonymousWithFormatCSV is the tracer for PRD #143
+// slice 9 (#184): `export --plain` is the documented Common Flag Set
+// synonym for `--format csv`. Both invocations must emit the exact same
+// payload on stdout.
+func TestExportPlainFlagSynonymousWithFormatCSV(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	plainStdout := new(bytes.Buffer)
+	plainStderr := new(bytes.Buffer)
+	plainCode := run([]string{
+		"export",
+		"--config", configPath,
+		"--db", archivePath,
+		"--plain",
+		"daily-steps",
+		"--stdout",
+	}, plainStdout, plainStderr)
+	if plainCode != 0 {
+		t.Fatalf("export --plain exit code = %d, want 0\nstderr=%s", plainCode, plainStderr.String())
+	}
+
+	formatStdout := new(bytes.Buffer)
+	formatStderr := new(bytes.Buffer)
+	formatCode := run([]string{
+		"export",
+		"--config", configPath,
+		"--db", archivePath,
+		"--format", "csv",
+		"daily-steps",
+		"--stdout",
+	}, formatStdout, formatStderr)
+	if formatCode != 0 {
+		t.Fatalf("export --format csv exit code = %d, want 0\nstderr=%s", formatCode, formatStderr.String())
+	}
+	if plainStdout.String() != formatStdout.String() {
+		t.Fatalf("--plain stdout differs from --format csv stdout\n--plain:\n%s\n--format csv:\n%s", plainStdout.String(), formatStdout.String())
+	}
+}
+
+// TestExportRejectsJSONWithConflictingFormatCSV pins the small validator
+// that lives in export.go (NOT in the Common Flag Set module): when
+// --json and --format csv are both passed, the command fails with a
+// targeted "--json conflicts with --format csv" error via the unified
+// Failure Reporter. The same applies to --plain --format jsonl.
+func TestExportRejectsJSONWithConflictingFormatCSV(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"export",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+		"--format", "csv",
+		"daily-steps",
+		"--stdout",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("export --json --format csv exit code = %d, want 1\nstdout=%s\nstderr=%s", code, stdout.String(), stderr.String())
+	}
+	combined := stdout.String() + stderr.String()
+	if !strings.Contains(combined, "--json conflicts with --format csv") {
+		t.Fatalf("output missing conflict error\nstdout=%s\nstderr=%s", stdout.String(), stderr.String())
+	}
+}
+
+// TestExportRejectsPlainWithConflictingFormatJSONL mirrors the above for
+// the --plain side.
+func TestExportRejectsPlainWithConflictingFormatJSONL(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"export",
+		"--config", configPath,
+		"--db", archivePath,
+		"--plain",
+		"--format", "jsonl",
+		"daily-steps",
+		"--stdout",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("export --plain --format jsonl exit code = %d, want 1\nstdout=%s\nstderr=%s", code, stdout.String(), stderr.String())
+	}
+	combined := stdout.String() + stderr.String()
+	if !strings.Contains(combined, "--plain conflicts with --format jsonl") {
+		t.Fatalf("output missing conflict error\nstdout=%s\nstderr=%s", stdout.String(), stderr.String())
+	}
+}
+
+// TestExportPlainAndJSONMutuallyExclusive pins the CommonFlagSet
+// mutual-exclusion contract for the export verb.
+func TestExportPlainAndJSONMutuallyExclusive(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"export",
+		"--config", configPath,
+		"--db", archivePath,
+		"--plain",
+		"--json",
+		"daily-steps",
+		"--stdout",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("export --plain --json exit code = %d, want 1\nstdout=%s\nstderr=%s", code, stdout.String(), stderr.String())
+	}
+	combined := stdout.String() + stderr.String()
+	if !strings.Contains(combined, "--plain and --json are mutually exclusive") {
+		t.Fatalf("output missing mutual-exclusion error\nstdout=%s\nstderr=%s", stdout.String(), stderr.String())
+	}
+}
+
 func assertDailyStepsRow(t *testing.T, row dailyStepsExportRow, civilDate string, stepCount int64, sourceKind, sourceFamily string, sourceRecordCount int64) {
 	t.Helper()
 	if row.ProviderName != "googlehealth" ||

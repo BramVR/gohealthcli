@@ -1199,23 +1199,36 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 	flags := flag.NewFlagSet("export", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
-	exportConfigPath := flags.String("config", configPath, "config file path")
-	exportArchivePath := flags.String("db", archivePath, "SQLite Health Archive path")
-	exportFormat := flags.String("format", "csv", "export format: csv or jsonl")
+	// export accepts the full Common Flag Set ({config, db, json, plain,
+	// no-input}) so the "every subcommand accepts the same global flags"
+	// invariant (PRD #143) holds. --json is a documented synonym for
+	// --format jsonl; --plain is a documented synonym for --format csv.
+	// The export-specific --format / --output / --stdout flags are
+	// registered AFTER RegisterCommon. --no-input is accepted but unused
+	// by export (it's a read-only verb against the local archive); we
+	// keep it in the spec so the global-flag pre-scan does not reject it.
+	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
+		ConfigPath:  configPath,
+		ArchivePath: archivePath,
+	})
+	// Override the generic CommonFlagSet Usage strings for the flags
+	// whose meaning is export-specific. `export --help` now reflects the
+	// documented synonym semantics instead of the misleading "write
+	// stable JSON to stdout" wording inherited from the shared module.
+	flags.Lookup("json").Usage = "synonym for --format jsonl"
+	flags.Lookup("plain").Usage = "synonym for --format csv"
+	flags.Lookup("no-input").Usage = "accepted for uniformity; export does no prompting"
+	exportFormat := flags.String("format", "csv", "export format: csv or jsonl (synonyms: --json → jsonl, --plain → csv)")
 	exportOutputPath := flags.String("output", "", "write export to path")
 	exportStdout := flags.Bool("stdout", false, "write export data to stdout")
-	flags.Bool("no-input", false, "never prompt, never wait for browser input")
 
 	dataset, parseArgs, err := splitExportArgs(args)
 	if err != nil {
 		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: err.Error()}, stdout, stderr)
 	}
 
-	if err := flags.Parse(parseArgs); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 1
+	if err := ParseCommon(flags, common, parseArgs); err != nil {
+		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	if dataset == "" || flags.NArg() != 0 {
 		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: "export requires exactly one dataset"}, stdout, stderr)
@@ -1228,17 +1241,27 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 			Message: fmt.Sprintf("export dataset %q is not supported", dataset),
 		}, stdout, stderr)
 	}
+	// Resolve --json / --plain into --format. Mutual exclusion between
+	// --plain and --json already fired in ParseCommon above (the
+	// CommonFlagSet seam owns that invariant); the conflict between a
+	// Common Flag synonym and an explicit --format value is
+	// export-specific, so the validator lives here, not in common_flags.go.
+	formatExplicit := flagWasProvided(flags, "format")
+	resolvedFormat, err := resolveExportFormat(*exportFormat, formatExplicit, common.JSONOutput, common.PlainOutput)
+	if err != nil {
+		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: err.Error()}, stdout, stderr)
+	}
 	if *exportOutputPath == "" && !*exportStdout {
 		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: "export requires --output PATH or --stdout"}, stdout, stderr)
 	}
 	if *exportOutputPath != "" && *exportStdout {
 		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: "export accepts only one destination: --output or --stdout"}, stdout, stderr)
 	}
-	if err := validateExportFormat(*exportFormat); err != nil {
+	if err := validateExportFormat(resolvedFormat); err != nil {
 		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: err.Error()}, stdout, stderr)
 	}
 
-	resolvedArchivePath, err := resolveConfiguredArchivePath(*exportConfigPath, *exportArchivePath, archivePathExplicit || flagWasProvided(flags, "db"))
+	resolvedArchivePath, err := resolveConfiguredArchivePath(common.ConfigPath, common.ArchivePath, archivePathExplicit || common.ArchivePathExplicit)
 	if err != nil {
 		return ReportFailure(FailureReport{Command: "export", Status: StatusOperationFailed, Message: err.Error()}, stdout, stderr)
 	}
@@ -1248,7 +1271,7 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 	}
 
 	if *exportStdout {
-		if err := writeExport(rows, spec, *exportFormat, stdout); err != nil {
+		if err := writeExport(rows, spec, resolvedFormat, stdout); err != nil {
 			return ReportFailure(FailureReport{
 				Command: "export",
 				Status:  StatusArchiveUnwritable,
@@ -1257,7 +1280,7 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 		}
 		return 0
 	}
-	if err := writeExportFile(rows, spec, *exportFormat, *exportOutputPath); err != nil {
+	if err := writeExportFile(rows, spec, resolvedFormat, *exportOutputPath); err != nil {
 		return ReportFailure(FailureReport{
 			Command: "export",
 			Status:  StatusArchiveUnwritable,
@@ -1265,6 +1288,37 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 		}, stdout, stderr)
 	}
 	return 0
+}
+
+// resolveExportFormat maps the Common Flag Set synonyms (--json, --plain)
+// onto the export-specific --format value. It enforces the conflict
+// invariant export.go owns (CommonFlagSet owns --plain --json mutual
+// exclusion at the seam above):
+//
+//   - if --json is set with an explicit --format whose value is not "jsonl",
+//     return a "--json conflicts with --format <value>" error;
+//   - if --plain is set with an explicit --format whose value is not "csv",
+//     return a "--plain conflicts with --format <value>" error;
+//   - otherwise, --json overrides the default to "jsonl" and --plain
+//     overrides the default to "csv" (when --format was NOT explicit).
+//
+// formatExplicit comes from flagWasProvided so a user passing the synonym
+// alongside `--format jsonl` (redundant but not contradictory) does NOT
+// error — only contradictory pairings do.
+func resolveExportFormat(format string, formatExplicit, jsonSynonym, plainSynonym bool) (string, error) {
+	if jsonSynonym && formatExplicit && format != "jsonl" {
+		return "", fmt.Errorf("--json conflicts with --format %s", format)
+	}
+	if plainSynonym && formatExplicit && format != "csv" {
+		return "", fmt.Errorf("--plain conflicts with --format %s", format)
+	}
+	if jsonSynonym && !formatExplicit {
+		return "jsonl", nil
+	}
+	if plainSynonym && !formatExplicit {
+		return "csv", nil
+	}
+	return format, nil
 }
 
 func splitExportArgs(args []string) (string, []string, error) {

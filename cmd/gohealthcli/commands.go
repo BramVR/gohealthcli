@@ -98,6 +98,41 @@ func withCommon(extra ...flagSpec) []flagSpec {
 	return out
 }
 
+// withCommonOverrides returns the shared flagSpec slice with the Usage
+// strings for the named common flags overridden. The Project Site's
+// command-reference pages and `gohealthcli schema --json` both read the
+// per-flag Usage as the source of truth, so a subcommand whose
+// `--plain` / `--json` semantics differ from the generic "write stable
+// JSON" / "write plain key/value" wording must override the description
+// at registry time — otherwise the published schema would say one thing
+// and the live `--help` output would say another. The overrides map
+// from common flag name to the subcommand-specific Usage string;
+// unknown names panic at init() because registry-build mistakes are
+// programmer errors, not runtime conditions.
+func withCommonOverrides(overrides map[string]string, extra ...flagSpec) []flagSpec {
+	out := make([]flagSpec, 0, len(commonFlags)+len(extra))
+	for _, flag := range commonFlags {
+		if override, ok := overrides[flag.Name]; ok {
+			flag.Usage = override
+		}
+		out = append(out, flag)
+	}
+	for name := range overrides {
+		found := false
+		for _, flag := range commonFlags {
+			if flag.Name == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			panic("withCommonOverrides: unknown common flag " + name)
+		}
+	}
+	out = append(out, extra...)
+	return out
+}
+
 // commonFlagNames returns the five shared flag names in their canonical
 // commonFlags order. Registry entries for subcommands whose runtime flag
 // setup goes through the CommonFlagSet module (issue #166) carry this
@@ -271,20 +306,24 @@ var commands = []commandDef{
 	{
 		Name:           "export",
 		Short:          "Write a normalised dataset to CSV or JSONL.",
-		Long:           "Render one of the curated normalised datasets (daily-steps, heart-rate-samples, resting-heart-rate-by-day, sleep-sessions, exercise-sessions, weight-samples) from the Health Archive. Exports are read-only; nothing in the archive is mutated.\n\nExactly one of `--output PATH` or `--stdout` must be supplied — the explicit destination prevents an accidental terminal dump of a long export.",
+		Long:           "Render one of the curated normalised datasets (daily-steps, heart-rate-samples, resting-heart-rate-by-day, sleep-sessions, exercise-sessions, weight-samples) from the Health Archive. Exports are read-only; nothing in the archive is mutated.\n\nExactly one of `--output PATH` or `--stdout` must be supplied — the explicit destination prevents an accidental terminal dump of a long export.\n\n`--json` is a Common Flag Set synonym for `--format jsonl`; `--plain` is a synonym for `--format csv`. Passing a synonym alongside a contradictory `--format` value (`--json --format csv`, `--plain --format jsonl`) fails with a `--<synonym> conflicts with --format <value>` error. `--plain --json` together fails with the documented mutual-exclusion error from the Common Flag Set seam.",
 		PositionalArgs: "<dataset>",
-		Flags: []flagSpec{
-			{Name: "config", Type: "string", Default: "", Usage: "config file path"},
-			{Name: "db", Type: "string", Default: "", Usage: "SQLite Health Archive path"},
-			{Name: "format", Type: "string", Default: "csv", Usage: "export format: csv or jsonl"},
-			{Name: "output", Type: "string", Default: "", Usage: "write export to path"},
-			{Name: "stdout", Type: "bool", Default: "false", Usage: "write export data to stdout"},
-			{Name: "no-input", Type: "bool", Default: "false", Usage: "never prompt, never wait for browser input"},
-		},
+		Flags: withCommonOverrides(
+			map[string]string{
+				"json":     "synonym for --format jsonl",
+				"plain":    "synonym for --format csv",
+				"no-input": "accepted for uniformity; export does no prompting",
+			},
+			flagSpec{Name: "format", Type: "string", Default: "csv", Usage: "export format: csv or jsonl (synonyms: --json → jsonl, --plain → csv)"},
+			flagSpec{Name: "output", Type: "string", Default: "", Usage: "write export to path"},
+			flagSpec{Name: "stdout", Type: "bool", Default: "false", Usage: "write export data to stdout"},
+		),
+		CommonFlags: commonFlagNames(),
 		// export reads ArchivePathExplicit identically to status / query; it
-		// has its own --format / --output flag surface so the shared
-		// json/plain mode is ignored, and the runtime adapter bundle is
-		// likewise unused (export is read-only against the local archive).
+		// has its own --format / --output flag surface, plus the Common
+		// Flag Set synonym mappings handled inside runExport. The runtime
+		// adapter bundle is unused (export is read-only against the local
+		// archive).
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
 			return runExport(args, common.ConfigPath, common.ArchivePath, common.ArchivePathExplicit, stdout, stderr)
 		},
@@ -322,13 +361,16 @@ var commands = []commandDef{
 	{
 		Name:  "describe-schema",
 		Short: "Self-describe the Health Archive for LLM consumption.",
-		Long:  "Emit the archive's schema in one of two modes.\n\n`--sql` dumps live DDL straight from `sqlite_master`, excluding internal `sqlite_*` objects. Use this when you want the actual truth of what tables and views exist right now.\n\n`--json` (default) emits a curated catalog combining the Normalized Views Registry's per-view metadata (name, migration version, declared columns), the live table+column shape from `pragma_table_info`, the merged hand-curated narrative file, and a stable wire-shape version field. Downstream tools (a Claude skill, an MCP server, a dashboard) read the JSON catalog as the contract.\n\nA drift test in CI fails when a public view exists in `sqlite_master` without a matching catalog entry — the JSON shape and the live schema cannot diverge silently.",
-		Flags: []flagSpec{
-			{Name: "config", Type: "string", Default: "", Usage: "config file path"},
-			{Name: "db", Type: "string", Default: "", Usage: "SQLite Health Archive path"},
-			{Name: "json", Type: "bool", Default: "true", Usage: "emit the curated JSON catalog (default)"},
-			{Name: "sql", Type: "bool", Default: "false", Usage: "dump live DDL from sqlite_master (excludes internal sqlite_* objects)"},
-		},
+		Long:  "Emit the archive's schema in one of two modes.\n\n`--sql` dumps live DDL straight from `sqlite_master`, excluding internal `sqlite_*` objects. Use this when you want the actual truth of what tables and views exist right now.\n\nThe JSON catalog is the success-mode default: it emits a curated document combining the Normalized Views Registry's per-view metadata (name, migration version, declared columns), the live table+column shape from `pragma_table_info`, the merged hand-curated narrative file, and a stable wire-shape version field. Downstream tools (a Claude skill, an MCP server, a dashboard) read the JSON catalog as the contract. The Common Flag Set `--json` flag is accepted for the uniform-flag contract but does not change behaviour — the catalog is emitted unless `--sql` overrides.\n\n`--plain` is accepted as a no-op — the schema catalog has no key/value plain shape, so `describe-schema --plain` emits the JSON catalog and surfaces a `// note: --plain is a no-op …` comment line on stderr; stdout stays valid JSON so users redirecting it to a file are unaffected. `--plain --json` together fails with the documented mutual-exclusion error.\n\nA drift test in CI fails when a public view exists in `sqlite_master` without a matching catalog entry — the JSON shape and the live schema cannot diverge silently.",
+		Flags: withCommonOverrides(
+			map[string]string{
+				"json":     "accepted for uniformity; the JSON catalog is the success-mode default",
+				"plain":    "no-op (schema catalog has no plain shape); emits JSON catalog + stderr note",
+				"no-input": "accepted for uniformity; describe-schema does no prompting",
+			},
+			flagSpec{Name: "sql", Type: "bool", Default: "false", Usage: "dump live DDL from sqlite_master (excludes internal sqlite_* objects)"},
+		),
+		CommonFlags: commonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 			return runDescribeSchemaWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
 		},
