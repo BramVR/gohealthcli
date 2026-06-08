@@ -232,7 +232,10 @@ func productionSyncPreflightContext(options syncCommandOptions, runtime runtimeA
 		dataTypeSupported:     syncDataPointDataTypeSupported,
 		dataTypeUsesDateRange: syncDataPointUsesDateRange,
 		sourceFamilyFilter:    googleHealthSourceFamilyFilterName,
-		defaultAllDataTypes:   func() []string { return append([]string(nil), defaultDataTypes...) },
+		// defaultDataTypes is a package-level var that the gate only ranges
+		// over; other readers also treat it as read-only, so returning it
+		// directly avoids allocating a fresh copy on every Validate call.
+		defaultAllDataTypes: func() []string { return defaultDataTypes },
 		currentConnection: func() (archivedConnection, error) {
 			if _, err := inspectIdentityConfig(options.configPath, options.archivePath); err != nil {
 				return archivedConnection{}, fmt.Errorf("config check failed: %w", err)

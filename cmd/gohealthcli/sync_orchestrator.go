@@ -68,9 +68,7 @@ func (orchestrator syncOrchestrator) Sync(options syncCommandOptions) ([]syncRes
 			// results slice themselves.
 			break
 		}
-		perType := options
-		perType.dataTypes = []string{dataType}
-		perType.cancelCh = orchestrator.cancelCh
+		perType := perTypeSyncOptions(options, dataType, orchestrator.cancelCh)
 		result, execErr := orchestrator.executor.Execute(perType)
 		if execErr != nil && result.Message == "" {
 			result.Message = execErr.Error()
@@ -80,29 +78,34 @@ func (orchestrator syncOrchestrator) Sync(options syncCommandOptions) ([]syncRes
 	return results, nil
 }
 
+// perTypeSyncOptions narrows a fan-out invocation's options down to a
+// single Data Type for one Execute call. allTypes is cleared because the
+// orchestrator already resolved the fan-out list — leaving allTypes=true
+// alongside a single-element dataTypes slice would trigger the gate's
+// preflightRuleAllVsTypesConflict and reject every per-type call,
+// breaking `sync --all` end-to-end.
+func perTypeSyncOptions(options syncCommandOptions, dataType string, cancelCh <-chan struct{}) syncCommandOptions {
+	perType := options
+	perType.allTypes = false
+	perType.dataTypes = []string{dataType}
+	perType.cancelCh = cancelCh
+	return perType
+}
+
 // expandDataTypes resolves --all / --types into the concrete ordered list
 // the orchestrator iterates. Delegates to syncPreflightGate so the
 // --all / --types mutual-exclusion + duplicate-detection rules live in
 // ONE place across the codebase; this method survives as a thin shim so
 // existing orchestrator tests continue to exercise the fan-out rules
-// without reaching into the gate's internals.
+// without reaching into the gate's internals. The gate context is built
+// from options carried by the orchestrator path; expandDataTypes never
+// invokes the I/O adapters (currentConnection, sourceFamilyFilter,
+// rollupCatalogValidator), so passing the production context here is
+// safe and avoids a separate partial-context constructor with nil
+// adapters that any future expansion-time rule could nil-deref.
 func (orchestrator syncOrchestrator) expandDataTypes(options syncCommandOptions) ([]string, error) {
-	gate := syncPreflightGate{ctx: orchestratorPreflightContextForExpansion(orchestrator.executor.runtime)}
+	gate := syncPreflightGate{ctx: productionSyncPreflightContext(options, orchestrator.executor.runtime)}
 	return gate.expandDataTypes(options)
-}
-
-// orchestratorPreflightContextForExpansion is the minimal gate context
-// expandDataTypes needs: only the catalog + default list are consulted,
-// so the other adapters can stay nil. Kept separate from
-// productionSyncPreflightContext (which also needs config/archive paths)
-// because the orchestrator does not have a single per-call configPath at
-// hand for the fan-out-level expansion step.
-func orchestratorPreflightContextForExpansion(runtime runtimeAdapters) syncPreflightContext {
-	return syncPreflightContext{
-		now:                 runtime.now,
-		dataTypeSupported:   syncDataPointDataTypeSupported,
-		defaultAllDataTypes: func() []string { return append([]string(nil), defaultDataTypes...) },
-	}
 }
 
 // syncFanOutSummary is the aggregate envelope rendered for multi-Data-Type

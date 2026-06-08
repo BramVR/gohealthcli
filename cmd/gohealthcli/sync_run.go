@@ -28,20 +28,17 @@ func syncSetupWithRuntime(options syncCommandOptions, runtime runtimeAdapters) (
 // string, per the JSON wire-shape AC); SyncRunID is unset so the JSON
 // envelope omits sync_run_id (matching the no-audit-row contract).
 // DataTypes mirrors what the operator passed so the failure envelope
-// still names the run the user thought they were starting.
-func preflightFailureResult(options syncCommandOptions, plan preflightPlan, err error) syncResult {
-	result := syncResult{Status: "sync_failed", DataTypes: options.dataTypes, Message: err.Error()}
-	if plan.from != "" {
-		result.From = plan.from
-	} else {
-		result.From = options.from
+// still names the run the user thought they were starting. From/To come
+// straight from options because the gate returns a zero preflightPlan on
+// every error path, so plan.from/plan.to would always be empty here.
+func preflightFailureResult(options syncCommandOptions, err error) syncResult {
+	return syncResult{
+		Status:    "sync_failed",
+		DataTypes: options.dataTypes,
+		From:      options.from,
+		To:        options.to,
+		Message:   err.Error(),
 	}
-	if plan.to != "" {
-		result.To = plan.to
-	} else {
-		result.To = options.to
-	}
-	return result
 }
 
 // Execute is the executor's per-Data-Type entry. It routes EVERY preflight
@@ -57,7 +54,7 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	gate := syncPreflightGate{ctx: productionSyncPreflightContext(options, runtime)}
 	plan, err := gate.Validate(options)
 	if err != nil {
-		return preflightFailureResult(options, plan, err), err
+		return preflightFailureResult(options, err), err
 	}
 	if len(plan.dataTypes) != 1 {
 		return syncResult{Status: "sync_failed", DataTypes: plan.dataTypes}, errors.New("sync currently supports one Data Type per run")
