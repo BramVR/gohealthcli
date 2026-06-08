@@ -22,9 +22,9 @@ gohealthcli status --plain
 
 ## What you can archive
 
-Raw Data Points across a focused set of Data Types: steps, heart rate, heart rate variability, oxygen saturation, sleep, exercise, distance, weight, and daily Rollups for the same. Wearable-only filtering is available for Data Types backed by the Google Health reconcile path.
+Raw Data Points across the Google Health Tier 1 and Tier 2 catalogs and their Rollups, plus identity, device, settings, and profile snapshots. Wearable-only filtering is available for Data Types backed by the Google Health reconcile path. `sync` orchestrates `--all` or `--types csv` into per-Data-Type runs with backoff/retry on 429/5xx and an outcome-aware Sync Cursor; expired access tokens auto-refresh from the stored refresh token. Exercise sessions can archive the upstream TCX route as a Data Point Attachment when the TCX scope is granted.
 
-Normalised exports cover daily steps, heart rate samples, resting heart rate by day, sleep sessions, exercise sessions, and weight samples — written as CSV or JSONL, on demand, to a path you choose.
+Normalised CSV or JSONL exports cover every Data Type the catalog supports. Rollups widen to `hourly`, `weekly`, or `window=<dur>`. The [README](https://github.com/BramVR/gohealthcli#readme) is the canonical catalog and export list — drift-guarded against the binary — and the [commands reference](commands.html) covers every verb and flag.
 
 ## Where to start
 
