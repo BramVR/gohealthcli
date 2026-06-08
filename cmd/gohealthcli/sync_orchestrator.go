@@ -24,12 +24,19 @@ func newSyncOrchestrator(runtime runtimeAdapters, cancelCh <-chan struct{}) sync
 }
 
 // Sync runs every requested Data Type in order and returns one
-// syncResult per Data Type. The aggregate (counts, status) is computed
-// downstream by summarizeSyncFanOut / fanOutStatus when the caller
-// renders multi-type output. The error return is non-nil only when the
+// syncResult per Data Type. Aggregation across the fan-out (totals,
+// overall status, summary line) is the caller's job — summarizeSyncFanOut,
+// fanOutStatus, and fanOutMessage take this slice and derive each piece
+// of the rendered output. The error return is non-nil only when the
 // orchestration itself could not start any run (e.g. --all + --types
 // mutual-exclusion); per-type failures live inside the result slice and
 // the returned error is nil so the caller can render every outcome.
+//
+// Empty slice + nil error is the canonical "SIGINT arrived before the
+// first Data Type started" signal — every other reason for zero
+// progress (no Data Types requested, --all/--types conflict) returns
+// nil + a non-nil error instead. The CLI translates the empty case
+// into a sync_canceled result via fanOutStatus.
 func (orchestrator syncOrchestrator) Sync(options syncCommandOptions) ([]syncResult, error) {
 	dataTypes, err := orchestrator.expandDataTypes(options)
 	if err != nil {
@@ -41,11 +48,19 @@ func (orchestrator syncOrchestrator) Sync(options syncCommandOptions) ([]syncRes
 	results := make([]syncResult, 0, len(dataTypes))
 	for _, dataType := range dataTypes {
 		if ingestionCanceled(orchestrator.cancelCh) {
-			// Orchestrator received SIGINT after a prior Data Type finished
-			// and before this one started. Stop the loop cleanly rather
-			// than emitting skipped-result rows that would inflate the
-			// summary's "N attempted" count; the in-flight type (if any)
-			// already wrote its own sync_canceled result.
+			// Orchestrator received SIGINT between Data Types: a prior
+			// type either completed or had no time to start. Stop the
+			// loop cleanly rather than emitting skipped-result rows for
+			// the types that never started — those would inflate the
+			// summary's "N attempted" count without any audit row to
+			// back them up. The skipped types are simply absent from
+			// the results slice; fanOutStatus folds an entirely empty
+			// fan-out (cancel before the first type started) to
+			// sync_canceled, and a partial fan-out (some completed,
+			// rest skipped) currently surfaces as sync_completed —
+			// callers that need the "incomplete vs complete" signal
+			// must compare the requested type list against the
+			// results slice themselves.
 			break
 		}
 		perType := options
@@ -153,12 +168,25 @@ func summarizeSyncFanOut(results []syncResult, requestedFrom, requestedTo string
 	return summary
 }
 
-func fanOutMessage(status string, attempted int) string {
+// fanOutMessage formats the one-line summary the CLI prints after a
+// fan-out finishes. Per-status counts are derived from `results` rather
+// than passed in, so the canceled-status arm can report "Data Types
+// that actually completed" instead of len(results) — the canceled
+// in-flight run sits in the slice too and would otherwise inflate the
+// count by one.
+func fanOutMessage(status string, results []syncResult) string {
+	attempted := len(results)
 	switch status {
 	case "sync_failed":
 		return fmt.Sprintf("Sync Run summary: %d Data Types attempted, at least one failed", attempted)
 	case "sync_canceled":
-		return fmt.Sprintf("Sync Run summary: %d Data Types completed before cancellation", attempted)
+		completed := 0
+		for _, result := range results {
+			if result.Status == "sync_completed" {
+				completed++
+			}
+		}
+		return fmt.Sprintf("Sync Run summary: %d Data Types completed before cancellation", completed)
 	default:
 		return fmt.Sprintf("Sync Run summary: %d Data Types archived", attempted)
 	}

@@ -949,7 +949,11 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 	// flat shape for backwards compatibility.
 	fanOut := options.allTypes || len(dataTypes) > 1
 	if !fanOut {
-		single := syncResult{Status: "sync_failed", DataTypes: dataTypes, Message: "sync produced no results"}
+		// orchestrator.Sync returns an empty slice only when SIGINT
+		// arrived before the first Data Type started — report that as
+		// sync_canceled, not the misleading "sync produced no results"
+		// the legacy path would surface as sync_failed.
+		single := syncResult{Status: "sync_canceled", DataTypes: dataTypes, Message: "sync canceled before any Data Type started"}
 		if len(results) > 0 {
 			single = results[0]
 		}
@@ -966,10 +970,11 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 		fmt.Fprintf(stderr, "write output: %v\n", writeErr)
 		return 1
 	}
-	for _, result := range results {
-		if result.Status != "sync_completed" {
-			return 1
-		}
+	// fanOutStatus folds the same empty-results case to sync_canceled
+	// (see fanOutStatus), so an empty fan-out should also exit non-zero
+	// rather than the silent exit-0 the per-result loop would produce.
+	if fanOutStatus(results) != "sync_completed" {
+		return 1
 	}
 	return 0
 }
@@ -4994,7 +4999,7 @@ type syncFanOutResult struct {
 func writeSyncFanOutResult(results []syncResult, options syncCommandOptions, mode outputMode, stdout io.Writer) error {
 	summary := summarizeSyncFanOut(results, options.from, options.to)
 	status := fanOutStatus(results)
-	message := fanOutMessage(status, len(results))
+	message := fanOutMessage(status, results)
 	if mode.json {
 		envelope := syncFanOutResult{
 			Status:  status,
