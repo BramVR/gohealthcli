@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -9,9 +11,11 @@ import (
 // contract introduced by PRD #143 slice 6 (issue #175): every entry in
 // the registry — visible OR hidden — must carry a non-nil Run adapter,
 // because runWithRuntime dispatches through the registry rather than a
-// hand-written switch. A new subcommand that lands without populating
-// Run would silently dispatch as "unknown command" today; this test
-// makes the omission a compile-relevant test failure instead.
+// hand-written switch. A new subcommand that lands without wiring Run
+// would be caught by runWithRuntime's defensive nil-Run branch at
+// invocation time (clean "internal error" exit instead of a panic);
+// this test catches the same omission at build time so the regression
+// never ships in the first place.
 func TestEveryCommandHasRunAdapter(t *testing.T) {
 	for _, cmd := range commands {
 		if cmd.Run == nil {
@@ -38,6 +42,40 @@ func TestEveryVisibleCommandHelpExitsZero(t *testing.T) {
 				t.Fatalf("`%s --help` exit code = %d, want 0\nstderr: %s", cmd.Name, code, stderr.String())
 			}
 		})
+	}
+}
+
+// TestRunWithRuntimeRejectsNilRunAdapter pins the defensive guard in
+// runWithRuntime: a registry entry with a nil Run adapter exits with a
+// clean "internal error" message instead of panicking. The guard is
+// belt-and-braces (TestEveryCommandHasRunAdapter already pins the same
+// invariant at build time), but the test means future maintainers can
+// see the failure mode at a glance instead of inferring it from a
+// stack trace. We mutate a fresh in-memory registry to simulate a
+// regression — the package-level `commands` slice is left untouched.
+func TestRunWithRuntimeRejectsNilRunAdapter(t *testing.T) {
+	// Snapshot the existing schema entry, blank its Run, and run the
+	// dispatch through the real runWithRuntime path. We restore the
+	// adapter on test exit so subsequent tests still see a wired
+	// registry.
+	for i := range commands {
+		if commands[i].Name != "schema" {
+			continue
+		}
+		original := commands[i].Run
+		commands[i].Run = nil
+		t.Cleanup(func() { commands[i].Run = original })
+		break
+	}
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{"schema"}, stdout, stderr, runtimeAdapters{})
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	want := `internal error: command "schema" has no Run adapter`
+	if !strings.Contains(stderr.String(), want) {
+		t.Fatalf("stderr missing %q\ngot: %s", want, stderr.String())
 	}
 }
 

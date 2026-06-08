@@ -24,8 +24,8 @@ import "io"
 //                                             the wire shape stays additive.
 //
 // Run is the dispatch adapter — invoked by runWithRuntime after a successful
-// registry lookup (PRD #143 slice 6, issue #175). It is deliberately untagged
-// so it stays out of the published JSON contract: the schema documents the
+// registry lookup (PRD #143 slice 6, issue #175). The `json:"-"` tag keeps
+// the function out of the published JSON contract: the schema documents the
 // surface, the adapter implements the call. Subcommands whose underlying
 // signature differs (status's ArchivePathExplicit, export's no-runtime,
 // schema's stdout/stderr-only) satisfy this uniform type via thin wrappers

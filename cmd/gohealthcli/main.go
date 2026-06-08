@@ -521,11 +521,17 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 	// PRD #143 slice 6 (issue #175): dispatch reads from the same registry
 	// the --help printer reads, so a new subcommand registered in commands.go
 	// is automatically callable — no parallel switch to forget to update.
-	// The four diverged signatures from the previous hand-written switch
-	// (status/query/export's ArchivePathExplicit, export's no-runtime,
-	// schema's stdout-only, raw's outputMode{}) are folded into each
-	// commandDef.Run adapter; CommonFlagValues is the single seam that
-	// carries the global flag state down to those adapters.
+	// The diverged signatures from the previous hand-written switch are
+	// folded into each commandDef.Run adapter:
+	//   - status / query / export read ArchivePathExplicit out of common.
+	//   - init / status / query / export / schema take but ignore the
+	//     runtime adapter bundle (their underlying entry points pre-date
+	//     the runtime injection).
+	//   - raw takes the global outputMode but its underlying function
+	//     ignores it (declared as `_`); the adapter still passes the
+	//     value through for call-site uniformity.
+	// CommonFlagValues is the single seam that carries the global flag
+	// state down to all of those adapters.
 	common := CommonFlagValues{
 		ConfigPath:          *configPath,
 		ArchivePath:         *archivePath,
@@ -541,6 +547,16 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 		// "Did you mean" line (when a Levenshtein suggestion exists) lives
 		// between the two and is handled by the runUnknownCommand helper.
 		runUnknownCommand(flags.Arg(0), stderr)
+		return 1
+	}
+	if cmd.Run == nil {
+		// Defensive guard: TestEveryCommandHasRunAdapter pins the invariant
+		// that every entry's Run is wired, but if a future change slips a
+		// registry entry through without an adapter we exit cleanly with a
+		// targeted stderr message instead of panicking on the nil call.
+		// The error wording names the offending command so an operator can
+		// flag the bug without inspecting a stack trace.
+		fmt.Fprintf(stderr, "internal error: command %q has no Run adapter\n", cmd.Name)
 		return 1
 	}
 	return cmd.Run(flags.Args()[1:], common, stdout, stderr, runtime)
