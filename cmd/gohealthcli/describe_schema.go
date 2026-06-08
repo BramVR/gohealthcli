@@ -79,9 +79,11 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 	// knows their flag was honoured as a best-effort fallback; stdout
 	// stays the catalog so redirecting it to a file still produces valid
 	// JSON. The ParseCommon mutual-exclusion check already rejects
-	// `--plain --json`, so this branch only fires when --plain is the
-	// only output-mode flag set.
-	if common.PlainOutput {
+	// `--plain --json`, and an explicit `--sql` is the user's chosen
+	// override, so we skip the note in that case (the note's wording
+	// would be misleading because we're about to emit DDL, not the JSON
+	// catalog).
+	if common.PlainOutput && !*describeSQL {
 		fmt.Fprintln(stderr, "// note: --plain is a no-op on describe-schema; emitting JSON catalog")
 	}
 
