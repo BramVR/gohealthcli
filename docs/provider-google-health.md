@@ -56,9 +56,12 @@ Likely Go module: `google.golang.org/api/health/v4`.
 provider failures do not require restarting a multi-year backfill:
 
 - `429 Too Many Requests` and `5xx` responses retry with exponential backoff
-  (`250ms` base, doubling each attempt, capped at `30s`) plus jitter.
+  (`250ms` base, doubling each attempt) plus jitter. The exponential
+  component is capped at `30s`; the final sleep can exceed that cap when
+  the server-supplied `Retry-After` value is larger (see next bullet).
 - `Retry-After` (when present on a `429`) is honored as the minimum
-  next-attempt delay.
+  next-attempt delay and overrides the exponential cap when larger, so
+  a `Retry-After: 120` response waits ~120 s before the next attempt.
 - `401 Unauthorized` surfaces immediately with the existing
   "run `gohealthcli connect` again" message.
 - Other `4xx` (`400`, `403`, `404`, ...) surface immediately without retry.
