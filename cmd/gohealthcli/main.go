@@ -40,17 +40,37 @@ const googleHealthProfileURL = "https://health.googleapis.com/v4/users/me/profil
 const googleHealthRawResponseLimit = 10 << 20
 
 type doctorResult struct {
-	Status              string `json:"status"`
-	ConfigPath          string `json:"config_path"`
-	ArchivePath         string `json:"archive_path"`
-	OAuthClientSource   string `json:"oauth_client_source"`
-	CredentialStore     string `json:"credential_store"`
-	SchemaVersion       *int   `json:"schema_version"`
-	ConnectionCount     *int   `json:"connection_count"`
-	TokenStatus         string `json:"token_status"`
-	AttachmentRootPath  string `json:"attachment_root_path,omitempty"`
-	AttachmentRootMode  string `json:"attachment_root_mode,omitempty"`
-	Message             string `json:"message"`
+	Status              string                  `json:"status"`
+	ConfigPath          string                  `json:"config_path"`
+	ArchivePath         string                  `json:"archive_path"`
+	OAuthClientSource   string                  `json:"oauth_client_source"`
+	CredentialStore     string                  `json:"credential_store"`
+	SchemaVersion       *int                    `json:"schema_version"`
+	ConnectionCount     *int                    `json:"connection_count"`
+	TokenStatus         string                  `json:"token_status"`
+	AttachmentRootPath  string                  `json:"attachment_root_path,omitempty"`
+	AttachmentRootMode  string                  `json:"attachment_root_mode,omitempty"`
+	Attachments         *doctorAttachmentReport `json:"attachments,omitempty"`
+	Message             string                  `json:"message"`
+}
+
+type doctorAttachmentReport struct {
+	// Always emit both arrays so downstream tools can rely on the
+	// shape; nil slices would encode as null, so the constructor
+	// initialises them to []. omitempty would break the contract when
+	// only one side has orphans.
+	OrphanRows  []doctorOrphanRow  `json:"orphan_rows"`
+	OrphanFiles []doctorOrphanFile `json:"orphan_files"`
+}
+
+type doctorOrphanRow struct {
+	SHA256       string `json:"sha256"`
+	PathRelative string `json:"path_relative"`
+	DataPointID  int64  `json:"data_point_id"`
+}
+
+type doctorOrphanFile struct {
+	AbsolutePath string `json:"absolute_path"`
 }
 
 type initResult struct {
@@ -494,6 +514,11 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 		}
 		result.AttachmentRootPath = attachmentRoot
 		result.AttachmentRootMode = attachmentMode
+		attachments, attachmentsErr := collectAttachmentOrphans(*doctorArchivePath)
+		if attachmentsErr != nil {
+			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, attachmentsErr.Error(), mode, stdout, stderr)
+		}
+		result.Attachments = attachments
 		if err := writeDoctorResult(result, mode, stdout); err != nil {
 			fmt.Fprintf(stderr, "write output: %v\n", err)
 			return 1
@@ -1254,6 +1279,19 @@ func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtim
 	result.SchemaVersion = &archive.schemaVersion
 	result.ConnectionCount = &archive.connectionCount
 	result.TokenStatus = archive.tokenStatus
+	attachmentRoot, attachmentMode, attachmentErr := inspectAttachmentRoot(archivePath)
+	if attachmentErr != nil {
+		result.Status = "setup_invalid"
+		return result, attachmentErr
+	}
+	result.AttachmentRootPath = attachmentRoot
+	result.AttachmentRootMode = attachmentMode
+	attachments, attachmentsErr := collectAttachmentOrphans(archivePath)
+	if attachmentsErr != nil {
+		result.Status = "setup_invalid"
+		return result, attachmentsErr
+	}
+	result.Attachments = attachments
 	if archive.connectionCount == 0 {
 		result.TokenStatus = "not_connected"
 		return result, errors.New("no Connection found; run `gohealthcli connect` first")
@@ -4471,6 +4509,18 @@ func writeDoctorResult(result doctorResult, mode outputMode, stdout io.Writer) e
 			}
 			if result.AttachmentRootMode != "" {
 				if _, err := fmt.Fprintf(stdout, "attachment_root_mode: %s\n", result.AttachmentRootMode); err != nil {
+					return err
+				}
+			}
+		}
+		if result.Attachments != nil {
+			if n := len(result.Attachments.OrphanFiles); n > 0 {
+				if _, err := fmt.Fprintf(stdout, "attachments_orphan_files: %d\n", n); err != nil {
+					return err
+				}
+			}
+			if n := len(result.Attachments.OrphanRows); n > 0 {
+				if _, err := fmt.Fprintf(stdout, "attachments_orphan_rows: %d\n", n); err != nil {
 					return err
 				}
 			}

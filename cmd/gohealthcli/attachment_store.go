@@ -38,6 +38,45 @@ func attachmentRootDirForArchive(archivePath string) string {
 	return archivePath + ".attachments"
 }
 
+// collectAttachmentOrphans opens the attachment store read-only and
+// walks it for integrity violations. Returns nil if no orphans exist
+// (so the doctor result's attachments block stays omitempty), or a
+// populated report otherwise. The slices inside the report are
+// initialised to empty so JSON encoding is `[]` not `null` when only
+// one orphan kind is present. Pure reporting — never mutates state.
+func collectAttachmentOrphans(archivePath string) (*doctorAttachmentReport, error) {
+	store, err := openAttachmentStoreReadOnly(archivePath)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	report := &doctorAttachmentReport{
+		OrphanRows:  []doctorOrphanRow{},
+		OrphanFiles: []doctorOrphanFile{},
+	}
+	if err := store.Walk(func(o attachmentOrphan) error {
+		switch o.Kind {
+		case attachmentOrphanRowMissingFile:
+			report.OrphanRows = append(report.OrphanRows, doctorOrphanRow{
+				SHA256:       o.SHA256,
+				PathRelative: o.PathRelative,
+				DataPointID:  o.DataPointID,
+			})
+		case attachmentOrphanFileMissingRow:
+			report.OrphanFiles = append(report.OrphanFiles, doctorOrphanFile{
+				AbsolutePath: o.AbsolutePath,
+			})
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if len(report.OrphanRows) == 0 && len(report.OrphanFiles) == 0 {
+		return nil, nil
+	}
+	return report, nil
+}
+
 // inspectAttachmentRoot is the doctor probe: verify the attachment
 // root exists and (on POSIX) is owner-only. Returns the path + the
 // observed octal mode, or an error if either fails.
