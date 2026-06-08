@@ -43,15 +43,17 @@ func rollupKindForSync(rollup string) syncCursorRollupKind {
 	return syncCursorRollupKind(rollup)
 }
 
-// resolveSyncCursor returns the current cursor_time for a key, plus
-// whether one exists. The boolean lets callers distinguish "no prior
-// successful Sync Run" from "cursor at the empty string".
+// resolveSyncCursor returns the current cursor_time for a key, plus a
+// boolean indicating whether a row exists. cursor_time itself is stored
+// as TEXT NOT NULL and commitSyncCursor rejects empty values, so the
+// returned string is non-empty whenever the boolean is true; the boolean
+// is the canonical "no prior successful Sync Run" signal.
 func resolveSyncCursor(db *sql.DB, key syncCursorKey) (string, bool, error) {
 	var cursorTime string
 	err := db.QueryRow(`SELECT cursor_time FROM sync_cursors
 		WHERE connection_id = ?
 			AND data_type = ?
-			AND IFNULL(source_family_filter, '') = ?
+			AND source_family_filter = ?
 			AND rollup_kind = ?`,
 		key.connectionID,
 		key.dataType,

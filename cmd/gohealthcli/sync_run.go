@@ -141,16 +141,19 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 			// `outcome` (e.g. sync_completed) but the cursor commit failed, so
 			// the next sync would resume from the prior cursor while status
 			// reports the run as successful. Re-mark the row as failed so the
-			// audit trail and the cursor agree.
-			if outcome == syncRunOutcomeCompleted {
-				_ = archive.FinishSyncRun(syncRunID, "sync_failed", seen, newCount, updated, now, result.Message)
-			}
-			// commitSyncCursor already prefixes its errors with
-			// "commit Sync Cursor:" — don't double-wrap.
+			// audit trail and the cursor agree. Surface the reconciliation
+			// error if it also fails — that combined failure is the exact
+			// inconsistency this block exists to prevent.
+			finalErr := commitErr
 			if cause != nil {
-				return result, fmt.Errorf("%w; %v", cause, commitErr)
+				finalErr = fmt.Errorf("%w; %v", cause, commitErr)
 			}
-			return result, commitErr
+			if outcome == syncRunOutcomeCompleted {
+				if reconcileErr := archive.FinishSyncRun(syncRunID, "sync_failed", seen, newCount, updated, now, result.Message); reconcileErr != nil {
+					finalErr = fmt.Errorf("%v; reconcile Sync Run: %w", finalErr, reconcileErr)
+				}
+			}
+			return result, finalErr
 		}
 		return result, cause
 	}
