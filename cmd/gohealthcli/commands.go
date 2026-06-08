@@ -45,6 +45,20 @@ type flagSpec struct {
 // markdown.
 const commandSchemaVersion = 1
 
+// lookupCommand returns the registry entry whose Name matches the given
+// subcommand. It deliberately INCLUDES hidden entries: the `help <cmd>` verb
+// (PRD #143 slice 2) must surface the prose for hidden build-time commands
+// like `schema` when asked explicitly, even though they are filtered from the
+// top-level `--help` listing.
+func lookupCommand(name string) (commandDef, bool) {
+	for _, cmd := range commands {
+		if cmd.Name == name {
+			return cmd, true
+		}
+	}
+	return commandDef{}, false
+}
+
 // commonFlags are the five shared flags that the standard output subcommands
 // (init, doctor, connect, identity, profile, sync, status, query) accept.
 // `export` and `raw` use different flag sets — see their explicit Flags slices

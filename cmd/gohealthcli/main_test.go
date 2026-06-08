@@ -337,6 +337,144 @@ func TestTopLevelHelpStillShowsGlobalFlags(t *testing.T) {
 	}
 }
 
+// TestHelpVerbMatchesTopLevelHelp asserts `gohealthcli help` is an alias for
+// `gohealthcli --help`: same exit code, identical stderr bytes. The verb form
+// reads more naturally than the flag form and is what users reach for first.
+func TestHelpVerbMatchesTopLevelHelp(t *testing.T) {
+	codeFlag, _, stderrFlag := runCommand(t, "--help")
+	codeVerb, stdoutVerb, stderrVerb := runCommand(t, "help")
+
+	if codeFlag != 0 {
+		t.Fatalf("--help exit code = %d, want 0\nstderr: %s", codeFlag, stderrFlag.String())
+	}
+	if codeVerb != 0 {
+		t.Fatalf("help exit code = %d, want 0\nstderr: %s", codeVerb, stderrVerb.String())
+	}
+	if stdoutVerb.String() != "" {
+		t.Fatalf("help stdout = %q, want empty", stdoutVerb.String())
+	}
+	if stderrVerb.String() != stderrFlag.String() {
+		t.Fatalf("help stderr differs from --help stderr\nhelp:\n%s\n--help:\n%s", stderrVerb.String(), stderrFlag.String())
+	}
+}
+
+// TestHelpVerbWithKnownSubcommand asserts `gohealthcli help status` prints
+// the status subcommand's Long description followed by its accepted flags,
+// exits 0, and does not write to stdout.
+func TestHelpVerbWithKnownSubcommand(t *testing.T) {
+	code, stdout, stderr := runCommand(t, "help", "status")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+
+	// Look up the entry in the same registry the implementation reads.
+	var statusDef commandDef
+	for _, cmd := range commands {
+		if cmd.Name == "status" {
+			statusDef = cmd
+			break
+		}
+	}
+	if statusDef.Name == "" {
+		t.Fatalf("registry missing status entry; cannot validate help output")
+	}
+
+	out := stderr.String()
+	// The Long body is multi-paragraph; assert on its first sentence so the
+	// test stays meaningful without re-encoding the whole prose.
+	firstSentence := strings.SplitN(statusDef.Long, ".", 2)[0]
+	if !strings.Contains(out, firstSentence) {
+		t.Errorf("help status missing Long prefix %q\noutput:\n%s", firstSentence, out)
+	}
+	// Status accepts the standard common flags — assert each is listed.
+	for _, flagName := range []string{"-config", "-db", "-json", "-plain", "-no-input"} {
+		if !strings.Contains(out, flagName) {
+			t.Errorf("help status missing flag %q\noutput:\n%s", flagName, out)
+		}
+	}
+}
+
+// TestHelpVerbWithUnknownSubcommand asserts `gohealthcli help bogus` exits 1
+// with `unknown command: bogus` on stderr. The did-you-mean suggestion list
+// is deferred to slice 3 of PRD #143 and explicitly NOT asserted here.
+func TestHelpVerbWithUnknownSubcommand(t *testing.T) {
+	code, stdout, stderr := runCommand(t, "help", "bogus")
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "unknown command: bogus") {
+		t.Fatalf("stderr missing unknown-command message: %q", stderr.String())
+	}
+}
+
+// TestHelpVerbWithHiddenSubcommand asserts that hidden registry entries (the
+// `schema` build-time helper) are still surfaced when looked up explicitly:
+// `gohealthcli help schema` prints its Long description and exits 0. Hidden
+// only means "filtered from the top-level --help listing"; an explicit help
+// lookup must still resolve it.
+func TestHelpVerbWithHiddenSubcommand(t *testing.T) {
+	code, stdout, stderr := runCommand(t, "help", "schema")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+
+	var schemaDef commandDef
+	for _, cmd := range commands {
+		if cmd.Name == "schema" {
+			schemaDef = cmd
+			break
+		}
+	}
+	if schemaDef.Name == "" || !schemaDef.Hidden {
+		t.Fatalf("registry missing hidden schema entry; cannot validate help output")
+	}
+
+	firstSentence := strings.SplitN(schemaDef.Long, ".", 2)[0]
+	if !strings.Contains(stderr.String(), firstSentence) {
+		t.Errorf("help schema missing Long prefix %q\noutput:\n%s", firstSentence, stderr.String())
+	}
+}
+
+// TestHelpVerbRejectsExtraArguments asserts the `help` verb fails fast when
+// given unexpected positional arguments, rather than silently dropping them.
+// This mirrors how every other subcommand rejects unknown positionals and
+// surfaces typos like `help status extra` instead of masking them.
+func TestHelpVerbRejectsExtraArguments(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"extras after known cmd", []string{"help", "status", "extra"}},
+		{"extras after --help form", []string{"help", "--help", "status"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, stdout, stderr := runCommand(t, tc.args...)
+			if code != 1 {
+				t.Fatalf("exit code = %d, want 1\nstderr: %s", code, stderr.String())
+			}
+			if stdout.String() != "" {
+				t.Fatalf("stdout = %q, want empty", stdout.String())
+			}
+			if !strings.Contains(stderr.String(), "unexpected arguments") {
+				t.Fatalf("stderr missing 'unexpected arguments' message: %q", stderr.String())
+			}
+		})
+	}
+}
+
 func TestDoctorDefaultPathsAreUsable(t *testing.T) {
 	home := t.TempDir()
 	xdgConfig := filepath.Join(home, "xdg-config")
