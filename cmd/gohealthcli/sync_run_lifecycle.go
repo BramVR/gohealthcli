@@ -46,10 +46,12 @@ func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
 	// orchestrator's per-Data-Type loop checks cancelCh at the top of
 	// the loop, but a signal that lands between that check and this
 	// entry still races against StartSyncRun. Catching it here — before
-	// any DB work — keeps the no-audit-row invariant from sync.md
-	// honest: a Sync Run canceled before it could start writes zero
-	// sync_runs rows and surfaces a fully-populated sync_canceled
-	// envelope (Status is never the empty string, AC #4).
+	// StartSyncRun writes the audit row — keeps the no-audit-row
+	// invariant from sync.md honest: gate.Validate already opened the
+	// archive to read CurrentConnection, but that's a read and not part
+	// of the sync_runs audit trail. A Sync Run canceled before it could
+	// start writes zero sync_runs rows and surfaces a fully-populated
+	// sync_canceled envelope (Status is never the empty string, AC #4).
 	if ingestionCanceled(options.cancelCh) {
 		return syncResultFromOutcome(syncRunOutcomeCanceled, syncResult{
 			DataTypes: plan.dataTypes,
