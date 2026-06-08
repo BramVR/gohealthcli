@@ -419,8 +419,8 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("schema migration rows: %v", err)
 	}
-	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter,4:add_daily_steps_view,5:add_first_release_normalized_views" {
-		t.Fatalf("migrations = %v, want initial + identity + source family + normalized views", migrations)
+	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter,4:add_daily_steps_view,5:add_first_release_normalized_views,6:add_sync_cursors" {
+		t.Fatalf("migrations = %v, want initial + identity + source family + normalized views + sync cursors", migrations)
 	}
 
 	for _, table := range []string{
@@ -430,6 +430,7 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 		"rollups",
 		"profile_snapshots",
 		"sync_runs",
+		"sync_cursors",
 	} {
 		var tableName string
 		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&tableName); err != nil {
@@ -2836,29 +2837,6 @@ func TestCountArchiveRowsRejectsUnknownTable(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unsupported Health Archive table") {
 		t.Fatalf("countArchiveRows error = %v, want unsupported table", err)
-	}
-}
-
-func TestSyncRequiresFrom(t *testing.T) {
-	stdout := new(bytes.Buffer)
-	stderr := new(bytes.Buffer)
-	code := run([]string{"sync", "--json"}, stdout, stderr)
-	if code != 1 {
-		t.Fatalf("sync exit code = %d, want 1", code)
-	}
-	if stderr.String() != "" {
-		t.Fatalf("stderr = %q, want empty", stderr.String())
-	}
-	var got map[string]any
-	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
-		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
-	}
-	assertJSONString(t, got, "status", "sync_failed")
-	if !strings.Contains(got["message"].(string), "--from") {
-		t.Fatalf("message = %v, want --from hint", got["message"])
-	}
-	if _, ok := got["sync_run_id"]; ok {
-		t.Fatalf("sync_run_id = %v, want omitted before setup", got["sync_run_id"])
 	}
 }
 

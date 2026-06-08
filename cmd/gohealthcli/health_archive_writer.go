@@ -14,6 +14,8 @@ type healthArchiveWriter interface {
 	FinishSyncRun(id int64, status string, seenCount, newCount, updatedCount int, finishedAt, errorSummary string) error
 	UpsertDataPoint(point archivedDataPoint, now string) (string, error)
 	UpsertRollup(rollup archivedRollup, now string) (string, error)
+	ResolveSyncCursor(key syncCursorKey) (string, bool, error)
+	CommitSyncCursor(key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error
 }
 
 type sqliteHealthArchiveWriter struct {
@@ -56,6 +58,14 @@ func (archive *sqliteHealthArchiveWriter) UpsertDataPoint(point archivedDataPoin
 
 func (archive *sqliteHealthArchiveWriter) UpsertRollup(rollup archivedRollup, now string) (string, error) {
 	return upsertRollup(archive.db, rollup, now)
+}
+
+func (archive *sqliteHealthArchiveWriter) ResolveSyncCursor(key syncCursorKey) (string, bool, error) {
+	return resolveSyncCursor(archive.db, key)
+}
+
+func (archive *sqliteHealthArchiveWriter) CommitSyncCursor(key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error {
+	return commitSyncCursor(archive.db, key, outcome, to, advancedAt)
 }
 
 func insertSyncRun(db *sql.DB, connection archivedConnection, dataTypes []string, from, to, endpointFamily, sourceFamilyFilter, startedAt string) (int64, error) {

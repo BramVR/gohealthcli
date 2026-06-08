@@ -10,6 +10,11 @@ type syncRunExecutor struct {
 	runtime runtimeAdapters
 }
 
+// healthArchiveWriterOpenerForTest allows tests to inject a wrapped writer
+// (for example, one that forces CommitSyncCursor to fail) without rewriting
+// the whole sync pipeline. Production always uses openHealthArchiveWriter.
+var healthArchiveWriterOpenerForTest = openHealthArchiveWriter
+
 func syncSetup(options syncCommandOptions) (syncResult, error) {
 	return syncSetupWithRuntime(options, productionRuntimeAdapters())
 }
@@ -44,9 +49,6 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	if options.rollup != "" && options.sourceFamily != "" {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync --source-family cannot be combined with --rollup")
 	}
-	if options.from == "" {
-		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync requires --from")
-	}
 	if options.to == "" {
 		if options.rollup == "daily" || syncDataPointUsesDateRange(dataType) {
 			options.to = runtime.now().UTC().Format("2006-01-02")
@@ -59,7 +61,7 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	if err != nil {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, fmt.Errorf("config check failed: %w", err)
 	}
-	archive, err := openHealthArchiveWriter(options.archivePath)
+	archive, err := healthArchiveWriterOpenerForTest(options.archivePath)
 	if err != nil {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, err
 	}
@@ -67,6 +69,24 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	connection, err := archive.CurrentConnection()
 	if err != nil {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, err
+	}
+	cursorKey := syncCursorKey{
+		connectionID:       connection.id,
+		dataType:           dataType,
+		sourceFamilyFilter: options.sourceFamily,
+		rollupKind:         rollupKindForSync(options.rollup),
+	}
+	resumedFromCursor := false
+	if options.from == "" {
+		cursorTime, found, err := archive.ResolveSyncCursor(cursorKey)
+		if err != nil {
+			return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, To: options.to}, fmt.Errorf("resolve Sync Cursor: %w", err)
+		}
+		if !found {
+			return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, To: options.to}, errors.New("sync has no Sync Cursor for this Data Type yet; set --from for the initial backfill")
+		}
+		options.from = cursorTime
+		resumedFromCursor = true
 	}
 	ingestion := newGoogleHealthIngestionWithRuntime(runtime)
 	ingestionRequest := googleHealthIngestionRequest{
@@ -82,13 +102,14 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, err
 	}
 	result := syncResult{
-		ConnectionID:   connection.id,
-		ProviderName:   connection.providerName,
-		DataTypes:      options.dataTypes,
-		From:           options.from,
-		To:             options.to,
-		EndpointFamily: ingestionPlan.endpointFamily,
-		SourceFamily:   options.sourceFamily,
+		ConnectionID:      connection.id,
+		ProviderName:      connection.providerName,
+		DataTypes:         options.dataTypes,
+		From:              options.from,
+		To:                options.to,
+		EndpointFamily:    ingestionPlan.endpointFamily,
+		SourceFamily:      options.sourceFamily,
+		ResumedFromCursor: resumedFromCursor,
 	}
 	startedAt := runtime.now().UTC().Format(time.RFC3339)
 	syncRunID, err := archive.StartSyncRun(connection, options.dataTypes, options.from, options.to, result.EndpointFamily, result.SourceFamily, startedAt)
@@ -96,36 +117,60 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 		return result, err
 	}
 	result.SyncRunID = syncRunID
-	fail := func(cause error) (syncResult, error) {
-		result.Status = "sync_failed"
-		result.Message = cause.Error()
+	finalize := func(outcome syncRunOutcome, cause error) (syncResult, error) {
+		result.Status = string(outcome)
+		errorSummary := ""
+		if cause != nil {
+			result.Message = cause.Error()
+			errorSummary = result.Message
+		}
+		now := runtime.now().UTC().Format(time.RFC3339)
 		seen, newCount, updated := syncResultTotalCounts(result)
-		if updateErr := archive.FinishSyncRun(syncRunID, result.Status, seen, newCount, updated, runtime.now().UTC().Format(time.RFC3339), result.Message); updateErr != nil {
-			return result, fmt.Errorf("%w; record failed Sync Run: %v", cause, updateErr)
+		if updateErr := archive.FinishSyncRun(syncRunID, result.Status, seen, newCount, updated, now, errorSummary); updateErr != nil {
+			result.Status = "sync_failed"
+			result.Message = updateErr.Error()
+			if cause != nil {
+				return result, fmt.Errorf("%w; record %s Sync Run: %v", cause, outcome, updateErr)
+			}
+			return result, fmt.Errorf("record %s Sync Run: %w", outcome, updateErr)
+		}
+		if commitErr := archive.CommitSyncCursor(cursorKey, outcome, options.to, now); commitErr != nil {
+			result.Status = "sync_failed"
+			result.Message = commitErr.Error()
+			// Reconcile the audit trail: the Sync Run row was just written as
+			// `outcome` (e.g. sync_completed) but the cursor commit failed, so
+			// the next sync would resume from the prior cursor while status
+			// reports the run as successful. Re-mark the row as failed so the
+			// audit trail and the cursor agree. Surface the reconciliation
+			// error if it also fails — that combined failure is the exact
+			// inconsistency this block exists to prevent.
+			finalErr := commitErr
+			if cause != nil {
+				finalErr = fmt.Errorf("%w; %v", cause, commitErr)
+			}
+			if outcome == syncRunOutcomeCompleted {
+				if reconcileErr := archive.FinishSyncRun(syncRunID, "sync_failed", seen, newCount, updated, now, result.Message); reconcileErr != nil {
+					finalErr = fmt.Errorf("%v; reconcile Sync Run: %w", finalErr, reconcileErr)
+				}
+			}
+			return result, finalErr
 		}
 		return result, cause
 	}
 	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{options.configPath, options.archivePath}, runtime)
 	accessToken, err := connectionAccess.AccessToken(googleHealthScopesForDataType(dataType))
 	if err != nil {
-		return fail(err)
+		return finalize(syncRunOutcomeFailed, err)
 	}
 	if _, err := connectionAccess.FetchVerifiedIdentity(accessToken); err != nil {
-		return fail(err)
+		return finalize(syncRunOutcomeFailed, err)
 	}
 	ingestionRequest.accessToken = accessToken
 	ingestionResult, err := ingestion.Execute(archive, ingestionRequest)
 	applyGoogleHealthIngestionCounts(&result, ingestionResult)
 	if err != nil {
-		return fail(err)
+		return finalize(syncRunOutcomeFailed, err)
 	}
-	seen, newCount, updated := syncResultTotalCounts(result)
-	if err := archive.FinishSyncRun(syncRunID, "sync_completed", seen, newCount, updated, runtime.now().UTC().Format(time.RFC3339), ""); err != nil {
-		result.Status = "sync_failed"
-		result.Message = err.Error()
-		return result, err
-	}
-	result.Status = "sync_completed"
 	if options.rollup == "daily" {
 		result.Message = "Sync Run archived steps daily Rollups"
 	} else if options.sourceFamily != "" {
@@ -133,7 +178,7 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 	} else {
 		result.Message = fmt.Sprintf("Sync Run archived %s Data Points", dataType)
 	}
-	return result, nil
+	return finalize(syncRunOutcomeCompleted, nil)
 }
 
 func applyGoogleHealthIngestionCounts(result *syncResult, ingestionResult googleHealthIngestionResult) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -61,6 +62,10 @@ func (archive *sqliteHealthArchiveReader) StatusSummary() (statusResult, error) 
 		return result, err
 	}
 	result.DataTypes, err = readStatusDataTypes(archive.db)
+	if err != nil {
+		return result, err
+	}
+	result.DataTypes, err = attachStatusSyncCursors(archive.db, result.DataTypes)
 	if err != nil {
 		return result, err
 	}
@@ -298,6 +303,65 @@ func readStatusDataTypes(db *sql.DB) ([]statusDataType, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	return dataTypes, nil
+}
+
+// attachStatusSyncCursors looks up every sync_cursors row and attaches it
+// to the matching statusDataType entry. Data Types that have a cursor but
+// no archived rows yet (a completed Sync Run that returned nothing
+// upstream) surface as zero-count entries so the cursor is still visible
+// in status. The returned slice keeps the existing order from
+// readStatusDataTypes; cursor-only entries are appended at the end in
+// data_type-sorted order.
+func attachStatusSyncCursors(db *sql.DB, dataTypes []statusDataType) ([]statusDataType, error) {
+	rows, err := db.Query(`SELECT
+		data_type,
+		IFNULL(source_family_filter, ''),
+		rollup_kind,
+		cursor_time,
+		advanced_at
+	FROM sync_cursors
+	ORDER BY data_type, rollup_kind, source_family_filter`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cursorsByDataType := map[string][]statusSyncCursor{}
+	for rows.Next() {
+		var dataType, sourceFamily, rollupKind, cursorTime, advancedAt string
+		if err := rows.Scan(&dataType, &sourceFamily, &rollupKind, &cursorTime, &advancedAt); err != nil {
+			return nil, err
+		}
+		cursorsByDataType[dataType] = append(cursorsByDataType[dataType], statusSyncCursor{
+			SourceFamilyFilter: sourceFamily,
+			RollupKind:         rollupKind,
+			CursorTime:         cursorTime,
+			AdvancedAt:         advancedAt,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for index, dataType := range dataTypes {
+		if cursors, ok := cursorsByDataType[dataType.DataType]; ok {
+			dataTypes[index].SyncCursors = cursors
+			delete(cursorsByDataType, dataType.DataType)
+		}
+	}
+	if len(cursorsByDataType) == 0 {
+		return dataTypes, nil
+	}
+	leftovers := make([]string, 0, len(cursorsByDataType))
+	for dataType := range cursorsByDataType {
+		leftovers = append(leftovers, dataType)
+	}
+	sort.Strings(leftovers)
+	for _, dataType := range leftovers {
+		dataTypes = append(dataTypes, statusDataType{
+			DataType:    dataType,
+			SyncCursors: cursorsByDataType[dataType],
+		})
 	}
 	return dataTypes, nil
 }

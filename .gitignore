@@ -4,4 +4,5 @@ dist/
 *.sqlite
 *.sqlite-*
 coverage.out
+/gohealthcli
 

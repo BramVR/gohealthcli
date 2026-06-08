@@ -26,7 +26,7 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 5
+const currentSchemaVersion = 6
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
@@ -97,6 +97,7 @@ type syncResult struct {
 	ProviderName      string   `json:"provider_name,omitempty"`
 	DataTypes         []string `json:"data_types,omitempty"`
 	From              string   `json:"from,omitempty"`
+	ResumedFromCursor bool     `json:"resumed_from_cursor,omitempty"`
 	To                string   `json:"to,omitempty"`
 	EndpointFamily    string   `json:"endpoint_family,omitempty"`
 	SourceFamily      string   `json:"source_family,omitempty"`
@@ -124,11 +125,19 @@ type statusResult struct {
 }
 
 type statusDataType struct {
-	DataType                 string `json:"data_type"`
-	DataPointCount           int    `json:"data_point_count"`
-	RollupCount              int    `json:"rollup_count"`
-	NewestDataPointTimestamp string `json:"newest_data_point_timestamp,omitempty"`
-	NewestRollupTimestamp    string `json:"newest_rollup_timestamp,omitempty"`
+	DataType                 string             `json:"data_type"`
+	DataPointCount           int                `json:"data_point_count"`
+	RollupCount              int                `json:"rollup_count"`
+	NewestDataPointTimestamp string             `json:"newest_data_point_timestamp,omitempty"`
+	NewestRollupTimestamp    string             `json:"newest_rollup_timestamp,omitempty"`
+	SyncCursors              []statusSyncCursor `json:"sync_cursors,omitempty"`
+}
+
+type statusSyncCursor struct {
+	SourceFamilyFilter string `json:"source_family_filter,omitempty"`
+	RollupKind         string `json:"rollup_kind"`
+	CursorTime         string `json:"cursor_time"`
+	AdvancedAt         string `json:"advanced_at"`
 }
 
 type statusSyncRun struct {
@@ -3592,7 +3601,10 @@ func applyMigrations(db *sql.DB) error {
 	if err := applyFirstReleaseNormalizedViewsMigration(tx, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 5`); err != nil {
+	if err := applySyncCursorsMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 6`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -3610,7 +3622,7 @@ func applyPendingMigrations(db *sql.DB) error {
 	switch userVersion {
 	case currentSchemaVersion:
 		return nil
-	case 1, 2, 3, 4:
+	case 1, 2, 3, 4, 5:
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -3632,10 +3644,15 @@ func applyPendingMigrations(db *sql.DB) error {
 				return err
 			}
 		}
-		if err := applyFirstReleaseNormalizedViewsMigration(tx, now); err != nil {
+		if userVersion <= 4 {
+			if err := applyFirstReleaseNormalizedViewsMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if err := applySyncCursorsMigration(tx, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`PRAGMA user_version = 5`); err != nil {
+		if _, err := tx.Exec(`PRAGMA user_version = 6`); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -3685,6 +3702,31 @@ func applyFirstReleaseNormalizedViewsMigration(tx *sql.Tx, appliedAt string) err
 	return err
 }
 
+func applySyncCursorsMigration(tx *sql.Tx, appliedAt string) error {
+	for _, statement := range syncCursorsMigrationStatements() {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (6, 'add_sync_cursors', ?)`, appliedAt)
+	return err
+}
+
+func syncCursorsMigrationStatements() []string {
+	return []string{
+		`CREATE TABLE sync_cursors (
+			connection_id TEXT NOT NULL,
+			data_type TEXT NOT NULL,
+			source_family_filter TEXT NOT NULL DEFAULT '',
+			rollup_kind TEXT NOT NULL DEFAULT 'none',
+			cursor_time TEXT NOT NULL,
+			advanced_at TEXT NOT NULL,
+			PRIMARY KEY (connection_id, data_type, source_family_filter, rollup_kind),
+			FOREIGN KEY (connection_id) REFERENCES connections(id)
+		)`,
+	}
+}
+
 func expectedSchemaMigrations() map[int]string {
 	return map[int]string{
 		1: "initial_archive_schema",
@@ -3692,6 +3734,7 @@ func expectedSchemaMigrations() map[int]string {
 		3: "add_source_family_filter",
 		4: "add_daily_steps_view",
 		5: "add_first_release_normalized_views",
+		6: "add_sync_cursors",
 	}
 }
 
@@ -3833,6 +3876,23 @@ func writeStatusResult(result statusResult, mode outputMode, stdout io.Writer) e
 						return err
 					}
 				}
+				for index, cursor := range dataType.SyncCursors {
+					cursorPrefix := fmt.Sprintf("%ssync_cursor.%d.", prefix, index)
+					if _, err := fmt.Fprintf(stdout, "%srollup_kind: %s\n", cursorPrefix, cursor.RollupKind); err != nil {
+						return err
+					}
+					if cursor.SourceFamilyFilter != "" {
+						if _, err := fmt.Fprintf(stdout, "%ssource_family_filter: %s\n", cursorPrefix, cursor.SourceFamilyFilter); err != nil {
+							return err
+						}
+					}
+					if _, err := fmt.Fprintf(stdout, "%scursor_time: %s\n", cursorPrefix, cursor.CursorTime); err != nil {
+						return err
+					}
+					if _, err := fmt.Fprintf(stdout, "%sadvanced_at: %s\n", cursorPrefix, cursor.AdvancedAt); err != nil {
+						return err
+					}
+				}
 			}
 		}
 		if err := writeStatusSyncRunPlain(stdout, "latest_successful_sync_run", result.LatestSuccessfulRun); err != nil {
@@ -3882,6 +3942,15 @@ func writeStatusResult(result statusResult, mode outputMode, stdout io.Writer) e
 			}
 			if dataType.NewestRollupTimestamp != "" {
 				if _, err := fmt.Fprintf(stdout, ", newest Rollup %s", dataType.NewestRollupTimestamp); err != nil {
+					return err
+				}
+			}
+			for _, cursor := range dataType.SyncCursors {
+				label := cursor.RollupKind
+				if cursor.SourceFamilyFilter != "" {
+					label = label + "/" + cursor.SourceFamilyFilter
+				}
+				if _, err := fmt.Fprintf(stdout, ", Sync Cursor (%s) %s", label, cursor.CursorTime); err != nil {
 					return err
 				}
 			}
@@ -4353,6 +4422,11 @@ func writeSyncResult(result syncResult, mode outputMode, stdout io.Writer) error
 				return err
 			}
 		}
+		if result.ResumedFromCursor {
+			if _, err := fmt.Fprintln(stdout, "resumed_from_cursor: true"); err != nil {
+				return err
+			}
+		}
 		if result.To != "" {
 			if _, err := fmt.Fprintf(stdout, "to: %s\n", result.To); err != nil {
 				return err
@@ -4416,6 +4490,11 @@ func writeSyncResult(result syncResult, mode outputMode, stdout io.Writer) error
 	}
 	if result.From != "" || result.To != "" {
 		if _, err := fmt.Fprintf(stdout, "Range: %s to %s\n", result.From, result.To); err != nil {
+			return err
+		}
+	}
+	if result.ResumedFromCursor {
+		if _, err := fmt.Fprintln(stdout, "Resumed from Sync Cursor"); err != nil {
 			return err
 		}
 	}

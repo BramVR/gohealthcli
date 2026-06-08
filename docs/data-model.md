@@ -104,7 +104,7 @@ correction behavior warrants it.
 - range requested
 - endpoint family used
 - source-family filter when requested
-- status
+- status (`sync_running`, `sync_completed`, `sync_failed`, `sync_canceled`)
 - seen/new/updated counts
 - started/finished timestamps
 - error summary
@@ -112,6 +112,25 @@ correction behavior warrants it.
 The First Release records Sync Runs and newest archived timestamps, but does not
 infer completeness gaps. Gap tracking can wait until pagination, sparse Data
 Types, source filtering, and correction behavior are better understood.
+
+`sync_cursors`
+
+- connection ID
+- Data Type
+- source-family filter (empty string when none)
+- rollup kind (`none`, `daily`; future: `hourly`, `weekly`, `window:<duration>`)
+- cursor time — the durable highwater mark, used as the next `--from`
+- advanced-at timestamp
+
+A Sync Cursor is the resume point for `gohealthcli sync` when `--from` is
+omitted. It advances **only** when a Sync Run for the same key finishes with
+status `sync_completed` (ADR-0008). A failed or cancelled Sync Run leaves the
+cursor at its prior value — the next sync re-reads the same window and relies
+on idempotent upsert dedupe to absorb the overlap.
+
+The Sync Cursor is *not* `max(timestamp)` over `data_points`. A partial run
+may leave archived rows past the cursor without advancing it; that is by
+design (see ADR-0008).
 
 ## Normalized Views
 
