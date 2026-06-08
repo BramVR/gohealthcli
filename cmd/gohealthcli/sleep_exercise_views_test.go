@@ -87,10 +87,13 @@ func TestExerciseSplitsViewExplodesEachSplit(t *testing.T) {
 		endCivil:             "2026-06-08T18:30:00",
 		civilDate:            "2026-06-08",
 		dataSource:           `{"platform":"FITBIT"}`,
+		// Real Google Health API shape: distanceMillimeters lives under
+		// metricsSummary, not at the split root. Live testing in #105
+		// caught the earlier wrong-path bug.
 		rawJSON: `{"exercise":{"exerciseType":"RUNNING","splits":[
-			{"splitType":"DISTANCE","distanceMeters":1000,"startTime":"2026-06-08T17:00:00Z","endTime":"2026-06-08T17:05:00Z"},
-			{"splitType":"DISTANCE","distanceMeters":1000,"startTime":"2026-06-08T17:05:00Z","endTime":"2026-06-08T17:10:30Z"},
-			{"splitType":"DISTANCE","distanceMeters":1000,"startTime":"2026-06-08T17:10:30Z","endTime":"2026-06-08T17:16:00Z"}
+			{"splitType":"DISTANCE","metricsSummary":{"distanceMillimeters":1000000},"startTime":"2026-06-08T17:00:00Z","endTime":"2026-06-08T17:05:00Z"},
+			{"splitType":"DISTANCE","metricsSummary":{"distanceMillimeters":1000000},"startTime":"2026-06-08T17:05:00Z","endTime":"2026-06-08T17:10:30Z"},
+			{"splitType":"DISTANCE","metricsSummary":{"distanceMillimeters":1000000},"startTime":"2026-06-08T17:10:30Z","endTime":"2026-06-08T17:16:00Z"}
 		]}}`,
 	})
 

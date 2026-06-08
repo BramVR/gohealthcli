@@ -325,7 +325,9 @@ var exportDatasetDefinitions = []exportDatasetSpec{
 			IFNULL(json_extract(split.value, '$.endTime'), '') AS end_time_utc,
 			COALESCE(data_points.provider_civil_date, substr(data_points.start_civil_time, 1, 10), substr(data_points.start_time_utc, 1, 10), '') AS civil_date,
 			IFNULL(json_extract(split.value, '$.splitType'), '') AS split_type,
-			CAST(json_extract(split.value, '$.distanceMeters') AS INTEGER) AS distance_meters,
+			CAST(json_extract(split.value, '$.metricsSummary.distanceMillimeters') AS INTEGER) / 1000 AS distance_meters,
+			CAST(json_extract(split.value, '$.metricsSummary.distanceMillimeters') AS INTEGER) AS distance_millimeters,
+			IFNULL(json_extract(split.value, '$.activeDuration'), '') AS active_duration,
 			IFNULL(data_points.source_family_filter, '') AS source_family_filter,
 			IFNULL(data_points.upstream_resource_name, '') AS upstream_resource_name
 		FROM data_points, json_each(data_points.raw_json, '$.exercise.splits') AS split
@@ -339,6 +341,8 @@ var exportDatasetDefinitions = []exportDatasetSpec{
 			{name: "civil_date"},
 			{name: "split_type"},
 			{name: "distance_meters"},
+			{name: "distance_millimeters"},
+			{name: "active_duration"},
 			{name: "source_family_filter"},
 			{name: "upstream_resource_name"},
 		},
