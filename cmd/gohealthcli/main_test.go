@@ -3892,6 +3892,122 @@ func TestSyncArchivesExerciseSessionDataPointsIdempotentlyAndTracksRevisions(t *
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+// TestSyncArchivesElectrocardiogramSessionDataPoints pins the
+// session-parser contract for the Tier 2 ECG Data Type (#104).
+// addStoredConnectionScope simulates the user having run
+// `connect --add-scopes ecg`; without that the AccessToken call
+// would short-circuit on the missing-scope error. The fixture mirrors
+// the sleep/exercise session shape because the live probe is deferred
+// until the user grants the scope against the live OAuth client.
+func TestSyncArchivesElectrocardiogramSessionDataPoints(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	addStoredConnectionScope(t, archivePath, googleHealthEcgReadonlyScope)
+	originalCurrentTime := currentTime
+	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { currentTime = originalCurrentTime })
+
+	ecgPage := string(readTestFixture(t, "googlehealth_electrocardiogram_list.json"))
+	requests := installDataPointSyncFetchFake(t, "connect-access-secret", "electrocardiogram", map[string]string{"": ecgPage})
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "electrocardiogram",
+		"--from", "2026-01-01",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("electrocardiogram sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("electrocardiogram stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "sync_completed")
+	assertJSONString(t, got, "endpoint_family", "list")
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 1)
+	assertJSONNumber(t, got, "data_points_updated", 0)
+	if (*requests)[0].endpointName != "dataTypes.electrocardiogram.list" {
+		t.Fatalf("endpoint = %q, want electrocardiogram Data Type list", (*requests)[0].endpointName)
+	}
+	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `electrocardiogram.interval.civil_start_time >= "2026-01-01" AND electrocardiogram.interval.civil_start_time < "2026-01-02"` {
+		t.Fatalf("electrocardiogram filter = %q", gotFilter)
+	}
+	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/electrocardiogram/dataPoints/ecg-2026-01-01", "electrocardiogram", "2026-01-01T09:30:00Z", "2026-01-01T09:30:30Z", "2026-01-01T10:30:00", "2026-01-01T10:30:30", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"classification":"SINUS_RHYTHM"`)
+	assertArchiveTableCount(t, archivePath, "data_points", 1)
+	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "electrocardiogram", "list", 1, 1, 0, "")
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+// TestSyncArchivesIrregularRhythmNotificationSessionDataPoints pins
+// the session-parser contract for the Tier 2 IRN Data Type (#104).
+// Same harness as the ECG test, with the IRN-specific scope and
+// fixture payload.
+func TestSyncArchivesIrregularRhythmNotificationSessionDataPoints(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	addStoredConnectionScope(t, archivePath, googleHealthIrnReadonlyScope)
+	originalCurrentTime := currentTime
+	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { currentTime = originalCurrentTime })
+
+	irnPage := string(readTestFixture(t, "googlehealth_irregular_rhythm_notification_list.json"))
+	requests := installDataPointSyncFetchFake(t, "connect-access-secret", "irregular-rhythm-notification", map[string]string{"": irnPage})
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "irregular-rhythm-notification",
+		"--from", "2026-01-01",
+		"--json",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("irregular-rhythm-notification sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("irregular-rhythm-notification stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "sync_completed")
+	assertJSONString(t, got, "endpoint_family", "list")
+	assertJSONNumber(t, got, "data_points_seen", 1)
+	assertJSONNumber(t, got, "data_points_new", 1)
+	if (*requests)[0].endpointName != "dataTypes.irregular-rhythm-notification.list" {
+		t.Fatalf("endpoint = %q, want irregular-rhythm-notification Data Type list", (*requests)[0].endpointName)
+	}
+	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `irregular_rhythm_notification.interval.civil_start_time >= "2026-01-01" AND irregular_rhythm_notification.interval.civil_start_time < "2026-01-02"` {
+		t.Fatalf("irregular-rhythm-notification filter = %q", gotFilter)
+	}
+	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/irregular-rhythm-notification/dataPoints/irn-2026-01-01", "irregular-rhythm-notification", "2026-01-01T08:00:00Z", "2026-01-01T08:00:30Z", "2026-01-01T09:00:00", "2026-01-01T09:00:30", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"classification":"ATRIAL_FIBRILLATION_SUGGESTED"`)
+	assertArchiveTableCount(t, archivePath, "data_points", 1)
+	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "irregular-rhythm-notification", "list", 1, 1, 0, "")
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestSyncArchivesWearableStepsViaReconcile(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
