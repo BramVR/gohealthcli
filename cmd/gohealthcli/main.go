@@ -155,6 +155,7 @@ type statusResult struct {
 	SyncRunCount               int                      `json:"sync_run_count"`
 	DataTypes                  []statusDataType         `json:"data_types,omitempty"`
 	IdentitySnapshotsFreshness *statusSnapshotFreshness `json:"identity_snapshots_freshness,omitempty"`
+	Tier2                      *statusTier2             `json:"tier_2,omitempty"`
 	LatestSuccessfulRun        *statusSyncRun           `json:"latest_successful_sync_run,omitempty"`
 	LatestFailedRun            *statusSyncRun           `json:"latest_failed_sync_run,omitempty"`
 	Message                    string                   `json:"message"`
@@ -167,6 +168,19 @@ type statusResult struct {
 type statusSnapshotFreshness struct {
 	PairedDeviceCount int               `json:"paired_device_count"`
 	LatestFetchedAt   map[string]string `json:"latest_fetched_at,omitempty"`
+}
+
+// statusTier2 summarises Tier 2 (ECG + IRN) coverage for the archive
+// (#111). Both counts default to 0 when the scopes have not been
+// granted — the AC: "defaulting to 0 when the scopes are not
+// granted". The scope_granted flags let the plain writer decide
+// whether to emit the corresponding line, and let downstream tooling
+// distinguish "0 because no rows yet" from "0 because no scope".
+type statusTier2 struct {
+	ElectrocardiogramEventCount             int  `json:"electrocardiogram_event_count"`
+	ElectrocardiogramScopeGranted           bool `json:"electrocardiogram_scope_granted"`
+	IrregularRhythmNotificationCount        int  `json:"irregular_rhythm_notification_count"`
+	IrregularRhythmNotificationScopeGranted bool `json:"irregular_rhythm_notification_scope_granted"`
 }
 
 type statusDataType struct {
@@ -4439,6 +4453,22 @@ func writeStatusResult(result statusResult, mode outputMode, stdout io.Writer) e
 					if _, err := fmt.Fprintf(stdout, "identity_snapshot.%s.fetched_at: %s\n", kind, ts); err != nil {
 						return err
 					}
+				}
+			}
+		}
+		if result.Tier2 != nil {
+			// Plain output omits Tier 2 lines when the scope has not
+			// been granted — matches PR #128's omitted-when-missing
+			// convention for snapshot kinds. JSON always carries the
+			// block so downstream tooling sees a stable shape.
+			if result.Tier2.ElectrocardiogramScopeGranted {
+				if _, err := fmt.Fprintf(stdout, "electrocardiogram_event_count: %d\n", result.Tier2.ElectrocardiogramEventCount); err != nil {
+					return err
+				}
+			}
+			if result.Tier2.IrregularRhythmNotificationScopeGranted {
+				if _, err := fmt.Fprintf(stdout, "irregular_rhythm_notification_count: %d\n", result.Tier2.IrregularRhythmNotificationCount); err != nil {
+					return err
 				}
 			}
 		}

@@ -76,6 +76,10 @@ func (archive *sqliteHealthArchiveReader) StatusSummary() (statusResult, error) 
 	if err != nil {
 		return result, err
 	}
+	result.Tier2, err = readStatusTier2(archive.db)
+	if err != nil {
+		return result, err
+	}
 	result.LatestSuccessfulRun, err = readStatusSyncRun(archive.db, "sync_completed")
 	if err != nil {
 		return result, err
@@ -435,6 +439,68 @@ func countPairedDevicesIn(rawJSON string) (int, error) {
 		return 0, fmt.Errorf("paired-devices raw_json is not valid JSON: %w", err)
 	}
 	return len(envelope.Devices), nil
+}
+
+// readStatusTier2 reports Tier 2 (ECG + IRN) coverage: row counts in
+// data_points per Data Type plus per-scope grant flags read from the
+// stored Connection's token metadata. AC #111: both counts default to
+// 0 (never an error, never missing) when the user has not run
+// `connect --add-scopes ecg,irn` yet. The plain/JSON writers use the
+// scope_granted flags to decide whether to emit the plain lines —
+// JSON always carries the block so downstream tooling sees a stable
+// shape.
+func readStatusTier2(db *sql.DB) (*statusTier2, error) {
+	tier2 := &statusTier2{}
+	var err error
+	if tier2.ElectrocardiogramEventCount, err = countTier2DataPoints(db, "electrocardiogram"); err != nil {
+		return nil, err
+	}
+	if tier2.IrregularRhythmNotificationCount, err = countTier2DataPoints(db, "irregular-rhythm-notification"); err != nil {
+		return nil, err
+	}
+	scopes, err := readCurrentConnectionScopes(db)
+	if err != nil {
+		return nil, err
+	}
+	tier2.ElectrocardiogramScopeGranted = scopeListContains(scopes, googleHealthEcgReadonlyScope)
+	tier2.IrregularRhythmNotificationScopeGranted = scopeListContains(scopes, googleHealthIrnReadonlyScope)
+	return tier2, nil
+}
+
+// countTier2DataPoints counts data_points rows for a single Data Type.
+// Kept narrow on purpose: the broader readStatusDataTypes UNION runs
+// once and groups every Data Type, but Tier 2 needs the count even
+// when no rows exist (the broader query just omits the entry). A
+// dedicated COUNT keeps the "always emit, default to 0" contract
+// trivial.
+func countTier2DataPoints(db *sql.DB, dataType string) (int, error) {
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM data_points WHERE data_type = ?`, dataType).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// readCurrentConnectionScopes returns the scopes stored on the single
+// archived Connection. Returns nil (no error) when no Connection has
+// been archived yet — status is a read-only summary and must not fail
+// just because `connect` hasn't run. Returns nil when the metadata is
+// malformed for the same reason: a parse error here would mask the
+// data_point counts the rest of `status` reports.
+func readCurrentConnectionScopes(db *sql.DB) ([]string, error) {
+	var metadata string
+	err := db.QueryRow(`SELECT token_metadata_json FROM connections LIMIT 1`).Scan(&metadata)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	_, scopes, err := connectionTokenExpiryAndScopes(metadata)
+	if err != nil {
+		return nil, nil
+	}
+	return scopes, nil
 }
 
 func readStatusSyncRun(db *sql.DB, syncStatus string) (*statusSyncRun, error) {
