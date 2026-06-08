@@ -164,6 +164,22 @@ silent skips; the Sync Run stays `sync_completed`. 5xx, 401, and
 transport errors are surfaced so the Sync Cursor stays put and the
 user can retry.
 
+`exportExerciseTcx` returns a JSON envelope `{"tcxData": "<xml>"}`,
+not raw XML. The ingestion unwraps the envelope and stores the raw
+TCX XML as the sidecar (#187) — opening `tcx/<sha[0:2]>/<sha>.tcx` in
+any TCX viewer Just Works. The SHA + path are computed against the
+raw XML bytes, so a re-sync after upgrading from an envelope-storing
+build naturally produces a fresh row at a new path; the old
+envelope-era row and its sidecar remain on disk untouched (both
+still mutually referenced — neither is an orphan). The operator
+cleans them up with the same SQL + filesystem delete used for any
+other stale attachment; ADR-0009 documents the doctor-driven
+purge. There is no proactive in-sync delete — sync stays
+append-only, and `doctor` is the canonical cleanup tool. If Google
+ever returns a non-envelope shape (raw XML, or a renamed wrapper
+field), the bytes are archived verbatim so the archive stays useful
+through the transition.
+
 The TCX hook is scope-gated (#140). Google requires
 `googlehealth.location.readonly` on top of
 `activity_and_fitness.readonly` for `exportExerciseTcx`; without the

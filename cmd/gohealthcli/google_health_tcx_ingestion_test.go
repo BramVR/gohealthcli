@@ -1,17 +1,19 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 )
 
 // TestGoogleHealthIngestionStoresTcxAttachmentForExercise pins #107
-// slice D: when exercise sync archives an exercise Data Point and
-// Google's `exportExerciseTcx` returns bytes, the bytes are stored as a
-// `tcx`-kind Attachment linked to the upserted Data Point. The Attachment
-// Store call happens after the upsert so the data_point row exists when
-// the FK is enforced.
+// slice D + #187: when exercise sync archives an exercise Data Point
+// and Google's `exportExerciseTcx` returns the JSON envelope
+// `{"tcxData":"<xml>"}`, the hook unwraps the envelope and stores the
+// raw TCX XML — not the envelope bytes — as the `tcx`-kind Attachment.
+// The Attachment Store call happens after the upsert so the data_point
+// row exists when the FK is enforced.
 func TestGoogleHealthIngestionStoresTcxAttachmentForExercise(t *testing.T) {
 	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
 	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
@@ -29,11 +31,23 @@ func TestGoogleHealthIngestionStoresTcxAttachmentForExercise(t *testing.T) {
 			}]
 		}`,
 	})
-	tcxBody := `<?xml version="1.0"?><TrainingCenterDatabase>fixture</TrainingCenterDatabase>`
-	provider.pages["users/me/dataTypes/exercise/dataPoints/run-1:exportExerciseTcx"] = tcxBody
+	// Google's exportExerciseTcx wraps the XML in a JSON envelope with
+	// a single `tcxData` string field. The hook MUST unwrap before
+	// archiving — otherwise the sidecar bytes do not parse as TCX.
+	tcxXML := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+		`<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">` +
+		`<Activities><Activity Sport="Running"><Id>2026-01-01T08:00:00Z</Id></Activity></Activities>` +
+		`</TrainingCenterDatabase>`
+	envelope, err := json.Marshal(struct {
+		TcxData string `json:"tcxData"`
+	}{TcxData: tcxXML})
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	provider.pages["users/me/dataTypes/exercise/dataPoints/run-1:exportExerciseTcx"] = string(envelope)
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	_, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+	_, err = ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
 		dataType:      "exercise",
 		from:          "2026-01-01",
 		to:            "2026-01-02",
@@ -53,8 +67,11 @@ func TestGoogleHealthIngestionStoresTcxAttachmentForExercise(t *testing.T) {
 	if got.point.upstreamResourceName != "users/me/dataTypes/exercise/dataPoints/run-1" {
 		t.Fatalf("attachment linked to %q, want run-1", got.point.upstreamResourceName)
 	}
-	if string(got.payload) != tcxBody {
-		t.Fatalf("attachment payload = %q, want fixture TCX body", string(got.payload))
+	if string(got.payload) != tcxXML {
+		t.Fatalf("attachment payload = %q, want unwrapped TCX XML %q", string(got.payload), tcxXML)
+	}
+	if strings.Contains(string(got.payload), `"tcxData"`) {
+		t.Fatalf("attachment payload still contains JSON envelope; got %q", string(got.payload))
 	}
 	// The TCX export endpoint must be hit exactly once (one exercise DP).
 	tcxRequests := 0
@@ -65,6 +82,135 @@ func TestGoogleHealthIngestionStoresTcxAttachmentForExercise(t *testing.T) {
 	}
 	if tcxRequests != 1 {
 		t.Fatalf("exportExerciseTcx request count = %d, want 1; requests = %#v", tcxRequests, provider.requests)
+	}
+}
+
+// TestGoogleHealthIngestionStoresRawTcxWhenResponseIsNotJsonEnvelope
+// pins the #187 defensive fallback: if `exportExerciseTcx` returns raw
+// XML bytes (a future shape Google might emit, or a transitional
+// response), the hook stores the bytes verbatim instead of dropping
+// the sidecar. The principle: the archive stays useful even when the
+// upstream shape changes.
+func TestGoogleHealthIngestionStoresRawTcxWhenResponseIsNotJsonEnvelope(t *testing.T) {
+	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"": `{
+			"dataPoints": [{
+				"name": "users/me/dataTypes/exercise/dataPoints/raw-xml",
+				"dataSource": {"platform": "FITBIT"},
+				"exercise": {
+					"interval": {
+						"startTime": "2026-01-01T08:00:00Z",
+						"endTime": "2026-01-01T08:30:00Z"
+					},
+					"exerciseType": "RUNNING"
+				}
+			}]
+		}`,
+	})
+	rawXML := `<?xml version="1.0"?><TrainingCenterDatabase>raw</TrainingCenterDatabase>`
+	provider.pages["users/me/dataTypes/exercise/dataPoints/raw-xml:exportExerciseTcx"] = rawXML
+	ingestion := fakeGoogleHealthIngestion(provider)
+
+	_, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+		dataType:      "exercise",
+		from:          "2026-01-01",
+		to:            "2026-01-02",
+		grantedScopes: []string{googleHealthActivityReadonlyScope, googleHealthLocationReadonlyScope},
+	}))
+	if err != nil {
+		t.Fatalf("ingest must succeed when response is not a JSON envelope, got %v", err)
+	}
+	if len(archive.attachments) != 1 {
+		t.Fatalf("attachment count = %d, want 1; archive = %#v", len(archive.attachments), archive.attachments)
+	}
+	if string(archive.attachments[0].payload) != rawXML {
+		t.Fatalf("attachment payload = %q, want raw XML stored verbatim %q",
+			string(archive.attachments[0].payload), rawXML)
+	}
+}
+
+// TestGoogleHealthIngestionStoresVerbatimWhenJsonShapeUnexpected pins
+// the #187 defensive fallback for a JSON response that is valid JSON
+// but missing the `tcxData` field — e.g. Google introducing a wrapper
+// field rename or returning an error envelope shape. The bytes are
+// archived verbatim so a re-sync after a shape fix produces a new
+// SHA and the operator can detect the regression via `doctor`.
+func TestGoogleHealthIngestionStoresVerbatimWhenJsonShapeUnexpected(t *testing.T) {
+	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"": `{
+			"dataPoints": [{
+				"name": "users/me/dataTypes/exercise/dataPoints/unexpected",
+				"dataSource": {"platform": "FITBIT"},
+				"exercise": {
+					"interval": {
+						"startTime": "2026-01-01T08:00:00Z",
+						"endTime": "2026-01-01T08:30:00Z"
+					},
+					"exerciseType": "RUNNING"
+				}
+			}]
+		}`,
+	})
+	unexpectedJSON := `{"unexpectedField": "future-shape"}`
+	provider.pages["users/me/dataTypes/exercise/dataPoints/unexpected:exportExerciseTcx"] = unexpectedJSON
+	ingestion := fakeGoogleHealthIngestion(provider)
+
+	_, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+		dataType:      "exercise",
+		from:          "2026-01-01",
+		to:            "2026-01-02",
+		grantedScopes: []string{googleHealthActivityReadonlyScope, googleHealthLocationReadonlyScope},
+	}))
+	if err != nil {
+		t.Fatalf("ingest must succeed on unexpected JSON shape, got %v", err)
+	}
+	if len(archive.attachments) != 1 {
+		t.Fatalf("attachment count = %d, want 1; archive = %#v", len(archive.attachments), archive.attachments)
+	}
+	if string(archive.attachments[0].payload) != unexpectedJSON {
+		t.Fatalf("attachment payload = %q, want verbatim JSON %q",
+			string(archive.attachments[0].payload), unexpectedJSON)
+	}
+}
+
+// TestGoogleHealthIngestionSkipsTcxWhenEnvelopeTcxDataEmpty pins the
+// #187 edge case: a JSON envelope with an empty `tcxData` string is
+// semantically equivalent to "no TCX content" — re-fire the empty-body
+// guard against the unwrapped bytes so we don't archive a zero-byte
+// sidecar that exists only because the envelope itself was non-empty.
+func TestGoogleHealthIngestionSkipsTcxWhenEnvelopeTcxDataEmpty(t *testing.T) {
+	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"": `{
+			"dataPoints": [{
+				"name": "users/me/dataTypes/exercise/dataPoints/empty-envelope",
+				"dataSource": {"platform": "FITBIT"},
+				"exercise": {
+					"interval": {
+						"startTime": "2026-01-01T08:00:00Z",
+						"endTime": "2026-01-01T08:30:00Z"
+					},
+					"exerciseType": "RUNNING"
+				}
+			}]
+		}`,
+		"users/me/dataTypes/exercise/dataPoints/empty-envelope:exportExerciseTcx": `{"tcxData":""}`,
+	})
+	ingestion := fakeGoogleHealthIngestion(provider)
+
+	_, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+		dataType:      "exercise",
+		from:          "2026-01-01",
+		to:            "2026-01-02",
+		grantedScopes: []string{googleHealthActivityReadonlyScope, googleHealthLocationReadonlyScope},
+	}))
+	if err != nil {
+		t.Fatalf("ingest must remain green on empty tcxData, got %v", err)
+	}
+	if len(archive.attachments) != 0 {
+		t.Fatalf("attachment count = %d, want 0 on empty tcxData", len(archive.attachments))
 	}
 }
 

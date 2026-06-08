@@ -416,7 +416,44 @@ func (ingestion googleHealthIngestion) attachExerciseTcxIfAvailable(archive goog
 	if len(body) == 0 {
 		return nil
 	}
-	return archive.StoreAttachment(point, "tcx", body, fetchedAt)
+	// #187: Google's exportExerciseTcx wraps the XML in a JSON envelope
+	// `{"tcxData": "<xml>"}`. Store the raw XML — opening a `.tcx`
+	// sidecar in a TCX viewer must Just Work. If the response shape is
+	// unexpected (not JSON, or no `tcxData` string field), fall back to
+	// storing the bytes verbatim so a future shape change does not
+	// silently drop the sidecar. The SHA is computed against whichever
+	// bytes are passed to StoreAttachment, so a re-sync after the
+	// envelope-era build produces a fresh row at a new content-addressed
+	// path. Sync stays append-only — the old envelope row + sidecar are
+	// left in place for `doctor`-driven cleanup (ADR-0009).
+	payload, _ := unwrapExerciseTcxResponse(body)
+	if len(payload) == 0 {
+		// Envelope present but its `tcxData` was empty — re-fire the
+		// empty-body guard against the unwrapped bytes so we don't
+		// archive a zero-byte sidecar.
+		return nil
+	}
+	return archive.StoreAttachment(point, "tcx", payload, fetchedAt)
+}
+
+// unwrapExerciseTcxResponse extracts the raw TCX XML from Google's
+// `exportExerciseTcx` JSON envelope. Returns (xml, true) when the body
+// is a JSON object with a non-empty `tcxData` string field. Returns
+// (body, false) for any other shape — including raw XML, an empty
+// object, or a JSON value with `tcxData` of the wrong type — so the
+// caller can fall back to storing the response verbatim if Google's
+// shape changes.
+func unwrapExerciseTcxResponse(body []byte) ([]byte, bool) {
+	var envelope struct {
+		TcxData *string `json:"tcxData"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return body, false
+	}
+	if envelope.TcxData == nil {
+		return body, false
+	}
+	return []byte(*envelope.TcxData), true
 }
 
 // buildGoogleHealthRollupRawRequest builds the POST body for the
