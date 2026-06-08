@@ -57,7 +57,7 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 		}
 	}
 
-	config, err := inspectIdentityConfig(options.configPath, options.archivePath)
+	config, err := inspectFullConfig(options.configPath, options.archivePath)
 	if err != nil {
 		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, fmt.Errorf("config check failed: %w", err)
 	}
@@ -165,7 +165,8 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 		}
 		return result, cause
 	}
-	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{options.configPath, options.archivePath}, runtime)
+	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{options.configPath, options.archivePath}, runtime).
+		WithAutoRefresh(config.oauthClient, archive)
 	accessToken, err := connectionAccess.AccessToken(googleHealthScopesForDataType(dataType))
 	if err != nil {
 		return finalize(syncRunOutcomeFailed, err)

@@ -1357,11 +1357,11 @@ func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtim
 	return result, nil
 }
 
-func persistDoctorOnlineRefreshedToken(archive healthArchiveConnectionAPI, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse, previousTokenMaterial map[string]any) error {
+func persistDoctorOnlineRefreshedToken(archive connectionTokenWriter, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse, previousTokenMaterial map[string]any) error {
 	return persistDoctorOnlineRefreshedTokenWithRuntime(archive, credentialStore, connectionID, token, previousTokenMaterial, productionRuntimeAdapters())
 }
 
-func persistDoctorOnlineRefreshedTokenWithRuntime(archive healthArchiveConnectionAPI, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse, previousTokenMaterial map[string]any, runtime runtimeAdapters) error {
+func persistDoctorOnlineRefreshedTokenWithRuntime(archive connectionTokenWriter, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse, previousTokenMaterial map[string]any, runtime runtimeAdapters) error {
 	runtime = runtime.withDefaults()
 	store, err := newCredentialStoreWithRuntime(credentialStore, runtime)
 	if err != nil {
@@ -3592,7 +3592,7 @@ func requireUsableConnectionAccessToken(metadata string, now time.Time) error {
 		return err
 	}
 	if !expiresAt.After(now.UTC()) {
-		return errors.New("Connection token has expired; run `gohealthcli connect` again")
+		return errCurrentConnectionTokenExpired
 	}
 	return nil
 }

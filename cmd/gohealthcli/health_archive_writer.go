@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"time"
 )
 
 type healthArchiveWriter interface {
@@ -17,6 +18,10 @@ type healthArchiveWriter interface {
 	UpsertRollup(rollup archivedRollup, now string) (string, error)
 	ResolveSyncCursor(key syncCursorKey) (string, bool, error)
 	CommitSyncCursor(key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error
+	// UpdateConnectionTokenMetadata lets sync persist a refreshed access
+	// token on the same writer it is already holding open, so the
+	// auto-refresh path does not need to open a second archive handle.
+	UpdateConnectionTokenMetadata(connectionID string, token oauthTokenResponse, now time.Time) error
 }
 
 // syncRunFinalize bundles the writes that finalize a Sync Run into one
@@ -87,6 +92,10 @@ func (archive *sqliteHealthArchiveWriter) ResolveSyncCursor(key syncCursorKey) (
 
 func (archive *sqliteHealthArchiveWriter) CommitSyncCursor(key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error {
 	return commitSyncCursor(archive.db, key, outcome, to, advancedAt)
+}
+
+func (archive *sqliteHealthArchiveWriter) UpdateConnectionTokenMetadata(connectionID string, token oauthTokenResponse, now time.Time) error {
+	return updateConnectionTokenMetadata(archive.db, connectionID, token, now)
 }
 
 // FinalizeSyncRun atomically writes the Sync Run terminal status AND
