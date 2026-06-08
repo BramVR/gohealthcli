@@ -44,11 +44,7 @@ func runIRNProfileWithRuntime(args []string, configPath, archivePath string, mod
 	})
 
 	if err := ParseCommon(flags, common, args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		fmt.Fprintln(stderr, err)
-		return 1
+		return commonFlagsExitCode(err, stderr)
 	}
 	if flags.NArg() != 0 {
 		fmt.Fprintf(stderr, "unexpected irn-profile argument: %s\n", flags.Arg(0))

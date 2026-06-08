@@ -640,11 +640,7 @@ func runStatus(args []string, configPath, archivePath string, archivePathExplici
 	})
 
 	if err := ParseCommon(flags, common, args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		fmt.Fprintln(stderr, err)
-		return 1
+		return commonFlagsExitCode(err, stderr)
 	}
 	if flags.NArg() != 0 {
 		fmt.Fprintf(stderr, "unexpected status argument: %s\n", flags.Arg(0))
@@ -840,11 +836,7 @@ func runIdentityWithRuntime(args []string, configPath, archivePath string, mode 
 	})
 
 	if err := ParseCommon(flags, common, args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		fmt.Fprintln(stderr, err)
-		return 1
+		return commonFlagsExitCode(err, stderr)
 	}
 	if flags.NArg() != 0 {
 		fmt.Fprintf(stderr, "unexpected identity argument: %s\n", flags.Arg(0))
@@ -887,11 +879,7 @@ func runProfileWithRuntime(args []string, configPath, archivePath string, mode o
 	})
 
 	if err := ParseCommon(flags, common, args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		fmt.Fprintln(stderr, err)
-		return 1
+		return commonFlagsExitCode(err, stderr)
 	}
 	if flags.NArg() != 0 {
 		fmt.Fprintf(stderr, "unexpected profile argument: %s\n", flags.Arg(0))

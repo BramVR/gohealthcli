@@ -15,6 +15,15 @@ import (
 // the subcommand.
 var knownGlobalCommonFlags = []string{"config", "db", "json", "plain", "no-input"}
 
+// ErrFlagParseFailed signals that fs.Parse rejected the args and ALREADY
+// wrote its full diagnostic (error message + usage block) to fs.Output().
+// Call sites should propagate exit code 1 WITHOUT re-printing the error.
+//
+// Custom errors that ParseCommon returns directly (mutual exclusion,
+// unknown-but-known-global) do not wrap this sentinel — callers should
+// print those themselves.
+var ErrFlagParseFailed = errors.New("flag parse failed")
+
 // CommonFlagSpec declares which of the five shared flags a subcommand
 // accepts. The Common Flag Set module owns the shared parsing surface
 // every subcommand crosses (mutual exclusion, unknown-but-known-global
@@ -78,6 +87,15 @@ func RegisterCommon(fs *flag.FlagSet, spec CommonFlagSpec, defaults CommonFlagVa
 	return values
 }
 
+// boolFlag mirrors the unexported interface stdlib's `flag` package uses
+// internally to detect "bare" bool flags (those that do NOT consume the
+// next arg as a value). We re-declare it here so the pre-Parse scan can
+// distinguish `--config foo` (string flag consumes "foo") from `--plain`
+// followed by another flag (bool, does not consume the next arg).
+type boolFlag interface {
+	IsBoolFlag() bool
+}
+
 // ParseCommon parses args against fs and enforces the shared invariants:
 //
 //   - If args contains a known global common flag (--config, --db, --json,
@@ -89,38 +107,21 @@ func RegisterCommon(fs *flag.FlagSet, spec CommonFlagSpec, defaults CommonFlagVa
 //   - --plain and --json together return the documented mutual-exclusion
 //     error.
 //   - ArchivePathExplicit is set to true when --db is on the command line.
+//
+// Stdlib parse errors (unknown flags the subcommand never heard of,
+// `-h` / `--help`, malformed bool values) flow through unchanged:
+// fs.Parse writes its full diagnostic (error + usage) to fs.Output()
+// as before, and ParseCommon returns ErrFlagParseFailed (or flag.ErrHelp
+// for help requests). Callers should NOT re-print those errors.
 func ParseCommon(fs *flag.FlagSet, values *CommonFlagValues, args []string) error {
-	accepted := make(map[string]bool, len(knownGlobalCommonFlags))
-	for _, name := range knownGlobalCommonFlags {
-		accepted[name] = fs.Lookup(name) != nil
+	if err := preScanUnknownButKnownGlobal(fs, args); err != nil {
+		return err
 	}
-	for _, arg := range args {
-		if arg == "--" {
-			break
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return err
 		}
-		if !strings.HasPrefix(arg, "-") {
-			break
-		}
-		name := strings.TrimLeft(arg, "-")
-		if i := strings.IndexByte(name, '='); i >= 0 {
-			name = name[:i]
-		}
-		if accepted[name] {
-			continue
-		}
-		if _, isGlobal := accepted[name]; isGlobal {
-			return fmt.Errorf("--%s is not supported by %s", name, fs.Name())
-		}
-	}
-	// fs.Parse writes its own diagnostic to fs.Output() AND returns the
-	// error. Silence the duplicate by redirecting to io.Discard for the
-	// duration of Parse; the caller will print whatever error we return.
-	prevOutput := fs.Output()
-	fs.SetOutput(io.Discard)
-	parseErr := fs.Parse(args)
-	fs.SetOutput(prevOutput)
-	if parseErr != nil {
-		return parseErr
+		return ErrFlagParseFailed
 	}
 	if values.PlainOutput && values.JSONOutput {
 		return errors.New("--plain and --json are mutually exclusive")
@@ -130,5 +131,74 @@ func ParseCommon(fs *flag.FlagSet, values *CommonFlagValues, args []string) erro
 			values.ArchivePathExplicit = true
 		}
 	})
+	return nil
+}
+
+// commonFlagsExitCode collapses the four ParseCommon error shapes the
+// migrated subcommands all handle identically into one helper:
+//
+//   - flag.ErrHelp     → exit 0 (fs.Parse already wrote the usage block)
+//   - ErrFlagParseFailed → exit 1 (fs.Parse already wrote error + usage)
+//   - any other error  → print to stderr, exit 1 (custom invariant errors)
+//
+// Returning a single helper keeps the six migrated subcommands' top-of-
+// function shape uniform and means a future ParseCommon error variant
+// only needs to be wired up here, not in every caller.
+func commonFlagsExitCode(err error, stderr io.Writer) int {
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
+	if errors.Is(err, ErrFlagParseFailed) {
+		return 1
+	}
+	fmt.Fprintln(stderr, err)
+	return 1
+}
+
+// preScanUnknownButKnownGlobal walks args BEFORE fs.Parse and returns a
+// targeted "--<flag> is not supported by <cmd>" error if the user passed
+// one of the five known global common flags that the subcommand's spec
+// (i.e. its FlagSet) did not declare. Returns nil otherwise.
+//
+// The scan respects "--" (end of flags) and skips over non-bool flags'
+// values (so `--config -weird-path --plain` is not misread as `--plain`
+// being passed positionally).
+func preScanUnknownButKnownGlobal(fs *flag.FlagSet, args []string) error {
+	knownGlobal := make(map[string]bool, len(knownGlobalCommonFlags))
+	for _, name := range knownGlobalCommonFlags {
+		knownGlobal[name] = true
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			return nil
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			return nil
+		}
+		name := strings.TrimLeft(arg, "-")
+		hasEq := strings.IndexByte(name, '=') >= 0
+		if hasEq {
+			name = name[:strings.IndexByte(name, '=')]
+		}
+		if knownGlobal[name] && fs.Lookup(name) == nil {
+			return fmt.Errorf("--%s is not supported by %s", name, fs.Name())
+		}
+		// Advance past the value if this is a non-bool flag invoked in
+		// "--flag value" form. For bool flags, unknown-to-fs flags, or
+		// any flag using "--flag=value" form, the next arg is itself a
+		// flag (or positional) — leave it for the next iteration.
+		if hasEq {
+			continue
+		}
+		f := fs.Lookup(name)
+		if f == nil {
+			continue
+		}
+		if bf, ok := f.Value.(boolFlag); ok && bf.IsBoolFlag() {
+			continue
+		}
+		i++
+	}
 	return nil
 }
