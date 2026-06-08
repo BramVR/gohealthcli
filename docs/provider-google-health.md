@@ -50,6 +50,24 @@ Likely Go module: `google.golang.org/api/health/v4`.
 - Civil-day aggregate.
 - Useful first normalized export path for steps, distance, calories, and heart-rate summaries.
 
+## Retry behavior
+
+`sync` wraps the upstream fetch in a bounded retry middleware so transient
+provider failures do not require restarting a multi-year backfill:
+
+- `429 Too Many Requests` and `5xx` responses retry with exponential backoff
+  (`250ms` base, doubling each attempt, capped at `30s`) plus jitter.
+- `Retry-After` (when present on a `429`) is honored as the minimum
+  next-attempt delay.
+- `401 Unauthorized` surfaces immediately with the existing
+  "run `gohealthcli connect` again" message.
+- Other `4xx` (`400`, `403`, `404`, ...) surface immediately without retry.
+- Bounded at `5` total attempts per request; after the budget is exhausted
+  the last error surfaces and the Sync Run is recorded as `sync_failed`.
+
+The retry layer wraps only `sync`. `raw` is an exploration tool and surfaces
+upstream errors immediately so failure modes stay visible.
+
 ## Naming Trap
 
 Endpoint path Data Type identifiers use kebab case, for example

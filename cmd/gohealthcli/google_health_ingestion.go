@@ -100,10 +100,14 @@ func newGoogleHealthIngestionWithRuntime(runtime runtimeAdapters) googleHealthIn
 
 type runtimeGoogleHealthIngestionProvider struct {
 	runtime runtimeAdapters
+	// sleeper and jitter are test seams. Production leaves them nil and
+	// fetchWithRetry falls back to time.Sleep + defaultRetryJitter.
+	sleeper googleHealthRetrySleeper
+	jitter  func(time.Duration) time.Duration
 }
 
 func (provider runtimeGoogleHealthIngestionProvider) Fetch(request rawProviderRequest, accessToken string) ([]byte, error) {
-	return provider.runtime.fetchRawProvider(request, accessToken)
+	return fetchWithRetry(provider.runtime.fetchRawProvider, provider.sleeper, provider.jitter, request, accessToken)
 }
 
 func (ingestion googleHealthIngestion) Plan(request googleHealthIngestionRequest) (googleHealthIngestionPlan, error) {

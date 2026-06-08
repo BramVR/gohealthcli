@@ -2596,12 +2596,45 @@ func fetchGoogleHealthRaw(request rawProviderRequest, accessToken string) ([]byt
 		return nil, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("Google Health raw request failed with HTTP %d", response.StatusCode)
+		return nil, &googleHealthHTTPError{
+			StatusCode: response.StatusCode,
+			RetryAfter: parseRetryAfter(response.Header.Get("Retry-After")),
+			Body:       body,
+		}
 	}
 	if tooLarge {
 		return nil, fmt.Errorf("Google Health raw response exceeds %d bytes; narrow the raw request", googleHealthRawResponseLimit)
 	}
 	return body, nil
+}
+
+// googleHealthHTTPError carries the upstream status code plus an optional
+// Retry-After hint. The ingestion retry middleware uses these to decide
+// whether to retry transient failures (429, 5xx) and how long to wait
+// before doing so. Other callers can still read the error string.
+type googleHealthHTTPError struct {
+	StatusCode int
+	RetryAfter time.Duration
+	Body       []byte
+}
+
+func (err *googleHealthHTTPError) Error() string {
+	return fmt.Sprintf("Google Health raw request failed with HTTP %d", err.StatusCode)
+}
+
+// parseRetryAfter parses the Retry-After header. RFC 7231 allows either
+// an HTTP-date or a delta-seconds. We accept the delta-seconds form (the
+// only form Google Health emits in practice) and ignore the date form so
+// the middleware never blocks for hours on a malformed header.
+func parseRetryAfter(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	return 0
 }
 
 func readLimitedBody(reader io.Reader, limit int64) ([]byte, bool, error) {
