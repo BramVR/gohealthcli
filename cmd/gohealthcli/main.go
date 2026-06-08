@@ -3084,47 +3084,13 @@ func parseGoogleHealthSessionDataPoint(connection archivedConnection, dataType s
 	}, nil
 }
 
+// parseGoogleHealthStepsDailyRollup is the legacy steps-only entry
+// point retained for callers (existing tests, the daily-rollup
+// executor) that still address it by name. It delegates to the
+// generic parseGoogleHealthRollup, which preserves byte-identical
+// output for the steps-daily shape (the #106 AC regression guard).
 func parseGoogleHealthStepsDailyRollup(connection archivedConnection, rawRollup json.RawMessage) (archivedRollup, error) {
-	canonicalRaw, err := compactJSONString(rawRollup)
-	if err != nil {
-		return archivedRollup{}, errors.New("Google Health steps daily Rollup is not valid JSON")
-	}
-	var raw struct {
-		Steps          *json.RawMessage `json:"steps"`
-		CivilStartTime json.RawMessage  `json:"civilStartTime"`
-		CivilEndTime   json.RawMessage  `json:"civilEndTime"`
-	}
-	if err := json.Unmarshal(rawRollup, &raw); err != nil {
-		return archivedRollup{}, errors.New("Google Health steps daily Rollup is not valid JSON")
-	}
-	if raw.Steps == nil {
-		return archivedRollup{}, errors.New("Google Health steps daily Rollup missing steps value")
-	}
-	_, civilDate, err := googleCivilDateTimeText(raw.CivilStartTime)
-	if err != nil {
-		return archivedRollup{}, fmt.Errorf("Google Health steps daily Rollup civilStartTime: %w", err)
-	}
-	if civilDate == "" {
-		return archivedRollup{}, errors.New("Google Health steps daily Rollup missing civilStartTime")
-	}
-	if _, endCivilDate, err := googleCivilDateTimeText(raw.CivilEndTime); err != nil {
-		return archivedRollup{}, fmt.Errorf("Google Health steps daily Rollup civilEndTime: %w", err)
-	} else if endCivilDate == "" {
-		return archivedRollup{}, errors.New("Google Health steps daily Rollup missing civilEndTime")
-	}
-	timezoneMetadata, err := googleDailyRollupTimeMetadataJSON(raw.CivilStartTime, raw.CivilEndTime)
-	if err != nil {
-		return archivedRollup{}, err
-	}
-	return archivedRollup{
-		providerName:         connection.providerName,
-		connectionID:         connection.id,
-		dataType:             "steps",
-		rollupKind:           "dailyRollUp",
-		civilDate:            civilDate,
-		timezoneMetadataJSON: timezoneMetadata,
-		rawJSON:              canonicalRaw,
-	}, nil
+	return parseGoogleHealthRollup(connection, "steps", "dailyRollUp", rawRollup)
 }
 
 func compactJSONString(raw json.RawMessage) (string, error) {

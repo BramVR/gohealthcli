@@ -67,23 +67,59 @@ func listReconcileDailyRollupEndpoints(filterField, rollupValueType string) map[
 	}
 }
 
+// listReconcileAllRollupEndpoints adds the windowed rollUp family
+// alongside list/reconcile/dailyRollUp. Used by Data Types whose
+// upstream supports both daily aggregates and arbitrary-window
+// aggregates (steps, floors, …) so `sync --rollup hourly|weekly|window=…`
+// dispatches through the same catalog row.
+func listReconcileAllRollupEndpoints(filterField, dailyValueType, windowValueType string, windowGranularities []string) map[endpointFamily]endpointSupport {
+	return map[endpointFamily]endpointSupport{
+		endpointFamilyList:        {FilterField: filterField},
+		endpointFamilyReconcile:   {FilterField: filterField},
+		endpointFamilyDailyRollUp: {RollupValueType: dailyValueType},
+		endpointFamilyRollUp:      {RollupValueType: windowValueType, WindowGranularities: windowGranularities},
+	}
+}
+
+// listReconcileWithRollupEndpoints adds only the windowed rollUp
+// family alongside list/reconcile. Used by Data Types whose upstream
+// returns sample shapes per Data Point but supports aggregated rollUp
+// (heart-rate hourly averages, etc.) and does not expose a separate
+// dailyRollUp endpoint.
+func listReconcileWithRollupEndpoints(filterField, rollupValueType string, windowGranularities []string) map[endpointFamily]endpointSupport {
+	return map[endpointFamily]endpointSupport{
+		endpointFamilyList:      {FilterField: filterField},
+		endpointFamilyReconcile: {FilterField: filterField},
+		endpointFamilyRollUp:    {RollupValueType: rollupValueType, WindowGranularities: windowGranularities},
+	}
+}
+
 var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTypeCatalogEntry{
 	{
-		DataType:           "steps",
-		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
-		Parser:             "steps",
-		RecordKind:         "interval",
-		DefaultConfigType:  true,
-		SupportedEndpoints: listReconcileDailyRollupEndpoints("steps.interval.start_time", "stepsCount"),
+		DataType:          "steps",
+		RequiredScopes:    []string{googleHealthActivityReadonlyScope},
+		Parser:            "steps",
+		RecordKind:        "interval",
+		DefaultConfigType: true,
+		SupportedEndpoints: listReconcileAllRollupEndpoints(
+			"steps.interval.start_time",
+			"stepsCount",
+			"stepsCount",
+			[]string{"1h", "1d", "7d"},
+		),
 	},
 	{
-		DataType:           "heart-rate",
-		RequiredScopes:     []string{googleHealthHealthMetricsReadonlyScope},
-		Parser:             "sample",
-		JSONField:          "heartRate",
-		RecordKind:         "sample",
-		DefaultConfigType:  true,
-		SupportedEndpoints: listReconcileEndpoints("heart_rate.sample_time.physical_time"),
+		DataType:          "heart-rate",
+		RequiredScopes:    []string{googleHealthHealthMetricsReadonlyScope},
+		Parser:            "sample",
+		JSONField:         "heartRate",
+		RecordKind:        "sample",
+		DefaultConfigType: true,
+		SupportedEndpoints: listReconcileWithRollupEndpoints(
+			"heart_rate.sample_time.physical_time",
+			"heartRate",
+			[]string{"1h", "1d", "7d"},
+		),
 	},
 	{
 		DataType:             "daily-resting-heart-rate",
@@ -198,12 +234,17 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		// `sync --all` would break that command for users. Add the
 		// flag once the upstream endpoint shape is confirmed and the
 		// floors sync runs cleanly end-to-end.
-		DataType:           "floors",
-		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
-		Parser:             "interval",
-		JSONField:          "floors",
-		RecordKind:         "interval",
-		SupportedEndpoints: listReconcileDailyRollupEndpoints("floors.interval.start_time", "floorsCount"),
+		DataType:       "floors",
+		RequiredScopes: []string{googleHealthActivityReadonlyScope},
+		Parser:         "interval",
+		JSONField:      "floors",
+		RecordKind:     "interval",
+		SupportedEndpoints: listReconcileAllRollupEndpoints(
+			"floors.interval.start_time",
+			"floorsCount",
+			"floorsCount",
+			[]string{"1h", "1d", "7d"},
+		),
 	},
 	// Tier 1 Activity & fitness Data Types (#101). Each carries a
 	// hopeful filter field based on the existing pattern (snake-case
@@ -486,6 +527,18 @@ func dailyRollupDataTypeSupported(dataType string) bool {
 	}
 	_, hasDaily := entry.SupportedEndpoints[endpointFamilyDailyRollUp]
 	return hasDaily
+}
+
+// windowRollupDataTypeSupported reports whether the Data Type's
+// catalog entry carries the windowed rollUp endpoint family. Used by
+// the sync planner to gate `--rollup hourly|weekly|window=<dur>`.
+func windowRollupDataTypeSupported(dataType string) bool {
+	entry, ok := googleHealthDataTypes.Lookup(dataType)
+	if !ok {
+		return false
+	}
+	_, hasRollUp := entry.SupportedEndpoints[endpointFamilyRollUp]
+	return hasRollUp
 }
 
 func syncDataPointUsesDateRange(dataType string) bool {
