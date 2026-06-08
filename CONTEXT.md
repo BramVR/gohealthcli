@@ -23,6 +23,9 @@ _Avoid_: row, event, measurement
 **Data Point Revision**: A previous raw version retained when an upstream correction changes the canonical Data Point. A Data Point Revision is not a separate Data Point.
 _Avoid_: duplicate, history row, event
 
+**Data Point Attachment**: A binary payload (TCX route, future byte-shaped Provider export) tied to exactly one Data Point and stored as an owner-only sidecar file next to the SQLite archive, content-addressed by SHA-256. A Data Point Attachment is not a Data Point and is not stored inside the SQLite file.
+_Avoid_: blob, asset, media, file
+
 **Data Source**: The upstream origin attached to a Data Point, such as a wearable, app, or web client.
 _Avoid_: device, platform
 
@@ -32,11 +35,17 @@ _Avoid_: watch data, Fitbit data
 **Rollup**: An upstream aggregate returned by a `rollUp` or `dailyRollUp` endpoint over a time window. A Rollup summarizes Data Points but does not replace the raw Data Points in the Health Archive.
 _Avoid_: summary, aggregate
 
-**Profile Snapshot**: Raw provider profile or settings metadata fetched for a Google Identity at a point in time. A Profile Snapshot is not a Data Point, Rollup, or analytics result.
-_Avoid_: profile, settings, account data
+**Normalized View**: A SQL VIEW (or, where measurement requires it, an expression index plus generated columns on `data_points`) that projects raw Data Point, Rollup, or Identity Snapshot JSON into a stable column-shaped surface for `query` and `export`. A Normalized View is read-only and recomputes on read; the raw row remains the source of truth.
+_Avoid_: normalized export dataset, materialized view, projection
 
-**Sync Run**: One attempt to fetch and archive Data Points or Rollups for selected Data Types and time ranges.
-_Avoid_: import, scrape, download
+**Identity Snapshot**: Raw provider identity-level metadata fetched for a Google Identity at a point in time, append-only and tagged by **kind**: `profile`, `settings`, `paired-devices`, or `irn-profile`. An Identity Snapshot is not a Data Point, Rollup, or analytics result. Normalized views (`current_profile`, `current_settings`, `paired_devices`, `current_irn_profile`) project the latest snapshot of each kind into queryable form.
+_Avoid_: profile snapshot, profile, settings, account data, device record
+
+**Sync Run**: One attempt to fetch and archive Data Points or Rollups for **one selected Data Type** and time range. Multi-Data-Type CLI invocations (`sync --all`, `sync --types a,b,c`) fan out into one Sync Run per Data Type so per-type counts and failure status stay isolated.
+_Avoid_: import, scrape, download, batch
+
+**Sync Cursor**: The durable highwater mark of successfully archived Data Points or Rollups for one (Connection, Data Type, source-family filter, endpoint family) tuple. A Sync Cursor advances only when a Sync Run finishes with status `sync_completed`; it is not `max(timestamp)` over archived rows and may legitimately trail it after a partial run.
+_Avoid_: watermark, checkpoint, offset, last-sync
 
 **Connection**: The local authorization relationship between `gohealthcli` and one Google Identity. A Connection owns OAuth token material, has a deterministic `provider:google_health_user_id` identifier, and is not itself the person or the archive.
 _Avoid_: login, account, session
@@ -78,3 +87,15 @@ Domain expert: "Not in the First Release. One Health Archive has one Google Iden
 Developer: "Should we store refresh tokens in 1Password?"
 
 Domain expert: "No. Use a Credential Store for runtime tokens. 1Password can be a Secret Provider during setup."
+
+Developer: "After a partial `sync --all`, can I just `SELECT max(end_time_utc) FROM data_points WHERE data_type = 'steps'` to know where to resume?"
+
+Domain expert: "No. That's `max(timestamp)`, not the Sync Cursor. A partial run can leave archived rows past the cursor without advancing it. The Sync Cursor is the resume point — it only advances on `sync_completed`."
+
+Developer: "The user's paired Pixel Watch 2 — is that a Data Point?"
+
+Domain expert: "No. It's an Identity Snapshot of kind `paired-devices`, projected through the `paired_devices` Normalized View. Data Points are measurements; devices are identity-level metadata."
+
+Developer: "Where does the TCX route for yesterday's run live?"
+
+Domain expert: "As a Data Point Attachment in the sidecar directory next to the SQLite, content-addressed by SHA-256. The `data_point_attachments` table links it back to the exercise Data Point. The bytes are not inside the archive file itself."

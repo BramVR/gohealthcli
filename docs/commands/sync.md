@@ -9,6 +9,8 @@ Pull raw Data Points for the requested Data Types within an inclusive `--from` /
 
 `--types` accepts a comma-separated list (for example `steps,heart-rate,sleep`). `--rollup daily` switches the sync from raw Data Points to daily Rollup records for the same Data Types (where the provider supports it). `--source-family wearable` restricts the result set to Data Points whose Data Source family is a watch or tracker.
 
+`--from` is optional once an initial backfill has succeeded — subsequent runs read the durable Sync Cursor for the same `(data_type, source_family, rollup)` key and resume from it. The cursor advances only when a Sync Run finishes with `sync_completed`, so failed or cancelled runs re-read the same window on the next attempt (ADR-0008).
+
 A Sync Run is recorded for every invocation — succeeded or failed — so the archive carries an audit trail of attempts as well as records.
 
 ## Flags
@@ -21,7 +23,7 @@ A Sync Run is recorded for every invocation — succeeded or failed — so the a
 | `--plain` | bool | `false` | write plain key/value output to stdout |
 | `--no-input` | bool | `false` | never prompt, never wait for browser input |
 | `--types` | string | `steps` | comma-separated Data Types |
-| `--from` | string | — | inclusive sync range start |
+| `--from` | string | — | inclusive sync range start; optional once a Sync Cursor exists |
 | `--to` | string | — | exclusive sync range end |
 | `--rollup` | string | — | rollup kind to sync; supported: daily |
 | `--source-family` | string | — | source family filter; supported: wearable |
