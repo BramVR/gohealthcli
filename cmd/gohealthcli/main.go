@@ -28,7 +28,7 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 14
+const currentSchemaVersion = 15
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
@@ -40,15 +40,17 @@ const googleHealthProfileURL = "https://health.googleapis.com/v4/users/me/profil
 const googleHealthRawResponseLimit = 10 << 20
 
 type doctorResult struct {
-	Status            string `json:"status"`
-	ConfigPath        string `json:"config_path"`
-	ArchivePath       string `json:"archive_path"`
-	OAuthClientSource string `json:"oauth_client_source"`
-	CredentialStore   string `json:"credential_store"`
-	SchemaVersion     *int   `json:"schema_version"`
-	ConnectionCount   *int   `json:"connection_count"`
-	TokenStatus       string `json:"token_status"`
-	Message           string `json:"message"`
+	Status              string `json:"status"`
+	ConfigPath          string `json:"config_path"`
+	ArchivePath         string `json:"archive_path"`
+	OAuthClientSource   string `json:"oauth_client_source"`
+	CredentialStore     string `json:"credential_store"`
+	SchemaVersion       *int   `json:"schema_version"`
+	ConnectionCount     *int   `json:"connection_count"`
+	TokenStatus         string `json:"token_status"`
+	AttachmentRootPath  string `json:"attachment_root_path,omitempty"`
+	AttachmentRootMode  string `json:"attachment_root_mode,omitempty"`
+	Message             string `json:"message"`
 }
 
 type initResult struct {
@@ -486,6 +488,12 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 			TokenStatus:       archive.tokenStatus,
 			Message:           "local gohealthcli setup is initialized",
 		}
+		attachmentRoot, attachmentMode, attachmentErr := inspectAttachmentRoot(*doctorArchivePath)
+		if attachmentErr != nil {
+			return runDoctorInvalid(*doctorConfigPath, *doctorArchivePath, attachmentErr.Error(), mode, stdout, stderr)
+		}
+		result.AttachmentRootPath = attachmentRoot
+		result.AttachmentRootMode = attachmentMode
 		if err := writeDoctorResult(result, mode, stdout); err != nil {
 			fmt.Fprintf(stderr, "write output: %v\n", err)
 			return 1
@@ -1545,7 +1553,13 @@ func configContent(configPath, archivePath string, source oauthClientSource) str
 }
 
 func createArchive(archivePath string) (err error) {
-	return (healthArchiveLifecycle{path: archivePath}).Create()
+	if err := (healthArchiveLifecycle{path: archivePath}).Create(); err != nil {
+		return err
+	}
+	// Pre-create the attachment root so users running init see the
+	// full archive shape without waiting for a sync to lazily create
+	// it. Owner-only mode follows the rest of the archive.
+	return ensureOwnerOnlyDir(attachmentRootDirForArchive(archivePath))
 }
 
 func validateConfig(configPath, archivePath string) error {
@@ -3760,14 +3774,23 @@ func applyMigrations(db *sql.DB) error {
 	if err := applySearchableTextLatestProfileMigration(tx, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 14`); err != nil {
+	if err := applyDataPointAttachmentsMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 15`); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 func migrateArchiveIfNeeded(archivePath string) error {
-	return (healthArchiveLifecycle{path: archivePath}).Migrate()
+	if err := (healthArchiveLifecycle{path: archivePath}).Migrate(); err != nil {
+		return err
+	}
+	// Post-migration: backfill the attachment root for archives that
+	// predate #107 / migration 15. Idempotent — ensureOwnerOnlyDir
+	// is a no-op when the directory already exists with the right mode.
+	return ensureOwnerOnlyDir(attachmentRootDirForArchive(archivePath))
 }
 
 func applyPendingMigrations(db *sql.DB) error {
@@ -3778,7 +3801,7 @@ func applyPendingMigrations(db *sql.DB) error {
 	switch userVersion {
 	case currentSchemaVersion:
 		return nil
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14:
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -3845,10 +3868,15 @@ func applyPendingMigrations(db *sql.DB) error {
 				return err
 			}
 		}
-		if err := applySearchableTextLatestProfileMigration(tx, now); err != nil {
+		if userVersion <= 13 {
+			if err := applySearchableTextLatestProfileMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if err := applyDataPointAttachmentsMigration(tx, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`PRAGMA user_version = 14`); err != nil {
+		if _, err := tx.Exec(`PRAGMA user_version = 15`); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -3905,6 +3933,26 @@ func applySyncCursorsMigration(tx *sql.Tx, appliedAt string) error {
 		}
 	}
 	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (6, 'add_sync_cursors', ?)`, appliedAt)
+	return err
+}
+
+func applyDataPointAttachmentsMigration(tx *sql.Tx, appliedAt string) error {
+	if _, err := tx.Exec(`CREATE TABLE data_point_attachments (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		data_point_id INTEGER NOT NULL,
+		kind TEXT NOT NULL,
+		sha256 TEXT NOT NULL,
+		path_relative TEXT NOT NULL,
+		byte_size INTEGER NOT NULL,
+		fetched_at TEXT NOT NULL,
+		FOREIGN KEY (data_point_id) REFERENCES data_points(id)
+	)`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`CREATE UNIQUE INDEX data_point_attachments_dp_sha ON data_point_attachments (data_point_id, sha256)`); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (15, 'add_data_point_attachments', ?)`, appliedAt)
 	return err
 }
 
@@ -4053,6 +4101,7 @@ func expectedSchemaMigrations() map[int]string {
 		12: "fix_exercise_splits_real_shape",
 		13: "add_searchable_text_view",
 		14: "fix_searchable_text_latest_profile_and_empty_filter",
+		15: "add_data_point_attachments",
 	}
 }
 
@@ -4418,6 +4467,16 @@ func writeDoctorResult(result doctorResult, mode outputMode, stdout io.Writer) e
 		if result.TokenStatus != "" {
 			if _, err := fmt.Fprintf(stdout, "token_status: %s\n", result.TokenStatus); err != nil {
 				return err
+			}
+		}
+		if result.AttachmentRootPath != "" {
+			if _, err := fmt.Fprintf(stdout, "attachment_root_path: %s\n", result.AttachmentRootPath); err != nil {
+				return err
+			}
+			if result.AttachmentRootMode != "" {
+				if _, err := fmt.Fprintf(stdout, "attachment_root_mode: %s\n", result.AttachmentRootMode); err != nil {
+					return err
+				}
 			}
 		}
 		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)

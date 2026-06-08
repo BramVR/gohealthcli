@@ -138,6 +138,26 @@ later without changing prompts.
 
 ## LLM-facing schema discovery
 
+## Data Point Attachments
+
+`data_point_attachments` indexes binary payloads (today: TCX route
+bytes) that live as content-addressed sidecar files next to the
+SQLite archive, NOT inside it. ADR-0009 explains the trade-off. The
+sidecar tree lives at `<archive>.attachments/<kind>/<sha256[0:2]>/<sha256>.<ext>`
+with owner-only POSIX permissions (`0700` dirs, `0600` files). Schema:
+`(id, data_point_id, kind, sha256, path_relative, byte_size,
+fetched_at)`.
+
+The Attachment Store module exposes `Store(dataPointID, kind, bytes)
+→ {sha256, path}` (content-addressed; same bytes → same path,
+idempotent insert), `Resolve(sha256) → path`, and `Walk(fn)` for
+orphan detection (row with no sidecar, sidecar with no row — `doctor`
+will surface these in a follow-up slice). TCX ingestion during
+exercise sync is gated behind a follow-up live-API exploration to
+nail the upstream payload shape before wiring.
+
+## LLM-facing schema discovery
+
 `gohealthcli describe-schema --json` emits the curated JSON catalog
 (view metadata, table/column shape, hand-curated narrative, version
 field) that downstream tools (a Claude skill, an MCP server, a
