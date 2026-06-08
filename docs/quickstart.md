@@ -125,8 +125,18 @@ gohealthcli raw data-type steps --from 2026-01-01 --to 2026-01-02
 
 ## Where next
 
-- `gohealthcli <command> --help` prints flags and a usage summary for any subcommand.
-- `gohealthcli doctor --plain` is the fastest sanity check whenever something feels off.
-- A per-subcommand reference section will appear in the sidebar once the auto-generated command reference ships.
+- `gohealthcli <command> --help` (or the equivalent verb `gohealthcli help
+  <command>`) prints flags and a usage summary for any subcommand. A bare
+  `gohealthcli` invocation prints the same top-level help to stdout and
+  exits 0, so typing the binary name without arguments is always safe.
+- `gohealthcli --version` prints a build-stamped identifier line, or pass
+  `--version --json` for a single-line `{"version":..., "commit":..., "built":...}`
+  envelope. See [commands/version.html](commands/version.html).
+- A mistyped subcommand prints `unknown command: <typo>`, an optional
+  Levenshtein-2 "Did you mean" hint, and a link to `--help`. The full
+  contract is on the [help reference page](commands/help.html).
+- `gohealthcli doctor --plain` is the fastest sanity check whenever
+  something feels off.
+- The per-subcommand reference is at [Command reference](commands.html).
 
 The archive is yours. Move it, back it up, query it — `gohealthcli` will only write when you ask.

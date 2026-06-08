@@ -45,10 +45,23 @@ After any of the paths above, confirm the binary is on your `PATH` and reports a
 
 ```bash
 gohealthcli --version
+gohealthcli --version --json
 gohealthcli --help
 ```
 
-`--help` lists the available subcommands. The first thing to run next is `gohealthcli init` — see the [Quickstart](quickstart.html).
+`--version` prints the build-stamped identifiers as
+`gohealthcli <version> (<commit> built <built>)`; `--version --json` prints
+the same three values as a single-line `{"version":..., "commit":..., "built":...}`
+object. A `go install` from a tagged release stamps real values; a bare
+`go build ./...` leaves all three as `dev` (still a usable binary, just
+unstamped — see [docs/commands/version.html](commands/version.html)).
+
+`--help` lists the available subcommands. `gohealthcli help` and
+`gohealthcli help <command>` are equivalent verbs that prepend the
+registry's long-form prose to the standard flag block.
+
+The first thing to run next is `gohealthcli init` — see the
+[Quickstart](quickstart.html).
 
 ## What gets installed
 

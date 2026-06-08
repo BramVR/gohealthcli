@@ -21,3 +21,8 @@ Every user-facing subcommand exposed by `gohealthcli`. Pages are regenerated fro
 - [`gohealthcli export`](commands/export.html) — Write a normalised dataset to CSV or JSONL.
 - [`gohealthcli raw`](commands/raw.html) — Print raw provider JSON for endpoint exploration.
 - [`gohealthcli describe-schema`](commands/describe-schema.html) — Self-describe the Health Archive for LLM consumption.
+
+## Discoverability
+
+- [`gohealthcli help`](commands/help.html) — discoverability verb (`help`, `help <command>`, did-you-mean).
+- [`gohealthcli --version`](commands/version.html) — build-stamped version, commit, and built identifiers (plain and JSON shapes).
