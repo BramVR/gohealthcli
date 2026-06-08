@@ -4366,7 +4366,7 @@ func TestSyncReportsFailedWhenCompletionRecordFails(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		return brokenCompletedFinalizeWriter{healthArchiveWriter: inner}, nil
+		return fakeFinalizeWriter{healthArchiveWriter: inner, failOn: failOnCompletedOutcome(errSimulatedFinalizeCompletedFailure)}, nil
 	}
 
 	stdout := new(bytes.Buffer)

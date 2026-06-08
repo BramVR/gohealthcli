@@ -127,21 +127,40 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 		}
 		now := runtime.now().UTC().Format(time.RFC3339)
 		seen, newCount, updated := syncResultTotalCounts(result)
-		if finalizeErr := archive.FinalizeSyncRun(syncRunID, result.Status, seen, newCount, updated, now, errorSummary, cursorKey, outcome, options.to, now); finalizeErr != nil {
+		if finalizeErr := archive.FinalizeSyncRun(syncRunFinalize{
+			SyncRunID:      syncRunID,
+			Status:         result.Status,
+			SeenCount:      seen,
+			NewCount:       newCount,
+			UpdatedCount:   updated,
+			FinishedAt:     now,
+			ErrorSummary:   errorSummary,
+			CursorKey:      cursorKey,
+			Outcome:        outcome,
+			CursorTo:       options.to,
+			CursorAdvanced: now,
+		}); finalizeErr != nil {
 			// The atomic write rolled back: the sync_run row is still in its
-			// StartSyncRun state and no cursor advance happened. Try a
-			// best-effort separate write to mark the run sync_failed so the
-			// audit trail does not show a perpetually-running attempt. If
-			// that recovery write also fails, surface both errors — there is
-			// no in-process action that can repair an unreachable database.
+			// StartSyncRun state and no cursor advance happened. For an
+			// originally sync_completed outcome, write a separate sync_failed
+			// row so the audit trail does not show a perpetually-running
+			// attempt; for outcomes that were already failure-shaped
+			// (sync_failed / sync_canceled), the legacy single-UPDATE path
+			// would have left the row as sync_running on the same write
+			// failure, so do not silently change a canceled run into a
+			// failed one. Surface both errors when the recovery write also
+			// fails — there is no in-process action that can repair an
+			// unreachable database.
 			result.Status = "sync_failed"
 			result.Message = finalizeErr.Error()
-			finalErr := finalizeErr
+			finalErr := fmt.Errorf("record %s Sync Run: %w", outcome, finalizeErr)
 			if cause != nil {
-				finalErr = fmt.Errorf("%w; %v", cause, finalizeErr)
+				finalErr = fmt.Errorf("%w; %v", cause, finalErr)
 			}
-			if recoveryErr := archive.FinishSyncRun(syncRunID, "sync_failed", seen, newCount, updated, now, result.Message); recoveryErr != nil {
-				finalErr = fmt.Errorf("%v; mark Sync Run failed: %w", finalErr, recoveryErr)
+			if outcome == syncRunOutcomeCompleted {
+				if recoveryErr := archive.FinishSyncRun(syncRunID, "sync_failed", seen, newCount, updated, now, result.Message); recoveryErr != nil {
+					finalErr = fmt.Errorf("%v; mark Sync Run failed: %w", finalErr, recoveryErr)
+				}
 			}
 			return result, finalErr
 		}

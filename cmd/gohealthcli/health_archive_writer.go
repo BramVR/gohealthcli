@@ -12,11 +12,29 @@ type healthArchiveWriter interface {
 	CurrentConnection() (archivedConnection, error)
 	StartSyncRun(connection archivedConnection, dataTypes []string, from, to, endpointFamily, sourceFamilyFilter, startedAt string) (int64, error)
 	FinishSyncRun(id int64, status string, seenCount, newCount, updatedCount int, finishedAt, errorSummary string) error
-	FinalizeSyncRun(id int64, status string, seenCount, newCount, updatedCount int, finishedAt, errorSummary string, cursorKey syncCursorKey, outcome syncRunOutcome, cursorTo, advancedAt string) error
+	FinalizeSyncRun(finalize syncRunFinalize) error
 	UpsertDataPoint(point archivedDataPoint, now string) (string, error)
 	UpsertRollup(rollup archivedRollup, now string) (string, error)
 	ResolveSyncCursor(key syncCursorKey) (string, bool, error)
 	CommitSyncCursor(key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error
+}
+
+// syncRunFinalize bundles the writes that finalize a Sync Run into one
+// struct so FinalizeSyncRun does not need an 11-positional-arg signature.
+// SyncRun fields land in sync_runs; Cursor fields land in sync_cursors;
+// Outcome gates whether the cursor advance runs at all.
+type syncRunFinalize struct {
+	SyncRunID     int64
+	Status        string
+	SeenCount     int
+	NewCount      int
+	UpdatedCount  int
+	FinishedAt    string
+	ErrorSummary  string
+	CursorKey     syncCursorKey
+	Outcome       syncRunOutcome
+	CursorTo      string
+	CursorAdvanced string
 }
 
 type sqliteHealthArchiveWriter struct {
@@ -77,7 +95,7 @@ func (archive *sqliteHealthArchiveWriter) CommitSyncCursor(key syncCursorKey, ou
 // still stale. The cursor advance is gated by the outcome via
 // commitSyncCursorTx, so sync_failed and sync_canceled finalize the
 // run row without touching the cursor.
-func (archive *sqliteHealthArchiveWriter) FinalizeSyncRun(id int64, status string, seenCount, newCount, updatedCount int, finishedAt, errorSummary string, cursorKey syncCursorKey, outcome syncRunOutcome, cursorTo, advancedAt string) error {
+func (archive *sqliteHealthArchiveWriter) FinalizeSyncRun(finalize syncRunFinalize) error {
 	tx, err := archive.db.Begin()
 	if err != nil {
 		return err
@@ -88,10 +106,10 @@ func (archive *sqliteHealthArchiveWriter) FinalizeSyncRun(id int64, status strin
 			_ = tx.Rollback()
 		}
 	}()
-	if err := finishSyncRunTx(tx, id, status, seenCount, newCount, updatedCount, finishedAt, errorSummary); err != nil {
+	if err := finishSyncRunTx(tx, finalize.SyncRunID, finalize.Status, finalize.SeenCount, finalize.NewCount, finalize.UpdatedCount, finalize.FinishedAt, finalize.ErrorSummary); err != nil {
 		return err
 	}
-	if err := commitSyncCursorTx(tx, cursorKey, outcome, cursorTo, advancedAt); err != nil {
+	if err := commitSyncCursorTx(tx, finalize.CursorKey, finalize.Outcome, finalize.CursorTo, finalize.CursorAdvanced); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
