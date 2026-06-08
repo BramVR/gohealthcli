@@ -503,6 +503,7 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 	// `<cmd> --help` (with the registry's `Long` prose prepended). Slice 2 of
 	// PRD #143.
 	if flags.Arg(0) == "help" {
+		globalMode := outputMode{json: *jsonOutput, plain: *plainOutput}
 		if flags.NArg() == 1 || flags.Arg(1) == "--help" || flags.Arg(1) == "-help" {
 			// Top-level help form rejects trailing positionals so a typo like
 			// `gohealthcli help --help status` fails loudly instead of being
@@ -512,6 +513,7 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 					Command: "help",
 					Status:  StatusUnexpectedArgument,
 					Message: fmt.Sprintf("unexpected arguments: %s", strings.Join(flags.Args()[2:], " ")),
+					Mode:    globalMode,
 				}, stdout, stderr)
 			}
 			printTopLevelUsage(flags, stderr)
@@ -524,6 +526,7 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 				Command: "help",
 				Status:  StatusUnexpectedArgument,
 				Message: fmt.Sprintf("unexpected arguments after %s: %s", flags.Arg(1), strings.Join(flags.Args()[2:], " ")),
+				Mode:    globalMode,
 			}, stdout, stderr)
 		}
 		target := flags.Arg(1)
@@ -532,6 +535,7 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 			return ReportFailure(FailureReport{
 				Status:  StatusFlagInvalid,
 				Message: fmt.Sprintf("unknown command: %s", target),
+				Mode:    globalMode,
 			}, stdout, stderr)
 		}
 		// Print the registry Long prose, then re-dispatch through the runtime
@@ -698,6 +702,7 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 				Command: "doctor",
 				Status:  StatusArchiveUnwritable,
 				Message: fmt.Sprintf("write output: %v", err),
+				Mode:    mode,
 			}, stdout, stderr)
 		}
 		return 0
@@ -719,6 +724,7 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 			Command: "doctor",
 			Status:  StatusArchiveUnwritable,
 			Message: fmt.Sprintf("write output: %v", err),
+			Mode:    mode,
 		}, stdout, stderr)
 	}
 
@@ -745,6 +751,7 @@ func runDoctorInvalid(configPath, archivePath, message string, mode outputMode, 
 			Command: "doctor",
 			Status:  StatusArchiveUnwritable,
 			Message: fmt.Sprintf("write output: %v", err),
+			Mode:    mode,
 		}, stdout, stderr)
 	}
 	return 1
@@ -766,6 +773,7 @@ func runDoctorOnlineWithRuntime(configPath, archivePath string, mode outputMode,
 				Command: "doctor",
 				Status:  StatusArchiveUnwritable,
 				Message: fmt.Sprintf("write output: %v", writeErr),
+				Mode:    mode,
 			}, stdout, stderr)
 		}
 		return 1
@@ -775,6 +783,7 @@ func runDoctorOnlineWithRuntime(configPath, archivePath string, mode outputMode,
 			Command: "doctor",
 			Status:  StatusArchiveUnwritable,
 			Message: fmt.Sprintf("write output: %v", err),
+			Mode:    mode,
 		}, stdout, stderr)
 	}
 	return 0
@@ -1287,11 +1296,11 @@ func installSyncCancelChannel() (<-chan struct{}, func()) {
 	return ctx.Done(), stop
 }
 
-func runRaw(args []string, configPath, archivePath string, _ outputMode, stdout, stderr io.Writer) int {
-	return runRawWithRuntime(args, configPath, archivePath, outputMode{}, stdout, stderr, productionRuntimeAdapters())
+func runRaw(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
+	return runRawWithRuntime(args, configPath, archivePath, mode, stdout, stderr, productionRuntimeAdapters())
 }
 
-func runRawWithRuntime(args []string, configPath, archivePath string, _ outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+func runRawWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	options, err := parseRawCommandOptions(args, configPath, archivePath)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -1303,22 +1312,26 @@ func runRawWithRuntime(args []string, configPath, archivePath string, _ outputMo
 		// raw: prefix is now produced by ReportFailure's Command field
 		// instead of an inline fmt.Fprintf — the seam (slice 7, #178)
 		// folds the legacy special case into the same writer every
-		// other subcommand uses.
-		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error()}, stdout, stderr)
+		// other subcommand uses. raw's SUCCESS output is provider-shaped
+		// (raw JSON body to stdout), but its FAILURE output respects
+		// the global --json / --plain so the unified failure contract
+		// applies even on the one verb whose happy path is provider-shaped.
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	request, err := buildGoogleHealthRawRequest(options.target, options.from, options.to, options.pageSize, options.pageToken)
 	if err != nil {
-		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error()}, stdout, stderr)
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	body, err := rawSetupWithRuntime(options.configPath, options.archivePath, request, runtime)
 	if err != nil {
-		return ReportFailure(FailureReport{Command: "raw", Status: StatusOperationFailed, Message: err.Error()}, stdout, stderr)
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	if _, err := stdout.Write(body); err != nil {
 		return ReportFailure(FailureReport{
 			Command: "raw",
 			Status:  StatusArchiveUnwritable,
 			Message: fmt.Sprintf("write output: %v", err),
+			Mode:    mode,
 		}, stdout, stderr)
 	}
 	return 0

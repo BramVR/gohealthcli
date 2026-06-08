@@ -42,37 +42,42 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 		}
 		return 1
 	}
-	_ = mode // describe-schema picks JSON or SQL via its own flags, not the global outputMode.
+	// describe-schema's success output is determined by its own --sql /
+	// --json flags, not the global outputMode. Its FAILURE output still
+	// honours the global outputMode so the unified failure contract
+	// (slice 7, #178) applies uniformly: `--json describe-schema bogus`
+	// gets the JSON envelope on stdout like every other subcommand.
 	if flags.NArg() != 0 {
 		return ReportFailure(FailureReport{
 			Command: "describe-schema",
 			Status:  StatusUnexpectedArgument,
 			Message: fmt.Sprintf("unexpected describe-schema argument: %s", flags.Arg(0)),
+			Mode:    mode,
 		}, stdout, stderr)
 	}
 
 	resolvedPath, err := resolveConfiguredArchivePath(*describeConfigPath, *describeArchivePath, false)
 	if err != nil {
-		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error()}, stdout, stderr)
+		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	if err := migrateArchiveIfNeeded(resolvedPath); err != nil {
-		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error()}, stdout, stderr)
+		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	db, err := openArchiveReadOnly(resolvedPath)
 	if err != nil {
-		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error()}, stdout, stderr)
+		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	defer db.Close()
 
 	if *describeSQL {
 		if err := writeSchemaSQL(db, stdout); err != nil {
-			return ReportFailure(FailureReport{Command: "describe-schema --sql", Status: StatusArchiveUnwritable, Message: err.Error()}, stdout, stderr)
+			return ReportFailure(FailureReport{Command: "describe-schema --sql", Status: StatusArchiveUnwritable, Message: err.Error(), Mode: mode}, stdout, stderr)
 		}
 		return 0
 	}
 	// Default is --json.
 	if err := writeSchemaJSON(db, stdout); err != nil {
-		return ReportFailure(FailureReport{Command: "describe-schema --json", Status: StatusArchiveUnwritable, Message: err.Error()}, stdout, stderr)
+		return ReportFailure(FailureReport{Command: "describe-schema --json", Status: StatusArchiveUnwritable, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	return 0
 }
