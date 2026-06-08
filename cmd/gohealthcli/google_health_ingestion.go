@@ -537,3 +537,33 @@ func syncProviderRequestError(err error) error {
 	}
 	return err
 }
+
+// buildGoogleHealthExportExerciseTcxRawRequest constructs the GET
+// request for `users.dataTypes.dataPoints.exportExerciseTcx` (ADR-0009,
+// #107 slice D). Google's REST shape is `<base>/<name>:exportExerciseTcx`
+// where `name` is the exercise Data Point's `upstream_resource_name`
+// (e.g. `users/me/dataTypes/exercise/dataPoints/<id>`). The endpoint
+// returns raw TCX XML bytes on success and HTTP 404 when no route is
+// associated with the Data Point — both shapes are handled by the
+// caller, which Stores success bytes as a `tcx`-kind Attachment and
+// silently skips 404s.
+func buildGoogleHealthExportExerciseTcxRawRequest(dataPointName string) (rawProviderRequest, error) {
+	if dataPointName == "" {
+		return rawProviderRequest{}, errors.New("exportExerciseTcx requires a non-empty exercise Data Point name")
+	}
+	// The data point resource name must match
+	// `users/<user>/dataTypes/exercise/dataPoints/<id>`. Reject anything
+	// else so a steps or sleep name can't accidentally be routed to the
+	// TCX export endpoint.
+	parts := strings.Split(dataPointName, "/")
+	if len(parts) < 6 || parts[2] != "dataTypes" || parts[3] != "exercise" || parts[4] != "dataPoints" || parts[5] == "" {
+		return rawProviderRequest{}, fmt.Errorf("exportExerciseTcx requires an exercise Data Point name, got %q", dataPointName)
+	}
+	return rawProviderRequest{
+		endpointName:   "dataTypes.exercise.exportExerciseTcx",
+		dataType:       "exercise",
+		method:         http.MethodGet,
+		url:            googleHealthBaseURL + "/" + dataPointName + ":exportExerciseTcx",
+		requiredScopes: googleHealthScopesForDataType("exercise"),
+	}, nil
+}
