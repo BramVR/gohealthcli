@@ -16,6 +16,11 @@ type healthArchiveWriter interface {
 	FinalizeSyncRun(finalize syncRunFinalize) error
 	UpsertDataPoint(point archivedDataPoint, now string) (string, error)
 	UpsertRollup(rollup archivedRollup, now string) (string, error)
+	// StoreAttachment writes a content-addressed sidecar file via the
+	// Attachment Store (ADR-0009) and inserts a data_point_attachments
+	// row linked to the just-upserted Data Point identified by `point`'s
+	// identity columns. Used by exercise sync to archive TCX bytes.
+	StoreAttachment(point archivedDataPoint, kind string, payload []byte, fetchedAt string) error
 	ResolveSyncCursor(key syncCursorKey) (string, bool, error)
 	CommitSyncCursor(key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error
 	// UpdateConnectionTokenMetadata lets sync persist a refreshed access
@@ -46,6 +51,10 @@ type syncRunFinalize struct {
 
 type sqliteHealthArchiveWriter struct {
 	db *sql.DB
+	// archivePath is the path to the SQLite file. The attachment store
+	// derives its sidecar root from this (`<archivePath>.attachments`)
+	// when StoreAttachment is invoked from the ingestion hook.
+	archivePath string
 }
 
 var finishSyncRunRecord = finishSyncRun
@@ -55,7 +64,7 @@ func openHealthArchiveWriter(archivePath string) (healthArchiveWriter, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &sqliteHealthArchiveWriter{db: handle.db}, nil
+	return &sqliteHealthArchiveWriter{db: handle.db, archivePath: archivePath}, nil
 }
 
 func (archive *sqliteHealthArchiveWriter) Close() error {
@@ -96,6 +105,28 @@ func (archive *sqliteHealthArchiveWriter) CommitSyncCursor(key syncCursorKey, ou
 
 func (archive *sqliteHealthArchiveWriter) UpdateConnectionTokenMetadata(connectionID string, token oauthTokenResponse, now time.Time) error {
 	return updateConnectionTokenMetadata(archive.db, connectionID, token, now)
+}
+
+// StoreAttachment resolves the data_point row id for the just-upserted
+// Data Point and writes the bytes as a content-addressed sidecar via
+// the Attachment Store (ADR-0009). The write reuses the same SQLite
+// handle the rest of sync holds so there's only one BEGIN IMMEDIATE
+// holder per Sync Run.
+func (archive *sqliteHealthArchiveWriter) StoreAttachment(point archivedDataPoint, kind string, payload []byte, fetchedAt string) error {
+	dataPointID, _, found, err := findExistingDataPoint(archive.db, point)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("StoreAttachment: data_point row not found for upserted point")
+	}
+	rootDir := attachmentRootDirForArchive(archive.archivePath)
+	if err := ensureOwnerOnlyDir(rootDir); err != nil {
+		return err
+	}
+	store := &attachmentStore{db: archive.db, archivePath: archive.archivePath, rootDir: rootDir}
+	_, err = store.Store(dataPointID, kind, payload, fetchedAt)
+	return err
 }
 
 // FinalizeSyncRun atomically writes the Sync Run terminal status AND

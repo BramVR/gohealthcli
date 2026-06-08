@@ -6473,6 +6473,14 @@ func installDataPointSyncFetchFake(t *testing.T, wantAccessToken, dataType strin
 		if accessToken != wantAccessToken {
 			t.Fatalf("sync access token = %q, want stored token", accessToken)
 		}
+		// The exercise sync path now also hits exportExerciseTcx after
+		// each Data Point (#107 slice D, ADR-0009). The fixture archives
+		// used by existing exercise sync tests do not carry TCX, so the
+		// fake responds with 404 — the production code path treats 404
+		// as "no TCX for this Data Point" and continues.
+		if request.endpointName == "dataTypes.exercise.exportExerciseTcx" {
+			return nil, &googleHealthHTTPError{StatusCode: 404}
+		}
 		if request.endpointName != "dataTypes."+dataType+".list" || request.dataType != dataType {
 			t.Fatalf("sync request = (%q, %q), want %s list", request.endpointName, request.dataType, dataType)
 		}
