@@ -3,8 +3,6 @@ title: "gohealthcli raw"
 description: "Print raw provider JSON for endpoint exploration."
 ---
 
-<!-- Auto-generated from `gohealthcli schema --json`. Do not edit by hand. -->
-
 Fetch a single upstream Google Health API response and print the raw body to stdout. Useful for endpoint exploration without committing the response to the Health Archive.
 
 First positional argument is `endpoint <name>` (for example `endpoint getIdentity`) or `data-type <data-type>` (for example `data-type steps --from 2026-01-01 --to 2026-01-02`). `--from` and `--to` constrain time ranges where the endpoint supports them; `--page-size` and `--page-token` drive pagination.

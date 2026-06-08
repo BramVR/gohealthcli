@@ -20,8 +20,6 @@ export function renderIndex(commands, binary) {
   lines.push(`description: ${yamlString(`Every ${binary} subcommand at a stable URL.`)}`);
   lines.push("---");
   lines.push("");
-  lines.push(`<!-- Auto-generated from \`${binary} schema --json\`. Do not edit by hand. -->`);
-  lines.push("");
   lines.push(`Every user-facing subcommand exposed by \`${binary}\`. Pages are regenerated from the binary by \`make docs-commands\`; the committed copies must match a fresh regeneration.`);
   lines.push("");
   lines.push("## Subcommands");
@@ -40,8 +38,6 @@ export function renderCommand(cmd, binary) {
   lines.push(`title: ${yamlString(`${binary} ${cmd.name}`)}`);
   if (cmd.short) lines.push(`description: ${yamlString(cmd.short)}`);
   lines.push("---");
-  lines.push("");
-  lines.push(`<!-- Auto-generated from \`${binary} schema --json\`. Do not edit by hand. -->`);
   lines.push("");
   if (cmd.long) {
     lines.push(cmd.long.trim());
