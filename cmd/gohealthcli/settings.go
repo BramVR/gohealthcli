@@ -85,7 +85,14 @@ func settingsSetupWithRuntime(configPath, archivePath string, runtime runtimeAda
 	if err != nil {
 		return settingsResult{}, err
 	}
-	defer archive.Close()
+	// archive is closed either by writeIdentitySnapshotHandoff (success
+	// path) or by this deferred guard (any error before handoff).
+	archiveClosed := false
+	defer func() {
+		if !archiveClosed {
+			_ = archive.Close()
+		}
+	}()
 	connection, err := archive.CurrentConnection()
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -111,17 +118,8 @@ func settingsSetupWithRuntime(configPath, archivePath string, runtime runtimeAda
 		return result, currentConnectionProviderError(err)
 	}
 	fetchedAt := runtime.now().UTC().Format(time.RFC3339)
-	// Close the Connection API handle before opening the Identity Snapshot
-	// Archive — same single-writer pattern the profile command uses.
-	if err := archive.Close(); err != nil {
-		return result, fmt.Errorf("close Connection API: %w", err)
-	}
-	snapshots, err := openIdentitySnapshotArchive(archivePath)
-	if err != nil {
-		return result, err
-	}
-	defer snapshots.Close()
-	snapshotID, err := snapshots.Insert(connection, "settings", settings.rawJSON, fetchedAt)
+	snapshotID, err := writeIdentitySnapshotHandoff(archive, archivePath, connection, "settings", settings.rawJSON, fetchedAt)
+	archiveClosed = true // handoff owns archive's lifecycle now
 	if err != nil {
 		return result, err
 	}

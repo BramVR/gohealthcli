@@ -381,7 +381,7 @@ func TestV6ArchiveMigratesProfileSnapshotsWithKindDefault(t *testing.T) {
 	createLegacyV6ArchiveWithProfileSnapshot(t, archivePath, "conn_v6", `{"profile":"snapshot"}`, "2026-06-01T00:00:00Z")
 
 	if err := migrateArchiveIfNeeded(archivePath); err != nil {
-		t.Fatalf("migrate v6 → v7: %v", err)
+		t.Fatalf("migrate legacy v6 archive to current schema version: %v", err)
 	}
 
 	db, err := openArchive(archivePath)

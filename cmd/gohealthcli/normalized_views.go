@@ -1,17 +1,20 @@
 package main
 
-// normalizedViewsRegistryHandle is the single source of truth for SQL
-// VIEWs over the Health Archive. Three consumers read from it:
+// normalizedViewsRegistryHandle is the entry point through which every
+// consumer reads Normalized View specs:
 // - The export writer (export.go) looks up a spec by name to render CSV/JSONL.
 // - Archive migrations apply MigrationStatements(version) so a fresh
 //   archive's CREATE VIEWs match what an upgraded archive sees.
 // - A future describe-schema --json (#109) emits the catalog so an LLM
 //   reading the archive knows what views are available.
 //
-// The Registry is intentionally a thin facade over the existing
-// exportDatasetDefinitions slice. Spec storage moves into category-split
-// files (views_steps.go, views_heart_rate.go, …) in follow-up commits;
-// the Registry's surface stays stable.
+// The spec storage currently lives in export.go (as the historical
+// exportDatasetDefinitions slice) for transitional reasons; #109 splits
+// it into category-named files (views_steps.go, views_sleep.go,
+// views_identity.go, …) and re-anchors the Registry as the only place
+// the slice is defined. The Registry's surface (View / MigrationStatements
+// / Catalog) stays stable across that move — downstream consumers
+// reading through the Registry today don't need to change.
 type normalizedViewsRegistryHandle struct {
 	definitions []exportDatasetSpec
 }

@@ -39,6 +39,15 @@ type exportFieldSpec struct {
 
 type exportRow []string
 
+// exportDatasetDefinitions is the canonical Normalized View registry.
+// It lives next to the export writer for historical reasons (this
+// package shipped exports before the Registry concept existed); the
+// follow-up PR for #109 (describe-schema --json) splits these into
+// per-category files (views_steps.go, views_sleep.go, views_identity.go,
+// …) and the Registry becomes the only entry point. Until then, treat
+// this slice and `normalizedViewsRegistry()` as the same thing — every
+// consumer should go through the Registry, never read the slice
+// directly.
 var exportDatasetDefinitions = []exportDatasetSpec{
 	{
 		name:             "daily-steps",

@@ -1095,7 +1095,14 @@ func profileSetupWithRuntime(configPath, archivePath string, runtime runtimeAdap
 	if err != nil {
 		return profileResult{}, err
 	}
-	defer archive.Close()
+	// archive is closed either by writeIdentitySnapshotHandoff (success
+	// path) or by this deferred guard (any error before handoff).
+	archiveClosed := false
+	defer func() {
+		if !archiveClosed {
+			_ = archive.Close()
+		}
+	}()
 	connection, err := archive.CurrentConnection()
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1134,19 +1141,8 @@ func profileSetupWithRuntime(configPath, archivePath string, runtime runtimeAdap
 		return result, err
 	}
 	fetchedAt := runtime.now().UTC().Format(time.RFC3339)
-	// Close the Connection-scoped handle before opening the Identity
-	// Snapshot Archive — both target the same SQLite file in write mode.
-	// SQLite handles this fine in-process, but reusing one writer keeps
-	// the contention surface small.
-	if err := archive.Close(); err != nil {
-		return result, fmt.Errorf("close Connection API: %w", err)
-	}
-	snapshots, err := openIdentitySnapshotArchive(archivePath)
-	if err != nil {
-		return result, err
-	}
-	defer snapshots.Close()
-	snapshotID, err := snapshots.Insert(connection, "profile", profile.rawJSON, fetchedAt)
+	snapshotID, err := writeIdentitySnapshotHandoff(archive, archivePath, connection, "profile", profile.rawJSON, fetchedAt)
+	archiveClosed = true // handoff owns archive's lifecycle now
 	if err != nil {
 		return result, err
 	}
@@ -4090,7 +4086,7 @@ func writeStatusResult(result statusResult, mode outputMode, stdout io.Writer) e
 			return err
 		}
 	}
-	if _, err := fmt.Fprintf(stdout, "Counts: %d Data Points, %d Rollups, %d Profile Snapshots, %d Sync Runs\n", result.DataPointCount, result.RollupCount, result.ProfileSnapshotCount, result.SyncRunCount); err != nil {
+	if _, err := fmt.Fprintf(stdout, "Counts: %d Data Points, %d Rollups, %d Identity Snapshots (%d Profile), %d Sync Runs\n", result.DataPointCount, result.RollupCount, result.IdentitySnapshotCount, result.ProfileSnapshotCount, result.SyncRunCount); err != nil {
 		return err
 	}
 	if len(result.DataTypes) != 0 {
@@ -4147,6 +4143,7 @@ func writeStatusCounts(result statusResult, stdout io.Writer) error {
 		{"data_point_count", result.DataPointCount},
 		{"rollup_count", result.RollupCount},
 		{"profile_snapshot_count", result.ProfileSnapshotCount},
+		{"identity_snapshot_count", result.IdentitySnapshotCount},
 		{"sync_run_count", result.SyncRunCount},
 	} {
 		if _, err := fmt.Fprintf(stdout, "%s: %d\n", item.key, item.count); err != nil {

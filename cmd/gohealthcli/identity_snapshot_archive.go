@@ -27,6 +27,24 @@ type identitySnapshotRecord struct {
 	FetchedAt string
 }
 
+// writeIdentitySnapshotHandoff closes the supplied Connection API (which
+// holds the SQLite write handle), opens an identitySnapshotArchive
+// against the same file, writes one kind-tagged snapshot, and closes
+// the archive. Centralizing the close-then-open dance here keeps the
+// double-close cognitive load off the profile/settings/devices/irn
+// command paths.
+func writeIdentitySnapshotHandoff(connectionArchive healthArchiveConnectionAPI, archivePath string, connection archivedConnection, kind, rawJSON, fetchedAt string) (int64, error) {
+	if err := connectionArchive.Close(); err != nil {
+		return 0, fmt.Errorf("close Connection API before identity snapshot handoff: %w", err)
+	}
+	snapshots, err := openIdentitySnapshotArchive(archivePath)
+	if err != nil {
+		return 0, err
+	}
+	defer snapshots.Close()
+	return snapshots.Insert(connection, kind, rawJSON, fetchedAt)
+}
+
 func openIdentitySnapshotArchive(archivePath string) (*identitySnapshotArchive, error) {
 	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(writeArchive)
 	if err != nil {
