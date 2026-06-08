@@ -3,8 +3,6 @@ title: "gohealthcli identity"
 description: "Refresh the archived Google Identity metadata."
 ---
 
-<!-- Auto-generated from `gohealthcli schema --json`. Do not edit by hand. -->
-
 Re-fetch the upstream Google Identity payload (Google Health user ID and legacy Fitbit user ID when present) and update the metadata stored alongside the Connection.
 
 `identity` does not change the OAuth tokens or move the Connection between archives — use `connect` for those. It is a low-cost, read-only operation against the provider.

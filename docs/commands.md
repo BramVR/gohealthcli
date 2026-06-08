@@ -3,8 +3,6 @@ title: "Command reference"
 description: "Every gohealthcli subcommand at a stable URL."
 ---
 
-<!-- Auto-generated from `gohealthcli schema --json`. Do not edit by hand. -->
-
 Every user-facing subcommand exposed by `gohealthcli`. Pages are regenerated from the binary by `make docs-commands`; the committed copies must match a fresh regeneration.
 
 ## Subcommands

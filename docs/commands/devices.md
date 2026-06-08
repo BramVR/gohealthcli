@@ -3,8 +3,6 @@ title: "gohealthcli devices"
 description: "Archive a Paired Devices Snapshot from the provider."
 ---
 
-<!-- Auto-generated from `gohealthcli schema --json`. Do not edit by hand. -->
-
 Fetch the upstream `users.pairedDevices.list` payload and append it to the Health Archive as a new Identity Snapshot of kind `paired-devices`. The `paired_devices` Normalized View explodes the latest snapshot via `json_each`, returning one row per device with `device_type`, `model`, `manufacturer`, `battery_percentage`, `last_sync_time`, and `features`.
 
 This is the LLM's path to questions like "which Pixel Watch synced last?" or "what's my Fitbit battery?" — every projection is read-only against the raw snapshot, so new fields can be added without re-syncing.

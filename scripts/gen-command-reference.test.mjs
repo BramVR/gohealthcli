@@ -35,9 +35,9 @@ describe("renderCommand", () => {
     assert.match(out, /^---\ntitle: "gohealthcli doctor"\ndescription: "Validate local setup\."\n---/);
   });
 
-  it("includes the auto-gen warning comment", () => {
+  it("does not leak the generator-warning HTML comment into the rendered page", () => {
     const out = renderCommand(sample, "gohealthcli");
-    assert.match(out, /<!-- Auto-generated from `gohealthcli schema --json`\. Do not edit by hand\. -->/);
+    assert.doesNotMatch(out, /<!--/);
   });
 
   it("includes the long description verbatim", () => {
@@ -88,9 +88,9 @@ describe("renderIndex", () => {
     assert.match(out, /^---\ntitle: "Command reference"\ndescription: "Every gohealthcli subcommand at a stable URL\."\n---/);
   });
 
-  it("includes the auto-gen warning comment", () => {
+  it("does not leak the generator-warning HTML comment into the rendered page", () => {
     const out = renderIndex(cmds, "gohealthcli");
-    assert.match(out, /<!-- Auto-generated from `gohealthcli schema --json`\. Do not edit by hand\. -->/);
+    assert.doesNotMatch(out, /<!--/);
   });
 
   it("lists every non-hidden command with its short description and link", () => {

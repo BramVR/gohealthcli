@@ -3,8 +3,6 @@ title: "gohealthcli describe-schema"
 description: "Self-describe the Health Archive for LLM consumption."
 ---
 
-<!-- Auto-generated from `gohealthcli schema --json`. Do not edit by hand. -->
-
 Emit the archive's schema in one of two modes.
 
 `--sql` dumps live DDL straight from `sqlite_master`, excluding internal `sqlite_*` objects. Use this when you want the actual truth of what tables and views exist right now.
