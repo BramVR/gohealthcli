@@ -26,6 +26,14 @@ Use the target Google Cloud project, then configure:
     Data Type (#104).
   - `https://www.googleapis.com/auth/googlehealth.electrocardiogram.readonly`
     — required by the Tier 2 `electrocardiogram` Data Type (#104).
+  - `https://www.googleapis.com/auth/googlehealth.nutrition.readonly` —
+    required by `hydration-log` and any future nutrition Data Type (#103).
+  - `https://www.googleapis.com/auth/googlehealth.location.readonly` —
+    required (on top of `activity_and_fitness.readonly`) by the
+    `users.dataTypes.dataPoints.exportExerciseTcx` endpoint that
+    archives TCX route bytes during exercise sync (#140). Granted via
+    `connect --add-scopes tcx`; without it, exercise sync still
+    archives the Data Points themselves but skips the TCX sidecar.
 - OAuth client: create a Desktop app client from Google Auth Platform >
   Clients, then download its JSON.
 
@@ -130,3 +138,22 @@ keywords for the missing scopes specifically: `--add-scopes ecg` when
 only the ECG scope is missing, `--add-scopes irn` for IRN, and
 `--add-scopes ecg,irn` when both are. Run that exact line to fix it.
 No second base-set browser sign-in is needed.
+
+## TCX Route Archival (`tcx`)
+
+Google's `exportExerciseTcx` endpoint requires both
+`activity_and_fitness.readonly` and `location.readonly` on the access
+token (#140). The base set already grants the first; the second is
+opt-in via the `tcx` keyword:
+
+```bash
+gohealthcli connect --add-scopes tcx --plain
+```
+
+After enabling `googlehealth.location.readonly` on the Google Cloud
+Data Access page and re-running `connect`, exercise sync archives the
+TCX route bytes as `tcx`-kind Attachments under
+`<archive>.attachments/tcx/<sha256[0:2]>/<sha256>.tcx` (ADR-0009).
+Without the scope, exercise sync still upserts the exercise Data
+Points themselves but the TCX hook short-circuits with no HTTP
+round-trip — `exportExerciseTcx` would return 403 deterministically.

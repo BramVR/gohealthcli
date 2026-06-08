@@ -44,6 +44,15 @@ const googleHealthProfileReadonlyScope = "https://www.googleapis.com/auth/google
 const googleHealthEcgReadonlyScope = "https://www.googleapis.com/auth/googlehealth.electrocardiogram.readonly"
 const googleHealthIrnReadonlyScope = "https://www.googleapis.com/auth/googlehealth.irn.readonly"
 
+// Tier 2 optional scope #140: `googlehealth.location.readonly` is the
+// scope Google requires (on top of `activity_and_fitness.readonly`) to
+// authorise `users.dataTypes.dataPoints.exportExerciseTcx`. Users opt
+// in via `gohealthcli connect --add-scopes tcx`; the exercise sync
+// then archives TCX route bytes as a `tcx`-kind Attachment per
+// ADR-0009. Without it, exercise sync skips the TCX hook cleanly (no
+// 403 round-trip) — see attachExerciseTcxIfAvailable.
+const googleHealthLocationReadonlyScope = "https://www.googleapis.com/auth/googlehealth.location.readonly"
+
 const googleHealthBaseURL = "https://health.googleapis.com/v4"
 const googleHealthIdentityURL = "https://health.googleapis.com/v4/users/me/identity"
 const googleHealthProfileURL = "https://health.googleapis.com/v4/users/me/profile"
@@ -776,7 +785,7 @@ func runConnectWithRuntime(args []string, configPath, archivePath string, global
 	connectJSONOutput := flags.Bool("json", mode.json, "write stable JSON to stdout")
 	connectPlainOutput := flags.Bool("plain", mode.plain, "write plain key/value output to stdout")
 	noInput := flags.Bool("no-input", globalNoInput, "never prompt, never wait for browser input")
-	connectAddScopes := flags.String("add-scopes", "", "extend the OAuth grant with optional scope keywords (csv): irn, ecg")
+	connectAddScopes := flags.String("add-scopes", "", "extend the OAuth grant with optional scope keywords (csv): irn, ecg, nutrition, tcx")
 
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

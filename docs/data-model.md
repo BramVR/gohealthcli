@@ -164,6 +164,16 @@ silent skips; the Sync Run stays `sync_completed`. 5xx, 401, and
 transport errors are surfaced so the Sync Cursor stays put and the
 user can retry.
 
+The TCX hook is scope-gated (#140). Google requires
+`googlehealth.location.readonly` on top of
+`activity_and_fitness.readonly` for `exportExerciseTcx`; without the
+second scope every call returns 403. Users opt in via
+`gohealthcli connect --add-scopes tcx`. When the stored Connection
+token does not include `location.readonly`, the hook short-circuits
+before the HTTP call — exercise Data Points still archive, but no TCX
+sidecar is fetched and no round-trip is wasted on a guaranteed-403
+endpoint. The 403 graceful-skip remains as belt-and-suspenders.
+
 ## LLM-facing schema discovery
 
 `gohealthcli describe-schema --json` emits the curated JSON catalog

@@ -34,9 +34,10 @@ func TestGoogleHealthIngestionStoresTcxAttachmentForExercise(t *testing.T) {
 	ingestion := fakeGoogleHealthIngestion(provider)
 
 	_, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "exercise",
-		from:     "2026-01-01",
-		to:       "2026-01-02",
+		dataType:      "exercise",
+		from:          "2026-01-01",
+		to:            "2026-01-02",
+		grantedScopes: []string{googleHealthActivityReadonlyScope, googleHealthLocationReadonlyScope},
 	}))
 	if err != nil {
 		t.Fatalf("ingest exercise: %v", err)
@@ -94,9 +95,10 @@ func TestGoogleHealthIngestionSkipsTcxWhenUpstream404(t *testing.T) {
 	ingestion := fakeGoogleHealthIngestion(provider)
 
 	result, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "exercise",
-		from:     "2026-01-01",
-		to:       "2026-01-02",
+		dataType:      "exercise",
+		from:          "2026-01-01",
+		to:            "2026-01-02",
+		grantedScopes: []string{googleHealthActivityReadonlyScope, googleHealthLocationReadonlyScope},
 	}))
 	if err != nil {
 		t.Fatalf("ingest must remain green on 404 TCX export, got %v", err)
@@ -138,9 +140,10 @@ func TestGoogleHealthIngestionSkipsTcxWhenUpstream403(t *testing.T) {
 	ingestion := fakeGoogleHealthIngestion(provider)
 
 	result, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "exercise",
-		from:     "2026-01-01",
-		to:       "2026-01-02",
+		dataType:      "exercise",
+		from:          "2026-01-01",
+		to:            "2026-01-02",
+		grantedScopes: []string{googleHealthActivityReadonlyScope, googleHealthLocationReadonlyScope},
 	}))
 	if err != nil {
 		t.Fatalf("ingest must remain green on 403 TCX export, got %v", err)
@@ -190,9 +193,10 @@ func TestGoogleHealthIngestionSkipsTcxWhenUpstreamEmpty(t *testing.T) {
 	ingestion := fakeGoogleHealthIngestion(provider)
 
 	_, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "exercise",
-		from:     "2026-01-01",
-		to:       "2026-01-02",
+		dataType:      "exercise",
+		from:          "2026-01-01",
+		to:            "2026-01-02",
+		grantedScopes: []string{googleHealthActivityReadonlyScope, googleHealthLocationReadonlyScope},
 	}))
 	if err != nil {
 		t.Fatalf("ingest must remain green on empty TCX body, got %v", err)
@@ -229,15 +233,70 @@ func TestGoogleHealthIngestionSurfacesTcxNon404Errors(t *testing.T) {
 	ingestion := fakeGoogleHealthIngestion(provider)
 
 	_, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "exercise",
-		from:     "2026-01-01",
-		to:       "2026-01-02",
+		dataType:      "exercise",
+		from:          "2026-01-01",
+		to:            "2026-01-02",
+		grantedScopes: []string{googleHealthActivityReadonlyScope, googleHealthLocationReadonlyScope},
 	}))
 	if err == nil {
 		t.Fatalf("ingest must surface non-404 TCX errors")
 	}
 	if !strings.Contains(err.Error(), "upstream blew up") {
 		t.Fatalf("error %q does not surface upstream cause", err)
+	}
+}
+
+// TestGoogleHealthIngestionSkipsTcxWhenLocationScopeNotGranted pins
+// #140: when the stored Connection's granted-scopes set does NOT
+// include `googlehealth.location.readonly`, exercise sync archives the
+// Data Point but does NOT round-trip to `exportExerciseTcx` at all.
+// Google requires both `activity_and_fitness.readonly` AND
+// `location.readonly` for that endpoint; without the second scope the
+// call deterministically returns 403, so skipping pre-emptively saves
+// one HTTP round-trip per exercise Data Point. Users opt in via
+// `gohealthcli connect --add-scopes tcx`.
+func TestGoogleHealthIngestionSkipsTcxWhenLocationScopeNotGranted(t *testing.T) {
+	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"": `{
+			"dataPoints": [{
+				"name": "users/me/dataTypes/exercise/dataPoints/run-1",
+				"dataSource": {"platform": "FITBIT"},
+				"exercise": {
+					"interval": {
+						"startTime": "2026-01-01T08:00:00Z",
+						"endTime": "2026-01-01T08:30:00Z"
+					},
+					"exerciseType": "RUNNING"
+				}
+			}]
+		}`,
+	})
+	// Seed a TCX body so the test fails loudly if the hook DID fire.
+	provider.pages["users/me/dataTypes/exercise/dataPoints/run-1:exportExerciseTcx"] = `<?xml version="1.0"?>`
+	ingestion := fakeGoogleHealthIngestion(provider)
+
+	result, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+		dataType: "exercise",
+		from:     "2026-01-01",
+		to:       "2026-01-02",
+		// Only the base activity scope — the location scope that
+		// authorises exportExerciseTcx is NOT granted.
+		grantedScopes: []string{googleHealthActivityReadonlyScope},
+	}))
+	if err != nil {
+		t.Fatalf("ingest must remain green without location scope, got %v", err)
+	}
+	if result.dataPointsSeen != 1 || result.dataPointsNew != 1 {
+		t.Fatalf("data point counts = (seen=%d, new=%d), want (1, 1)", result.dataPointsSeen, result.dataPointsNew)
+	}
+	if len(archive.attachments) != 0 {
+		t.Fatalf("attachment count = %d, want 0 when location.readonly not granted", len(archive.attachments))
+	}
+	for _, req := range provider.requests {
+		if strings.Contains(req.url, ":exportExerciseTcx") {
+			t.Fatalf("exportExerciseTcx must not be called when location.readonly is not granted; got request %+v", req)
+		}
 	}
 }
 
