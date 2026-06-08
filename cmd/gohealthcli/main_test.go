@@ -419,8 +419,8 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("schema migration rows: %v", err)
 	}
-	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter,4:add_daily_steps_view,5:add_first_release_normalized_views,6:add_sync_cursors,7:rename_profile_snapshots_to_identity_snapshots,8:add_current_settings_view,9:add_paired_devices_view" {
-		t.Fatalf("migrations = %v, want all migrations 1..9", migrations)
+	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter,4:add_daily_steps_view,5:add_first_release_normalized_views,6:add_sync_cursors,7:rename_profile_snapshots_to_identity_snapshots,8:add_current_settings_view,9:add_paired_devices_view,10:add_current_irn_profile_view" {
+		t.Fatalf("migrations = %v, want all migrations 1..10", migrations)
 	}
 
 	for _, table := range []string{

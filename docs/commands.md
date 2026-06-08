@@ -16,6 +16,7 @@ Every user-facing subcommand exposed by `gohealthcli`. Pages are regenerated fro
 - [`gohealthcli profile`](commands/profile.html) — Archive a Profile Snapshot from the provider.
 - [`gohealthcli settings`](commands/settings.html) — Archive a Settings Snapshot from the provider.
 - [`gohealthcli devices`](commands/devices.html) — Archive a Paired Devices Snapshot from the provider.
+- [`gohealthcli irn-profile`](commands/irn-profile.html) — Archive an IRN Profile Snapshot from the provider.
 - [`gohealthcli sync`](commands/sync.html) — Archive Google Health Data Points and supported Rollups.
 - [`gohealthcli status`](commands/status.html) — Summarise archive counts and newest synced timestamps.
 - [`gohealthcli query`](commands/query.html) — Run guarded read-only SQL over the Health Archive.

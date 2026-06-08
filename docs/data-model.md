@@ -104,7 +104,9 @@ the latest snapshot of each kind per Connection into queryable columns:
 - `paired_devices` — `kind='paired-devices'` exploded via `json_each` into
   one row per device with `device_type`, `model`, `manufacturer`,
   `battery_percentage`, `last_sync_time`, and `features`.
-- Follow-up slices add `current_profile` and `current_irn_profile`.
+- `current_irn_profile` — `kind='irn-profile'` projected as
+  `onboarding_state`, `enrollment_state`, `last_update_time`. Requires
+  the `irn.readonly` OAuth scope granted via `connect --add-scopes irn`.
 
 Rows pre-dating migration 7 keep `snapshot_kind='profile'` via the column
 default; no parallel-table-with-view shim was used (PRD #93
