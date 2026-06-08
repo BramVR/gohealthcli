@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -25,14 +26,27 @@ type googlePairedDevices struct {
 var fetchPairedDevices = fetchGooglePairedDevices
 
 type devicesResult struct {
-	Status             string `json:"status"`
-	ConnectionID       string `json:"connection_id,omitempty"`
-	ProviderName       string `json:"provider_name,omitempty"`
-	GoogleHealthUserID string `json:"google_health_user_id,omitempty"`
-	SnapshotID         int64  `json:"snapshot_id,omitempty"`
-	DeviceCount        int    `json:"device_count"`
-	FetchedAt          string `json:"fetched_at,omitempty"`
-	Message            string `json:"message"`
+	Status             string                  `json:"status"`
+	ConnectionID       string                  `json:"connection_id,omitempty"`
+	ProviderName       string                  `json:"provider_name,omitempty"`
+	GoogleHealthUserID string                  `json:"google_health_user_id,omitempty"`
+	SnapshotID         int64                   `json:"snapshot_id,omitempty"`
+	DeviceCount        int                     `json:"device_count"`
+	Devices            []devicesResultDevice   `json:"devices,omitempty"`
+	FetchedAt          string                  `json:"fetched_at,omitempty"`
+	Message            string                  `json:"message"`
+}
+
+// devicesResultDevice mirrors the columns the paired_devices Normalized
+// View exposes; downstream tooling can read either surface and get the
+// same fields without crossing layers.
+type devicesResultDevice struct {
+	DeviceType        string   `json:"device_type"`
+	Model             string   `json:"model"`
+	Manufacturer      string   `json:"manufacturer"`
+	BatteryPercentage *int     `json:"battery_percentage,omitempty"`
+	LastSyncTime      string   `json:"last_sync_time,omitempty"`
+	Features          []string `json:"features,omitempty"`
 }
 
 func runDevicesWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
@@ -117,7 +131,8 @@ func devicesSetupWithRuntime(configPath, archivePath string, runtime runtimeAdap
 	if err != nil {
 		return result, currentConnectionProviderError(err)
 	}
-	result.DeviceCount = countPairedDevicesIn(devices.rawJSON)
+	result.Devices = parsePairedDeviceSummaries(devices.rawJSON)
+	result.DeviceCount = len(result.Devices)
 	fetchedAt := runtime.now().UTC().Format(time.RFC3339)
 	snapshotID, err := writeIdentitySnapshotHandoff(archive, archivePath, connection, "paired-devices", devices.rawJSON, fetchedAt)
 	archiveClosed = true
@@ -156,17 +171,40 @@ func fetchGooglePairedDevices(accessToken string) (googlePairedDevices, error) {
 	return googlePairedDevices{rawJSON: string(body)}, nil
 }
 
-// countPairedDevicesIn extracts the number of devices in a
-// pairedDevices payload. Used purely for the result.DeviceCount
-// reporting field; the source of truth stays in the raw JSON.
-func countPairedDevicesIn(rawJSON string) int {
+// parsePairedDeviceSummaries projects the raw users.pairedDevices.list
+// payload into the same columns the paired_devices view exposes, so
+// CLI output and SQL queries answer the same questions. The raw JSON
+// stays the source of truth in identity_snapshots; this is purely
+// for the result's user-facing rendering.
+func parsePairedDeviceSummaries(rawJSON string) []devicesResultDevice {
 	var envelope struct {
-		Devices []json.RawMessage `json:"devices"`
+		Devices []struct {
+			DeviceType        string   `json:"deviceType"`
+			Model             string   `json:"model"`
+			Manufacturer      string   `json:"manufacturer"`
+			BatteryPercentage *int     `json:"batteryPercentage,omitempty"`
+			LastSyncTime      string   `json:"lastSyncTime,omitempty"`
+			Features          []string `json:"features,omitempty"`
+		} `json:"devices"`
 	}
 	if err := json.Unmarshal([]byte(rawJSON), &envelope); err != nil {
-		return 0
+		return nil
 	}
-	return len(envelope.Devices)
+	if len(envelope.Devices) == 0 {
+		return nil
+	}
+	result := make([]devicesResultDevice, 0, len(envelope.Devices))
+	for _, device := range envelope.Devices {
+		result = append(result, devicesResultDevice{
+			DeviceType:        device.DeviceType,
+			Model:             device.Model,
+			Manufacturer:      device.Manufacturer,
+			BatteryPercentage: device.BatteryPercentage,
+			LastSyncTime:      device.LastSyncTime,
+			Features:          device.Features,
+		})
+	}
+	return result
 }
 
 func writeDevicesResult(result devicesResult, mode outputMode, stdout io.Writer) error {
@@ -187,6 +225,33 @@ func writeDevicesResult(result devicesResult, mode outputMode, stdout io.Writer)
 		if _, err := fmt.Fprintf(stdout, "device_count: %d\n", result.DeviceCount); err != nil {
 			return err
 		}
+		for index, device := range result.Devices {
+			prefix := fmt.Sprintf("devices.%d.", index)
+			if _, err := fmt.Fprintf(stdout, "%sdevice_type: %s\n", prefix, device.DeviceType); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintf(stdout, "%smodel: %s\n", prefix, device.Model); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintf(stdout, "%smanufacturer: %s\n", prefix, device.Manufacturer); err != nil {
+				return err
+			}
+			if device.BatteryPercentage != nil {
+				if _, err := fmt.Fprintf(stdout, "%sbattery_percentage: %d\n", prefix, *device.BatteryPercentage); err != nil {
+					return err
+				}
+			}
+			if device.LastSyncTime != "" {
+				if _, err := fmt.Fprintf(stdout, "%slast_sync_time: %s\n", prefix, device.LastSyncTime); err != nil {
+					return err
+				}
+			}
+			if len(device.Features) > 0 {
+				if _, err := fmt.Fprintf(stdout, "%sfeatures: %s\n", prefix, strings.Join(device.Features, ",")); err != nil {
+					return err
+				}
+			}
+		}
 		if result.FetchedAt != "" {
 			if _, err := fmt.Fprintf(stdout, "fetched_at: %s\n", result.FetchedAt); err != nil {
 				return err
@@ -200,6 +265,19 @@ func writeDevicesResult(result devicesResult, mode outputMode, stdout io.Writer)
 	}
 	if _, err := fmt.Fprintf(stdout, "Device count: %d\n", result.DeviceCount); err != nil {
 		return err
+	}
+	for _, device := range result.Devices {
+		battery := "?"
+		if device.BatteryPercentage != nil {
+			battery = fmt.Sprintf("%d%%", *device.BatteryPercentage)
+		}
+		lastSync := device.LastSyncTime
+		if lastSync == "" {
+			lastSync = "?"
+		}
+		if _, err := fmt.Fprintf(stdout, "- %s %s (%s) — battery %s, last sync %s\n", device.Manufacturer, device.Model, device.DeviceType, battery, lastSync); err != nil {
+			return err
+		}
 	}
 	if result.FetchedAt != "" {
 		if _, err := fmt.Fprintf(stdout, "Fetched at: %s\n", result.FetchedAt); err != nil {
