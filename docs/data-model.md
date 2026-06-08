@@ -136,8 +136,6 @@ reserved so prompts can stay stable across the API change.
 The view name is the stable contract — the backing can swap to FTS5
 later without changing prompts.
 
-## LLM-facing schema discovery
-
 ## Data Point Attachments
 
 `data_point_attachments` indexes binary payloads (today: TCX route

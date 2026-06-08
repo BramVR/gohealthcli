@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 )
 
@@ -57,14 +58,28 @@ func inspectAttachmentRoot(archivePath string) (string, string, error) {
 }
 
 func openAttachmentStore(archivePath string) (*attachmentStore, error) {
-	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(writeArchive)
+	return openAttachmentStoreMode(archivePath, writeArchive)
+}
+
+// openAttachmentStoreReadOnly opens the store without taking the
+// write lock on the SQLite handle. Resolve/Walk and the planned
+// doctor integration use this so integrity checks can run against
+// read-only copies.
+func openAttachmentStoreReadOnly(archivePath string) (*attachmentStore, error) {
+	return openAttachmentStoreMode(archivePath, readOnlyArchive)
+}
+
+func openAttachmentStoreMode(archivePath string, mode healthArchiveOpenMode) (*attachmentStore, error) {
+	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(mode)
 	if err != nil {
 		return nil, err
 	}
 	root := attachmentRootDirForArchive(archivePath)
-	if err := ensureOwnerOnlyDir(root); err != nil {
-		_ = handle.db.Close()
-		return nil, fmt.Errorf("ensure attachment root: %w", err)
+	if mode == writeArchive {
+		if err := ensureOwnerOnlyDir(root); err != nil {
+			_ = handle.db.Close()
+			return nil, fmt.Errorf("ensure attachment root: %w", err)
+		}
 	}
 	return &attachmentStore{db: handle.db, archivePath: archivePath, rootDir: root}, nil
 }
@@ -85,13 +100,16 @@ func (store *attachmentStore) Store(dataPointID int64, kind string, payload []by
 	hashHex := hex.EncodeToString(hash[:])
 	ext := attachmentFileExtension(kind)
 	subdir := filepath.Join(store.rootDir, kind, hashHex[:2])
-	pathRelative := filepath.Join(kind, hashHex[:2], hashHex+ext)
-	absolutePath := filepath.Join(store.rootDir, pathRelative)
+	// path_relative is stored with forward slashes so an archive moved
+	// between POSIX and Windows resolves consistently. The on-disk path
+	// is built from filepath.FromSlash at the seam.
+	pathRelative := path.Join(kind, hashHex[:2], hashHex+ext)
+	absolutePath := filepath.Join(store.rootDir, filepath.FromSlash(pathRelative))
 
 	if existing, found, err := store.findExisting(dataPointID, hashHex); err != nil {
 		return attachmentRecord{}, err
 	} else if found {
-		existing.AbsolutePath = filepath.Join(store.rootDir, existing.PathRelative)
+		existing.AbsolutePath = filepath.Join(store.rootDir, filepath.FromSlash(existing.PathRelative))
 		// Re-write the sidecar bytes only if the file is missing — a
 		// previous Store could have left the row without the file (e.g.,
 		// disk corruption); the byte content is content-addressed so
@@ -131,19 +149,38 @@ func (store *attachmentStore) Store(dataPointID int64, kind string, payload []by
 	}, nil
 }
 
-// Resolve returns the absolute path for a given sha256. Returns a
-// clear error when the hash isn't in data_point_attachments, so doctor
-// can format a useful diagnostic.
+// Resolve returns the absolute path for a given sha256. The on-disk
+// location is kind-scoped, so the same SHA in two kinds would resolve
+// non-deterministically — guard against that by checking that every
+// row for the SHA points at the same path_relative. Returns a clear
+// error when the hash isn't in data_point_attachments.
 func (store *attachmentStore) Resolve(hashHex string) (string, error) {
-	var pathRelative string
-	err := store.db.QueryRow(`SELECT path_relative FROM data_point_attachments WHERE sha256 = ? LIMIT 1`, hashHex).Scan(&pathRelative)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("attachment %s not found", hashHex)
-	}
+	rows, err := store.db.Query(`SELECT path_relative FROM data_point_attachments WHERE sha256 = ?`, hashHex)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(store.rootDir, pathRelative), nil
+	defer rows.Close()
+	var canonical string
+	for rows.Next() {
+		var pathRelative string
+		if err := rows.Scan(&pathRelative); err != nil {
+			return "", err
+		}
+		if canonical == "" {
+			canonical = pathRelative
+			continue
+		}
+		if canonical != pathRelative {
+			return "", fmt.Errorf("attachment %s ambiguous: appears at %s AND %s", hashHex, canonical, pathRelative)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	if canonical == "" {
+		return "", fmt.Errorf("attachment %s not found", hashHex)
+	}
+	return filepath.Join(store.rootDir, filepath.FromSlash(canonical)), nil
 }
 
 func (store *attachmentStore) findExisting(dataPointID int64, hashHex string) (attachmentRecord, bool, error) {
@@ -256,8 +293,14 @@ func writeSidecarFile(subdir, absolutePath string, payload []byte) error {
 		return fmt.Errorf("create attachment subdir: %w", err)
 	}
 	if usesPOSIXPermissions() {
+		// Tighten BOTH the per-kind dir and its child shard subdir.
+		// MkdirAll may have left a pre-existing intermediate `<kind>`
+		// dir with looser perms; re-chmod walks up one level.
 		if err := os.Chmod(subdir, 0o700); err != nil {
 			return fmt.Errorf("chmod attachment subdir: %w", err)
+		}
+		if err := os.Chmod(filepath.Dir(subdir), 0o700); err != nil {
+			return fmt.Errorf("chmod attachment kind dir: %w", err)
 		}
 	}
 	if err := os.WriteFile(absolutePath, payload, 0o600); err != nil {

@@ -3784,13 +3784,9 @@ func applyMigrations(db *sql.DB) error {
 }
 
 func migrateArchiveIfNeeded(archivePath string) error {
-	if err := (healthArchiveLifecycle{path: archivePath}).Migrate(); err != nil {
-		return err
-	}
-	// Post-migration: backfill the attachment root for archives that
-	// predate #107 / migration 15. Idempotent — ensureOwnerOnlyDir
-	// is a no-op when the directory already exists with the right mode.
-	return ensureOwnerOnlyDir(attachmentRootDirForArchive(archivePath))
+	// healthArchiveLifecycle.Migrate already backfills the attachment
+	// root, so this thin wrapper just forwards.
+	return (healthArchiveLifecycle{path: archivePath}).Migrate()
 }
 
 func applyPendingMigrations(db *sql.DB) error {
