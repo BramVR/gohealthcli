@@ -269,6 +269,44 @@ var exportDatasetDefinitions = []exportDatasetSpec{
 			{name: "upstream_resource_name"},
 		},
 	},
+	{
+		// current_settings projects the most recent Identity Snapshot of
+		// kind='settings' for each Connection into a column-shaped view.
+		// New fields land here as additional json_extract projections
+		// without a re-sync; raw_json stays the source of truth.
+		name:             "current-settings",
+		view:             "current_settings",
+		migrationVersion: 8,
+		orderBy:          "connection_id",
+		viewSQL: `WITH latest AS (
+			SELECT
+				provider_name,
+				connection_id,
+				snapshot_kind,
+				raw_json,
+				fetched_at,
+				ROW_NUMBER() OVER (PARTITION BY connection_id ORDER BY id DESC) AS rank
+			FROM identity_snapshots
+			WHERE snapshot_kind = 'settings'
+		)
+		SELECT
+			provider_name,
+			connection_id,
+			IFNULL(json_extract(raw_json, '$.measurementSystem'), '') AS measurement_system,
+			IFNULL(json_extract(raw_json, '$.timezone'), '') AS timezone,
+			IFNULL(json_extract(raw_json, '$.strideLengthType'), '') AS stride_length_type,
+			fetched_at
+		FROM latest
+		WHERE rank = 1`,
+		fields: []exportFieldSpec{
+			{name: "provider_name"},
+			{name: "connection_id"},
+			{name: "measurement_system"},
+			{name: "timezone"},
+			{name: "stride_length_type"},
+			{name: "fetched_at"},
+		},
+	},
 }
 
 var exportDatasetSpecs = exportDatasetSpecByName(exportDatasetDefinitions)

@@ -28,7 +28,7 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 7
+const currentSchemaVersion = 8
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
@@ -395,6 +395,8 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 		return runIdentityWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
 	case "profile":
 		return runProfileWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
+	case "settings":
+		return runSettingsWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
 	case "sync":
 		return runSyncWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
 	case "status":
@@ -3712,7 +3714,10 @@ func applyMigrations(db *sql.DB) error {
 	if err := applyIdentitySnapshotsMigration(tx, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 7`); err != nil {
+	if err := applyCurrentSettingsViewMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 8`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -3730,7 +3735,7 @@ func applyPendingMigrations(db *sql.DB) error {
 	switch userVersion {
 	case currentSchemaVersion:
 		return nil
-	case 1, 2, 3, 4, 5, 6:
+	case 1, 2, 3, 4, 5, 6, 7:
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -3762,10 +3767,15 @@ func applyPendingMigrations(db *sql.DB) error {
 				return err
 			}
 		}
-		if err := applyIdentitySnapshotsMigration(tx, now); err != nil {
+		if userVersion <= 6 {
+			if err := applyIdentitySnapshotsMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if err := applyCurrentSettingsViewMigration(tx, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`PRAGMA user_version = 7`); err != nil {
+		if _, err := tx.Exec(`PRAGMA user_version = 8`); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -3825,6 +3835,16 @@ func applySyncCursorsMigration(tx *sql.Tx, appliedAt string) error {
 	return err
 }
 
+func applyCurrentSettingsViewMigration(tx *sql.Tx, appliedAt string) error {
+	for _, statement := range normalizedViewsRegistry().MigrationStatements(8) {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (8, 'add_current_settings_view', ?)`, appliedAt)
+	return err
+}
+
 func applyIdentitySnapshotsMigration(tx *sql.Tx, appliedAt string) error {
 	for _, statement := range identitySnapshotsMigrationStatements() {
 		if _, err := tx.Exec(statement); err != nil {
@@ -3872,6 +3892,7 @@ func expectedSchemaMigrations() map[int]string {
 		5: "add_first_release_normalized_views",
 		6: "add_sync_cursors",
 		7: "rename_profile_snapshots_to_identity_snapshots",
+		8: "add_current_settings_view",
 	}
 }
 

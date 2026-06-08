@@ -209,6 +209,116 @@ func TestProfileCommandWritesViaIdentitySnapshotArchive(t *testing.T) {
 	}
 }
 
+// TestSettingsCommandArchivesSnapshotWithKindSettings is the slice D
+// tracer: `gohealthcli settings` calls users.getSettings, archives the
+// payload via the Identity Snapshot Archive with kind='settings', and
+// reports success to the user.
+func TestSettingsCommandArchivesSnapshotWithKindSettings(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d", code)
+	}
+
+	originalFetchSettings := fetchSettings
+	fetchSettings = func(string) (googleSettings, error) {
+		return googleSettings{
+			rawJSON: `{"name":"users/111111256096816351/settings","measurementSystem":"METRIC","timezone":"Europe/Brussels"}`,
+		}, nil
+	}
+	t.Cleanup(func() { fetchSettings = originalFetchSettings })
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"settings", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("settings exit code = %d, stderr=%s, stdout=%s", code, stderr.String(), stdout.String())
+	}
+
+	archive, err := openIdentitySnapshotArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open identity snapshot archive: %v", err)
+	}
+	defer archive.Close()
+	connection, err := archive.CurrentConnection()
+	if err != nil {
+		t.Fatalf("CurrentConnection: %v", err)
+	}
+	latest, found, err := archive.Latest(connection, "settings")
+	if err != nil || !found {
+		t.Fatalf("Latest(settings): found=%v err=%v", found, err)
+	}
+	if latest.Kind != "settings" {
+		t.Fatalf("Kind = %q, want settings", latest.Kind)
+	}
+	if latest.RawJSON != `{"name":"users/111111256096816351/settings","measurementSystem":"METRIC","timezone":"Europe/Brussels"}` {
+		t.Fatalf("RawJSON = %q, want round-tripped settings payload", latest.RawJSON)
+	}
+}
+
+// TestCurrentSettingsViewProjectsLatestSnapshot pins the slice D view:
+// once at least one settings snapshot has been archived, current_settings
+// returns one row per Connection projecting the latest payload as
+// columns (measurement_system, timezone) plus the source identifiers.
+func TestCurrentSettingsViewProjectsLatestSnapshot(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d", code)
+	}
+
+	archive, err := openIdentitySnapshotArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	connection, err := archive.CurrentConnection()
+	if err != nil {
+		archive.Close()
+		t.Fatalf("CurrentConnection: %v", err)
+	}
+	// Two settings snapshots: only the newest (id=2) should surface.
+	if _, err := archive.Insert(connection, "settings", `{"measurementSystem":"IMPERIAL","timezone":"America/New_York"}`, "2026-05-01T00:00:00Z"); err != nil {
+		t.Fatalf("insert old settings: %v", err)
+	}
+	if _, err := archive.Insert(connection, "settings", `{"measurementSystem":"METRIC","timezone":"Europe/Brussels"}`, "2026-06-08T00:00:00Z"); err != nil {
+		t.Fatalf("insert new settings: %v", err)
+	}
+	archive.Close()
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+	var measurementSystem, timezone, fetchedAt string
+	err = db.QueryRow(`SELECT measurement_system, timezone, fetched_at FROM current_settings WHERE connection_id = ?`, connection.id).
+		Scan(&measurementSystem, &timezone, &fetchedAt)
+	if err != nil {
+		t.Fatalf("query current_settings: %v", err)
+	}
+	if measurementSystem != "METRIC" {
+		t.Fatalf("measurement_system = %q, want METRIC (newest snapshot's value)", measurementSystem)
+	}
+	if timezone != "Europe/Brussels" {
+		t.Fatalf("timezone = %q, want Europe/Brussels (newest snapshot's value)", timezone)
+	}
+	if fetchedAt != "2026-06-08T00:00:00Z" {
+		t.Fatalf("fetched_at = %q, want newest snapshot's timestamp", fetchedAt)
+	}
+}
+
 // TestV6ArchiveMigratesProfileSnapshotsWithKindDefault drives behavior 2
 // of slice A: a v6 archive that contains profile_snapshots rows must
 // migrate forward so those rows surface as identity_snapshots rows with
