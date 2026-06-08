@@ -1,0 +1,226 @@
+package main
+
+import (
+	"errors"
+	"strings"
+	"testing"
+	"time"
+)
+
+// fakeSyncPreflightContext lets the gate's unit table-test run without
+// touching the real archive: an in-memory catalog adapter, an in-memory
+// source-family rule, a fixed clock, and a stub current-connection
+// lookup. Re-uses the production rules via thin closures so the gate's
+// behaviour stays in lockstep with the catalog as it grows.
+func fakeSyncPreflightContext(now time.Time, connection archivedConnection) syncPreflightContext {
+	return syncPreflightContext{
+		now: func() time.Time { return now },
+		dataTypeSupported: func(dataType string) bool {
+			switch dataType {
+			case "steps", "heart-rate", "weight", "sleep", "active-energy-burned":
+				return true
+			}
+			return false
+		},
+		dataTypeUsesDateRange: func(dataType string) bool {
+			return dataType == "weight"
+		},
+		sourceFamilyFilter: func(dataType, sourceFamily string) (string, error) {
+			if dataType != "steps" && dataType != "heart-rate" {
+				return "", errors.New("sync --source-family is not supported for Data Type " + dataType)
+			}
+			if sourceFamily != "wearable" {
+				return "", errors.New("sync --source-family currently supports only wearable")
+			}
+			return "users/me/dataSourceFamilies/google-wearables", nil
+		},
+		defaultAllDataTypes: func() []string {
+			return []string{"steps", "heart-rate", "sleep"}
+		},
+		currentConnection: func() (archivedConnection, error) {
+			return connection, nil
+		},
+		rollupCatalogValidator: func(spec syncRollupSpec, dataType string) error {
+			// Only `steps` carries `daily` in the fake catalog; everything
+			// else returns the same shape the production validator emits.
+			if spec.cursorKind == "daily" && dataType != "steps" {
+				return errors.New("sync --rollup daily: Data Type " + dataType + " does not support daily Rollups")
+			}
+			return nil
+		},
+	}
+}
+
+func TestSyncPreflightGateRulesTable(t *testing.T) {
+	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
+	conn := archivedConnection{id: "googlehealth:111", providerName: "Google Health"}
+	ctx := fakeSyncPreflightContext(now, conn)
+	gate := syncPreflightGate{ctx: ctx}
+
+	cases := []struct {
+		name       string
+		options    syncCommandOptions
+		wantRule   string
+		wantErrSub string
+	}{
+		{
+			name:       "no types and no all flag is missing-types",
+			options:    syncCommandOptions{},
+			wantRule:   preflightRuleMissingDataTypes,
+			wantErrSub: "sync requires --types or --all",
+		},
+		{
+			name:       "all combined with types is mutually exclusive",
+			options:    syncCommandOptions{allTypes: true, dataTypes: []string{"steps"}},
+			wantRule:   preflightRuleAllVsTypesConflict,
+			wantErrSub: "--all cannot be combined with --types",
+		},
+		{
+			name:       "duplicate --types entries rejected",
+			options:    syncCommandOptions{dataTypes: []string{"steps", "steps"}},
+			wantRule:   preflightRuleDuplicateDataType,
+			wantErrSub: `"steps" more than once`,
+		},
+		{
+			name:       "unsupported Data Type rejected",
+			options:    syncCommandOptions{dataTypes: []string{"unsupported-type"}},
+			wantRule:   preflightRuleUnsupportedDataType,
+			wantErrSub: `"unsupported-type" is not supported yet`,
+		},
+		{
+			name:       "rollup parse failure",
+			options:    syncCommandOptions{dataTypes: []string{"steps"}, rollup: "weird"},
+			wantRule:   preflightRuleRollupParse,
+			wantErrSub: `"weird" is not supported`,
+		},
+		{
+			name:       "rollup catalog mismatch",
+			options:    syncCommandOptions{dataTypes: []string{"heart-rate"}, rollup: "daily"},
+			wantRule:   preflightRuleRollupCatalog,
+			wantErrSub: "does not support daily Rollups",
+		},
+		{
+			name:       "source-family rejected for unsupported Data Type",
+			options:    syncCommandOptions{dataTypes: []string{"sleep"}, sourceFamily: "wearable"},
+			wantRule:   preflightRuleSourceFamily,
+			wantErrSub: "is not supported for Data Type sleep",
+		},
+		{
+			name:       "source-family + rollup mutually exclusive",
+			options:    syncCommandOptions{dataTypes: []string{"steps"}, rollup: "daily", sourceFamily: "wearable"},
+			wantRule:   preflightRuleRollupSourceFamilyConflict,
+			wantErrSub: "--source-family cannot be combined with --rollup",
+		},
+		{
+			// Mutual-exclusion must fire before per-type source-family /
+			// rollup-catalog checks so an operator who sets both flags
+			// hears about the conflict itself, not a downstream rejection
+			// from one of the flags they aren't actually allowed to use
+			// in combination.
+			name:       "rollup + source-family conflict reported even when source-family unsupported for the type",
+			options:    syncCommandOptions{dataTypes: []string{"sleep"}, rollup: "daily", sourceFamily: "wearable"},
+			wantRule:   preflightRuleRollupSourceFamilyConflict,
+			wantErrSub: "--source-family cannot be combined with --rollup",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := gate.Validate(tc.options)
+			if err == nil {
+				t.Fatalf("Validate(%+v) error = nil, want rule=%s", tc.options, tc.wantRule)
+			}
+			var failure *preflightFailure
+			if !errors.As(err, &failure) {
+				t.Fatalf("error = %v (%T), want *preflightFailure", err, err)
+			}
+			if failure.Rule() != tc.wantRule {
+				t.Errorf("rule = %q, want %q", failure.Rule(), tc.wantRule)
+			}
+			if !strings.Contains(err.Error(), tc.wantErrSub) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tc.wantErrSub)
+			}
+		})
+	}
+}
+
+func TestSyncPreflightGateAllExpandsToCatalogList(t *testing.T) {
+	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
+	conn := archivedConnection{id: "googlehealth:111", providerName: "Google Health"}
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
+
+	plan, err := gate.Validate(syncCommandOptions{allTypes: true, from: "2026-01-01", to: "2026-01-02T00:00:00Z"})
+	if err != nil {
+		t.Fatalf("Validate(--all): %v", err)
+	}
+	want := []string{"steps", "heart-rate", "sleep"}
+	if len(plan.dataTypes) != len(want) {
+		t.Fatalf("plan.dataTypes = %v, want %v", plan.dataTypes, want)
+	}
+	for i, dt := range want {
+		if plan.dataTypes[i] != dt {
+			t.Errorf("plan.dataTypes[%d] = %q, want %q", i, plan.dataTypes[i], dt)
+		}
+	}
+	if plan.connection.id != conn.id {
+		t.Errorf("plan.connection.id = %q, want %q", plan.connection.id, conn.id)
+	}
+}
+
+func TestSyncPreflightGateDefaultsToWhenEmpty(t *testing.T) {
+	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
+	conn := archivedConnection{id: "googlehealth:111"}
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
+
+	plan, err := gate.Validate(syncCommandOptions{dataTypes: []string{"steps"}, from: "2026-01-01"})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	// steps + non-rollup defaults to RFC3339 (date-range only fires for
+	// catalog entries with UsesDateRangeDefault=true, or for --rollup daily).
+	if want := now.UTC().Format(time.RFC3339); plan.to != want {
+		t.Errorf("plan.to = %q, want %q", plan.to, want)
+	}
+}
+
+func TestSyncPreflightGateDefaultsToWhenDailyRollup(t *testing.T) {
+	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
+	conn := archivedConnection{id: "googlehealth:111"}
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
+
+	plan, err := gate.Validate(syncCommandOptions{dataTypes: []string{"steps"}, rollup: "daily", from: "2026-01-01"})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if want := now.UTC().Format("2006-01-02"); plan.to != want {
+		t.Errorf("plan.to = %q, want %q (daily rollup defaults to civil date)", plan.to, want)
+	}
+}
+
+func TestSyncPreflightGateProducesCursorKeyPerDataType(t *testing.T) {
+	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
+	conn := archivedConnection{id: "googlehealth:abc"}
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
+
+	plan, err := gate.Validate(syncCommandOptions{
+		dataTypes: []string{"steps", "heart-rate"},
+		from:      "2026-01-01",
+		to:        "2026-01-02T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if len(plan.cursorKeys) != 2 {
+		t.Fatalf("plan.cursorKeys len = %d, want 2", len(plan.cursorKeys))
+	}
+	if plan.cursorKeys[0].dataType != "steps" || plan.cursorKeys[1].dataType != "heart-rate" {
+		t.Errorf("cursor keys = %+v, want one per Data Type", plan.cursorKeys)
+	}
+	for i, key := range plan.cursorKeys {
+		if key.connectionID != conn.id {
+			t.Errorf("cursorKeys[%d].connectionID = %q, want %q", i, key.connectionID, conn.id)
+		}
+		if key.rollupKind != syncCursorRollupKindNone {
+			t.Errorf("cursorKeys[%d].rollupKind = %q, want none", i, key.rollupKind)
+		}
+	}
+}

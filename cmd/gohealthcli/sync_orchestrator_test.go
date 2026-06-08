@@ -313,6 +313,45 @@ func TestInstallSyncCancelChannelClosesOnStop(t *testing.T) {
 	stop()
 }
 
+// TestPerTypeSyncOptionsClearsAllTypes is the regression test for the
+// `sync --all` carry-over bug: orchestrator.Sync expanded --all into a
+// fan-out list, but the per-Data-Type options copy preserved
+// allTypes=true. When Execute then called gate.Validate, the gate's
+// expandDataTypes rejected every per-type call as
+// preflightRuleAllVsTypesConflict, completely breaking --all.
+func TestPerTypeSyncOptionsClearsAllTypes(t *testing.T) {
+	cancel := make(chan struct{})
+	options := syncCommandOptions{
+		allTypes:  true,
+		dataTypes: []string{"steps", "heart-rate"},
+		from:      "2026-01-01",
+		to:        "2026-01-02T00:00:00Z",
+	}
+	perType := perTypeSyncOptions(options, "steps", cancel)
+	if perType.allTypes {
+		t.Errorf("perType.allTypes = true, want false (gate rejects allTypes alongside dataTypes)")
+	}
+	if len(perType.dataTypes) != 1 || perType.dataTypes[0] != "steps" {
+		t.Errorf("perType.dataTypes = %v, want [\"steps\"]", perType.dataTypes)
+	}
+	if perType.cancelCh != cancel {
+		t.Error("perType.cancelCh not wired from orchestrator")
+	}
+	if perType.from != options.from || perType.to != options.to {
+		t.Errorf("perType drops --from/--to: from=%q to=%q", perType.from, perType.to)
+	}
+	// Drive the resulting options through the gate's expandDataTypes to
+	// confirm the all-vs-types conflict no longer fires.
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(time.Now(), archivedConnection{id: "x"})}
+	got, err := gate.expandDataTypes(perType)
+	if err != nil {
+		t.Fatalf("gate.expandDataTypes(perType): %v — orchestrator forwards a config the gate rejects", err)
+	}
+	if len(got) != 1 || got[0] != "steps" {
+		t.Errorf("gate.expandDataTypes(perType) = %v, want [\"steps\"]", got)
+	}
+}
+
 // TestFanOutStatusEmptyResultsReportsCanceled pins the contract callers
 // rely on: orchestrator.Sync returns an empty slice only when SIGINT
 // arrived before the first Data Type started. The CLI surface must read

@@ -23,68 +23,55 @@ func syncSetupWithRuntime(options syncCommandOptions, runtime runtimeAdapters) (
 	return (syncRunExecutor{runtime: runtime}).Execute(options)
 }
 
+// preflightFailureResult shapes the syncResult returned when the gate
+// rejects an invocation. Status is always sync_failed (never the empty
+// string, per the JSON wire-shape AC); SyncRunID is unset so the JSON
+// envelope omits sync_run_id (matching the no-audit-row contract).
+// DataTypes mirrors what the operator passed so the failure envelope
+// still names the run the user thought they were starting. From/To come
+// straight from options because the gate returns a zero preflightPlan on
+// every error path, so plan.from/plan.to would always be empty here.
+func preflightFailureResult(options syncCommandOptions, err error) syncResult {
+	return syncResult{
+		Status:    "sync_failed",
+		DataTypes: options.dataTypes,
+		From:      options.from,
+		To:        options.to,
+		Message:   err.Error(),
+	}
+}
+
+// Execute is the executor's per-Data-Type entry. It routes EVERY preflight
+// rule through syncPreflightGate.Validate so this function holds no
+// flag-shape, rollup-parse, source-family or connection-presence checks
+// of its own — the gate owns the no-audit-row contract: when Validate
+// fails, no sync_runs row has been written and the early return preserves
+// that invariant. Resume-from-cursor lookup stays here because it depends
+// on archive state, not flag shape; the rest of the body assumes every
+// option is already validated.
 func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
 	runtime := executor.runtime.withDefaults()
-	if len(options.dataTypes) == 0 {
-		return syncResult{Status: "sync_failed"}, errors.New("sync requires at least one Data Type")
-	}
-	if len(options.dataTypes) != 1 {
-		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync currently supports one Data Type per run")
-	}
-	dataType := options.dataTypes[0]
-	if !syncDataPointDataTypeSupported(dataType) {
-		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, fmt.Errorf("sync Data Type %q is not supported yet", dataType)
-	}
-	// Validate --rollup up front so we surface the parse / catalog
-	// error verbatim (the #106 AC requires the SupportedEndpoints map
-	// keys be quoted) without reaching the upstream provider. The
-	// Plan() call below re-runs the same validation; pre-flighting it
-	// here keeps the audit-row-not-written semantic for preflight
-	// failures intact.
-	if options.rollup != "" {
-		spec, err := parseSyncRollupSpec(options.rollup)
-		if err != nil {
-			return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, err
-		}
-		if err := validateSyncRollupAgainstDataType(spec, dataType); err != nil {
-			return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, err
-		}
-	}
-	if options.sourceFamily != "" {
-		if _, err := googleHealthSourceFamilyFilterName(dataType, options.sourceFamily); err != nil {
-			return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, err
-		}
-	}
-	if options.rollup != "" && options.sourceFamily != "" {
-		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes}, errors.New("sync --source-family cannot be combined with --rollup")
-	}
-	if options.to == "" {
-		if options.rollup == "daily" || syncDataPointUsesDateRange(dataType) {
-			options.to = runtime.now().UTC().Format("2006-01-02")
-		} else {
-			options.to = runtime.now().UTC().Format(time.RFC3339)
-		}
-	}
-
-	config, err := inspectIdentityConfig(options.configPath, options.archivePath)
+	gate := syncPreflightGate{ctx: productionSyncPreflightContext(options, runtime)}
+	plan, err := gate.Validate(options)
 	if err != nil {
-		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, fmt.Errorf("config check failed: %w", err)
+		return preflightFailureResult(options, err), err
 	}
+	if len(plan.dataTypes) != 1 {
+		return syncResult{Status: "sync_failed", DataTypes: plan.dataTypes}, errors.New("sync currently supports one Data Type per run")
+	}
+	dataType := plan.dataTypes[0]
+	options.to = plan.to
+	connection := plan.connection
 	archive, err := healthArchiveWriterOpenerForTest(options.archivePath)
 	if err != nil {
-		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, err
+		return syncResult{Status: "sync_failed", DataTypes: plan.dataTypes, From: options.from, To: options.to}, err
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	config, err := inspectIdentityConfig(options.configPath, options.archivePath)
 	if err != nil {
-		return syncResult{Status: "sync_failed", DataTypes: options.dataTypes, From: options.from, To: options.to}, err
+		return syncResult{Status: "sync_failed", DataTypes: plan.dataTypes, From: options.from, To: options.to}, fmt.Errorf("config check failed: %w", err)
 	}
-	cursorKey := syncCursorKey{
-		connectionID:       connection.id,
-		dataType:           dataType,
-		sourceFamilyFilter: options.sourceFamily,
-		rollupKind:         rollupKindForSync(options.rollup),
-	}
+	cursorKey := plan.cursorKeys[0]
 	resumedFromCursor := false
 	if options.from == "" {
 		cursorTime, found, err := archive.ResolveSyncCursor(cursorKey)
