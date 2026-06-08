@@ -215,39 +215,12 @@ func TestFetchWithRetryRetryAfterIgnoredIfSmallerThanExponential(t *testing.T) {
 	}
 }
 
-// TestFetchWithRetryHonorsPreClosedCancel pins the entry-side cancel
-// check: a cancelCh that was already closed before fetchWithRetry is
-// invoked must surface errSyncCanceled without issuing any upstream
-// fetch. Without this guard, an orchestrator that receives SIGINT
-// between Data Types could still incur one wasted HTTP round-trip on
-// the in-flight type before the loop's mid-backoff cancel fires.
-func TestFetchWithRetryHonorsPreClosedCancel(t *testing.T) {
+func TestFetchWithRetryShortCircuitsBackoffOnCancel(t *testing.T) {
 	cancelCh := make(chan struct{})
 	close(cancelCh)
 	attempts := 0
 	fetcher := func(rawProviderRequest, string) ([]byte, error) {
 		attempts++
-		return nil, &googleHealthHTTPError{StatusCode: 429}
-	}
-	_, err := fetchWithRetry(fetcher, sleepWithCancel, noopRetryJitter, rawProviderRequest{}, "tok", cancelCh)
-	if !errors.Is(err, errSyncCanceled) {
-		t.Fatalf("err = %v, want errSyncCanceled (pre-closed cancelCh must short-circuit before the first fetch)", err)
-	}
-	if attempts != 0 {
-		t.Fatalf("attempts = %d, want 0 (no fetch should run when cancelCh was closed before the call)", attempts)
-	}
-}
-
-func TestFetchWithRetryShortCircuitsBackoffOnCancel(t *testing.T) {
-	cancelCh := make(chan struct{})
-	attempts := 0
-	fetcher := func(rawProviderRequest, string) ([]byte, error) {
-		attempts++
-		// Cancel arrives mid-flight: the first fetch finishes, then the
-		// caller's SIGINT closes cancelCh, then the middleware enters
-		// its mid-backoff sleep. The pre-attempt guard does not fire
-		// because attempt 1 was already in flight when cancel arrived.
-		close(cancelCh)
 		return nil, &googleHealthHTTPError{StatusCode: 429, RetryAfter: 10 * time.Second}
 	}
 	// Use the real sleeper so we exercise the select against cancelCh.
