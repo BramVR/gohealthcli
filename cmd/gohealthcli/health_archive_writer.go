@@ -12,6 +12,7 @@ type healthArchiveWriter interface {
 	CurrentConnection() (archivedConnection, error)
 	StartSyncRun(connection archivedConnection, dataTypes []string, from, to, endpointFamily, sourceFamilyFilter, startedAt string) (int64, error)
 	FinishSyncRun(id int64, status string, seenCount, newCount, updatedCount int, finishedAt, errorSummary string) error
+	FinalizeSyncRun(id int64, status string, seenCount, newCount, updatedCount int, finishedAt, errorSummary string, cursorKey syncCursorKey, outcome syncRunOutcome, cursorTo, advancedAt string) error
 	UpsertDataPoint(point archivedDataPoint, now string) (string, error)
 	UpsertRollup(rollup archivedRollup, now string) (string, error)
 	ResolveSyncCursor(key syncCursorKey) (string, bool, error)
@@ -68,6 +69,38 @@ func (archive *sqliteHealthArchiveWriter) CommitSyncCursor(key syncCursorKey, ou
 	return commitSyncCursor(archive.db, key, outcome, to, advancedAt)
 }
 
+// FinalizeSyncRun atomically writes the Sync Run terminal status AND
+// advances the Sync Cursor (when the outcome warrants it) inside one
+// SQLite transaction. This closes the ADR-0008 race where a crash
+// between the legacy FinishSyncRun and CommitSyncCursor calls could
+// leave the sync_run row marked sync_completed while the cursor was
+// still stale. The cursor advance is gated by the outcome via
+// commitSyncCursorTx, so sync_failed and sync_canceled finalize the
+// run row without touching the cursor.
+func (archive *sqliteHealthArchiveWriter) FinalizeSyncRun(id int64, status string, seenCount, newCount, updatedCount int, finishedAt, errorSummary string, cursorKey syncCursorKey, outcome syncRunOutcome, cursorTo, advancedAt string) error {
+	tx, err := archive.db.Begin()
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if err := finishSyncRunTx(tx, id, status, seenCount, newCount, updatedCount, finishedAt, errorSummary); err != nil {
+		return err
+	}
+	if err := commitSyncCursorTx(tx, cursorKey, outcome, cursorTo, advancedAt); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
 func insertSyncRun(db *sql.DB, connection archivedConnection, dataTypes []string, from, to, endpointFamily, sourceFamilyFilter, startedAt string) (int64, error) {
 	dataTypesJSON, err := json.Marshal(dataTypes)
 	if err != nil {
@@ -103,7 +136,22 @@ func insertSyncRun(db *sql.DB, connection archivedConnection, dataTypes []string
 }
 
 func finishSyncRun(db *sql.DB, syncRunID int64, status string, seen, newCount, updated int, finishedAt, errorSummary string) error {
-	_, err := db.Exec(`UPDATE sync_runs SET
+	return finishSyncRunExec(db, syncRunID, status, seen, newCount, updated, finishedAt, errorSummary)
+}
+
+// finishSyncRunTx is the same write as finishSyncRun but bound to an open
+// transaction so it can compose with commitSyncCursorTx inside
+// FinalizeSyncRun.
+func finishSyncRunTx(tx *sql.Tx, syncRunID int64, status string, seen, newCount, updated int, finishedAt, errorSummary string) error {
+	return finishSyncRunExec(tx, syncRunID, status, seen, newCount, updated, finishedAt, errorSummary)
+}
+
+type sqlExecutor interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func finishSyncRunExec(executor sqlExecutor, syncRunID int64, status string, seen, newCount, updated int, finishedAt, errorSummary string) error {
+	_, err := executor.Exec(`UPDATE sync_runs SET
 		status = ?,
 		seen_count = ?,
 		new_count = ?,

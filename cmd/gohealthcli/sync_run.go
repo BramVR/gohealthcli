@@ -127,32 +127,21 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 		}
 		now := runtime.now().UTC().Format(time.RFC3339)
 		seen, newCount, updated := syncResultTotalCounts(result)
-		if updateErr := archive.FinishSyncRun(syncRunID, result.Status, seen, newCount, updated, now, errorSummary); updateErr != nil {
+		if finalizeErr := archive.FinalizeSyncRun(syncRunID, result.Status, seen, newCount, updated, now, errorSummary, cursorKey, outcome, options.to, now); finalizeErr != nil {
+			// The atomic write rolled back: the sync_run row is still in its
+			// StartSyncRun state and no cursor advance happened. Try a
+			// best-effort separate write to mark the run sync_failed so the
+			// audit trail does not show a perpetually-running attempt. If
+			// that recovery write also fails, surface both errors — there is
+			// no in-process action that can repair an unreachable database.
 			result.Status = "sync_failed"
-			result.Message = updateErr.Error()
+			result.Message = finalizeErr.Error()
+			finalErr := finalizeErr
 			if cause != nil {
-				return result, fmt.Errorf("%w; record %s Sync Run: %v", cause, outcome, updateErr)
+				finalErr = fmt.Errorf("%w; %v", cause, finalizeErr)
 			}
-			return result, fmt.Errorf("record %s Sync Run: %w", outcome, updateErr)
-		}
-		if commitErr := archive.CommitSyncCursor(cursorKey, outcome, options.to, now); commitErr != nil {
-			result.Status = "sync_failed"
-			result.Message = commitErr.Error()
-			// Reconcile the audit trail: the Sync Run row was just written as
-			// `outcome` (e.g. sync_completed) but the cursor commit failed, so
-			// the next sync would resume from the prior cursor while status
-			// reports the run as successful. Re-mark the row as failed so the
-			// audit trail and the cursor agree. Surface the reconciliation
-			// error if it also fails — that combined failure is the exact
-			// inconsistency this block exists to prevent.
-			finalErr := commitErr
-			if cause != nil {
-				finalErr = fmt.Errorf("%w; %v", cause, commitErr)
-			}
-			if outcome == syncRunOutcomeCompleted {
-				if reconcileErr := archive.FinishSyncRun(syncRunID, "sync_failed", seen, newCount, updated, now, result.Message); reconcileErr != nil {
-					finalErr = fmt.Errorf("%v; reconcile Sync Run: %w", finalErr, reconcileErr)
-				}
+			if recoveryErr := archive.FinishSyncRun(syncRunID, "sync_failed", seen, newCount, updated, now, result.Message); recoveryErr != nil {
+				finalErr = fmt.Errorf("%v; mark Sync Run failed: %w", finalErr, recoveryErr)
 			}
 			return result, finalErr
 		}
