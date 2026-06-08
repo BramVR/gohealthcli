@@ -28,7 +28,7 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 6
+const currentSchemaVersion = 7
 const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
@@ -113,17 +113,18 @@ type syncResult struct {
 }
 
 type statusResult struct {
-	Status               string           `json:"status"`
-	ArchivePath          string           `json:"archive_path"`
-	SchemaVersion        int              `json:"schema_version,omitempty"`
-	DataPointCount       int              `json:"data_point_count"`
-	RollupCount          int              `json:"rollup_count"`
-	ProfileSnapshotCount int              `json:"profile_snapshot_count"`
-	SyncRunCount         int              `json:"sync_run_count"`
-	DataTypes            []statusDataType `json:"data_types,omitempty"`
-	LatestSuccessfulRun  *statusSyncRun   `json:"latest_successful_sync_run,omitempty"`
-	LatestFailedRun      *statusSyncRun   `json:"latest_failed_sync_run,omitempty"`
-	Message              string           `json:"message"`
+	Status                string           `json:"status"`
+	ArchivePath           string           `json:"archive_path"`
+	SchemaVersion         int              `json:"schema_version,omitempty"`
+	DataPointCount        int              `json:"data_point_count"`
+	RollupCount           int              `json:"rollup_count"`
+	ProfileSnapshotCount  int              `json:"profile_snapshot_count"`
+	IdentitySnapshotCount int              `json:"identity_snapshot_count"`
+	SyncRunCount          int              `json:"sync_run_count"`
+	DataTypes             []statusDataType `json:"data_types,omitempty"`
+	LatestSuccessfulRun   *statusSyncRun   `json:"latest_successful_sync_run,omitempty"`
+	LatestFailedRun       *statusSyncRun   `json:"latest_failed_sync_run,omitempty"`
+	Message               string           `json:"message"`
 }
 
 type statusDataType struct {
@@ -3696,7 +3697,10 @@ func applyMigrations(db *sql.DB) error {
 	if err := applySyncCursorsMigration(tx, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 6`); err != nil {
+	if err := applyIdentitySnapshotsMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 7`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -3714,7 +3718,7 @@ func applyPendingMigrations(db *sql.DB) error {
 	switch userVersion {
 	case currentSchemaVersion:
 		return nil
-	case 1, 2, 3, 4, 5:
+	case 1, 2, 3, 4, 5, 6:
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -3741,10 +3745,15 @@ func applyPendingMigrations(db *sql.DB) error {
 				return err
 			}
 		}
-		if err := applySyncCursorsMigration(tx, now); err != nil {
+		if userVersion <= 5 {
+			if err := applySyncCursorsMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if err := applyIdentitySnapshotsMigration(tx, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`PRAGMA user_version = 6`); err != nil {
+		if _, err := tx.Exec(`PRAGMA user_version = 7`); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -3804,6 +3813,29 @@ func applySyncCursorsMigration(tx *sql.Tx, appliedAt string) error {
 	return err
 }
 
+func applyIdentitySnapshotsMigration(tx *sql.Tx, appliedAt string) error {
+	for _, statement := range identitySnapshotsMigrationStatements() {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (7, 'rename_profile_snapshots_to_identity_snapshots', ?)`, appliedAt)
+	return err
+}
+
+// identitySnapshotsMigrationStatements renames profile_snapshots to
+// identity_snapshots and adds the snapshot_kind discriminator. All
+// existing rows keep snapshot_kind = 'profile' via the column default,
+// preserving every prior profile snapshot's identity without a
+// parallel-table-with-view shim (per the PRD §"identity_snapshots
+// migration: explicit strategy").
+func identitySnapshotsMigrationStatements() []string {
+	return []string{
+		`ALTER TABLE profile_snapshots RENAME TO identity_snapshots`,
+		`ALTER TABLE identity_snapshots ADD COLUMN snapshot_kind TEXT NOT NULL DEFAULT 'profile'`,
+	}
+}
+
 func syncCursorsMigrationStatements() []string {
 	return []string{
 		`CREATE TABLE sync_cursors (
@@ -3827,6 +3859,7 @@ func expectedSchemaMigrations() map[int]string {
 		4: "add_daily_steps_view",
 		5: "add_first_release_normalized_views",
 		6: "add_sync_cursors",
+		7: "rename_profile_snapshots_to_identity_snapshots",
 	}
 }
 

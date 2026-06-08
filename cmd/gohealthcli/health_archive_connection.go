@@ -124,8 +124,13 @@ func readCurrentConnection(db *sql.DB) (archivedConnection, error) {
 	return connections[0], nil
 }
 
+// insertProfileSnapshot is the Connection API's profile-write path. Slice
+// B of #97 lifts this into a dedicated Identity Snapshot Archive module;
+// for slice A the function stays put but now writes into the renamed
+// identity_snapshots table with snapshot_kind='profile' supplied by the
+// column default.
 func insertProfileSnapshot(db *sql.DB, connection archivedConnection, rawJSON, fetchedAt string) (int64, error) {
-	result, err := db.Exec(`INSERT INTO profile_snapshots (
+	result, err := db.Exec(`INSERT INTO identity_snapshots (
 		provider_name,
 		connection_id,
 		raw_json,

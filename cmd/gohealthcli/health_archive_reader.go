@@ -58,6 +58,9 @@ func (archive *sqliteHealthArchiveReader) StatusSummary() (statusResult, error) 
 	if result.ProfileSnapshotCount, err = countArchiveRows(archive.db, "profile_snapshots"); err != nil {
 		return result, err
 	}
+	if result.IdentitySnapshotCount, err = countArchiveRows(archive.db, "identity_snapshots"); err != nil {
+		return result, err
+	}
 	if result.SyncRunCount, err = countArchiveRows(archive.db, "sync_runs"); err != nil {
 		return result, err
 	}
@@ -247,10 +250,15 @@ func countArchiveRows(db *sql.DB, table string) (int, error) {
 }
 
 var archiveCountQueryByTable = map[string]string{
-	"data_points":       `SELECT count(*) FROM data_points`,
-	"rollups":           `SELECT count(*) FROM rollups`,
-	"profile_snapshots": `SELECT count(*) FROM profile_snapshots`,
-	"sync_runs":         `SELECT count(*) FROM sync_runs`,
+	"data_points": `SELECT count(*) FROM data_points`,
+	"rollups":     `SELECT count(*) FROM rollups`,
+	// profile_snapshots is a virtual count: post-#97 the underlying table
+	// is identity_snapshots, but the JSON status field keeps its existing
+	// name for downstream tooling that pre-dates the rename. We count
+	// only kind='profile' rows so it matches what the field used to mean.
+	"profile_snapshots":  `SELECT count(*) FROM identity_snapshots WHERE snapshot_kind = 'profile'`,
+	"identity_snapshots": `SELECT count(*) FROM identity_snapshots`,
+	"sync_runs":          `SELECT count(*) FROM sync_runs`,
 }
 
 func readStatusDataTypes(db *sql.DB) ([]statusDataType, error) {
