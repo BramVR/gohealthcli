@@ -150,6 +150,44 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantRecordKind:        "sample",
 			wantDefaultConfigType: true,
 		},
+		// Tier 1 Health metrics Data Types (#102). Opt-in only via
+		// `--types <name>` — none are DefaultConfigType yet.
+		{
+			dataType:            "body-fat",
+			wantScopes:          []string{googleHealthHealthMetricsReadonlyScope},
+			wantListFilterField: "body_fat.sample_time.physical_time",
+			wantSyncDataPoint:   true,
+			wantReconcile:       true,
+			wantParser:          "sample",
+			wantRecordKind:      "sample",
+		},
+		{
+			dataType:            "blood-glucose",
+			wantScopes:          []string{googleHealthHealthMetricsReadonlyScope},
+			wantListFilterField: "blood_glucose.sample_time.physical_time",
+			wantSyncDataPoint:   true,
+			wantReconcile:       true,
+			wantParser:          "sample",
+			wantRecordKind:      "sample",
+		},
+		{
+			dataType:            "core-body-temperature",
+			wantScopes:          []string{googleHealthHealthMetricsReadonlyScope},
+			wantListFilterField: "core_body_temperature.sample_time.physical_time",
+			wantSyncDataPoint:   true,
+			wantReconcile:       true,
+			wantParser:          "sample",
+			wantRecordKind:      "sample",
+		},
+		{
+			dataType:            "height",
+			wantScopes:          []string{googleHealthHealthMetricsReadonlyScope},
+			wantListFilterField: "height.sample_time.physical_time",
+			wantSyncDataPoint:   true,
+			wantReconcile:       true,
+			wantParser:          "sample",
+			wantRecordKind:      "sample",
+		},
 	}
 
 	for _, tt := range tests {

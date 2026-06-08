@@ -301,6 +301,43 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		RecordKind:         "interval",
 		SupportedEndpoints: listReconcileEndpoints("swim_lengths_data.interval.start_time"),
 	},
+	// Tier 1 Health metrics Data Types (#102). Same hopeful-filter
+	// pattern as the Activity Tier 1 entries (#101): snake-case
+	// data-type prefix + .sample_time.physical_time for sample-shaped
+	// types. None flipped to DefaultConfigType until the upstream
+	// shape is confirmed across multiple weeks of real data.
+	{
+		DataType:           "body-fat",
+		RequiredScopes:     []string{googleHealthHealthMetricsReadonlyScope},
+		Parser:             "sample",
+		JSONField:          "bodyFat",
+		RecordKind:         "sample",
+		SupportedEndpoints: listReconcileEndpoints("body_fat.sample_time.physical_time"),
+	},
+	{
+		DataType:           "blood-glucose",
+		RequiredScopes:     []string{googleHealthHealthMetricsReadonlyScope},
+		Parser:             "sample",
+		JSONField:          "bloodGlucose",
+		RecordKind:         "sample",
+		SupportedEndpoints: listReconcileEndpoints("blood_glucose.sample_time.physical_time"),
+	},
+	{
+		DataType:           "core-body-temperature",
+		RequiredScopes:     []string{googleHealthHealthMetricsReadonlyScope},
+		Parser:             "sample",
+		JSONField:          "coreBodyTemperature",
+		RecordKind:         "sample",
+		SupportedEndpoints: listReconcileEndpoints("core_body_temperature.sample_time.physical_time"),
+	},
+	{
+		DataType:           "height",
+		RequiredScopes:     []string{googleHealthHealthMetricsReadonlyScope},
+		Parser:             "sample",
+		JSONField:          "height",
+		RecordKind:         "sample",
+		SupportedEndpoints: listReconcileEndpoints("height.sample_time.physical_time"),
+	},
 })
 
 var defaultDataTypes = googleHealthDataTypes.DefaultDataTypes()
