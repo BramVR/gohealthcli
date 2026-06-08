@@ -141,6 +141,7 @@ var commands = []commandDef{
 			flagSpec{Name: "secret-provider", Type: "string", Default: "", Usage: "Secret Provider name for OAuth client setup"},
 			flagSpec{Name: "oauth-client-item", Type: "string", Default: "", Usage: "Secret Provider item name for OAuth client setup"},
 		),
+		CommonFlags: commonFlagNames(),
 		// init runs entirely against the local filesystem (config + archive),
 		// so the runtime adapter bundle is ignored.
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
@@ -154,6 +155,7 @@ var commands = []commandDef{
 		Flags: withCommon(
 			flagSpec{Name: "online", Type: "bool", Default: "false", Usage: "refresh tokens and check provider reachability"},
 		),
+		CommonFlags: commonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 			return runDoctorWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
 		},
@@ -165,6 +167,7 @@ var commands = []commandDef{
 		Flags: withCommon(
 			flagSpec{Name: "add-scopes", Type: "string", Default: "", Usage: "extend the OAuth grant with optional scope keywords (csv): irn, ecg, nutrition, tcx"},
 		),
+		CommonFlags: commonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 			return runConnectWithRuntime(args, common.ConfigPath, common.ArchivePath, common.NoInput, commonOutputMode(common), stdout, stderr, runtime)
 		},
@@ -231,6 +234,7 @@ var commands = []commandDef{
 			flagSpec{Name: "rollup", Type: "string", Default: "", Usage: "rollup kind to sync; supported: daily | hourly | weekly | window=<duration>"},
 			flagSpec{Name: "source-family", Type: "string", Default: "", Usage: "source family filter; supported: wearable"},
 		),
+		CommonFlags: commonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 			return runSyncWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
 		},
@@ -255,6 +259,7 @@ var commands = []commandDef{
 		Long:           "Execute a single SQL statement against the Health Archive. The binary refuses anything that would write or alter the archive — `query` is for inspection, not maintenance.\n\nFlags must appear **before** the SQL argument because Go's `flag` parser stops at the first positional argument. To explore the schema, query the `sqlite_master` table or run `gohealthcli export` for the canonical normalised datasets.",
 		PositionalArgs: "<sql>",
 		Flags:          withCommon(),
+		CommonFlags:    commonFlagNames(),
 		// query, like status, reads ArchivePathExplicit so a --db passed
 		// on the global side (before the subcommand) still wins. query
 		// hits the archive read-only, so the runtime adapter bundle is
@@ -297,6 +302,12 @@ var commands = []commandDef{
 			{Name: "page-size", Type: "int", Default: "", Usage: "pagination page size (positive integer; where supported by the endpoint)"},
 			{Name: "page-token", Type: "string", Default: "", Usage: "pagination page token from a prior response"},
 		},
+		// raw's success output is the provider's raw bytes on stdout, so
+		// --plain / --json / --no-input would have no useful effect. Its
+		// CommonFlagSpec at the runtime layer (see runRawWithRuntime in
+		// main.go) declares only {config, db}; CommonFlags here mirrors
+		// that contract so the schema reflects the divergence honestly.
+		CommonFlags: []string{"config", "db"},
 		// raw owns its own --from / --to / --page-size / --page-token flag
 		// surface and writes the provider's raw bytes. runRawWithRuntime's
 		// signature already declares the outputMode arg unused (`_`), but
