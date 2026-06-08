@@ -19,6 +19,17 @@ type schemaDocument struct {
 }
 
 func runSchema(args []string, stdout, stderr io.Writer) int {
+	return runSchemaWithRegistry(args, commands, stdout, stderr)
+}
+
+// runSchemaWithRegistry is the seam runSchema's adapter uses. Splitting
+// the package-level `commands` lookup out of runSchema removes the
+// initialisation cycle that arose when slice 6 added a `commands` entry
+// whose Run adapter referenced runSchema — Go's var-init checker sees
+// the cycle even though closures defer the actual call. Taking the
+// registry as a parameter keeps the data and the adapter in lockstep
+// without the cycle.
+func runSchemaWithRegistry(args []string, registry []commandDef, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("schema", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	jsonOutput := flags.Bool("json", true, "emit the registry as JSON (default and currently the only output mode)")
@@ -41,7 +52,7 @@ func runSchema(args []string, stdout, stderr io.Writer) int {
 	doc := schemaDocument{
 		Version:  commandSchemaVersion,
 		Binary:   "gohealthcli",
-		Commands: commands,
+		Commands: registry,
 	}
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")

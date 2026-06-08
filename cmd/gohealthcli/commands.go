@@ -1,10 +1,11 @@
 package main
 
+import "io"
+
 // commandDef describes a single gohealthcli subcommand for both documentation
-// and (in a later slice) dispatch. The Project Site's command-reference pages
-// are generated from the JSON encoding of this slice via `gohealthcli schema
-// --json` — keep field names stable, because they are part of the contract
-// downstream tooling reads.
+// and dispatch. The Project Site's command-reference pages are generated from
+// the JSON encoding of this slice via `gohealthcli schema --json` — keep field
+// names stable, because they are part of the contract downstream tooling reads.
 //
 // Fields on the published JSON contract:
 //   - name            (string)              — the subcommand's invocation name
@@ -21,14 +22,23 @@ package main
 //                                             CommonFlagSet module (issue #166).
 //                                             Omitted entirely when empty so
 //                                             the wire shape stays additive.
+//
+// Run is the dispatch adapter — invoked by runWithRuntime after a successful
+// registry lookup (PRD #143 slice 6, issue #175). It is deliberately untagged
+// so it stays out of the published JSON contract: the schema documents the
+// surface, the adapter implements the call. Subcommands whose underlying
+// signature differs (status's ArchivePathExplicit, export's no-runtime,
+// schema's stdout/stderr-only) satisfy this uniform type via thin wrappers
+// that fold the differences into CommonFlagValues or ignore unused params.
 type commandDef struct {
-	Name           string     `json:"name"`
-	Short          string     `json:"short"`
-	Long           string     `json:"long"`
-	Hidden         bool       `json:"hidden"`
-	PositionalArgs string     `json:"positional_args,omitempty"`
-	Flags          []flagSpec `json:"flags"`
-	CommonFlags    []string   `json:"common_flags,omitempty"`
+	Name           string                                                                                              `json:"name"`
+	Short          string                                                                                              `json:"short"`
+	Long           string                                                                                              `json:"long"`
+	Hidden         bool                                                                                                `json:"hidden"`
+	PositionalArgs string                                                                                              `json:"positional_args,omitempty"`
+	Flags          []flagSpec                                                                                          `json:"flags"`
+	CommonFlags    []string                                                                                            `json:"common_flags,omitempty"`
+	Run            func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int `json:"-"`
 }
 
 // flagSpec describes one flag accepted by a subcommand. The string-typed
@@ -101,9 +111,23 @@ func commonFlagNames() []string {
 	return names
 }
 
+// commonOutputMode collapses the CommonFlagValues' json/plain pair into
+// the outputMode struct every subcommand's WithRuntime entry point already
+// expects. Keeping the projection in one place means a future shared-flag
+// addition (a hypothetical --quiet) only has to be wired here and in the
+// CommonFlagSet module — not threaded through every adapter inline.
+func commonOutputMode(common CommonFlagValues) outputMode {
+	return outputMode{json: common.JSONOutput, plain: common.PlainOutput}
+}
+
 // commands is the registry of every subcommand the binary exposes. The
-// dispatch switch and the --help formatter continue to source their data
-// inline for now; subsequent slices fold them onto this registry.
+// dispatch path (`runWithRuntime` after `--version` / `--help`) and the
+// `--help` printer both read from this slice — there is no parallel switch.
+// PRD #143 slice 6 (issue #175): every entry's Run adapter binds the
+// uniform `(args, common, stdout, stderr, runtime) → int` shape down to
+// each subcommand's existing entry point, folding the diverged signatures
+// (status's ArchivePathExplicit, export's no-runtime, schema's minimal)
+// into thin wrappers that ignore unused params.
 //
 // Entries are listed in the order that they should appear in the Project
 // Site sidebar and the auto-generated command-reference index.
@@ -117,6 +141,11 @@ var commands = []commandDef{
 			flagSpec{Name: "secret-provider", Type: "string", Default: "", Usage: "Secret Provider name for OAuth client setup"},
 			flagSpec{Name: "oauth-client-item", Type: "string", Default: "", Usage: "Secret Provider item name for OAuth client setup"},
 		),
+		// init runs entirely against the local filesystem (config + archive),
+		// so the runtime adapter bundle is ignored.
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
+			return runInit(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr)
+		},
 	},
 	{
 		Name:  "doctor",
@@ -125,6 +154,9 @@ var commands = []commandDef{
 		Flags: withCommon(
 			flagSpec{Name: "online", Type: "bool", Default: "false", Usage: "refresh tokens and check provider reachability"},
 		),
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+			return runDoctorWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+		},
 	},
 	{
 		Name:  "connect",
@@ -133,6 +165,9 @@ var commands = []commandDef{
 		Flags: withCommon(
 			flagSpec{Name: "add-scopes", Type: "string", Default: "", Usage: "extend the OAuth grant with optional scope keywords (csv): irn, ecg, nutrition, tcx"},
 		),
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+			return runConnectWithRuntime(args, common.ConfigPath, common.ArchivePath, common.NoInput, commonOutputMode(common), stdout, stderr, runtime)
+		},
 	},
 	{
 		Name:        "identity",
@@ -140,6 +175,9 @@ var commands = []commandDef{
 		Long:        "Re-fetch the upstream Google Identity payload (Google Health user ID and legacy Fitbit user ID when present) and update the metadata stored alongside the Connection.\n\n`identity` does not change the OAuth tokens or move the Connection between archives — use `connect` for those. It is a low-cost, read-only operation against the provider.",
 		Flags:       withCommon(),
 		CommonFlags: commonFlagNames(),
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+			return runIdentityWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+		},
 	},
 	{
 		Name:        "profile",
@@ -147,6 +185,9 @@ var commands = []commandDef{
 		Long:        "Fetch the upstream profile blob (units, time zone, demographic settings as exposed by the Google Health API) and append it to the Health Archive as a new Profile Snapshot. Each invocation creates a new dated snapshot rather than overwriting the prior one, so historical settings drift is preserved.\n\nA Profile Snapshot is not a Data Point. It is metadata about the consenting user's account and the unit conventions in force at the time of fetch.",
 		Flags:       withCommon(),
 		CommonFlags: commonFlagNames(),
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+			return runProfileWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+		},
 	},
 	{
 		Name:        "settings",
@@ -154,6 +195,9 @@ var commands = []commandDef{
 		Long:        "Fetch the upstream `users.getSettings` payload and append it to the Health Archive as a new Identity Snapshot of kind `settings`. The `current_settings` Normalized View projects the latest snapshot's measurement system, timezone, and stride-length type into columns for `query` and `export`.\n\n`settings` is read-only against the provider and writes the raw response to the archive; the JSON shape stays the source of truth, so new fields can be projected into the view without a re-sync.",
 		Flags:       withCommon(),
 		CommonFlags: commonFlagNames(),
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+			return runSettingsWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+		},
 	},
 	{
 		Name:        "devices",
@@ -161,6 +205,9 @@ var commands = []commandDef{
 		Long:        "Fetch the upstream `users.pairedDevices.list` payload and append it to the Health Archive as a new Identity Snapshot of kind `paired-devices`. The `paired_devices` Normalized View explodes the latest snapshot via `json_each`, returning one row per device with `device_type`, `model`, `manufacturer`, `battery_percentage`, `last_sync_time`, and `features`.\n\nThis is the LLM's path to questions like \"which Pixel Watch synced last?\" or \"what's my Fitbit battery?\" — every projection is read-only against the raw snapshot, so new fields can be added without re-syncing.",
 		Flags:       withCommon(),
 		CommonFlags: commonFlagNames(),
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+			return runDevicesWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+		},
 	},
 	{
 		Name:        "irn-profile",
@@ -168,6 +215,9 @@ var commands = []commandDef{
 		Long:        "Fetch the upstream `users.getIrnProfile` payload (onboarding state, enrollment state for Google's irregular-rhythm-notification feature) and append it to the Health Archive as a new Identity Snapshot of kind `irn-profile`. The `current_irn_profile` Normalized View projects the latest snapshot as columns.\n\nRequires the `irn.readonly` OAuth scope — run `gohealthcli connect --add-scopes irn` once to grant it. If the scope is not granted, `irn-profile` exits with a clear reconnect instruction and does **not** trigger the browser flow.",
 		Flags:       withCommon(),
 		CommonFlags: commonFlagNames(),
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+			return runIRNProfileWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+		},
 	},
 	{
 		Name:  "sync",
@@ -181,6 +231,9 @@ var commands = []commandDef{
 			flagSpec{Name: "rollup", Type: "string", Default: "", Usage: "rollup kind to sync; supported: daily | hourly | weekly | window=<duration>"},
 			flagSpec{Name: "source-family", Type: "string", Default: "", Usage: "source family filter; supported: wearable"},
 		),
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+			return runSyncWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+		},
 	},
 	{
 		Name:        "status",
@@ -188,6 +241,13 @@ var commands = []commandDef{
 		Long:        "Print a per-Data-Type summary of the Health Archive: how many Data Points are stored, the newest synced timestamp, and the most recent Sync Run status. Useful as a quick health check before or after a long sync.\n\nAlso reports identity-metadata freshness: a `paired_device_count` line (when a `paired-devices` snapshot is archived) and an `identity_snapshot.<kind>.fetched_at` line per Identity Snapshot kind that has at least one row (`profile`, `settings`, `paired-devices`, `irn-profile`). In `--json` these surface under an `identity_snapshots_freshness` block — omitted entirely when no snapshots exist.\n\nAlso reports Tier 2 coverage: `electrocardiogram_event_count` and `irregular_rhythm_notification_count` (plain) appear only when the corresponding scope has been granted via `connect --add-scopes ecg,irn`. In `--json` these surface under a `tier_2` block alongside `electrocardiogram_scope_granted` / `irregular_rhythm_notification_scope_granted` flags, both counts defaulting to 0 when the scope is not granted.\n\n`status` does no provider I/O — it reads only the local Health Archive.",
 		Flags:       withCommon(),
 		CommonFlags: commonFlagNames(),
+		// status's underlying signature carries an explicit ArchivePathExplicit
+		// flag (so its own --db can win over the config-recorded path); the
+		// adapter sources it from CommonFlagValues, which the dispatch path
+		// populates from the FlagSet Visit pass.
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
+			return runStatus(args, common.ConfigPath, common.ArchivePath, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr)
+		},
 	},
 	{
 		Name:           "query",
@@ -195,6 +255,13 @@ var commands = []commandDef{
 		Long:           "Execute a single SQL statement against the Health Archive. The binary refuses anything that would write or alter the archive — `query` is for inspection, not maintenance.\n\nFlags must appear **before** the SQL argument because Go's `flag` parser stops at the first positional argument. To explore the schema, query the `sqlite_master` table or run `gohealthcli export` for the canonical normalised datasets.",
 		PositionalArgs: "<sql>",
 		Flags:          withCommon(),
+		// query, like status, reads ArchivePathExplicit so a --db passed
+		// on the global side (before the subcommand) still wins. query
+		// hits the archive read-only, so the runtime adapter bundle is
+		// not needed.
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
+			return runQuery(args, common.ConfigPath, common.ArchivePath, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr)
+		},
 	},
 	{
 		Name:           "export",
@@ -208,6 +275,13 @@ var commands = []commandDef{
 			{Name: "output", Type: "string", Default: "", Usage: "write export to path"},
 			{Name: "stdout", Type: "bool", Default: "false", Usage: "write export data to stdout"},
 			{Name: "no-input", Type: "bool", Default: "false", Usage: "never prompt, never wait for browser input"},
+		},
+		// export reads ArchivePathExplicit identically to status / query; it
+		// has its own --format / --output flag surface so the shared
+		// json/plain mode is ignored, and the runtime adapter bundle is
+		// likewise unused (export is read-only against the local archive).
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
+			return runExport(args, common.ConfigPath, common.ArchivePath, common.ArchivePathExplicit, stdout, stderr)
 		},
 	},
 	{
@@ -223,6 +297,16 @@ var commands = []commandDef{
 			{Name: "page-size", Type: "int", Default: "", Usage: "pagination page size (positive integer; where supported by the endpoint)"},
 			{Name: "page-token", Type: "string", Default: "", Usage: "pagination page token from a prior response"},
 		},
+		// raw owns its own --from / --to / --page-size / --page-token flag
+		// surface and writes the provider's raw bytes. runRawWithRuntime's
+		// signature already declares the outputMode arg unused (`_`), but
+		// the adapter still passes commonOutputMode(common) so this entry
+		// has the same call-site shape as every other registry adapter —
+		// future code that promotes the mode out of unused-arg status will
+		// not have to special-case `raw`.
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+			return runRawWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+		},
 	},
 	{
 		Name:  "describe-schema",
@@ -234,6 +318,9 @@ var commands = []commandDef{
 			{Name: "json", Type: "bool", Default: "true", Usage: "emit the curated JSON catalog (default)"},
 			{Name: "sql", Type: "bool", Default: "false", Usage: "dump live DDL from sqlite_master (excludes internal sqlite_* objects)"},
 		},
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+			return runDescribeSchemaWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+		},
 	},
 	{
 		Name:   "schema",
@@ -243,7 +330,30 @@ var commands = []commandDef{
 		Flags: []flagSpec{
 			{Name: "json", Type: "bool", Default: "true", Usage: "emit the registry as JSON (default and currently the only output mode)"},
 		},
+		// schema's Run adapter is wired below in init(): emitting the
+		// registry-as-JSON means schema's Run closure has to reference
+		// the very `commands` slice it lives in, which trips Go's
+		// var-init cycle checker even though closures defer the actual
+		// call. Wiring after the slice is fully initialised sidesteps
+		// that without forcing the schema command out of the registry.
 	},
+}
+
+// init wires the Run adapter for the `schema` entry after `commands` is
+// fully initialised, sidestepping the var-init cycle that would otherwise
+// fire when the closure references the very slice it lives in. The lookup
+// walks the registry once at startup and is keyed on the canonical name so
+// a reorder of `commands` does not break this binding.
+func init() {
+	for i := range commands {
+		if commands[i].Name != "schema" {
+			continue
+		}
+		commands[i].Run = func(args []string, _ CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
+			return runSchemaWithRegistry(args, commands, stdout, stderr)
+		}
+		return
+	}
 }
 
 // commandRegistry is the typed view over the package-level commands slice that

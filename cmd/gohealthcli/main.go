@@ -518,40 +518,24 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 		return runWithRuntime([]string{target, "--help"}, stdout, stderr, runtime)
 	}
 
-	globalArchivePathExplicit := flagWasProvided(flags, "db")
-
-	switch flags.Arg(0) {
-	case "doctor":
-		return runDoctorWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
-	case "init":
-		return runInit(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
-	case "connect":
-		return runConnectWithRuntime(flags.Args()[1:], *configPath, *archivePath, *noInput, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
-	case "identity":
-		return runIdentityWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
-	case "profile":
-		return runProfileWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
-	case "settings":
-		return runSettingsWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
-	case "devices":
-		return runDevicesWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
-	case "irn-profile":
-		return runIRNProfileWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
-	case "describe-schema":
-		return runDescribeSchemaWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
-	case "sync":
-		return runSyncWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
-	case "status":
-		return runStatus(flags.Args()[1:], *configPath, *archivePath, globalArchivePathExplicit, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
-	case "query":
-		return runQuery(flags.Args()[1:], *configPath, *archivePath, globalArchivePathExplicit, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
-	case "export":
-		return runExport(flags.Args()[1:], *configPath, *archivePath, globalArchivePathExplicit, stdout, stderr)
-	case "raw":
-		return runRawWithRuntime(flags.Args()[1:], *configPath, *archivePath, outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr, runtime)
-	case "schema":
-		return runSchema(flags.Args()[1:], stdout, stderr)
-	default:
+	// PRD #143 slice 6 (issue #175): dispatch reads from the same registry
+	// the --help printer reads, so a new subcommand registered in commands.go
+	// is automatically callable — no parallel switch to forget to update.
+	// The four diverged signatures from the previous hand-written switch
+	// (status/query/export's ArchivePathExplicit, export's no-runtime,
+	// schema's stdout-only, raw's outputMode{}) are folded into each
+	// commandDef.Run adapter; CommonFlagValues is the single seam that
+	// carries the global flag state down to those adapters.
+	common := CommonFlagValues{
+		ConfigPath:          *configPath,
+		ArchivePath:         *archivePath,
+		JSONOutput:          *jsonOutput,
+		PlainOutput:         *plainOutput,
+		NoInput:             *noInput,
+		ArchivePathExplicit: flagWasProvided(flags, "db"),
+	}
+	cmd, ok := lookupCommand(flags.Arg(0))
+	if !ok {
 		// PRD #143 slice 3: every unknown-command exit prints the canonical
 		// help hint so users always know how to discover the catalog. The
 		// "Did you mean" line (when a Levenshtein suggestion exists) lives
@@ -559,6 +543,7 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 		runUnknownCommand(flags.Arg(0), stderr)
 		return 1
 	}
+	return cmd.Run(flags.Args()[1:], common, stdout, stderr, runtime)
 }
 
 // runUnknownCommand renders the unknown-command stderr block: the
