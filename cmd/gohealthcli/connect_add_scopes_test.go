@@ -28,6 +28,14 @@ func TestExpandConnectAddScopesMapsKeywordsToScopeStrings(t *testing.T) {
 		t.Fatalf("scopes len = %d, want 2", len(scopes))
 	}
 
+	scopes, err = expandConnectAddScopes([]string{"nutrition"})
+	if err != nil {
+		t.Fatalf("expand nutrition: %v", err)
+	}
+	if len(scopes) != 1 || !strings.Contains(scopes[0], "nutrition.readonly") {
+		t.Fatalf("scopes = %v, want one nutrition.readonly scope URL", scopes)
+	}
+
 	if _, err := expandConnectAddScopes([]string{"typo"}); err == nil {
 		t.Fatal("expand unknown keyword: err = nil, want unknown-keyword failure")
 	} else if !strings.Contains(err.Error(), "typo") {
