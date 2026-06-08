@@ -247,16 +247,34 @@ func TestSyncRunLifecycleClosesSIGINTPreFirstDataTypeRace(t *testing.T) {
 	assertArchiveTableCount(t, archivePath, "sync_runs", 0)
 }
 
-// TestSyncOrchestratorCancelBeforeFirstDataTypeWritesNoAuditRow pins
-// the end-to-end behaviour from the operator's perspective: a SIGINT
-// delivered before orchestrator.Sync has a chance to start the first
-// Data Type produces a clean sync_canceled fan-out with zero audit
-// rows. Together with the lifecycle-level test above, this seals the
-// invariant from both layers — the orchestrator's loop-top guard and
-// the lifecycle's pre-StartSyncRun check — so the race window from
-// PRD #141 slice 5 is closed regardless of which side observes the
-// closed channel first.
-func TestSyncOrchestratorCancelBeforeFirstDataTypeWritesNoAuditRow(t *testing.T) {
+// TestSyncOrchestratorCancelBetweenLoopGuardAndLifecycleWritesNoAuditRow
+// pins PRD #141 slice 5 at the exact race window the slice closes: a
+// SIGINT that lands AFTER orchestrator.Sync's loop-top guard observes
+// cancelCh open BUT BEFORE syncRunLifecycle.Run reaches its
+// pre-StartSyncRun cancel check.
+//
+// Why a different shape than the lifecycle-level test:
+// pre-closing cancelCh before orchestrator.Sync runs would be caught by
+// the orchestrator's loop-top guard at sync_orchestrator.go:58 on the
+// first iteration and break out before any executor call — that
+// scenario passes pre-fix and post-fix identically, so it does not
+// exercise the race window the slice actually closes. To exercise that
+// window we close cancelCh DURING gate.Validate (specifically, inside
+// the gate's currentConnection() lookup, which runs after the
+// orchestrator's loop-top guard observed the channel as open and before
+// lifecycle.Run gets a chance to check it). Without slice 5's check at
+// syncRunLifecycle.Run's first line, this sequence would proceed
+// straight to StartSyncRun and book a sync_runs row; with slice 5 in
+// place, the lifecycle catches the now-closed channel and returns
+// sync_canceled with zero audit rows.
+//
+// The seam used here — healthArchiveWriterOpenerForTest — is already a
+// pre-existing test hook (see sync_run.go:10), called from
+// productionSyncPreflightContext.currentConnection during
+// gate.Validate. Wrapping it lets us deterministically slot a close()
+// into the validate-then-lifecycle handoff without introducing a new
+// production hook.
+func TestSyncOrchestratorCancelBetweenLoopGuardAndLifecycleWritesNoAuditRow(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -270,12 +288,28 @@ func TestSyncOrchestratorCancelBeforeFirstDataTypeWritesNoAuditRow(t *testing.T)
 	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 	testRuntime.fetchRawProvider = func(request rawProviderRequest, _ string) ([]byte, error) {
-		t.Fatalf("orchestrator reached upstream Fetch despite pre-closed cancelCh")
+		t.Fatalf("orchestrator reached upstream Fetch despite cancelCh closed during gate.Validate")
 		return nil, nil
 	}
 
 	cancelCh := make(chan struct{})
-	close(cancelCh)
+
+	// Wrap the archive opener so that the FIRST open (which happens
+	// inside gate.Validate's currentConnection lookup) closes cancelCh.
+	// That places the close strictly AFTER the orchestrator's loop-top
+	// guard observed an open channel (the guard runs before
+	// executor.Execute) and strictly BEFORE syncRunLifecycle.Run's
+	// pre-StartSyncRun cancel check fires (which is the first thing
+	// lifecycle.Run does). This is the exact race window slice 5 closes.
+	t.Cleanup(func() { healthArchiveWriterOpenerForTest = openHealthArchiveWriter })
+	opens := 0
+	healthArchiveWriterOpenerForTest = func(path string) (healthArchiveWriter, error) {
+		opens++
+		if opens == 1 {
+			close(cancelCh)
+		}
+		return openHealthArchiveWriter(path)
+	}
 
 	orchestrator := newSyncOrchestrator(testRuntime, cancelCh)
 	results, err := orchestrator.Sync(syncCommandOptions{
@@ -289,6 +323,9 @@ func TestSyncOrchestratorCancelBeforeFirstDataTypeWritesNoAuditRow(t *testing.T)
 	if err != nil {
 		t.Fatalf("orchestrator.Sync: %v", err)
 	}
+	if opens == 0 {
+		t.Fatal("archive opener never invoked; test seam did not fire — race window not exercised")
+	}
 	if fanOutStatus(results) != "sync_canceled" {
 		t.Fatalf("fanOutStatus = %q, want sync_canceled", fanOutStatus(results))
 	}
@@ -297,6 +334,9 @@ func TestSyncOrchestratorCancelBeforeFirstDataTypeWritesNoAuditRow(t *testing.T)
 			t.Errorf("results[%d].Status is empty; --json envelope must carry sync_canceled, never the empty string", index)
 		}
 	}
+	// AC #1: no sync_runs audit row may exist — lifecycle.Run must
+	// short-circuit before StartSyncRun on the cancelCh it observes at
+	// entry.
 	assertArchiveTableCount(t, archivePath, "sync_runs", 0)
 }
 
