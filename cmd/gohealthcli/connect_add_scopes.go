@@ -9,10 +9,13 @@ import (
 // connectAddScopeKeywords maps the user-facing `--add-scopes` keyword
 // to the actual Google Health API scope URL. PRD #93 §"Tier 2 Data
 // Types" picks `ecg` (electrocardiogram) and `irn`
-// (irregular-rhythm-notification) as the two opt-in expansions.
+// (irregular-rhythm-notification) as the two opt-in expansions;
+// `nutrition` covers hydration-log (#103) and any future
+// nutrition.readonly Data Types.
 var connectAddScopeKeywords = map[string]string{
-	"irn": "https://www.googleapis.com/auth/googlehealth.irn.readonly",
-	"ecg": "https://www.googleapis.com/auth/googlehealth.electrocardiogram.readonly",
+	"irn":       "https://www.googleapis.com/auth/googlehealth.irn.readonly",
+	"ecg":       "https://www.googleapis.com/auth/googlehealth.electrocardiogram.readonly",
+	"nutrition": "https://www.googleapis.com/auth/googlehealth.nutrition.readonly",
 }
 
 // expandConnectAddScopes turns the CLI-side keyword list into the
