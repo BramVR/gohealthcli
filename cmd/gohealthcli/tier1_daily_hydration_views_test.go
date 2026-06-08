@@ -98,6 +98,9 @@ func TestDailyHeartRateZonesViewExplodesEachZone(t *testing.T) {
 		}
 		got = append(got, r)
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows iteration: %v", err)
+	}
 	if len(got) != 4 {
 		t.Fatalf("rows = %d, want 4", len(got))
 	}

@@ -4045,7 +4045,7 @@ func applyTier1DailyHydrationViewsMigration(tx *sql.Tx, appliedAt string) error 
 			return err
 		}
 	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (19, 'add_tier1_daily_hydration_views', ?)`, appliedAt)
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (19, 'add_tier1_daily_and_respiratory_views', ?)`, appliedAt)
 	return err
 }
 
@@ -4228,7 +4228,7 @@ func expectedSchemaMigrations() map[int]string {
 		16: "add_floors_intervals_view",
 		17: "add_tier1_activity_views",
 		18: "add_tier1_health_metrics_views",
-		19: "add_tier1_daily_hydration_views",
+		19: "add_tier1_daily_and_respiratory_views",
 	}
 }
 
