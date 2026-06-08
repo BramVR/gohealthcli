@@ -16,7 +16,7 @@ Shape-rejection messages name both supported forms per rollup kind so operators 
 
 `--from` is optional once an initial backfill has succeeded — subsequent runs read the durable Sync Cursor for the same `(connection_id, data_type, source_family_filter, rollup_kind)` key and resume from it. Each rollup kind (`daily` / `hourly` / `weekly` / `window=<duration>`) carries its own cursor, so syncing weekly aggregates does not disturb the hourly cursor for the same Data Type. The cursor advances only when a Sync Run finishes with `sync_completed`, so failed or cancelled runs re-read the same window on the next attempt (ADR-0008). The terminal Sync Run status and the cursor advance are written in one SQLite transaction, so a crash between them cannot leave the audit trail and the cursor disagreeing.
 
-A Sync Run row is recorded for every invocation that reaches upstream — succeeded, failed, or cancelled — so the archive carries an audit trail of attempts as well as records. Every `--json` envelope carries a non-empty `status` from the enum `sync_completed | sync_failed | sync_canceled`; the empty string is structurally impossible because every return path goes through the lifecycle's outcome constructor.
+A Sync Run row is recorded for every invocation that reaches upstream — succeeded, failed, or cancelled — so the archive carries an audit trail of attempts as well as records. Every `--json` envelope carries a non-empty `status` from the enum `sync_completed | sync_failed | sync_canceled`; the empty string is structurally impossible because every code path emits a non-empty status.
 
 Preflight failures exit before contacting the provider and do NOT write a `sync_runs` audit row. The full list of no-audit-row rejections is:
 
@@ -24,6 +24,7 @@ Preflight failures exit before contacting the provider and do NOT write a `sync_
 - Inverted range (`--from > --to`).
 - Zero-width range (`--from == --to`).
 - Unsupported `--rollup` kind (parse failure).
+- `--rollup <kind>` requested for a Data Type whose catalog entry does not support that kind (e.g. `--rollup hourly --types daily-resting-heart-rate`).
 - Unsupported Data Type (not in the catalog).
 - Source-family vs Data Type mismatch.
 - `--rollup` combined with `--source-family` (mutually exclusive).
@@ -32,11 +33,11 @@ Preflight failures exit before contacting the provider and do NOT write a `sync_
 - `--all` combined with `--types` (mutually exclusive).
 - Duplicate entries in `--types`.
 - `--all` expanding to zero supported Data Types.
-- SIGINT received before the first `StartSyncRun` (the lifecycle short-circuits before any audit row).
+- SIGINT received before any Data Type has started its audit row (no run is in flight to mark).
 
 SIGINT (Ctrl-C) during a fan-out marks the in-flight Sync Run `sync_canceled`, leaves its Sync Cursor un-advanced, and stops cleanly; prior Data Types remain `sync_completed`.
 
-Terminal writes are resilient to SQLite contention: on `SQLITE_BUSY`, `FinalizeSyncRun` retries with bounded exponential backoff plus full jitter. If the retry budget is exhausted, the run surfaces as `sync_failed` with a contention-aware message and a separate short-transaction recovery write drives the row to a terminal state under the same retry budget so a `sync_running` row never lingers. `sync_canceled` outcomes are preserved through the recovery path — they are never reclassified as `sync_failed`.
+Terminal writes are resilient to SQLite contention: on `SQLITE_BUSY`, the terminal write retries with bounded exponential backoff plus full jitter. If the retry budget is exhausted, the run surfaces as `sync_failed` with a contention-aware message and a separate short-transaction recovery write drives the row to a terminal state under the same retry budget so a `sync_running` row never lingers. `sync_canceled` outcomes are preserved through the recovery path — they are never reclassified as `sync_failed`.
 
 ## Flags
 
