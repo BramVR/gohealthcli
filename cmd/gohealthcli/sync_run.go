@@ -129,14 +129,13 @@ func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult,
 		seen, newCount, updated := syncResultTotalCounts(result)
 		if finalizeErr := archive.FinalizeSyncRun(syncRunFinalize{
 			SyncRunID:      syncRunID,
-			Status:         result.Status,
+			Outcome:        outcome,
 			SeenCount:      seen,
 			NewCount:       newCount,
 			UpdatedCount:   updated,
 			FinishedAt:     now,
 			ErrorSummary:   errorSummary,
 			CursorKey:      cursorKey,
-			Outcome:        outcome,
 			CursorTo:       options.to,
 			CursorAdvanced: now,
 		}); finalizeErr != nil {

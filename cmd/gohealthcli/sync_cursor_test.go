@@ -392,7 +392,7 @@ func TestSyncRunOutcomeAdvancesCursorOnlyOnSyncCompleted(t *testing.T) {
 	}
 }
 
-var errSimulatedCommitFailure = errSimulated("simulated cursor commit failure")
+var errSimulatedFinalizeFailure = errSimulated("simulated finalize failure")
 
 type errSimulated string
 
@@ -473,10 +473,9 @@ func TestArchiveFinalizeSyncRunAtomicallyCommitsRunAndCursor(t *testing.T) {
 	}
 	if err := archive.FinalizeSyncRun(syncRunFinalize{
 		SyncRunID:      syncRunID,
-		Status:         "sync_completed",
+		Outcome:        syncRunOutcomeCompleted,
 		FinishedAt:     "2026-01-05T00:00:01Z",
 		CursorKey:      key,
-		Outcome:        syncRunOutcomeCompleted,
 		CursorTo:       "2026-01-02T00:00:00Z",
 		CursorAdvanced: "2026-01-05T00:00:01Z",
 	}); err != nil {
@@ -541,10 +540,9 @@ func TestArchiveFinalizeSyncRunRollsBackRunStatusWhenCursorUpsertFails(t *testin
 	}
 	finalizeErr := archive.FinalizeSyncRun(syncRunFinalize{
 		SyncRunID:      syncRunID,
-		Status:         "sync_completed",
+		Outcome:        syncRunOutcomeCompleted,
 		FinishedAt:     "2026-01-05T00:00:01Z",
 		CursorKey:      key,
-		Outcome:        syncRunOutcomeCompleted,
 		CursorTo:       "2026-01-02T00:00:00Z",
 		CursorAdvanced: "2026-01-05T00:00:01Z",
 	})
@@ -566,11 +564,10 @@ func TestArchiveFinalizeSyncRunRollsBackRunStatusWhenCursorUpsertFails(t *testin
 func TestArchiveFinalizeSyncRunSkipsCursorAdvanceForNonCompletedOutcomes(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
-		status  string
 		outcome syncRunOutcome
 	}{
-		{"sync_failed", "sync_failed", syncRunOutcomeFailed},
-		{"sync_canceled", "sync_canceled", syncRunOutcomeCanceled},
+		{"sync_failed", syncRunOutcomeFailed},
+		{"sync_canceled", syncRunOutcomeCanceled},
 	} {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
@@ -603,20 +600,19 @@ func TestArchiveFinalizeSyncRunSkipsCursorAdvanceForNonCompletedOutcomes(t *test
 			key := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: syncCursorRollupKindNone}
 			if err := archive.FinalizeSyncRun(syncRunFinalize{
 				SyncRunID:      syncRunID,
-				Status:         tc.status,
+				Outcome:        tc.outcome,
 				FinishedAt:     "2026-01-05T00:00:01Z",
 				ErrorSummary:   "simulated",
 				CursorKey:      key,
-				Outcome:        tc.outcome,
 				CursorTo:       "2026-01-02T00:00:00Z",
 				CursorAdvanced: "2026-01-05T00:00:01Z",
 			}); err != nil {
-				t.Fatalf("FinalizeSyncRun(%s): %v", tc.status, err)
+				t.Fatalf("FinalizeSyncRun(%s): %v", tc.outcome, err)
 			}
 
-			assertSyncRunForDataType(t, archivePath, syncRunID, tc.status, "steps", "list", 0, 0, 0, "simulated")
+			assertSyncRunForDataType(t, archivePath, syncRunID, string(tc.outcome), "steps", "list", 0, 0, 0, "simulated")
 			if _, found, err := archive.ResolveSyncCursor(key); err != nil || found {
-				t.Fatalf("cursor present after %s finalize: found=%v err=%v, want absent (ADR-0008)", tc.status, found, err)
+				t.Fatalf("cursor present after %s finalize: found=%v err=%v, want absent (ADR-0008)", tc.outcome, found, err)
 			}
 		})
 	}
@@ -642,7 +638,7 @@ func TestSyncRunSurfacesFailureWhenFinalizeFails(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		return fakeFinalizeWriter{healthArchiveWriter: inner, failOn: failOnEveryOutcome(errSimulatedCommitFailure)}, nil
+		return fakeFinalizeWriter{healthArchiveWriter: inner, failOn: failOnEveryOutcome(errSimulatedFinalizeFailure)}, nil
 	}
 
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
@@ -661,7 +657,7 @@ func TestSyncRunSurfacesFailureWhenFinalizeFails(t *testing.T) {
 	if result.Status != "sync_failed" {
 		t.Fatalf("result.Status = %q, want sync_failed", result.Status)
 	}
-	if !strings.Contains(err.Error(), "simulated cursor commit failure") {
+	if !strings.Contains(err.Error(), "simulated finalize failure") {
 		t.Fatalf("err = %v, want simulated finalize failure", err)
 	}
 	// The wrapped error must call out which outcome the executor was
@@ -673,7 +669,7 @@ func TestSyncRunSurfacesFailureWhenFinalizeFails(t *testing.T) {
 
 	// Recovery write ran (sync_completed outcome) and marked the run
 	// sync_failed so the audit trail reflects the failure.
-	assertSyncRunForDataType(t, archivePath, result.SyncRunID, "sync_failed", "steps", "list", 0, 0, 0, "simulated cursor commit failure")
+	assertSyncRunForDataType(t, archivePath, result.SyncRunID, "sync_failed", "steps", "list", 0, 0, 0, "simulated finalize failure")
 
 	// ADR-0008 invariant: no cursor row exists when finalize fails.
 	archive, err := openHealthArchiveWriter(archivePath)

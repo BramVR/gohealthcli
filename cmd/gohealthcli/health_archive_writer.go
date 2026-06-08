@@ -20,20 +20,22 @@ type healthArchiveWriter interface {
 }
 
 // syncRunFinalize bundles the writes that finalize a Sync Run into one
-// struct so FinalizeSyncRun does not need an 11-positional-arg signature.
-// SyncRun fields land in sync_runs; Cursor fields land in sync_cursors;
-// Outcome gates whether the cursor advance runs at all.
+// struct so FinalizeSyncRun does not need a long positional-arg
+// signature. Outcome is the single source of truth: the run-status UPDATE
+// uses string(Outcome) and Outcome.AdvancesCursor() gates the cursor
+// write, so a caller cannot construct an "outcome says completed but
+// status says canceled" inconsistency that would re-open the ADR-0008
+// race at the struct boundary instead of the storage boundary.
 type syncRunFinalize struct {
-	SyncRunID     int64
-	Status        string
-	SeenCount     int
-	NewCount      int
-	UpdatedCount  int
-	FinishedAt    string
-	ErrorSummary  string
-	CursorKey     syncCursorKey
-	Outcome       syncRunOutcome
-	CursorTo      string
+	SyncRunID      int64
+	Outcome        syncRunOutcome
+	SeenCount      int
+	NewCount       int
+	UpdatedCount   int
+	FinishedAt     string
+	ErrorSummary   string
+	CursorKey      syncCursorKey
+	CursorTo       string
 	CursorAdvanced string
 }
 
@@ -106,7 +108,7 @@ func (archive *sqliteHealthArchiveWriter) FinalizeSyncRun(finalize syncRunFinali
 			_ = tx.Rollback()
 		}
 	}()
-	if err := finishSyncRunTx(tx, finalize.SyncRunID, finalize.Status, finalize.SeenCount, finalize.NewCount, finalize.UpdatedCount, finalize.FinishedAt, finalize.ErrorSummary); err != nil {
+	if err := finishSyncRunTx(tx, finalize.SyncRunID, string(finalize.Outcome), finalize.SeenCount, finalize.NewCount, finalize.UpdatedCount, finalize.FinishedAt, finalize.ErrorSummary); err != nil {
 		return err
 	}
 	if err := commitSyncCursorTx(tx, finalize.CursorKey, finalize.Outcome, finalize.CursorTo, finalize.CursorAdvanced); err != nil {
