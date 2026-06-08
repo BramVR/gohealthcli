@@ -149,8 +149,10 @@ fetched_at)`.
 The Attachment Store module exposes `Store(dataPointID, kind, bytes)
 → {sha256, path}` (content-addressed; same bytes → same path,
 idempotent insert), `Resolve(sha256) → path`, and `Walk(fn)` for
-orphan detection (row with no sidecar, sidecar with no row — `doctor`
-surfaces these via `--archive-integrity`).
+orphan detection (row with no sidecar, sidecar with no row). `doctor`
+surfaces the orphan counts in its default report (`attachments_orphan_files`
+and `attachments_orphan_rows` in `--plain`, an `attachments` block in
+`--json`), emitted only when a count is positive.
 
 Exercise sync (Data Type `exercise`) drives the only Attachment
 producer today (#107): after each upserted exercise Data Point, the

@@ -604,11 +604,15 @@ func buildGoogleHealthExportExerciseTcxRawRequest(dataPointName string) (rawProv
 		return rawProviderRequest{}, errors.New("exportExerciseTcx requires a non-empty exercise Data Point name")
 	}
 	// The data point resource name must match
-	// `users/<user>/dataTypes/exercise/dataPoints/<id>`. Reject anything
-	// else so a steps or sleep name can't accidentally be routed to the
-	// TCX export endpoint.
+	// `users/<user>/dataTypes/exercise/dataPoints/<id>` exactly. Reject
+	// anything else so a steps or sleep name (or a malformed name with
+	// extra path segments) can't accidentally be routed to the TCX
+	// export endpoint.
 	parts := strings.Split(dataPointName, "/")
-	if len(parts) < 6 || parts[2] != "dataTypes" || parts[3] != "exercise" || parts[4] != "dataPoints" || parts[5] == "" {
+	if len(parts) != 6 ||
+		parts[0] != "users" || parts[1] == "" ||
+		parts[2] != "dataTypes" || parts[3] != "exercise" ||
+		parts[4] != "dataPoints" || parts[5] == "" {
 		return rawProviderRequest{}, fmt.Errorf("exportExerciseTcx requires an exercise Data Point name, got %q", dataPointName)
 	}
 	return rawProviderRequest{

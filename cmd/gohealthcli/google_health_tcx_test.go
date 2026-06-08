@@ -48,6 +48,9 @@ func TestBuildGoogleHealthExportExerciseTcxRawRequestRejectsBadName(t *testing.T
 		{"empty", ""},
 		{"missing dataPoints prefix", "users/me/dataTypes/exercise"},
 		{"wrong data type", "users/me/dataTypes/steps/dataPoints/abc"},
+		{"missing users prefix", "me/dataTypes/exercise/dataPoints/abc/x/y"},
+		{"empty user segment", "users//dataTypes/exercise/dataPoints/abc"},
+		{"extra trailing segment", "users/me/dataTypes/exercise/dataPoints/abc/extra"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := buildGoogleHealthExportExerciseTcxRawRequest(tc.in); err == nil {
