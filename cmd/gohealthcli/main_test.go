@@ -447,6 +447,34 @@ func TestHelpVerbWithHiddenSubcommand(t *testing.T) {
 	}
 }
 
+// TestHelpVerbRejectsExtraArguments asserts the `help` verb fails fast when
+// given unexpected positional arguments, rather than silently dropping them.
+// This mirrors how every other subcommand rejects unknown positionals and
+// surfaces typos like `help status extra` instead of masking them.
+func TestHelpVerbRejectsExtraArguments(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"extras after known cmd", []string{"help", "status", "extra"}},
+		{"extras after --help form", []string{"help", "--help", "status"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, stdout, stderr := runCommand(t, tc.args...)
+			if code != 1 {
+				t.Fatalf("exit code = %d, want 1\nstderr: %s", code, stderr.String())
+			}
+			if stdout.String() != "" {
+				t.Fatalf("stdout = %q, want empty", stdout.String())
+			}
+			if !strings.Contains(stderr.String(), "unexpected arguments") {
+				t.Fatalf("stderr missing 'unexpected arguments' message: %q", stderr.String())
+			}
+		})
+	}
+}
+
 func TestDoctorDefaultPathsAreUsable(t *testing.T) {
 	home := t.TempDir()
 	xdgConfig := filepath.Join(home, "xdg-config")

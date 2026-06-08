@@ -482,8 +482,21 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 	// PRD #143.
 	if flags.Arg(0) == "help" {
 		if flags.NArg() == 1 || flags.Arg(1) == "--help" || flags.Arg(1) == "-help" {
+			// Top-level help form rejects trailing positionals so a typo like
+			// `gohealthcli help --help status` fails loudly instead of being
+			// silently dropped.
+			if flags.NArg() > 2 {
+				fmt.Fprintf(stderr, "help: unexpected arguments: %s\n", strings.Join(flags.Args()[2:], " "))
+				return 1
+			}
 			printTopLevelUsage(flags, stderr)
 			return 0
+		}
+		// Per-command help takes exactly one positional (the subcommand). Reject
+		// extras so `help status extra` fails fast like every other subcommand.
+		if flags.NArg() > 2 {
+			fmt.Fprintf(stderr, "help: unexpected arguments after %s: %s\n", flags.Arg(1), strings.Join(flags.Args()[2:], " "))
+			return 1
 		}
 		target := flags.Arg(1)
 		def, ok := lookupCommand(target)
