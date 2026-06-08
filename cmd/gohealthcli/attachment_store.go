@@ -41,14 +41,19 @@ func attachmentRootDirForArchive(archivePath string) string {
 // collectAttachmentOrphans opens the attachment store read-only and
 // walks it for integrity violations. Returns nil if no orphans exist
 // (so the doctor result's attachments block stays omitempty), or a
-// populated report otherwise. Pure reporting — never mutates state.
+// populated report otherwise. The slices inside the report are
+// initialised to empty so JSON encoding is `[]` not `null` when only
+// one orphan kind is present. Pure reporting — never mutates state.
 func collectAttachmentOrphans(archivePath string) (*doctorAttachmentReport, error) {
 	store, err := openAttachmentStoreReadOnly(archivePath)
 	if err != nil {
 		return nil, err
 	}
 	defer store.Close()
-	report := &doctorAttachmentReport{}
+	report := &doctorAttachmentReport{
+		OrphanRows:  []doctorOrphanRow{},
+		OrphanFiles: []doctorOrphanFile{},
+	}
 	if err := store.Walk(func(o attachmentOrphan) error {
 		switch o.Kind {
 		case attachmentOrphanRowMissingFile:

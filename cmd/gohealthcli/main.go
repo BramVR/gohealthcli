@@ -55,8 +55,12 @@ type doctorResult struct {
 }
 
 type doctorAttachmentReport struct {
-	OrphanRows  []doctorOrphanRow  `json:"orphan_rows,omitempty"`
-	OrphanFiles []doctorOrphanFile `json:"orphan_files,omitempty"`
+	// Always emit both arrays so downstream tools can rely on the
+	// shape; nil slices would encode as null, so the constructor
+	// initialises them to []. omitempty would break the contract when
+	// only one side has orphans.
+	OrphanRows  []doctorOrphanRow  `json:"orphan_rows"`
+	OrphanFiles []doctorOrphanFile `json:"orphan_files"`
 }
 
 type doctorOrphanRow struct {
@@ -1275,6 +1279,19 @@ func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtim
 	result.SchemaVersion = &archive.schemaVersion
 	result.ConnectionCount = &archive.connectionCount
 	result.TokenStatus = archive.tokenStatus
+	attachmentRoot, attachmentMode, attachmentErr := inspectAttachmentRoot(archivePath)
+	if attachmentErr != nil {
+		result.Status = "setup_invalid"
+		return result, attachmentErr
+	}
+	result.AttachmentRootPath = attachmentRoot
+	result.AttachmentRootMode = attachmentMode
+	attachments, attachmentsErr := collectAttachmentOrphans(archivePath)
+	if attachmentsErr != nil {
+		result.Status = "setup_invalid"
+		return result, attachmentsErr
+	}
+	result.Attachments = attachments
 	if archive.connectionCount == 0 {
 		result.TokenStatus = "not_connected"
 		return result, errors.New("no Connection found; run `gohealthcli connect` first")
