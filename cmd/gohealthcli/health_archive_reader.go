@@ -76,7 +76,7 @@ func (archive *sqliteHealthArchiveReader) StatusSummary() (statusResult, error) 
 	if err != nil {
 		return result, err
 	}
-	result.Tier2, err = readStatusTier2(archive.db)
+	result.Tier2, err = readStatusTier2(archive.db, result.DataTypes)
 	if err != nil {
 		return result, err
 	}
@@ -449,36 +449,35 @@ func countPairedDevicesIn(rawJSON string) (int, error) {
 // scope_granted flags to decide whether to emit the plain lines —
 // JSON always carries the block so downstream tooling sees a stable
 // shape.
-func readStatusTier2(db *sql.DB) (*statusTier2, error) {
-	tier2 := &statusTier2{}
-	var err error
-	if tier2.ElectrocardiogramEventCount, err = countTier2DataPoints(db, "electrocardiogram"); err != nil {
-		return nil, err
-	}
-	if tier2.IrregularRhythmNotificationCount, err = countTier2DataPoints(db, "irregular-rhythm-notification"); err != nil {
-		return nil, err
-	}
+//
+// Counts are derived from the already-computed per-Data-Type rows
+// instead of running fresh COUNT(*) queries — avoids extra full-table
+// scans of data_points and keeps the count source consistent with
+// the rest of `status`.
+func readStatusTier2(db *sql.DB, dataTypes []statusDataType) (*statusTier2, error) {
 	scopes, err := readCurrentConnectionScopes(db)
 	if err != nil {
 		return nil, err
 	}
-	tier2.ElectrocardiogramScopeGranted = scopeListContains(scopes, googleHealthEcgReadonlyScope)
-	tier2.IrregularRhythmNotificationScopeGranted = scopeListContains(scopes, googleHealthIrnReadonlyScope)
+	tier2 := &statusTier2{
+		ElectrocardiogramEventCount:             tier2DataPointCount(dataTypes, "electrocardiogram"),
+		IrregularRhythmNotificationCount:        tier2DataPointCount(dataTypes, "irregular-rhythm-notification"),
+		ElectrocardiogramScopeGranted:           scopeListContains(scopes, googleHealthEcgReadonlyScope),
+		IrregularRhythmNotificationScopeGranted: scopeListContains(scopes, googleHealthIrnReadonlyScope),
+	}
 	return tier2, nil
 }
 
-// countTier2DataPoints counts data_points rows for a single Data Type.
-// Kept narrow on purpose: the broader readStatusDataTypes UNION runs
-// once and groups every Data Type, but Tier 2 needs the count even
-// when no rows exist (the broader query just omits the entry). A
-// dedicated COUNT keeps the "always emit, default to 0" contract
-// trivial.
-func countTier2DataPoints(db *sql.DB, dataType string) (int, error) {
-	var count int
-	if err := db.QueryRow(`SELECT count(*) FROM data_points WHERE data_type = ?`, dataType).Scan(&count); err != nil {
-		return 0, err
+// tier2DataPointCount looks up the data_point_count for a single Data
+// Type in the already-computed status data types slice. Returns 0
+// when the Data Type has no rows (readStatusDataTypes omits empties).
+func tier2DataPointCount(dataTypes []statusDataType, dataType string) int {
+	for _, item := range dataTypes {
+		if item.DataType == dataType {
+			return item.DataPointCount
+		}
 	}
-	return count, nil
+	return 0
 }
 
 // readCurrentConnectionScopes returns the scopes stored on the single

@@ -255,6 +255,70 @@ func TestStatusReportsTier2CountsWhenScopesGranted(t *testing.T) {
 	}
 }
 
+// TestStatusReportsTier2CountsWithPartialScopeGrant pins the
+// partial-scope branch (#111 AC: "tests cover ... no Tier 2 scopes",
+// extended here to the realistic case where the user has granted one
+// of the two): with only the ECG scope granted, JSON keeps both
+// fields but flips only `electrocardiogram_scope_granted=true`, and
+// `--plain` emits only the ECG line.
+func TestStatusReportsTier2CountsWithPartialScopeGrant(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect: %d", code)
+	}
+	// Only grant the ECG scope — IRN stays missing.
+	addStoredConnectionScope(t, archivePath, googleHealthEcgReadonlyScope)
+	insertTier2DataPoint(t, archivePath, "electrocardiogram", "ecg-1")
+
+	jsonStdout := new(bytes.Buffer)
+	jsonStderr := new(bytes.Buffer)
+	if code := run([]string{"status", "--config", configPath, "--db", archivePath, "--json"}, jsonStdout, jsonStderr); code != 0 {
+		t.Fatalf("status --json exit = %d, stderr=%s", code, jsonStderr.String())
+	}
+	var got struct {
+		Tier2 struct {
+			ElectrocardiogramEventCount             int  `json:"electrocardiogram_event_count"`
+			IrregularRhythmNotificationCount        int  `json:"irregular_rhythm_notification_count"`
+			ElectrocardiogramScopeGranted           bool `json:"electrocardiogram_scope_granted"`
+			IrregularRhythmNotificationScopeGranted bool `json:"irregular_rhythm_notification_scope_granted"`
+		} `json:"tier_2"`
+	}
+	if err := json.Unmarshal(jsonStdout.Bytes(), &got); err != nil {
+		t.Fatalf("decode --json: %v\n%s", err, jsonStdout.String())
+	}
+	if got.Tier2.ElectrocardiogramEventCount != 1 {
+		t.Errorf("tier_2.electrocardiogram_event_count = %d, want 1", got.Tier2.ElectrocardiogramEventCount)
+	}
+	if got.Tier2.IrregularRhythmNotificationCount != 0 {
+		t.Errorf("tier_2.irregular_rhythm_notification_count = %d, want 0", got.Tier2.IrregularRhythmNotificationCount)
+	}
+	if !got.Tier2.ElectrocardiogramScopeGranted {
+		t.Errorf("tier_2.electrocardiogram_scope_granted = false, want true")
+	}
+	if got.Tier2.IrregularRhythmNotificationScopeGranted {
+		t.Errorf("tier_2.irregular_rhythm_notification_scope_granted = true, want false")
+	}
+
+	plainStdout := new(bytes.Buffer)
+	plainStderr := new(bytes.Buffer)
+	if code := run([]string{"status", "--config", configPath, "--db", archivePath, "--plain"}, plainStdout, plainStderr); code != 0 {
+		t.Fatalf("status --plain exit = %d, stderr=%s", code, plainStderr.String())
+	}
+	if !strings.Contains(plainStdout.String(), "electrocardiogram_event_count: 1") {
+		t.Errorf("plain output missing electrocardiogram_event_count: 1\n%s", plainStdout.String())
+	}
+	if strings.Contains(plainStdout.String(), "irregular_rhythm_notification_count") {
+		t.Errorf("plain output unexpectedly includes irregular_rhythm_notification_count (scope not granted)\n%s", plainStdout.String())
+	}
+}
+
 // insertTier2DataPoint writes one minimal data_points row for a Tier 2
 // Data Type so the status reader's count query has something to find.
 // The row is intentionally bare — only the fields the count query
