@@ -33,6 +33,7 @@ const version = "dev"
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
 const googleHealthSleepReadonlyScope = "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
+const googleHealthNutritionReadonlyScope = "https://www.googleapis.com/auth/googlehealth.nutrition.readonly"
 const googleHealthProfileReadonlyScope = "https://www.googleapis.com/auth/googlehealth.profile.readonly"
 const googleHealthBaseURL = "https://health.googleapis.com/v4"
 const googleHealthIdentityURL = "https://health.googleapis.com/v4/users/me/identity"
@@ -2162,6 +2163,7 @@ func oauthScopesForDataTypes(dataTypes []string) []string {
 		googleHealthActivityReadonlyScope,
 		googleHealthHealthMetricsReadonlyScope,
 		googleHealthSleepReadonlyScope,
+		googleHealthNutritionReadonlyScope,
 		googleHealthProfileReadonlyScope,
 	}
 	scopes := make([]string, 0, len(needed))
