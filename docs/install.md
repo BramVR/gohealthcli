@@ -52,9 +52,14 @@ gohealthcli --help
 `--version` prints the build-stamped identifiers as
 `gohealthcli <version> (<commit> built <built>)`; `--version --json` prints
 the same three values as a single-line `{"version":..., "commit":..., "built":...}`
-object. A `go install` from a tagged release stamps real values; a bare
-`go build ./...` leaves all three as `dev` (still a usable binary, just
-unstamped — see [docs/commands/version.html](commands/version.html)).
+object.
+
+The three identifiers are wired by `-ldflags "-X main.version=... -X
+main.commit=... -X main.built=..."`. Only the repo's `make build` target
+sets those flags; a plain `go install github.com/BramVR/gohealthcli/cmd/gohealthcli@latest`
+and `go build ./...` both leave all three as `dev` (still a usable binary,
+just unstamped). Clone the repo and run `make build` if you need a stamped
+binary — see [docs/commands/version.html](commands/version.html).
 
 `--help` lists the available subcommands. `gohealthcli help` and
 `gohealthcli help <command>` are equivalent verbs that prepend the

@@ -10,19 +10,21 @@ mutual-exclusion check accepts (`--version`, `--version --json`,
 `--version --plain`).
 
 The three identifiers are package-level `var`s wired by the Makefile's
-production `build` target via `-X` ldflags:
+`build` target via `-X` ldflags:
 
-| Field | Source (production build) | Default when unstamped |
-| ----- | ------------------------- | ---------------------- |
+| Field | Source (`make build`) | Default when unstamped |
+| ----- | --------------------- | ---------------------- |
 | `version` | `git describe --tags --always --dirty` | `dev` |
 | `commit`  | `git rev-parse HEAD`                   | `dev` |
 | `built`   | `date -u +%Y-%m-%dT%H:%M:%SZ`          | `dev` |
 
-A bare `go build ./...` produces a binary whose `--version` reports
-`gohealthcli dev (dev built dev)` — usable, but unstamped. Use
-`make build` to embed real values; `make build-info` prints the values
-the next `make build` would embed without round-tripping through the
-binary.
+Stamping happens only when the build command actually passes the `-X`
+flags. Plain `go install github.com/BramVR/gohealthcli/cmd/gohealthcli@latest`
+and bare `go build ./...` invocations do NOT pass `-ldflags`, so the
+resulting binary reports `gohealthcli dev (dev built dev)` — usable, but
+unstamped. Clone the repo and run `make build` to embed real values;
+`make build-info` prints the values the next `make build` would embed
+without round-tripping through the binary.
 
 ## Plain shape
 

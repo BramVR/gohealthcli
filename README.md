@@ -224,19 +224,25 @@ exclusive`"). The check fires for `--version` too, so
 `gohealthcli --plain --json --version` is rejected before any output is
 written.
 
-A few subcommands accept `--plain` / `--json` for the unified failure shape
-but do **not** change their success output based on them:
+A few subcommands treat `--plain` / `--json` as no-ops on their *success*
+output:
 
 - `describe-schema` always emits the curated JSON catalog (or live DDL when
   `--sql` is passed). Its own `--json` flag is on by default; the global
   `--json` / `--plain` are accepted and parsed but have no effect on the
-  schema bytes — only on failure envelopes routed through the Failure
-  Reporter.
+  schema bytes. Its *failure* envelopes do route through the Failure
+  Reporter, so `gohealthcli --json describe-schema bogus` lands a JSON
+  failure on stdout like every other subcommand.
 - `export` always writes CSV (default) or JSONL according to its own
-  `--format` flag. The global `--plain` / `--json` are no-ops for its
-  success output for the same reason; export's failure messages stay
-  unstyled because the subcommand pre-dates the unified failure reporter
-  for that surface (see [docs/commands/export.md](./docs/commands/export.html)).
+  `--format` flag. The global `--plain` / `--json` are no-ops both for its
+  success output (always CSV/JSONL) AND for its failure envelopes — the
+  subcommand's `ReportFailure` call sites do not currently set `Mode`, so
+  failure messages stay as the canonical `export: <reason>` plain line
+  regardless of which global mode was requested. Passing `--plain` /
+  `--json` *after* `export` is rejected at parse time as an unknown flag
+  (export's own flag set declares only `--config`, `--db`, `--format`,
+  `--output`, `--stdout`, `--no-input`). See
+  [docs/commands/export.md](./docs/commands/export.md).
 - `raw` writes the provider's raw bytes to stdout and ignores `--plain`,
   `--json`, and `--no-input`; passing any of them directly on `raw` is
   rejected at parse time with a targeted "not supported by raw" message.
