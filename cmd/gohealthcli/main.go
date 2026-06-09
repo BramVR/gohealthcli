@@ -825,12 +825,7 @@ func runStatus(args []string, configPath, archivePath string, configPathExplicit
 		}, stdout, stderr)
 	}
 
-	resolvedArchivePath, err := readArchivePathResolver{
-		configPath:          common.ConfigPath,
-		configPathExplicit:  common.ConfigPathExplicit,
-		archivePath:         common.ArchivePath,
-		archivePathExplicit: common.ArchivePathExplicit,
-	}.Resolve()
+	resolvedArchivePath, err := resolveReadArchivePath(*common)
 	if err != nil {
 		result := statusResult{Status: "status_failed", ArchivePath: common.ArchivePath, Message: err.Error()}
 		if writeErr := writeStatusResult(result, mode, stdout); writeErr != nil {

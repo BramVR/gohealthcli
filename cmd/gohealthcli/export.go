@@ -1435,12 +1435,7 @@ func runExport(args []string, configPath, archivePath string, configPathExplicit
 		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 
-	resolvedArchivePath, err := readArchivePathResolver{
-		configPath:          common.ConfigPath,
-		configPathExplicit:  common.ConfigPathExplicit,
-		archivePath:         common.ArchivePath,
-		archivePathExplicit: common.ArchivePathExplicit,
-	}.Resolve()
+	resolvedArchivePath, err := resolveReadArchivePath(*common)
 	if err != nil {
 		return ReportFailure(FailureReport{Command: "export", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}

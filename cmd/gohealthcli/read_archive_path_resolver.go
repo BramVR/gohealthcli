@@ -27,6 +27,22 @@ type readArchivePathResolver struct {
 	archivePathExplicit bool
 }
 
+// resolveReadArchivePath is the one-line call site every read command
+// goes through. It snaps the four CommonFlagValues fields the resolver
+// needs into the struct literal so the four read-command entry points
+// (status, query, export, describe-schema) read as a single call rather
+// than re-typing the same `field: common.Field` mapping each time —
+// matching the PRD #144 Architecture Notes ("Every read command becomes
+// a one-line call").
+func resolveReadArchivePath(common CommonFlagValues) (string, error) {
+	return readArchivePathResolver{
+		configPath:          common.ConfigPath,
+		configPathExplicit:  common.ConfigPathExplicit,
+		archivePath:         common.ArchivePath,
+		archivePathExplicit: common.ArchivePathExplicit,
+	}.Resolve()
+}
+
 // Resolve returns the Health Archive path a read command should open.
 //
 // Rules:

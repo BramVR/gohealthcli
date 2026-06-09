@@ -75,12 +75,7 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 		}, stdout, stderr)
 	}
 
-	resolvedPath, err := readArchivePathResolver{
-		configPath:          common.ConfigPath,
-		configPathExplicit:  common.ConfigPathExplicit,
-		archivePath:         common.ArchivePath,
-		archivePathExplicit: common.ArchivePathExplicit,
-	}.Resolve()
+	resolvedPath, err := resolveReadArchivePath(*common)
 	if err != nil {
 		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
