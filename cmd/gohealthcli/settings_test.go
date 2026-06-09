@@ -132,6 +132,13 @@ func TestSettingsCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
 		t.Fatalf("connect setup: %v", err)
 	}
+	// Ensure the stored Connection carries every scope the catalog
+	// requires for getSettings, so this test still exercises auto-refresh
+	// after slice 2 (#176) revises the catalog away from the default-granted
+	// scope set.
+	for _, scope := range googleHealthIdentityEndpointScopes["getSettings"] {
+		addStoredConnectionScope(t, archivePath, scope)
+	}
 	// Force the stored access-token expires_at into the past so
 	// AccessToken must take the auto-refresh path.
 	setConnectionTokenExpiry(t, archivePath, "2026-01-01T00:00:00Z")
