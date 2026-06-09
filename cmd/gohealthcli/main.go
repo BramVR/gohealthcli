@@ -572,6 +572,7 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 		PlainOutput:         *plainOutput,
 		NoInput:             *noInput,
 		ArchivePathExplicit: flagWasProvided(flags, "db"),
+		ConfigPathExplicit:  flagWasProvided(flags, "config"),
 	}
 	cmd, ok := lookupCommand(flags.Arg(0))
 	if !ok {
@@ -792,15 +793,23 @@ func runDoctorOnlineWithRuntime(configPath, archivePath string, mode outputMode,
 	return 0
 }
 
-func runStatus(args []string, configPath, archivePath string, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer) int {
+func runStatus(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("status", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
+	// Seed the two explicitness bits from the dispatch-time CommonFlagValues
+	// so the readArchivePathResolver below sees the correct shape even when
+	// the user passed --db / --config at the global slot (before the
+	// subcommand). ParseCommon's Visit pass below ORs in subcommand-local
+	// flag values too, so passing them on either side of the subcommand
+	// works the same way.
 	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
-		ConfigPath:  configPath,
-		ArchivePath: archivePath,
-		JSONOutput:  mode.json,
-		PlainOutput: mode.plain,
+		ConfigPath:          configPath,
+		ArchivePath:         archivePath,
+		JSONOutput:          mode.json,
+		PlainOutput:         mode.plain,
+		ArchivePathExplicit: archivePathExplicit,
+		ConfigPathExplicit:  configPathExplicit,
 	})
 
 	if err := ParseCommon(flags, common, args); err != nil {
@@ -816,7 +825,7 @@ func runStatus(args []string, configPath, archivePath string, archivePathExplici
 		}, stdout, stderr)
 	}
 
-	resolvedArchivePath, err := resolveConfiguredArchivePath(common.ConfigPath, common.ArchivePath, archivePathExplicit || common.ArchivePathExplicit)
+	resolvedArchivePath, err := resolveReadArchivePath(*common)
 	if err != nil {
 		result := statusResult{Status: "status_failed", ArchivePath: common.ArchivePath, Message: err.Error()}
 		if writeErr := writeStatusResult(result, mode, stdout); writeErr != nil {
@@ -1667,22 +1676,16 @@ func profileSetupWithRuntime(configPath, archivePath string, runtime runtimeAdap
 	return result, nil
 }
 
-func resolveConfiguredArchivePath(configPath, archivePath string, archivePathExplicit bool) (string, error) {
-	configArchivePath, configExists, err := readConfigArchivePath(configPath)
-	if err != nil {
-		return "", err
-	}
-	if !configExists {
-		return archivePath, nil
-	}
-	if !archivePathExplicit {
-		return configArchivePath, nil
-	}
-	if configArchivePath != archivePath {
-		return "", fmt.Errorf("archive_path points to %s, want %s", configArchivePath, archivePath)
-	}
-	return archivePath, nil
-}
+// resolveConfiguredArchivePath was the legacy read+write resolver. PRD
+// #144 slice 1 (issue #155) moved the four read commands to
+// readArchivePathResolver — which owns the read-side relaxation
+// (`--db` alone wins over a missing or default config) plus the
+// user-facing error wording (names `--db` and `--config`, not the
+// internal `archive_path` field). Write commands keep the stricter
+// `archive_path` agreement via inspectFullConfig / inspectIdentityConfig
+// (this file) so the no-callers `resolveConfiguredArchivePath` symbol
+// was deleted; consult `readArchivePathResolver` (read commands) or the
+// inspect* helpers (write commands) when reasoning about either side.
 
 func readConfigArchivePath(configPath string) (string, bool, error) {
 	info, err := os.Stat(configPath)

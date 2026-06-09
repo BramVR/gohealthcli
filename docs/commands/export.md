@@ -3,7 +3,9 @@ title: "gohealthcli export"
 description: "Write a normalised dataset to CSV or JSONL."
 ---
 
-Render one of the curated normalised datasets (daily-steps, heart-rate-samples, resting-heart-rate-by-day, sleep-sessions, exercise-sessions, weight-samples) from the Health Archive. Exports are read-only; nothing in the archive is mutated.
+Render one of the curated normalised datasets (daily-steps, heart-rate-samples, resting-heart-rate-by-day, sleep-sessions, exercise-sessions, weight-samples, and many more) from the Health Archive. Exports are read-only; nothing in the archive is mutated.
+
+Run `gohealthcli export --help` to see the full list of supported datasets, sorted alphabetically. If you pass a name that does not exist, the error message includes the closest matches (Levenshtein ≤ 3, top 3) and a pointer back to `export --help`.
 
 Exactly one of `--output PATH` or `--stdout` must be supplied — the explicit destination prevents an accidental terminal dump of a long export.
 

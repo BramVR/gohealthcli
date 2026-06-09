@@ -1,4 +1,4 @@
-.PHONY: build build-info docs-site docs-site-clean docs-commands
+.PHONY: build build-info docs-site docs-site-clean docs-commands docs-export-datasets
 
 # build embeds the three Version-module identifiers (version/commit/built)
 # at link time via -ldflags. Defaults are "dev" so an unstamped `go build`
@@ -29,3 +29,13 @@ docs-site-clean:
 
 docs-commands:
 	@go run ./cmd/gohealthcli schema --json | node scripts/gen-command-reference.mjs
+
+# docs-export-datasets rewrites README.md's "Normalized export
+# datasets" bullet block from exportDatasetCatalogSingleton.Names().
+# PRD #144 slice 4 (issue #165). The drift guard in
+# cmd/gohealthcli/docs_export_datasets_test.go runs the same splice
+# in-test and fails CI when the committed README does not match a
+# fresh regeneration, so re-running this target is the canonical fix
+# for that test failure.
+docs-export-datasets:
+	@go run ./cmd/gohealthcli docs-export-datasets --readme README.md

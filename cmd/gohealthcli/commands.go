@@ -345,7 +345,7 @@ var commands = []commandDef{
 		// adapter sources it from CommonFlagValues, which the dispatch path
 		// populates from the FlagSet Visit pass.
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runStatus(args, common.ConfigPath, common.ArchivePath, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr)
+			return runStatus(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr)
 		},
 	},
 	{
@@ -360,7 +360,7 @@ var commands = []commandDef{
 		// hits the archive read-only, so the runtime adapter bundle is
 		// not needed.
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runQuery(args, common.ConfigPath, common.ArchivePath, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr)
+			return runQuery(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr)
 		},
 	},
 	{
@@ -385,7 +385,7 @@ var commands = []commandDef{
 		// adapter bundle is unused (export is read-only against the local
 		// archive).
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runExport(args, common.ConfigPath, common.ArchivePath, common.ArchivePathExplicit, stdout, stderr)
+			return runExport(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, stdout, stderr)
 		},
 	},
 	{
@@ -432,7 +432,7 @@ var commands = []commandDef{
 		),
 		CommonFlags: commonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runDescribeSchemaWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runDescribeSchemaWithRuntime(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr, runtime)
 		},
 	},
 	{
@@ -449,6 +449,28 @@ var commands = []commandDef{
 		// var-init cycle checker even though closures defer the actual
 		// call. Wiring after the slice is fully initialised sidesteps
 		// that without forcing the schema command out of the registry.
+	},
+	{
+		// PRD #144 slice 4 (issue #165): hidden build-time verb that
+		// rewrites the README's "Normalized export datasets" block from
+		// the registry. Hidden for the same reason as `schema`: it is
+		// invoked by `make docs-export-datasets`, never by an end user.
+		// Listing it in the registry (rather than as a one-off main()
+		// program) keeps the dispatch surface uniform — the drift test
+		// can reuse runDocsExportDatasets directly, no second binary.
+		Name:   "docs-export-datasets",
+		Short:  "Rewrite README export-datasets block from the registry (hidden — used by `make docs-export-datasets`).",
+		Long:   "Rewrite the auto-generated bullet list in `README.md` between the `<!-- export-datasets:start -->` and `<!-- export-datasets:end -->` markers from `exportDatasetCatalogSingleton.Names()`.\n\nInvoked by `make docs-export-datasets`; the drift guard in `docs_export_datasets_test.go` fails CI when the committed README does not match a fresh regeneration. Pass `--readme PATH` to point at the file to rewrite (no default — an empty path is rejected so a misconfigured target cannot silently overwrite the wrong file).",
+		Hidden: true,
+		Flags: []flagSpec{
+			{Name: "readme", Type: "string", Default: "", Usage: "path to README.md to rewrite in place"},
+		},
+		// docs-export-datasets reads / writes one file and has no
+		// archive or provider dependency; the runtime adapter bundle
+		// and the CommonFlagValues block are ignored.
+		Run: func(args []string, _ CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
+			return runDocsExportDatasets(args, stdout, stderr)
+		},
 	},
 }
 

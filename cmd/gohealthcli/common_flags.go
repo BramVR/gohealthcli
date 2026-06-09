@@ -47,8 +47,12 @@ func AllCommonFlagsSpec() CommonFlagSpec {
 
 // CommonFlagValues carries the resolved values for the five shared
 // flags. ArchivePathExplicit records whether the user actually passed
-// --db on the command line; it replaces the per-call flagWasProvided
-// dance the subcommands used to do inline.
+// --db on the command line; ConfigPathExplicit records the same for
+// --config. The two explicitness bits replace the per-call
+// flagWasProvided dance the subcommands used to do inline, and are
+// read by the readArchivePathResolver (PRD #144 slice 1) to decide
+// when a --db value should win over the config-recorded archive path
+// without firing the agreement check.
 type CommonFlagValues struct {
 	ConfigPath          string
 	ArchivePath         string
@@ -56,6 +60,7 @@ type CommonFlagValues struct {
 	PlainOutput         bool
 	NoInput             bool
 	ArchivePathExplicit bool
+	ConfigPathExplicit  bool
 }
 
 // RegisterCommon registers the subset of shared flags declared in spec
@@ -64,11 +69,13 @@ type CommonFlagValues struct {
 // extra (non-common) flags directly on fs as before.
 func RegisterCommon(fs *flag.FlagSet, spec CommonFlagSpec, defaults CommonFlagValues) *CommonFlagValues {
 	values := &CommonFlagValues{
-		ConfigPath:  defaults.ConfigPath,
-		ArchivePath: defaults.ArchivePath,
-		JSONOutput:  defaults.JSONOutput,
-		PlainOutput: defaults.PlainOutput,
-		NoInput:     defaults.NoInput,
+		ConfigPath:          defaults.ConfigPath,
+		ArchivePath:         defaults.ArchivePath,
+		JSONOutput:          defaults.JSONOutput,
+		PlainOutput:         defaults.PlainOutput,
+		NoInput:             defaults.NoInput,
+		ArchivePathExplicit: defaults.ArchivePathExplicit,
+		ConfigPathExplicit:  defaults.ConfigPathExplicit,
 	}
 	for _, name := range spec.Accepted {
 		switch name {
@@ -127,8 +134,11 @@ func ParseCommon(fs *flag.FlagSet, values *CommonFlagValues, args []string) erro
 		return errors.New("--plain and --json are mutually exclusive")
 	}
 	fs.Visit(func(item *flag.Flag) {
-		if item.Name == "db" {
+		switch item.Name {
+		case "db":
 			values.ArchivePathExplicit = true
+		case "config":
+			values.ConfigPathExplicit = true
 		}
 	})
 	return nil
