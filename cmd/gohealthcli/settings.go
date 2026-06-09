@@ -123,12 +123,27 @@ func settingsSetupWithRuntime(configPath, archivePath string, runtime runtimeAda
 		ProviderName:       connection.providerName,
 		GoogleHealthUserID: connection.googleHealthUserID,
 	}
+	// The deepened currentConnectionAccess pattern (PRD #142): wire
+	// WithAutoRefresh when the OAuth client is a file source — the
+	// archive handle openHealthArchiveConnectionAPI returned already
+	// satisfies connectionTokenWriter — so an expired access token
+	// refreshes and persists transparently, the way
+	// sync_run_lifecycle.go already does. The required scope comes
+	// from googleHealthIdentityEndpointScopes["getSettings"] so a
+	// slice-2 revision of the catalog (PRD #142 #176) flows into
+	// settings automatically. The scope pre-check happens inside
+	// AccessToken via the errCurrentConnectionScopeMissing sentinel,
+	// so we set the per-command status without re-implementing the
+	// scope-list comparison locally.
 	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{configPath, archivePath}, runtime)
-	// users.getSettings is identity-level metadata, covered by the
-	// existing profile.readonly scope; no separate settings.readonly
-	// scope exists in the Google Health API today.
-	accessToken, err := connectionAccess.AccessToken([]string{googleHealthProfileReadonlyScope})
+	if config.oauthClient.kind == "file" {
+		connectionAccess = connectionAccess.WithAutoRefresh(config.oauthClient, archive)
+	}
+	accessToken, err := connectionAccess.AccessToken(googleHealthIdentityEndpointScopes["getSettings"])
 	if err != nil {
+		if errors.Is(err, errCurrentConnectionScopeMissing) {
+			result.Status = "settings_scope_missing"
+		}
 		return result, err
 	}
 	settings, err := fetchSettings(accessToken)
