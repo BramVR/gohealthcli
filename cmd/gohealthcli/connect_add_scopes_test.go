@@ -50,6 +50,17 @@ func TestExpandConnectAddScopesMapsKeywordsToScopeStrings(t *testing.T) {
 		t.Fatalf("scopes = %v, want one location.readonly scope URL", scopes)
 	}
 
+	// `settings` (#176) unlocks googlehealth.settings.readonly, which
+	// users.getSettings and users.pairedDevices.list require — Google's
+	// own per-method docs confirm profile.readonly alone returns 403.
+	scopes, err = expandConnectAddScopes([]string{"settings"})
+	if err != nil {
+		t.Fatalf("expand settings: %v", err)
+	}
+	if len(scopes) != 1 || !strings.Contains(scopes[0], "settings.readonly") {
+		t.Fatalf("scopes = %v, want one settings.readonly scope URL", scopes)
+	}
+
 	if _, err := expandConnectAddScopes([]string{"typo"}); err == nil {
 		t.Fatal("expand unknown keyword: err = nil, want unknown-keyword failure")
 	} else if !strings.Contains(err.Error(), "typo") {
