@@ -56,25 +56,36 @@ The discoverability verbs added by PRD #143 cover the rest of the surface:
   canonical `Run 'gohealthcli --help' for a list of commands.` discovery
   line — see [docs/commands/help.md](./docs/commands/help.md).
 
-Supported Data Point sync types:
+Supported Data Point sync types (grouped by domain):
 
-- `steps`
-- `heart-rate`
-- `heart-rate-variability`
-- `oxygen-saturation`
-- `daily-resting-heart-rate`
-- `daily-heart-rate-variability`
-- `daily-oxygen-saturation`
-- `daily-respiratory-rate`
-- `sleep`
-- `exercise`
-- `distance`
-- `weight`
+- Activity and fitness: `steps`, `distance`, `floors`, `altitude`,
+  `active-energy-burned`, `active-minutes`, `active-zone-minutes`,
+  `activity-level`, `sedentary-period`, `calories-in-heart-rate-zone`,
+  `time-in-heart-rate-zone`, `vo2-max`, `run-vo2-max`, `daily-vo2-max`,
+  `swim-lengths-data`.
+- Heart rate: `heart-rate`, `heart-rate-variability`,
+  `daily-resting-heart-rate`, `daily-heart-rate-variability`,
+  `daily-heart-rate-zones`.
+- Heart rhythm (Tier 2 opt-in scopes): `electrocardiogram`,
+  `irregular-rhythm-notification`.
+- Sleep and respiration: `sleep`, `oxygen-saturation`,
+  `daily-oxygen-saturation`, `daily-respiratory-rate`,
+  `respiratory-rate-sleep-summary`, `daily-sleep-temperature-derivations`.
+- Exercise: `exercise`.
+- Body measurements: `weight`, `body-fat`, `height`.
+- Other biomarkers: `blood-glucose`, `core-body-temperature`.
+- Hydration (nutrition.readonly scope): `hydration-log`.
 
 `sync --source-family wearable` is available for Data Types backed by the
 Google Health reconcile path. `sync --types steps --rollup daily` archives
 steps daily Rollups. `total-calories` is known to the catalog but is not
 supported by raw Data Point sync because Google exposes it as Rollup data.
+
+The drift guard in `cmd/gohealthcli/readme_sync_types_test.go`
+(`TestREADMEListsEverySyncableDataType` and
+`TestREADMECaveatListsCatalogTypesSyncRejects`) fails if a Data Type is
+added to the Google Health catalog without a matching entry in the list
+above or the caveat sentence.
 
 Normalized export datasets (grouped by domain; `gohealthcli export` accepts
 any of these names as its positional argument):
