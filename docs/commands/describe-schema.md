@@ -13,6 +13,14 @@ The JSON catalog is the success-mode default: it emits a curated document combin
 
 A drift test in CI fails when a public view exists in `sqlite_master` without a matching catalog entry — the JSON shape and the live schema cannot diverge silently.
 
+### Normalized View column types
+
+SQLite views don't carry declared column types. `pragma_table_info` reports the type of each view column from the underlying expression's affinity, which for any non-trivial JSON projection comes back as either an empty string or the literal `BLOB`. The JSON catalog is read as a contract by LLM consumers, so a column like `daily_steps.step_count` (an INTEGER projection over `data_points`) being reported as `BLOB` actively poisons agent reasoning.
+
+The catalog rewrites those misleading values to the literal `"unknown"`. Every entry in `views[*].columns_detailed[*].type` is therefore either a real SQL type (`TEXT`, `INTEGER`, `REAL`, `NUMERIC`, …) or the literal `"unknown"` — never `BLOB`, never empty. Treat `"unknown"` as "the runtime type is opaque from the catalog alone — inspect a row or consult the view DDL".
+
+Table columns (in `tables[*].columns`) are unaffected: real `BLOB` columns on real tables still report `BLOB`. The fallback is view-only.
+
 ## Flags
 
 | Flag | Type | Default | Description |

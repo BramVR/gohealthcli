@@ -224,3 +224,149 @@ func TestDescribeSchemaJSONDriftDetectionFailsWhenViewMissingFromCatalog(t *test
 		t.Fatal("assertNoSchemaDrift returned nil; want drift detected (orphan_view has no catalog entry)")
 	}
 }
+
+// TestNormalizeViewColumnTypeFallback is the tracer for PRD #144 slice 8
+// (issue #159): SQLite views do not carry declared column types, so
+// pragma_table_info on a view reports the type as either empty or the
+// literal "BLOB" — both of which would mislead an LLM reading the JSON
+// catalog as a contract. The PRD's Architecture Notes deliberately reject
+// parsing the view's SELECT projection (one bespoke SQL parser sitting
+// next to a working pragma call); we stamp "unknown" instead. Real
+// declared SQL types pass through unchanged.
+func TestNormalizeViewColumnTypeFallback(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"", "unknown"},
+		{"BLOB", "unknown"},
+		{"INTEGER", "INTEGER"},
+		{"TEXT", "TEXT"},
+		{"REAL", "REAL"},
+		{"NUMERIC", "NUMERIC"},
+	}
+	for _, tc := range cases {
+		got := normalizeViewColumnType(tc.in)
+		if got != tc.want {
+			t.Errorf("normalizeViewColumnType(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestDescribeSchemaJSONViewColumnsNeverBLOB is the end-to-end pin for
+// PRD #144 slice 8 (issue #159): `describe-schema --json` against a real
+// archive must never report `"type": "BLOB"` inside any
+// `views[*].columns_detailed`. The fallback is the literal "unknown".
+// Real declared types (TEXT, INTEGER, REAL, NUMERIC) pass through.
+func TestDescribeSchemaJSONViewColumnsNeverBLOB(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"describe-schema", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("describe-schema --json exit code = %d, stderr=%s", code, stderr.String())
+	}
+	var catalog struct {
+		Views []struct {
+			Name            string                `json:"name"`
+			ColumnsDetailed []schemaCatalogColumn `json:"columns_detailed"`
+		} `json:"views"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &catalog); err != nil {
+		t.Fatalf("--json output is not valid JSON: %v", err)
+	}
+	if len(catalog.Views) == 0 {
+		t.Fatal("catalog.views is empty; want registered views")
+	}
+	allowed := map[string]bool{
+		"":        false, // empty must have been rewritten to "unknown"
+		"unknown": true,
+		"TEXT":    true,
+		"INTEGER": true,
+		"REAL":    true,
+		"NUMERIC": true,
+	}
+	for _, view := range catalog.Views {
+		for _, col := range view.ColumnsDetailed {
+			if col.Type == "BLOB" {
+				t.Errorf("view %q column %q has type=BLOB; want a real SQL type or \"unknown\"",
+					view.Name, col.Name)
+			}
+			if col.Type == "" {
+				t.Errorf("view %q column %q has empty type; want a real SQL type or \"unknown\"",
+					view.Name, col.Name)
+			}
+			if _, ok := allowed[col.Type]; !ok {
+				// Any other non-empty value is a legitimate declared SQL
+				// type (rare on a view) — pass through, but flag exotic
+				// names so they surface in review.
+				t.Logf("view %q column %q has uncommon type %q (passed through)",
+					view.Name, col.Name, col.Type)
+			}
+		}
+	}
+}
+
+// TestDescribeSchemaJSONTableColumnsUnchanged pins that the view-only
+// fallback does NOT touch tables. Real BLOB columns on real tables still
+// report BLOB; declared types on tables pass through. The fixture archive
+// has at least one TEXT column (`connections.id`) we can pin; any future
+// BLOB column on a real table must still report BLOB.
+func TestDescribeSchemaJSONTableColumnsUnchanged(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+
+	// Inject a real BLOB column into a real table so the test exercises
+	// the "tables keep BLOB" guarantee even if no production table has
+	// one today. We use a fresh ad-hoc table so we never depend on a
+	// migration-managed schema feature.
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE _slice8_blob_probe (id INTEGER PRIMARY KEY, payload BLOB)`); err != nil {
+		db.Close()
+		t.Fatalf("create probe table: %v", err)
+	}
+	db.Close()
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"describe-schema", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("describe-schema --json exit code = %d, stderr=%s", code, stderr.String())
+	}
+	var catalog struct {
+		Tables []struct {
+			Name    string                `json:"name"`
+			Columns []schemaCatalogColumn `json:"columns"`
+		} `json:"tables"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &catalog); err != nil {
+		t.Fatalf("--json output is not valid JSON: %v", err)
+	}
+	var probe struct {
+		found      bool
+		payloadCol schemaCatalogColumn
+	}
+	for _, table := range catalog.Tables {
+		if table.Name != "_slice8_blob_probe" {
+			continue
+		}
+		probe.found = true
+		for _, col := range table.Columns {
+			if col.Name == "payload" {
+				probe.payloadCol = col
+			}
+		}
+	}
+	if !probe.found {
+		t.Fatal("probe table _slice8_blob_probe missing from catalog.tables")
+	}
+	if probe.payloadCol.Type != "BLOB" {
+		t.Errorf("real table BLOB column rewritten: got type=%q, want BLOB",
+			probe.payloadCol.Type)
+	}
+}
