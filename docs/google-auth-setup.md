@@ -34,6 +34,13 @@ Use the target Google Cloud project, then configure:
     archives TCX route bytes during exercise sync (#140). Granted via
     `connect --add-scopes tcx`; without it, exercise sync still
     archives the Data Points themselves but skips the TCX sidecar.
+  - `https://www.googleapis.com/auth/googlehealth.settings.readonly` —
+    required by `gohealthcli settings` and `gohealthcli devices`
+    (`users.getSettings` and `users.pairedDevices.list`). PRD #142 #176
+    confirmed empirically that `profile.readonly` alone returns HTTP
+    403 for both endpoints, so this scope is mandatory for the two
+    Identity Snapshot commands. Granted via `connect --add-scopes
+    settings`.
 - OAuth client: create a Desktop app client from Google Auth Platform >
   Clients, then download its JSON.
 
@@ -110,6 +117,36 @@ gohealthcli sync --types steps --from 2026-01-01 --to 2026-01-02 --plain
 gohealthcli status --plain
 gohealthcli export daily-steps --format jsonl --stdout
 ```
+
+## Identity Endpoint Scope Matrix
+
+`gohealthcli` calls five identity endpoints on the Google Health API. Each
+row below names the upstream call, the OAuth scope Google requires, and
+the `--add-scopes` keyword that grants it. Tier 1 (default-granted) scopes
+ship with the base set every `gohealthcli connect` already requests; Tier
+2 (opt-in) scopes require the matching `gohealthcli connect --add-scopes
+<keyword>` invocation. PRD #142 #176 confirmed empirically that
+`users.getSettings` and `users.pairedDevices.list` reject
+`profile.readonly` with HTTP 403, so the `settings` keyword (added
+post-#176) is the only path that unlocks `gohealthcli settings` and
+`gohealthcli devices`.
+
+| Endpoint | CLI surface | Required scope | `--add-scopes` keyword |
+| -------- | ----------- | -------------- | ---------------------- |
+| `users.getIdentity` | `gohealthcli identity` / `raw endpoint getIdentity` | `https://www.googleapis.com/auth/googlehealth.profile.readonly` | default-granted (Tier 1) |
+| `users.getProfile` | `gohealthcli profile` / `raw endpoint getProfile` | `https://www.googleapis.com/auth/googlehealth.profile.readonly` | default-granted (Tier 1) |
+| `users.getSettings` | `gohealthcli settings` / `raw endpoint getSettings` | `https://www.googleapis.com/auth/googlehealth.settings.readonly` | `settings` (Tier 2, #176) |
+| `users.pairedDevices.list` | `gohealthcli devices` / `raw endpoint pairedDevices` | `https://www.googleapis.com/auth/googlehealth.settings.readonly` | `settings` (Tier 2, #176) |
+| `users.getIrnProfile` | `gohealthcli irn-profile` / `raw endpoint getIrnProfile` | `https://www.googleapis.com/auth/googlehealth.irn.readonly` | `irn` (Tier 2) |
+
+If a Tier 2 command is called without the matching scope on the stored
+Connection, the command exits with a structured status
+(`settings_scope_missing`, `devices_scope_missing`,
+`irn_profile_scope_missing`) and a precise reconnect hint pointing at
+the keyword that fixes it (`--add-scopes settings`, `--add-scopes irn`).
+Run that exact line to extend the grant — `include_granted_scopes=true`
+preserves the base set, so no second base-set browser sign-in is
+needed.
 
 ## Tier 2 Opt-in Scopes (ECG + IRN)
 

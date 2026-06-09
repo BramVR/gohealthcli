@@ -7,6 +7,8 @@ Fetch the upstream `users.getSettings` payload and append it to the Health Archi
 
 `settings` is read-only against the provider and writes the raw response to the archive; the JSON shape stays the source of truth, so new fields can be projected into the view without a re-sync.
 
+Requires the `settings.readonly` OAuth scope (PRD #142 #176 confirmed empirically — `profile.readonly` alone returns HTTP 403). If the scope is missing, `settings` exits with status `settings_scope_missing` and a remediation hint; run `gohealthcli connect --add-scopes settings` once to grant it. No second base-set browser sign-in is needed.
+
 ## Flags
 
 | Flag | Type | Default | Description |
