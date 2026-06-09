@@ -166,6 +166,40 @@ func TestCurrentConnectionAccessTokenScopeMissingSentinel(t *testing.T) {
 			requiredScopes: []string{googleHealthIrnReadonlyScope},
 			wantSentinel:   false,
 		},
+		{
+			// Auto-refresh failure that surfaces an HTTP 401-style error
+			// must NOT be wrapped in the scope-missing sentinel — Provider
+			// rejections live in a different category and would otherwise
+			// flip the per-command status to "<command>_scope_missing"
+			// when the user actually needs to re-run `connect` (or the
+			// `doctor --online` diagnose path the auto-refresh wrapper
+			// names).
+			name: "auto-refresh HTTP 401 failure does not match sentinel",
+			setup: func(t *testing.T) currentConnectionAccess {
+				fixture := setupAutoRefreshFixture(t, map[string]any{
+					"access_token":  "stale-access",
+					"refresh_token": "stored-refresh",
+					"token_type":    "Bearer",
+				})
+				runtime := runtimeAdapters{}
+				runtime.now = func() time.Time { return now }
+				runtime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
+					return oauthTokenResponse{}, errors.New("Google Health raw request failed with HTTP 401")
+				}
+				access := newCurrentConnectionAccessWithRuntime(
+					fixture.credentialStore,
+					archivedConnection{
+						id:                "googlehealth:111",
+						tokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthIrnReadonlyScope}),
+					},
+					nil,
+					runtime,
+				).WithAutoRefresh(oauthClientSource{kind: "file", path: fixture.oauthClientPath}, &fakeHealthArchiveConnectionAPI{})
+				return access
+			},
+			requiredScopes: []string{googleHealthIrnReadonlyScope},
+			wantSentinel:   false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

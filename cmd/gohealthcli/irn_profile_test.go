@@ -179,7 +179,12 @@ func TestIRNProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	irnNow := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC)
 	refreshedExpiresAt := irnNow.Add(time.Hour)
 	testRuntime.now = func() time.Time { return irnNow }
+	// Count refresh attempts so the AC's implicit "refresh once, persist
+	// once" contract is guarded against a regression where retries would
+	// silently double-rotate the stored token.
+	refreshCalls := 0
 	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
+		refreshCalls++
 		if refreshToken != "connect-refresh-secret" {
 			t.Fatalf("refresh token = %q, want connect-refresh-secret", refreshToken)
 		}
@@ -231,6 +236,9 @@ func TestIRNProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	gotMetadata := archivedConnectionTokenMetadata(t, archivePath)
 	if !strings.Contains(gotMetadata, refreshedExpiresAt.Format(time.RFC3339)) {
 		t.Fatalf("archived token_metadata_json = %s, want refreshed expires_at %s", gotMetadata, refreshedExpiresAt.Format(time.RFC3339))
+	}
+	if refreshCalls != 1 {
+		t.Fatalf("refreshOAuthToken call count = %d, want 1 (no retry loop should double-rotate the stored token)", refreshCalls)
 	}
 }
 
