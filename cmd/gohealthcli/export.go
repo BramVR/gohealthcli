@@ -1224,14 +1224,29 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 
 	dataset, parseArgs, err := splitExportArgs(args)
 	if err != nil {
+		// splitExportArgs runs BEFORE ParseCommon, so common.JSONOutput /
+		// common.PlainOutput are not yet populated from inner flags. The
+		// only failure shape splitExportArgs surfaces is "flag needs an
+		// argument: --foo", which is a flag-shape error that defaults to
+		// the bare `<cmd>: <msg>` line on stderr. Every other ReportFailure
+		// in runExport runs AFTER ParseCommon and carries Mode so the
+		// unified --json / --plain failure contract is honoured.
 		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: err.Error()}, stdout, stderr)
 	}
 
 	if err := ParseCommon(flags, common, parseArgs); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
+	// mode is the unified output-mode the failure_reporter contract pivots
+	// on. Until slice 9's export migration is patched, every ReportFailure
+	// here dropped Mode and silently fell back to default-mode output —
+	// `--json` invocations never saw their JSON envelope. Threading mode
+	// once and reusing it on every call site below restores the contract
+	// without dragging an `outputMode` parameter through runExport's
+	// signature (the runtime adapter still owns the registry-driven shape).
+	mode := outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 	if dataset == "" || flags.NArg() != 0 {
-		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: "export requires exactly one dataset"}, stdout, stderr)
+		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: "export requires exactly one dataset", Mode: mode}, stdout, stderr)
 	}
 	spec, ok := exportDatasetSpecs[dataset]
 	if !ok {
@@ -1239,6 +1254,7 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 			Command: "export",
 			Status:  StatusFlagInvalid,
 			Message: fmt.Sprintf("export dataset %q is not supported", dataset),
+			Mode:    mode,
 		}, stdout, stderr)
 	}
 	// Resolve --json / --plain into --format. Mutual exclusion between
@@ -1249,25 +1265,25 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 	formatExplicit := flagWasProvided(flags, "format")
 	resolvedFormat, err := resolveExportFormat(*exportFormat, formatExplicit, common.JSONOutput, common.PlainOutput)
 	if err != nil {
-		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: err.Error()}, stdout, stderr)
+		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	if *exportOutputPath == "" && !*exportStdout {
-		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: "export requires --output PATH or --stdout"}, stdout, stderr)
+		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: "export requires --output PATH or --stdout", Mode: mode}, stdout, stderr)
 	}
 	if *exportOutputPath != "" && *exportStdout {
-		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: "export accepts only one destination: --output or --stdout"}, stdout, stderr)
+		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: "export accepts only one destination: --output or --stdout", Mode: mode}, stdout, stderr)
 	}
 	if err := validateExportFormat(resolvedFormat); err != nil {
-		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: err.Error()}, stdout, stderr)
+		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 
 	resolvedArchivePath, err := resolveConfiguredArchivePath(common.ConfigPath, common.ArchivePath, archivePathExplicit || common.ArchivePathExplicit)
 	if err != nil {
-		return ReportFailure(FailureReport{Command: "export", Status: StatusOperationFailed, Message: err.Error()}, stdout, stderr)
+		return ReportFailure(FailureReport{Command: "export", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	rows, err := exportRows(resolvedArchivePath, spec)
 	if err != nil {
-		return ReportFailure(FailureReport{Command: "export", Status: StatusOperationFailed, Message: err.Error()}, stdout, stderr)
+		return ReportFailure(FailureReport{Command: "export", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 
 	if *exportStdout {
@@ -1276,6 +1292,7 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 				Command: "export",
 				Status:  StatusArchiveUnwritable,
 				Message: fmt.Sprintf("write output: %v", err),
+				Mode:    mode,
 			}, stdout, stderr)
 		}
 		return 0
@@ -1285,6 +1302,7 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 			Command: "export",
 			Status:  StatusArchiveUnwritable,
 			Message: fmt.Sprintf("write export: %v", err),
+			Mode:    mode,
 		}, stdout, stderr)
 	}
 	return 0
