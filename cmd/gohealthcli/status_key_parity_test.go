@@ -283,7 +283,10 @@ func TestStatusPlainAndJSONKeyParity(t *testing.T) {
 	// JSON via the nested path the prefix maps to.
 	plainOnlyTopLevel := []string{}
 	for _, key := range plainKeys {
-		if plainKeyMapsToNestedJSON(key) {
+		if block, ok := plainKeyNestedBlock(key); ok {
+			if _, present := jsonResult[block]; !present {
+				t.Errorf("plain key %q maps to nested JSON block %q which is missing\nplain: %s\njson keys: %v", key, block, plainStdout.String(), sortedJSONKeys(jsonResult))
+			}
 			continue
 		}
 		plainOnlyTopLevel = append(plainOnlyTopLevel, key)
@@ -330,7 +333,7 @@ func extractPlainKnownDataTypes(t *testing.T, plain string) []string {
 // (everything left of the first `:` per line, skipping blank lines).
 // Dotted keys like `data_type.steps.data_point_count` and
 // `identity_snapshot.profile.fetched_at` are returned as-is; the
-// parity test classifies them via plainKeyMapsToNestedJSON.
+// parity test classifies them via plainKeyNestedBlock.
 func extractPlainStatusKeys(plain string) []string {
 	var keys []string
 	keyLineRE := regexp.MustCompile(`^([a-z0-9_.-]+):`)
@@ -345,22 +348,32 @@ func extractPlainStatusKeys(plain string) []string {
 	return keys
 }
 
-// plainKeyMapsToNestedJSON returns true when a plain key is the
-// flattened plain form of a JSON sub-document (per-data-type stanza,
-// sync_run sub-fields, snapshot freshness, etc.), so the parity test
-// does not require it to appear at JSON top level.
-func plainKeyMapsToNestedJSON(plainKey string) bool {
-	for _, prefix := range []string{
-		"data_type.",
-		"identity_snapshot.",
-		"latest_successful_sync_run_",
-		"latest_failed_sync_run_",
-	} {
-		if strings.HasPrefix(plainKey, prefix) {
-			return true
-		}
+// plainKeyNestedBlock returns the top-level JSON block a flattened
+// plain key maps to, plus ok=true. The parity test uses it to assert
+// the corresponding JSON block actually exists rather than silently
+// skipping the plain key, which would let nested-shape drift slip
+// through unnoticed.
+func plainKeyNestedBlock(plainKey string) (string, bool) {
+	switch {
+	case strings.HasPrefix(plainKey, "data_type."):
+		return "data_types", true
+	case strings.HasPrefix(plainKey, "identity_snapshot."):
+		return "identity_snapshots_freshness", true
+	case strings.HasPrefix(plainKey, "latest_successful_sync_run_"):
+		return "latest_successful_sync_run", true
+	case strings.HasPrefix(plainKey, "latest_failed_sync_run_"):
+		return "latest_failed_sync_run", true
 	}
-	return false
+	return "", false
+}
+
+func sortedJSONKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // jsonStructuredBlock returns true when a JSON top-level key is a
