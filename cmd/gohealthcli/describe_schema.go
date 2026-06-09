@@ -19,7 +19,7 @@ import (
 //go:embed llm-schema.json
 var curatedSchemaCatalogJSON []byte
 
-func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, _ runtimeAdapters) int {
+func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer, _ runtimeAdapters) int {
 	flags := flag.NewFlagSet("describe-schema", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -35,10 +35,12 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 	// uncluttered for users redirecting stdout to a file. `--no-input` is
 	// likewise accepted but ignored — describe-schema does no prompting.
 	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
-		ConfigPath:  configPath,
-		ArchivePath: archivePath,
-		JSONOutput:  mode.json,
-		PlainOutput: mode.plain,
+		ConfigPath:          configPath,
+		ArchivePath:         archivePath,
+		JSONOutput:          mode.json,
+		PlainOutput:         mode.plain,
+		ArchivePathExplicit: archivePathExplicit,
+		ConfigPathExplicit:  configPathExplicit,
 	})
 	// Override the generic CommonFlagSet Usage strings for the flags
 	// whose meaning is describe-schema-specific. `describe-schema --help`
@@ -73,7 +75,7 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 		}, stdout, stderr)
 	}
 
-	resolvedPath, err := resolveConfiguredArchivePath(common.ConfigPath, common.ArchivePath, common.ArchivePathExplicit)
+	resolvedPath, err := resolveReadArchivePath(*common)
 	if err != nil {
 		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
