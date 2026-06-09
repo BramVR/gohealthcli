@@ -136,13 +136,27 @@ func devicesSetupWithRuntime(configPath, archivePath string, runtime runtimeAdap
 		ProviderName:       connection.providerName,
 		GoogleHealthUserID: connection.googleHealthUserID,
 	}
+	// The deepened currentConnectionAccess pattern (PRD #142): wire
+	// WithAutoRefresh when the OAuth client is a file source — the
+	// archive handle openHealthArchiveConnectionAPI returned already
+	// satisfies connectionTokenWriter — so an expired access token
+	// refreshes and persists transparently, the way
+	// sync_run_lifecycle.go already does. The required scope comes
+	// from googleHealthIdentityEndpointScopes["pairedDevices"] so a
+	// slice-2 revision of the catalog (PRD #142 #176) flows into
+	// devices automatically. The scope pre-check happens inside
+	// AccessToken via the errCurrentConnectionScopeMissing sentinel,
+	// so we set the per-command status without re-implementing the
+	// scope-list comparison locally.
 	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{configPath, archivePath}, runtime)
-	// pairedDevices is identity-level metadata; today it falls under the
-	// existing profile.readonly scope. Issue #99 (connect --add-scopes)
-	// may surface a tighter scope; until then this matches the settings
-	// path.
-	accessToken, err := connectionAccess.AccessToken([]string{googleHealthProfileReadonlyScope})
+	if config.oauthClient.kind == "file" {
+		connectionAccess = connectionAccess.WithAutoRefresh(config.oauthClient, archive)
+	}
+	accessToken, err := connectionAccess.AccessToken(googleHealthIdentityEndpointScopes["pairedDevices"])
 	if err != nil {
+		if errors.Is(err, errCurrentConnectionScopeMissing) {
+			result.Status = "devices_scope_missing"
+		}
 		return result, err
 	}
 	devices, err := fetchPairedDevices(accessToken)
