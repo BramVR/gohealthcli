@@ -467,9 +467,9 @@ func isJSONTypedColumn(column string) bool {
 // output mode. `--raw-text` opts out of the JSON-passthrough even in
 // JSON mode, giving users the literal stored bytes when they need
 // them (regression-debugging, snapshotting an upstream payload).
-// Default mode (the unparseable `Row N: k=v` shape) keeps today's
-// string-cast behaviour via the plain-mode encoder; PRD #144 slice 8
-// removes the default mode itself.
+// The no-flag default falls through to the plain-mode encoder per
+// PRD #144 slice 7 (issue #168) — the legacy `Row N: k=v` shape is
+// gone; the default now produces the same parseable bytes as --plain.
 func selectQueryRowEncoder(mode outputMode, rawText bool) queryRowEncoder {
 	if mode.json && !rawText {
 		return newJSONModeEncoder()
@@ -477,69 +477,48 @@ func selectQueryRowEncoder(mode outputMode, rawText bool) queryRowEncoder {
 	return newPlainModeEncoder()
 }
 
+// writeQueryResult emits the query envelope in one of two shapes:
+//
+//   - JSON when mode.json is set.
+//   - Plain key/value otherwise.
+//
+// PRD #144 slice 7 (issue #168) removed the legacy `Row N: column=value ...`
+// default. The no-flag default now silently falls through to the plain shape:
+// scripts and LLM consumers get parseable output by default, and the
+// silent-footgun where `SELECT 'a b' AS x` produced unparseable
+// `Row 1: x=a b` is structurally impossible. No stderr warning fires — the
+// shape change is documented in the command's Long help (commands.go) and
+// docs/commands/query.md.
 func writeQueryResult(result queryResult, mode outputMode, stdout io.Writer) error {
 	if mode.json {
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(result)
 	}
-	if mode.plain {
-		if _, err := fmt.Fprintf(stdout, "status: %s\n", result.Status); err != nil {
-			return err
-		}
-		if result.ArchivePath != "" {
-			if _, err := fmt.Fprintf(stdout, "archive_path: %s\n", result.ArchivePath); err != nil {
-				return err
-			}
-		}
-		if len(result.Columns) != 0 {
-			if _, err := fmt.Fprintf(stdout, "columns: %s\n", strings.Join(result.Columns, ",")); err != nil {
-				return err
-			}
-		}
-		if _, err := fmt.Fprintf(stdout, "row_count: %d\n", result.RowCount); err != nil {
-			return err
-		}
-		for rowIndex, row := range result.Rows {
-			for columnIndex, value := range row {
-				if _, err := fmt.Fprintf(stdout, "row.%d.%d: %s\n", rowIndex+1, columnIndex+1, queryPlainValue(value)); err != nil {
-					return err
-				}
-			}
-		}
-		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
+	if _, err := fmt.Fprintf(stdout, "status: %s\n", result.Status); err != nil {
 		return err
 	}
-	if result.Status == "query_completed" {
-		if _, err := fmt.Fprintf(stdout, "Query completed: %d rows\n", result.RowCount); err != nil {
+	if result.ArchivePath != "" {
+		if _, err := fmt.Fprintf(stdout, "archive_path: %s\n", result.ArchivePath); err != nil {
 			return err
 		}
-		if len(result.Columns) != 0 {
-			if _, err := fmt.Fprintf(stdout, "Columns: %s\n", strings.Join(result.Columns, ", ")); err != nil {
-				return err
-			}
+	}
+	if len(result.Columns) != 0 {
+		if _, err := fmt.Fprintf(stdout, "columns: %s\n", strings.Join(result.Columns, ",")); err != nil {
+			return err
 		}
-		for rowIndex, row := range result.Rows {
-			if _, err := fmt.Fprintf(stdout, "Row %d:", rowIndex+1); err != nil {
-				return err
-			}
-			for columnIndex, value := range row {
-				column := fmt.Sprintf("column_%d", columnIndex+1)
-				if columnIndex < len(result.Columns) {
-					column = result.Columns[columnIndex]
-				}
-				if _, err := fmt.Fprintf(stdout, " %s=%s", column, queryPlainValue(value)); err != nil {
-					return err
-				}
-			}
-			if _, err := fmt.Fprintln(stdout); err != nil {
-				return err
-			}
-		}
-	} else if _, err := fmt.Fprintln(stdout, "Query failed"); err != nil {
+	}
+	if _, err := fmt.Fprintf(stdout, "row_count: %d\n", result.RowCount); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(stdout, "Message: %s\n", result.Message)
+	for rowIndex, row := range result.Rows {
+		for columnIndex, value := range row {
+			if _, err := fmt.Fprintf(stdout, "row.%d.%d: %s\n", rowIndex+1, columnIndex+1, queryPlainValue(value)); err != nil {
+				return err
+			}
+		}
+	}
+	_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
 	return err
 }
 

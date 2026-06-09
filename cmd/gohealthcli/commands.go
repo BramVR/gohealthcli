@@ -351,10 +351,12 @@ var commands = []commandDef{
 	{
 		Name:           "query",
 		Short:          "Run guarded read-only SQL over the Health Archive.",
-		Long:           "Execute a single SQL statement against the Health Archive. The binary refuses anything that would write or alter the archive — `query` is for inspection, not maintenance.\n\nFlags must appear **before** the SQL argument because Go's `flag` parser stops at the first positional argument. To explore the schema, query the `sqlite_master` table or run `gohealthcli export` for the canonical normalised datasets.",
+		Long:           "Execute a single SQL statement against the Health Archive. The binary refuses anything that would write or alter the archive — `query` is for inspection, not maintenance.\n\nFlags must appear **before** the SQL argument because Go's `flag` parser stops at the first positional argument. To explore the schema, query the `sqlite_master` table or run `gohealthcli export` for the canonical normalised datasets.\n\nThe default no-flag output is the `--plain` key/value shape: every cell appears on its own `row.<row>.<column>: <value>` line, with `\\n` / `\\t` / `\\r` / `\\\\` escaped so a downstream parser can split on the first `: ` and recover the value verbatim. The legacy `Row N: column=value column=value` shape — which silently broke on values containing spaces or `=` — was removed in PRD #144 slice 7; the default now produces byte-identical output to `--plain`, with no stderr warning, so scripted and LLM consumers get a parseable shape by default.\n\nIn `--json` mode, JSON-typed columns pass through as nested JSON objects so downstream consumers can read them with one parse instead of two. The recognised columns are `raw_json`, `data_source_json`, `timezone_metadata`, `token_metadata_json`, `google_identity_json`, and any column whose name ends in `_json`. Pass `--raw-text` to opt out and receive the literal stored string instead. NULL JSON-typed cells stay `null`; invalid JSON payloads fall back to the stored string so no row ever fails the query.",
 		PositionalArgs: "<sql>",
-		Flags:          withCommon(),
-		CommonFlags:    commonFlagNames(),
+		Flags: withCommon(
+			flagSpec{Name: "raw-text", Type: "bool", Default: "false", Usage: "in JSON mode, return JSON-typed columns as strings instead of nested objects"},
+		),
+		CommonFlags: commonFlagNames(),
 		// query, like status, reads ArchivePathExplicit so a --db passed
 		// on the global side (before the subcommand) still wins. query
 		// hits the archive read-only, so the runtime adapter bundle is
