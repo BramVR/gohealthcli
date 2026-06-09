@@ -14,18 +14,23 @@ import (
 // source of truth — adding a new endpoint or revising a scope is a
 // one-row change here.
 //
-// Today's values are pulled from PRD #142 §"Further Notes": getProfile,
-// getSettings, pairedDevices, and getIdentity are believed to require
-// `profile.readonly`; getIrnProfile requires the IRN scope. Slice 2 of
-// the PRD will revise the `pairedDevices` and `getSettings` entries
-// after empirical probing (Google currently 403s those endpoints with
-// only `profile.readonly`, suggesting they want a different scope).
-// When that discovery work lands, exactly the matching test value in
-// TestGoogleHealthIdentityEndpointScopesCatalog changes.
+// Values track Google's per-method documentation: getProfile and
+// getIdentity require `profile.readonly`, getSettings and pairedDevices
+// require `settings.readonly` (PRD #142 slice 2 / #176 confirmed
+// empirically — `profile.readonly` alone returns HTTP 403 for those
+// two), and getIrnProfile requires the IRN scope. References:
+//   - https://developers.google.com/health/api/reference/rest/v4/users/getProfile
+//   - https://developers.google.com/health/api/reference/rest/v4/users/getSettings
+//   - https://developers.google.com/health/api/reference/rest/v4/users.pairedDevices/list
+//   - https://developers.google.com/health/api/reference/rest/v4/users/getIrnProfile
+//   - https://developers.google.com/health/api/reference/rest/v4/users/getIdentity
+// TestGoogleHealthIdentityEndpointScopesCatalog pins the per-endpoint
+// values so any future revision is a one-row change here plus a
+// matching test-value flip.
 var googleHealthIdentityEndpointScopes = map[string][]string{
 	"getProfile":    {googleHealthProfileReadonlyScope},
-	"getSettings":   {googleHealthProfileReadonlyScope},
-	"pairedDevices": {googleHealthProfileReadonlyScope},
+	"getSettings":   {googleHealthSettingsReadonlyScope},
+	"pairedDevices": {googleHealthSettingsReadonlyScope},
 	"getIrnProfile": {googleHealthIrnReadonlyScope},
 	"getIdentity":   {googleHealthProfileReadonlyScope},
 }
@@ -52,15 +57,20 @@ var googleHealthIdentityEndpointURLs = map[string]string{
 // nutrition.readonly Data Types; `tcx` (#140) unlocks the
 // `location.readonly` scope that Google requires on top of
 // `activity_and_fitness.readonly` for the `exportExerciseTcx`
-// endpoint. The `tcx` keyword diverges from Google's bucket name on
-// purpose: users think in terms of TCX exports, not GPS location
-// telemetry. Values reference the `googleHealth*ReadonlyScope`
-// constants so the URL string lives in exactly one place.
+// endpoint; `settings` (#176) unlocks `settings.readonly`, which
+// Google's `users.getSettings` and `users.pairedDevices.list`
+// endpoints require — `profile.readonly` alone returns HTTP 403
+// despite what older docs implied. The `tcx` keyword diverges from
+// Google's bucket name on purpose: users think in terms of TCX
+// exports, not GPS location telemetry. Values reference the
+// `googleHealth*ReadonlyScope` constants so the URL string lives in
+// exactly one place.
 var connectAddScopeKeywords = map[string]string{
 	"irn":       googleHealthIrnReadonlyScope,
 	"ecg":       googleHealthEcgReadonlyScope,
 	"nutrition": googleHealthNutritionReadonlyScope,
 	"tcx":       googleHealthLocationReadonlyScope,
+	"settings":  googleHealthSettingsReadonlyScope,
 }
 
 // expandConnectAddScopes turns the CLI-side keyword list into the

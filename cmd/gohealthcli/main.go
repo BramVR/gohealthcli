@@ -35,13 +35,17 @@ const googleHealthSleepReadonlyScope = "https://www.googleapis.com/auth/googlehe
 const googleHealthNutritionReadonlyScope = "https://www.googleapis.com/auth/googlehealth.nutrition.readonly"
 const googleHealthProfileReadonlyScope = "https://www.googleapis.com/auth/googlehealth.profile.readonly"
 
-// Tier 2 opt-in scopes (#104). Users grant these via
-// `gohealthcli connect --add-scopes ecg,irn`. String literals match
-// connectAddScopeKeywords["ecg"/"irn"]; connect_add_scopes.go owns
-// the keyword→scope mapping, this file owns the constant the
-// catalog references.
+// Tier 2 opt-in scopes (#104, #176). Users grant these via
+// `gohealthcli connect --add-scopes ecg,irn,settings`. String
+// literals match connectAddScopeKeywords["ecg"/"irn"/"settings"];
+// connect_add_scopes.go owns the keyword→scope mapping, this file
+// owns the constant the catalog references. `settings.readonly`
+// (#176) is what Google's `users.getSettings` and
+// `users.pairedDevices.list` actually require — `profile.readonly`
+// alone returns HTTP 403 for those.
 const googleHealthEcgReadonlyScope = "https://www.googleapis.com/auth/googlehealth.electrocardiogram.readonly"
 const googleHealthIrnReadonlyScope = "https://www.googleapis.com/auth/googlehealth.irn.readonly"
+const googleHealthSettingsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.settings.readonly"
 
 // Tier 2 optional scope #140: `googlehealth.location.readonly` is the
 // scope Google requires (on top of `activity_and_fitness.readonly`) to
@@ -993,7 +997,7 @@ func runConnectWithRuntime(args []string, configPath, archivePath string, global
 		PlainOutput: mode.plain,
 		NoInput:     globalNoInput,
 	})
-	connectAddScopes := flags.String("add-scopes", "", "extend the OAuth grant with optional scope keywords (csv): irn, ecg, nutrition, tcx")
+	connectAddScopes := flags.String("add-scopes", "", "extend the OAuth grant with optional scope keywords (csv): irn, ecg, nutrition, tcx, settings")
 
 	if err := ParseCommon(flags, common, args); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)

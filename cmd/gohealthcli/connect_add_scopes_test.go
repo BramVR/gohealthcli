@@ -66,20 +66,22 @@ func TestExpandConnectAddScopesMapsKeywordsToScopeStrings(t *testing.T) {
 }
 
 // TestGoogleHealthIdentityEndpointScopesCatalog pins the AC for PRD
-// #142 slice 1: googleHealthIdentityEndpointScopes is a declarative
-// map keyed by endpoint identifier with entries for getProfile,
-// getSettings, pairedDevices, getIrnProfile, getIdentity. This slice
-// captures today's known values; slice 2 will revise pairedDevices
-// and getSettings after empirical probing — at that point exactly
-// one test value here changes.
+// #142 slice 1 plus the slice-2 revision (#176): the declarative
+// catalog has entries for getProfile, getSettings, pairedDevices,
+// getIrnProfile, getIdentity. Slice 2 flipped getSettings and
+// pairedDevices to googlehealth.settings.readonly after empirical
+// probing confirmed Google's per-method documentation
+// (https://developers.google.com/health/api/reference/rest/v4/users/getSettings,
+// https://developers.google.com/health/api/reference/rest/v4/users.pairedDevices/list);
+// profile.readonly returns HTTP 403 for those two endpoints.
 func TestGoogleHealthIdentityEndpointScopesCatalog(t *testing.T) {
 	tests := []struct {
 		endpoint   string
 		wantScopes []string
 	}{
 		{endpoint: "getProfile", wantScopes: []string{googleHealthProfileReadonlyScope}},
-		{endpoint: "getSettings", wantScopes: []string{googleHealthProfileReadonlyScope}},
-		{endpoint: "pairedDevices", wantScopes: []string{googleHealthProfileReadonlyScope}},
+		{endpoint: "getSettings", wantScopes: []string{googleHealthSettingsReadonlyScope}},
+		{endpoint: "pairedDevices", wantScopes: []string{googleHealthSettingsReadonlyScope}},
 		{endpoint: "getIrnProfile", wantScopes: []string{googleHealthIrnReadonlyScope}},
 		{endpoint: "getIdentity", wantScopes: []string{googleHealthProfileReadonlyScope}},
 	}
