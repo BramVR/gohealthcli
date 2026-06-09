@@ -111,21 +111,23 @@ func irnProfileSetupWithRuntime(configPath, archivePath string, runtime runtimeA
 		ProviderName:       connection.providerName,
 		GoogleHealthUserID: connection.googleHealthUserID,
 	}
-	// Fail fast if the IRN scope isn't on the stored Connection — calling
-	// the API would 403 and the user would not know why. AC requires
-	// this error to be the only thing the verb does in that case (no
-	// browser flow, no upstream call).
-	_, scopes, err := connectionTokenExpiryAndScopes(connection.tokenMetadataJSON)
-	if err != nil {
-		return result, err
-	}
-	if !scopeListContains(scopes, connectAddScopeKeywords["irn"]) {
-		result.Status = "irn_profile_scope_missing"
-		return result, errors.New("irn-profile requires the IRN OAuth scope; run `gohealthcli connect --add-scopes irn` to grant it")
-	}
+	// The deepened currentConnectionAccess pattern (PRD #142): wire
+	// WithAutoRefresh when the OAuth client is a file source — the
+	// archive handle already satisfies connectionTokenWriter — so an
+	// expired access token refreshes and persists transparently, the
+	// way sync_run_lifecycle.go already does. The scope pre-check
+	// happens inside AccessToken via the errCurrentConnectionScopeMissing
+	// sentinel, so we set the per-command status without re-implementing
+	// the scope-list comparison locally.
 	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{configPath, archivePath}, runtime)
-	accessToken, err := connectionAccess.AccessToken([]string{connectAddScopeKeywords["irn"]})
+	if config.oauthClient.kind == "file" {
+		connectionAccess = connectionAccess.WithAutoRefresh(config.oauthClient, archive)
+	}
+	accessToken, err := connectionAccess.AccessToken(googleHealthIdentityEndpointScopes["getIrnProfile"])
 	if err != nil {
+		if errors.Is(err, errCurrentConnectionScopeMissing) {
+			result.Status = "irn_profile_scope_missing"
+		}
 		return result, err
 	}
 	irn, err := fetchIRNProfile(accessToken)

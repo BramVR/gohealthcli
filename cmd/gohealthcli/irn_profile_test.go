@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 // addStoredConnectionScope rewrites the stored Connection's token
@@ -148,6 +149,99 @@ func TestIRNProfileCommandArchivesSnapshotWhenScopeGranted(t *testing.T) {
 	}
 }
 
+// TestIRNProfileCommandAutoRefreshesExpiredAccessToken pins the AC for
+// PRD #142 slice 1: with an expired access token but valid refresh
+// token and oauthClient.kind == "file", the verb refreshes
+// transparently, persists the new token via UpdateConnectionTokenMetadata
+// on the archive, and exits 0 with status "irn_profile_archived".
+func TestIRNProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	connectAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+		now:                connectAt,
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+		t.Fatalf("connect setup: %v", err)
+	}
+	// Mark the IRN scope as granted on the stored Connection so the
+	// scope pre-check passes — the verb under test exercises the
+	// auto-refresh path, not the scope-missing path.
+	addStoredConnectionScope(t, archivePath, connectAddScopeKeywords["irn"])
+	// Force the stored access-token expires_at into the past so
+	// AccessToken must take the auto-refresh path.
+	setConnectionTokenExpiry(t, archivePath, "2026-01-01T00:00:00Z")
+
+	irnNow := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC)
+	refreshedExpiresAt := irnNow.Add(time.Hour)
+	testRuntime.now = func() time.Time { return irnNow }
+	// Count refresh attempts so the AC's implicit "refresh once, persist
+	// once" contract is guarded against a regression where retries would
+	// silently double-rotate the stored token.
+	refreshCalls := 0
+	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
+		refreshCalls++
+		if refreshToken != "connect-refresh-secret" {
+			t.Fatalf("refresh token = %q, want connect-refresh-secret", refreshToken)
+		}
+		return oauthTokenResponse{
+			accessToken:  "rotated-access-secret",
+			refreshToken: "connect-refresh-secret",
+			tokenType:    "Bearer",
+			scopes:       fallbackScopes,
+			expiresAt:    refreshedExpiresAt,
+			rawTokenMaterialObject: map[string]any{
+				"access_token":  "rotated-access-secret",
+				"refresh_token": "connect-refresh-secret",
+				"token_type":    "Bearer",
+				"expires_in":    float64(3600),
+			},
+		}, nil
+	}
+
+	originalFetchIRNProfile := fetchIRNProfile
+	var calledWithToken string
+	fetchIRNProfile = func(accessToken string) (googleIRNProfile, error) {
+		calledWithToken = accessToken
+		return googleIRNProfile{
+			rawJSON: `{"onboardingState":"COMPLETED","enrollmentState":"ENROLLED","lastUpdateTime":"2026-06-01T00:00:00Z"}`,
+		}, nil
+	}
+	t.Cleanup(func() { fetchIRNProfile = originalFetchIRNProfile })
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{"irn-profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
+	if code != 0 {
+		t.Fatalf("irn-profile exit code = %d, stderr=%s, stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if calledWithToken != "rotated-access-secret" {
+		t.Fatalf("fetchIRNProfile access token = %q, want rotated-access-secret", calledWithToken)
+	}
+
+	var result irnProfileResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal stdout: %v\nstdout=%s", err, stdout.String())
+	}
+	if result.Status != "irn_profile_archived" {
+		t.Fatalf("result.Status = %q, want irn_profile_archived", result.Status)
+	}
+
+	// Refreshed expires_at must have been persisted to the archive's
+	// token_metadata_json via UpdateConnectionTokenMetadata.
+	gotMetadata := archivedConnectionTokenMetadata(t, archivePath)
+	if !strings.Contains(gotMetadata, refreshedExpiresAt.Format(time.RFC3339)) {
+		t.Fatalf("archived token_metadata_json = %s, want refreshed expires_at %s", gotMetadata, refreshedExpiresAt.Format(time.RFC3339))
+	}
+	if refreshCalls != 1 {
+		t.Fatalf("refreshOAuthToken call count = %d, want 1 (no retry loop should double-rotate the stored token)", refreshCalls)
+	}
+}
+
 // TestIRNProfileCommandFailsFastWhenScopeMissing pins the AC:
 // when the .irn.readonly scope is not on the stored Connection, the
 // verb errors with a clear 'run connect --add-scopes irn' instruction
@@ -175,11 +269,18 @@ func TestIRNProfileCommandFailsFastWhenScopeMissing(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"irn-profile", "--config", configPath, "--db", archivePath, "--plain"}, stdout, stderr)
+	code := run([]string{"irn-profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
 	if code == 0 {
 		t.Fatalf("irn-profile exit code = %d, want non-zero; stdout=%s", code, stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "connect --add-scopes irn") {
-		t.Fatalf("stdout missing reconnect hint:\n%s", stdout.String())
+	var result irnProfileResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal stdout: %v\nstdout=%s", err, stdout.String())
+	}
+	if result.Status != "irn_profile_scope_missing" {
+		t.Fatalf("result.Status = %q, want irn_profile_scope_missing", result.Status)
+	}
+	if !strings.Contains(result.Message, "connect --add-scopes irn") {
+		t.Fatalf("result.Message = %q, want it to name `connect --add-scopes irn`", result.Message)
 	}
 }

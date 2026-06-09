@@ -13,6 +13,17 @@ var (
 	errCurrentConnectionMissingAccessToken   = errors.New("Credential Store token material is missing access token; run `gohealthcli connect` again")
 	errCurrentConnectionMissingRefreshToken  = errors.New("Credential Store token material is missing refresh token; run `gohealthcli connect` again")
 	errCurrentConnectionTokenExpired         = errors.New("Connection token has expired; run `gohealthcli connect` again")
+	// errCurrentConnectionScopeMissing is the sentinel callers switch
+	// on when the stored Connection's granted scopes do not cover the
+	// scopes required for an upstream call. The wrapping error still
+	// carries the precise `connect --add-scopes <keyword>` recovery
+	// message that requireConnectionScopes already builds (main.go:1842);
+	// the sentinel only adds a typed test surface so each command can
+	// set its own "<command>_scope_missing" status without duplicating
+	// the pre-check logic. The sentinel's own Error() text matches the
+	// phrase requireConnectionScopes's wrapped message starts with, so
+	// errors.Is matchers and substring matchers see consistent prose.
+	errCurrentConnectionScopeMissing = errors.New("Connection token is missing required Google Health scope")
 )
 
 type currentConnectionAccess struct {
