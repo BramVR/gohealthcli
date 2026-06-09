@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -1195,6 +1196,119 @@ func exportDatasetViewMigrationStatement(spec exportDatasetSpec) string {
 	return fmt.Sprintf("CREATE VIEW %s AS\n%s", spec.view, strings.TrimSpace(spec.viewSQL))
 }
 
+// exportDatasetCatalog is the small discovery adapter over the
+// exportDatasetDefinitions registry. It owns the three views the read
+// surface needs but the registry itself was never shaped to provide:
+//
+//   - Names() — sorted, deduped list for `export --help` and the
+//     README drift guard.
+//   - Find(name) — case-sensitive lookup matching the registry's name
+//     contract (mirrors `exportDatasetSpecs[name]`).
+//   - Suggest(typo) — Levenshtein ≤ 3, top 3 by closeness then
+//     alphabetical, for the `export <typo>` did-you-mean line.
+//
+// PRD #144 slice 3 (issue #157) introduces this seam so consumers
+// (--help printer, typo error path, future docs generators) share one
+// surface instead of each re-walking the registry. ADR 0007 keeps the
+// registry as the source of truth for view SQL / migrations; the
+// catalog only *projects* discovery views over it.
+type exportDatasetCatalog struct {
+	// names is precomputed once at construction time: sorted, deduped.
+	// Cached because `export --help` and the typo error path each touch
+	// it on every invocation, and the registry never changes at runtime.
+	names []string
+	specs map[string]exportDatasetSpec
+}
+
+// exportSuggestMaxDistance is the Levenshtein cutoff for export typo
+// suggestions, fixed at 3 per PRD #144 slice 3. The looser bound (vs
+// the top-level command registry's 2) reflects that dataset names are
+// longer (averaging 18 chars) so a 2-edit cutoff misses common typos
+// like `heart-rate-sample` → `heart-rate-samples` when paired with a
+// second transposition.
+const exportSuggestMaxDistance = 3
+
+// exportSuggestMax is the hard cap on returned suggestions.
+const exportSuggestMax = 3
+
+// newExportDatasetCatalog builds a catalog over the given definitions.
+// Duplicate names are tolerated here (only the first wins for Find);
+// the registry seam (exportDatasetSpecByName) already panics on
+// duplicates, so production callers using exportDatasetDefinitions
+// never trigger the dedup branch. Tests pass synthetic registries.
+func newExportDatasetCatalog(definitions []exportDatasetSpec) *exportDatasetCatalog {
+	specs := make(map[string]exportDatasetSpec, len(definitions))
+	names := make([]string, 0, len(definitions))
+	for _, def := range definitions {
+		if _, exists := specs[def.name]; exists {
+			continue
+		}
+		specs[def.name] = def
+		names = append(names, def.name)
+	}
+	sort.Strings(names)
+	return &exportDatasetCatalog{names: names, specs: specs}
+}
+
+// Names returns the sorted, deduped list of dataset names. The returned
+// slice is a fresh copy so callers may safely mutate it without
+// disturbing the cached state.
+func (c *exportDatasetCatalog) Names() []string {
+	out := make([]string, len(c.names))
+	copy(out, c.names)
+	return out
+}
+
+// Find returns the spec for the given name and ok=true on hit,
+// (zero-value spec, false) on miss. Case-sensitive — the registry's
+// dataset names are kebab-case ASCII and never mixed-case.
+func (c *exportDatasetCatalog) Find(name string) (exportDatasetSpec, bool) {
+	spec, ok := c.specs[name]
+	return spec, ok
+}
+
+// Suggest returns at most exportSuggestMax dataset names whose
+// Levenshtein distance from `typo` is ≤ exportSuggestMaxDistance,
+// ordered by (distance asc, name asc). An empty slice (not nil)
+// indicates no close match; the typo error path falls back to the
+// `export --help` pointer in that case.
+//
+// The algorithm is dependency-free; we reuse the levenshteinDistance
+// helper that already lives in commands.go for the top-level
+// command-name typo path.
+func (c *exportDatasetCatalog) Suggest(typo string) []string {
+	type candidate struct {
+		name     string
+		distance int
+	}
+	var candidates []candidate
+	for _, name := range c.names {
+		d := levenshteinDistance(typo, name)
+		if d <= exportSuggestMaxDistance {
+			candidates = append(candidates, candidate{name: name, distance: d})
+		}
+	}
+	// Sort by (distance asc, name asc). c.names is already alphabetical
+	// so stable sort by distance preserves the alphabetical tie-break
+	// for free.
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].distance < candidates[j].distance
+	})
+	if len(candidates) > exportSuggestMax {
+		candidates = candidates[:exportSuggestMax]
+	}
+	out := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		out = append(out, c.name)
+	}
+	return out
+}
+
+// exportDatasetCatalogSingleton is the production catalog over the
+// canonical registry. Built once at package init so the help printer
+// and typo error path do not pay the construction cost per invocation.
+var exportDatasetCatalogSingleton = newExportDatasetCatalog(exportDatasetDefinitions)
+
 func runExport(args []string, configPath, archivePath string, archivePathExplicit bool, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("export", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -1221,6 +1335,21 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 	exportFormat := flags.String("format", "csv", "export format: csv or jsonl (synonyms: --json → jsonl, --plain → csv)")
 	exportOutputPath := flags.String("output", "", "write export to path")
 	exportStdout := flags.Bool("stdout", false, "write export data to stdout")
+
+	// `export --help` is the discovery surface for the 30+ normalized
+	// datasets (PRD #144 slice 3). The stdlib default Usage prints the
+	// flag block only; we wrap it to append the catalog list so an LLM
+	// or script that asks the binary "what can you export?" gets a
+	// complete answer from one call. The catalog earns its seam here:
+	// the loop is one line because Names() already sorts and dedupes.
+	flags.Usage = func() {
+		fmt.Fprintf(flags.Output(), "Usage of %s:\n", flags.Name())
+		flags.PrintDefaults()
+		fmt.Fprintln(flags.Output(), "\nSupported datasets:")
+		for _, name := range exportDatasetCatalogSingleton.Names() {
+			fmt.Fprintf(flags.Output(), "  %s\n", name)
+		}
+	}
 
 	positionals, parseArgs, err := splitExportArgs(args)
 	if err != nil {
@@ -1259,14 +1388,30 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: "export requires exactly one dataset", Mode: mode}, stdout, stderr)
 	}
 	dataset := positionals[0]
-	spec, ok := exportDatasetSpecs[dataset]
+	spec, ok := exportDatasetCatalogSingleton.Find(dataset)
 	if !ok {
-		return ReportFailure(FailureReport{
+		exit := ReportFailure(FailureReport{
 			Command: "export",
 			Status:  StatusFlagInvalid,
 			Message: fmt.Sprintf("export dataset %q is not supported", dataset),
 			Mode:    mode,
 		}, stdout, stderr)
+		// In --json mode the caller wants a single-line envelope on
+		// stdout and nothing on stderr; appending hints would corrupt
+		// that shape (the same constraint runUnknownCommand honours).
+		// In default/--plain mode, surface the did-you-mean line plus
+		// the `export --help` pointer so the human (or scripted LLM
+		// retry) can recover without grepping source. The pointer is
+		// emitted unconditionally because Suggest() can return an
+		// empty slice for gibberish input — the help pointer is the
+		// invariant fallback.
+		if !mode.json {
+			if suggestions := exportDatasetCatalogSingleton.Suggest(dataset); len(suggestions) > 0 {
+				fmt.Fprintf(stderr, "Did you mean: %s?\n", strings.Join(suggestions, ", "))
+			}
+			fmt.Fprintln(stderr, "Run 'gohealthcli export --help' for the full list of supported datasets.")
+		}
+		return exit
 	}
 	// Resolve --json / --plain into --format. Mutual exclusion between
 	// --plain and --json already fired in ParseCommon above (the
