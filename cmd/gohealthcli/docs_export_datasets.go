@@ -57,6 +57,39 @@ func renderExportDatasetsBlock(names []string) string {
 	return b.String()
 }
 
+// locateExportDatasetsRegion returns the byte indices that bound the
+// auto-generated bullet block in `content`: `bodyStart` is the first
+// byte after the start marker (and its trailing newline, if any) and
+// `endIdx` is the first byte of the end marker. The pair satisfies
+// `content[bodyStart:endIdx]` == current bullet block and
+// `content[:bodyStart] + block + content[endIdx:]` == rewritten file.
+//
+// Centralising the boundary calculation here keeps the splice and
+// extract paths byte-identical — a future tweak (e.g. CRLF handling)
+// lands in one place rather than diverging across two callers.
+func locateExportDatasetsRegion(content string) (bodyStart, endIdx int, err error) {
+	startIdx := strings.Index(content, exportDatasetsStartMarker)
+	if startIdx < 0 {
+		return 0, 0, fmt.Errorf("README missing %q marker", exportDatasetsStartMarker)
+	}
+	endIdx = strings.Index(content, exportDatasetsEndMarker)
+	if endIdx < 0 {
+		return 0, 0, fmt.Errorf("README missing %q marker", exportDatasetsEndMarker)
+	}
+	if endIdx < startIdx {
+		return 0, 0, errors.New("README markers are in the wrong order: end before start")
+	}
+	// Splice between the newline after the start marker and the line
+	// containing the end marker. That keeps both marker lines intact
+	// (so the markers are NOT consumed by repeated splices) while
+	// replacing only the bullet block in between.
+	bodyStart = startIdx + len(exportDatasetsStartMarker)
+	if bodyStart < len(content) && content[bodyStart] == '\n' {
+		bodyStart++
+	}
+	return bodyStart, endIdx, nil
+}
+
 // spliceREADMEExportDatasets returns the input README content with the
 // region between exportDatasetsStartMarker and exportDatasetsEndMarker
 // replaced by the rendered block. The markers themselves and every
@@ -68,48 +101,22 @@ func renderExportDatasetsBlock(names []string) string {
 // rendered block is inserted on the lines between them, so the marker
 // lines act as both "start of region" and "first/last preserved line".
 func spliceREADMEExportDatasets(content, block string) (string, error) {
-	startIdx := strings.Index(content, exportDatasetsStartMarker)
-	if startIdx < 0 {
-		return "", fmt.Errorf("README missing %q marker", exportDatasetsStartMarker)
+	bodyStart, endIdx, err := locateExportDatasetsRegion(content)
+	if err != nil {
+		return "", err
 	}
-	endIdx := strings.Index(content, exportDatasetsEndMarker)
-	if endIdx < 0 {
-		return "", fmt.Errorf("README missing %q marker", exportDatasetsEndMarker)
-	}
-	if endIdx < startIdx {
-		return "", errors.New("README markers are in the wrong order: end before start")
-	}
-	// Splice between the newline after the start marker and the line
-	// containing the end marker. That keeps both marker lines intact
-	// (so the markers are NOT consumed by repeated splices) while
-	// replacing only the bullet block in between.
-	afterStart := startIdx + len(exportDatasetsStartMarker)
-	if afterStart < len(content) && content[afterStart] == '\n' {
-		afterStart++
-	}
-	return content[:afterStart] + block + content[endIdx:], nil
+	return content[:bodyStart] + block + content[endIdx:], nil
 }
 
 // extractREADMEExportDatasetsBlock returns the bytes currently sitting
 // between the two markers in the input content. Used by the drift
 // guard test to compare committed bytes to a fresh render.
 func extractREADMEExportDatasetsBlock(content string) (string, error) {
-	startIdx := strings.Index(content, exportDatasetsStartMarker)
-	if startIdx < 0 {
-		return "", fmt.Errorf("README missing %q marker", exportDatasetsStartMarker)
+	bodyStart, endIdx, err := locateExportDatasetsRegion(content)
+	if err != nil {
+		return "", err
 	}
-	endIdx := strings.Index(content, exportDatasetsEndMarker)
-	if endIdx < 0 {
-		return "", fmt.Errorf("README missing %q marker", exportDatasetsEndMarker)
-	}
-	if endIdx < startIdx {
-		return "", errors.New("README markers are in the wrong order: end before start")
-	}
-	afterStart := startIdx + len(exportDatasetsStartMarker)
-	if afterStart < len(content) && content[afterStart] == '\n' {
-		afterStart++
-	}
-	return content[afterStart:endIdx], nil
+	return content[bodyStart:endIdx], nil
 }
 
 // parseExportDatasetBlockNames pulls the inline-code names out of a
