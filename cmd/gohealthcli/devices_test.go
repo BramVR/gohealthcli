@@ -26,6 +26,10 @@ func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
 	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
+	// PRD #142 slice 2 / #176: pairedDevices now requires
+	// settings.readonly, so simulate the user having run
+	// `connect --add-scopes settings`.
+	addStoredConnectionScope(t, archivePath, googleHealthSettingsReadonlyScope)
 
 	originalFetchPairedDevices := fetchPairedDevices
 	fetchPairedDevices = func(string) (googlePairedDevices, error) {
@@ -222,6 +226,10 @@ func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
 	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
+	// PRD #142 slice 2 / #176: pairedDevices now requires
+	// settings.readonly, so simulate the user having run
+	// `connect --add-scopes settings`.
+	addStoredConnectionScope(t, archivePath, googleHealthSettingsReadonlyScope)
 
 	originalFetchPairedDevices := fetchPairedDevices
 	fetchPairedDevices = func(string) (googlePairedDevices, error) {
@@ -366,6 +374,10 @@ func TestDevicesCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
 		t.Fatalf("connect setup: %v", err)
 	}
+	// PRD #142 slice 2 / #176: pairedDevices now requires
+	// settings.readonly, so simulate the user having run
+	// `connect --add-scopes settings`.
+	addStoredConnectionScope(t, archivePath, googleHealthSettingsReadonlyScope)
 	// Force the stored access-token expires_at into the past so
 	// AccessToken must take the auto-refresh path.
 	setConnectionTokenExpiry(t, archivePath, "2026-01-01T00:00:00Z")

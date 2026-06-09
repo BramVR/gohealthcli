@@ -50,6 +50,17 @@ func TestExpandConnectAddScopesMapsKeywordsToScopeStrings(t *testing.T) {
 		t.Fatalf("scopes = %v, want one location.readonly scope URL", scopes)
 	}
 
+	// `settings` (#176) unlocks googlehealth.settings.readonly, which
+	// users.getSettings and users.pairedDevices.list require — Google's
+	// own per-method docs confirm profile.readonly alone returns 403.
+	scopes, err = expandConnectAddScopes([]string{"settings"})
+	if err != nil {
+		t.Fatalf("expand settings: %v", err)
+	}
+	if len(scopes) != 1 || !strings.Contains(scopes[0], "settings.readonly") {
+		t.Fatalf("scopes = %v, want one settings.readonly scope URL", scopes)
+	}
+
 	if _, err := expandConnectAddScopes([]string{"typo"}); err == nil {
 		t.Fatal("expand unknown keyword: err = nil, want unknown-keyword failure")
 	} else if !strings.Contains(err.Error(), "typo") {
@@ -66,20 +77,22 @@ func TestExpandConnectAddScopesMapsKeywordsToScopeStrings(t *testing.T) {
 }
 
 // TestGoogleHealthIdentityEndpointScopesCatalog pins the AC for PRD
-// #142 slice 1: googleHealthIdentityEndpointScopes is a declarative
-// map keyed by endpoint identifier with entries for getProfile,
-// getSettings, pairedDevices, getIrnProfile, getIdentity. This slice
-// captures today's known values; slice 2 will revise pairedDevices
-// and getSettings after empirical probing — at that point exactly
-// one test value here changes.
+// #142 slice 1 plus the slice-2 revision (#176): the declarative
+// catalog has entries for getProfile, getSettings, pairedDevices,
+// getIrnProfile, getIdentity. Slice 2 flipped getSettings and
+// pairedDevices to googlehealth.settings.readonly after empirical
+// probing confirmed Google's per-method documentation
+// (https://developers.google.com/health/api/reference/rest/v4/users/getSettings,
+// https://developers.google.com/health/api/reference/rest/v4/users.pairedDevices/list);
+// profile.readonly returns HTTP 403 for those two endpoints.
 func TestGoogleHealthIdentityEndpointScopesCatalog(t *testing.T) {
 	tests := []struct {
 		endpoint   string
 		wantScopes []string
 	}{
 		{endpoint: "getProfile", wantScopes: []string{googleHealthProfileReadonlyScope}},
-		{endpoint: "getSettings", wantScopes: []string{googleHealthProfileReadonlyScope}},
-		{endpoint: "pairedDevices", wantScopes: []string{googleHealthProfileReadonlyScope}},
+		{endpoint: "getSettings", wantScopes: []string{googleHealthSettingsReadonlyScope}},
+		{endpoint: "pairedDevices", wantScopes: []string{googleHealthSettingsReadonlyScope}},
 		{endpoint: "getIrnProfile", wantScopes: []string{googleHealthIrnReadonlyScope}},
 		{endpoint: "getIdentity", wantScopes: []string{googleHealthProfileReadonlyScope}},
 	}

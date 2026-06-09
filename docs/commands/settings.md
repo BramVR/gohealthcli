@@ -15,4 +15,3 @@ Fetch the upstream `users.getSettings` payload and append it to the Health Archi
 | `--db` | string | — | SQLite Health Archive path |
 | `--json` | bool | `false` | write stable JSON to stdout |
 | `--plain` | bool | `false` | write plain key/value output to stdout |
-| `--no-input` | bool | `false` | never prompt, never wait for browser input |

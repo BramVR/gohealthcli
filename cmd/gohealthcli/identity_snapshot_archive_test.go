@@ -225,6 +225,10 @@ func TestSettingsCommandArchivesSnapshotWithKindSettings(t *testing.T) {
 	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
+	// PRD #142 slice 2 / #176: getSettings now requires
+	// settings.readonly, so simulate the user having run
+	// `connect --add-scopes settings`.
+	addStoredConnectionScope(t, archivePath, googleHealthSettingsReadonlyScope)
 
 	originalFetchSettings := fetchSettings
 	fetchSettings = func(string) (googleSettings, error) {

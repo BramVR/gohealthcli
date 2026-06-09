@@ -15,4 +15,3 @@ This is the LLM's path to questions like "which Pixel Watch synced last?" or "wh
 | `--db` | string | — | SQLite Health Archive path |
 | `--json` | bool | `false` | write stable JSON to stdout |
 | `--plain` | bool | `false` | write plain key/value output to stdout |
-| `--no-input` | bool | `false` | never prompt, never wait for browser input |
