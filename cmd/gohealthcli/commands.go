@@ -351,10 +351,17 @@ var commands = []commandDef{
 	{
 		Name:           "query",
 		Short:          "Run guarded read-only SQL over the Health Archive.",
-		Long:           "Execute a single SQL statement against the Health Archive. The binary refuses anything that would write or alter the archive — `query` is for inspection, not maintenance.\n\nFlags must appear **before** the SQL argument because Go's `flag` parser stops at the first positional argument. To explore the schema, query the `sqlite_master` table or run `gohealthcli export` for the canonical normalised datasets.",
+		Long:           "Execute a single SQL statement against the Health Archive. The binary refuses anything that would write or alter the archive — `query` is for inspection, not maintenance.\n\nFlags must appear **before** the SQL argument because Go's `flag` parser stops at the first positional argument. To explore the schema, query the `sqlite_master` table or run `gohealthcli export` for the canonical normalised datasets.\n\nIn `--json` mode, JSON-typed columns pass through as nested JSON objects so downstream consumers can read them with one parse instead of two. The recognised columns are `raw_json`, `data_source_json`, `timezone_metadata`, `token_metadata_json`, `google_identity_json`, and any column whose name ends in `_json`. Pass `--raw-text` to opt out and receive the literal stored string instead. NULL JSON-typed cells stay `null`; invalid JSON payloads fall back to the stored string so no row ever fails the query.\n\nBLOB columns in `--json` mode are wrapped in a `{\"__blob_base64__\": \"<base64>\"}` marker object so raw bytes survive the JSON path without UTF-8 replacement-character corruption. Detection covers both schema-declared BLOB columns (`sql.ColumnType.DatabaseTypeName() == \"BLOB\"`) and typeless expressions whose scan result is a byte slice (e.g. `SELECT randomblob(8)`). Decode the payload with any base64 decoder (`jq -r '.rows[0][0].__blob_base64__' | base64 -d`). The BLOB marker takes precedence over the JSON-typed allowlist, so a `raw_json` column that comes back as a BLOB is base64-encoded, never double-parsed. NULL BLOB cells stay `null`.\n\nBLOB columns in `--plain` mode are emitted as a `<blob:base64><payload>` string so the `row.N.M:` line stays parseable; without the prefix today's path emits the raw bytes and prints `\\ufffd` replacement characters wherever the bytes are not valid UTF-8.",
 		PositionalArgs: "<sql>",
-		Flags:          withCommon(),
-		CommonFlags:    commonFlagNames(),
+		Flags: withCommon(
+			// --raw-text registered on the runtime FlagSet inside
+			// runQuery; mirrored here so docs-commands regen + the
+			// `schema --json` contract list it alongside the common
+			// flags. Keep the usage string in sync with the BoolVar in
+			// runQuery (PRD #144 slice 5).
+			flagSpec{Name: "raw-text", Type: "bool", Default: "false", Usage: "in JSON mode, return JSON-typed columns as strings instead of nested objects"},
+		),
+		CommonFlags: commonFlagNames(),
 		// query, like status, reads ArchivePathExplicit so a --db passed
 		// on the global side (before the subcommand) still wins. query
 		// hits the archive read-only, so the runtime adapter bundle is

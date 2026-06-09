@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -8,6 +9,23 @@ import (
 	"io"
 	"strings"
 )
+
+// blobBase64MarkerKey is the documented JSON wrapper key that
+// `--json` mode uses to mark a base64-encoded BLOB cell. Downstream
+// consumers detect a BLOB column by checking for this key.
+const blobBase64MarkerKey = "__blob_base64__"
+
+// blobPlainPrefix is the documented `--plain` prefix that precedes a
+// base64-encoded BLOB payload, keeping the row.N.M line parseable
+// even when the underlying bytes contain control characters or
+// invalid UTF-8 sequences.
+const blobPlainPrefix = "<blob:base64>"
+
+// blobDatabaseTypeName is SQLite's BLOB type-name token, the signal
+// the encoders use to switch into base64 mode. SQLite reports type
+// names in uppercase via DatabaseTypeName(); we match
+// case-insensitively defensively.
+const blobDatabaseTypeName = "BLOB"
 
 type queryResult struct {
 	Status      string   `json:"status"`
@@ -354,17 +372,27 @@ func skipSQLParenthetical(statement string) (string, error) {
 //
 //   - jsonModeEncoder: JSON-typed columns pass through as nested
 //     json.RawMessage so a stdlib JSON consumer sees an object, not an
-//     escaped string. Non-JSON columns (and JSON-typed columns whose
-//     payload is NULL, empty, or fails to parse) fall back to today's
-//     string behaviour.
+//     escaped string. BLOB columns are wrapped in the documented
+//     `{"__blob_base64__": "..."}` marker so raw bytes never reach
+//     `encoding/json`'s UTF-8 path (which would mangle them with
+//     replacement characters). Non-JSON, non-BLOB columns (and
+//     JSON-typed columns whose payload is NULL, empty, or fails to
+//     parse) fall back to today's string behaviour.
 //   - plainModeEncoder: preserves today's escape-string behaviour
-//     byte-for-byte, regardless of column name.
+//     byte-for-byte for TEXT-shaped scan results, but base64-encodes
+//     BLOB columns under a documented `<blob:base64>` prefix so the
+//     row.N.M line stays parseable.
+//
+// databaseTypeName is the SQLite type name as reported by
+// `sql.ColumnType.DatabaseTypeName()` (BLOB / TEXT / INTEGER / REAL /
+// "" for typeless view columns). The encoders use it to detect BLOB
+// columns; everything else routes by column name + scan value type
+// per the slice 5 contract.
 //
 // The interface is the test seam: per-adapter unit tests cover the
-// branching, and the BLOB slice (PRD #144 issue #167) adds a sibling
-// adapter method without touching the call sites.
+// branching against a fixture-driven (column, type, value) input.
 type queryRowEncoder interface {
-	encode(column string, value any) any
+	encode(column, databaseTypeName string, value any) any
 }
 
 // jsonModeEncoder implements the JSON-passthrough behaviour for
@@ -387,17 +415,34 @@ var jsonModeAllowlist = map[string]struct{}{
 
 func newJSONModeEncoder() *jsonModeEncoder { return &jsonModeEncoder{} }
 
-// encode applies the JSON-typed passthrough rule. NULLs and non-byte
-// scalars flow through untouched so JSON Number/Bool/null shapes are
-// preserved. Byte slices and strings on a JSON-typed column that parse
-// as valid JSON become json.RawMessage; anything else falls back to a
-// string so users see the literal stored bytes instead of a parse
-// error.
+// encode applies the JSON-typed passthrough rule plus the BLOB
+// base64-wrap rule. NULLs and non-byte scalars flow through untouched
+// so JSON Number/Bool/null shapes are preserved.
+//
+// BLOB columns take precedence over the JSON-typed column-name
+// allowlist: a column named `raw_json` that comes back as a BLOB is
+// base64-encoded under the `__blob_base64__` marker, never
+// double-parsed as JSON. This stops `encoding/json` from mangling raw
+// bytes through its UTF-8 path, which today produces silent
+// replacement characters.
+//
+// Byte slices and strings on a JSON-typed column that parse as valid
+// JSON become json.RawMessage; anything else falls back to a string
+// so users see the literal stored bytes instead of a parse error.
 //
 // Both []byte and string need handling because the SQLite driver
 // returns TEXT columns as Go strings while BLOB columns come back as
 // []byte; the value is JSON-shaped either way.
-func (e *jsonModeEncoder) encode(column string, value any) any {
+func (e *jsonModeEncoder) encode(column, databaseTypeName string, value any) any {
+	if value == nil {
+		return nil
+	}
+	if isBLOBScanResult(databaseTypeName, value) {
+		bytesValue, _ := value.([]byte)
+		return map[string]string{
+			blobBase64MarkerKey: base64.StdEncoding.EncodeToString(bytesValue),
+		}
+	}
 	bytesValue, ok := bytesFromScanValue(value)
 	if !ok {
 		return value
@@ -433,20 +478,62 @@ func bytesFromScanValue(value any) ([]byte, bool) {
 	}
 }
 
-// plainModeEncoder implements today's escape-string behaviour. The
-// PRD wants `--plain` output byte-identical to the pre-change build,
+// plainModeEncoder implements today's escape-string behaviour for
+// TEXT-shaped scan results, plus the BLOB base64-prefix rule. The PRD
+// wants `--plain` TEXT output byte-identical to the pre-change build,
 // so this adapter does NOT consult the JSON-typed allowlist — every
-// []byte value becomes a string, full stop. queryPlainValue still
-// applies its control-character escaping downstream.
+// non-BLOB []byte value becomes a string, full stop. queryPlainValue
+// still applies its control-character escaping downstream.
+//
+// BLOB columns (detected via the SQLite type name) are stamped with
+// the documented `<blob:base64>` prefix and emitted as a single
+// base64-encoded payload so the row.N.M line stays parseable. Without
+// the prefix today's path produces `�` replacement characters and
+// silent data loss.
 type plainModeEncoder struct{}
 
 func newPlainModeEncoder() *plainModeEncoder { return &plainModeEncoder{} }
 
-func (e *plainModeEncoder) encode(_ string, value any) any {
+func (e *plainModeEncoder) encode(_, databaseTypeName string, value any) any {
+	if value == nil {
+		return nil
+	}
+	if isBLOBScanResult(databaseTypeName, value) {
+		bytesValue, _ := value.([]byte)
+		return blobPlainPrefix + base64.StdEncoding.EncodeToString(bytesValue)
+	}
 	if bytesValue, ok := value.([]byte); ok {
 		return string(bytesValue)
 	}
 	return value
+}
+
+// isBLOBScanResult returns true when a scanned column should be
+// treated as a BLOB and base64-encoded. Two signals combine:
+//
+//  1. `sql.ColumnType.DatabaseTypeName()` reports "BLOB" — the strong
+//     signal for schema-declared BLOB columns. Match is
+//     case-insensitive: SQLite reports the token in uppercase today
+//     but `DatabaseTypeName()` is driver-defined, so we normalize.
+//  2. `DatabaseTypeName()` is empty (typeless: view columns, SQL
+//     literals, or builtins like `randomblob()`) AND the scan value
+//     is `[]byte`. go-sqlite3 returns TEXT cells as Go strings and
+//     BLOB cells as []byte, so a typeless column whose scan value is
+//     []byte is observationally a BLOB.
+//
+// Signal (2) is the path the PRD's randomblob acceptance criterion
+// goes through: `randomblob(8)` carries no declared type but the
+// driver hands us 8 raw bytes, which the JSON encoder would otherwise
+// UTF-8-mangle.
+func isBLOBScanResult(databaseTypeName string, value any) bool {
+	if strings.EqualFold(databaseTypeName, blobDatabaseTypeName) {
+		return true
+	}
+	if databaseTypeName != "" {
+		return false
+	}
+	_, ok := value.([]byte)
+	return ok
 }
 
 // isJSONTypedColumn returns true when the column name is on the
