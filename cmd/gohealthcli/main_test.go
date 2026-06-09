@@ -3012,8 +3012,19 @@ func TestStatusRejectsConfigArchiveMismatch(t *testing.T) {
 		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
 	}
 	assertJSONString(t, got, "status", "status_failed")
-	if !strings.Contains(got["message"].(string), "archive_path points") {
-		t.Fatalf("message = %q, want config mismatch", got["message"])
+	// PRD #144 slice 1 (issue #155): a read-command mismatch error names
+	// the user-facing flags directly, never the internal `archive_path`
+	// config field. The resolver test matrix pins the exact wording; here
+	// we pin only the externally observable surface: both flag names
+	// appear, the internal name does not.
+	message, _ := got["message"].(string)
+	for _, want := range []string{"--db", "--config", otherArchivePath, configPath} {
+		if !strings.Contains(message, want) {
+			t.Errorf("message = %q, missing substring %q", message, want)
+		}
+	}
+	if strings.Contains(message, "archive_path") {
+		t.Errorf("message = %q, must not mention internal archive_path field", message)
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
@@ -3058,9 +3069,20 @@ func TestStatusRejectsExplicitDefaultArchiveMismatch(t *testing.T) {
 				t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
 			}
 			assertJSONString(t, got, "status", "status_failed")
-			wantMessage := fmt.Sprintf("archive_path points to %s, want %s", archivePath, defaultArchivePath)
-			if got["message"] != wantMessage {
-				t.Fatalf("message = %q, want %q", got["message"], wantMessage)
+			// PRD #144 slice 1 (issue #155): when --config and --db are
+			// both explicit and disagree, the read-command error must
+			// name the user-facing flags directly and must NOT mention
+			// the internal `archive_path` config field. Both flag values
+			// must show up so the user can see what they pointed each
+			// flag at.
+			message, _ := got["message"].(string)
+			for _, want := range []string{"--db", "--config", defaultArchivePath, configPath, archivePath} {
+				if !strings.Contains(message, want) {
+					t.Errorf("message = %q, missing substring %q", message, want)
+				}
+			}
+			if strings.Contains(message, "archive_path") {
+				t.Errorf("message = %q, must not mention internal archive_path field", message)
 			}
 			assertNoSecretWords(t, stdout.String()+stderr.String())
 		})

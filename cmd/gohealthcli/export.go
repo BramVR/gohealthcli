@@ -1309,7 +1309,7 @@ func (c *exportDatasetCatalog) Suggest(typo string) []string {
 // and typo error path do not pay the construction cost per invocation.
 var exportDatasetCatalogSingleton = newExportDatasetCatalog(exportDatasetDefinitions)
 
-func runExport(args []string, configPath, archivePath string, archivePathExplicit bool, stdout, stderr io.Writer) int {
+func runExport(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("export", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -1322,8 +1322,10 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 	// by export (it's a read-only verb against the local archive); we
 	// keep it in the spec so the global-flag pre-scan does not reject it.
 	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
-		ConfigPath:  configPath,
-		ArchivePath: archivePath,
+		ConfigPath:          configPath,
+		ArchivePath:         archivePath,
+		ArchivePathExplicit: archivePathExplicit,
+		ConfigPathExplicit:  configPathExplicit,
 	})
 	// Override the generic CommonFlagSet Usage strings for the flags
 	// whose meaning is export-specific. `export --help` now reflects the
@@ -1433,7 +1435,12 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 
-	resolvedArchivePath, err := resolveConfiguredArchivePath(common.ConfigPath, common.ArchivePath, archivePathExplicit || common.ArchivePathExplicit)
+	resolvedArchivePath, err := readArchivePathResolver{
+		configPath:          common.ConfigPath,
+		configPathExplicit:  common.ConfigPathExplicit,
+		archivePath:         common.ArchivePath,
+		archivePathExplicit: common.ArchivePathExplicit,
+	}.Resolve()
 	if err != nil {
 		return ReportFailure(FailureReport{Command: "export", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}

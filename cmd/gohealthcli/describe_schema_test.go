@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -197,6 +198,67 @@ func TestDescribeSchemaSQLStillOverridesJSONDefault(t *testing.T) {
 	trimmed := strings.TrimLeft(stdout.String(), " \t\r\n")
 	if strings.HasPrefix(trimmed, "{") {
 		t.Fatalf("--sql output looks like JSON catalog (starts with `{`); expected DDL\nstdout=%s", stdout.String())
+	}
+}
+
+// TestDescribeSchemaJSONHonorsExplicitDBAgainstTwoDistinctArchives is
+// the end-to-end tracer for PRD #144 slice 1 (issue #155) acceptance
+// criterion "describe-schema --db against two temp archives with
+// different schema state produces different JSON outputs". This proves
+// `--db` is honoured (not merely a regression-only assertion): pointing
+// the same binary at two distinct archive paths must yield two distinct
+// catalogs because each catalog reflects the live `sqlite_master` of
+// the archive at the resolved `--db` path.
+//
+// The two archives diverge by an extra table in archive B (the
+// resolver-honours-it test does not care which side of the schema is
+// different, only that one archive's catalog is observably distinct
+// from the other under the same binary invocation).
+func TestDescribeSchemaJSONHonorsExplicitDBAgainstTwoDistinctArchives(t *testing.T) {
+	tempDir := t.TempDir()
+	archiveA := filepath.Join(tempDir, "a", "a.sqlite")
+	archiveB := filepath.Join(tempDir, "b", "b.sqlite")
+	if err := createArchive(archiveA); err != nil {
+		t.Fatalf("create archive A: %v", err)
+	}
+	if err := createArchive(archiveB); err != nil {
+		t.Fatalf("create archive B: %v", err)
+	}
+	// Introduce a divergence the catalog will surface: an extra plain
+	// table in archive B. The catalog's `Tables` block is built from
+	// sqlite_master so the stray table only shows up against archive B.
+	db, err := openArchive(archiveB)
+	if err != nil {
+		t.Fatalf("open archive B: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE slice1_marker (id INTEGER PRIMARY KEY)`); err != nil {
+		db.Close()
+		t.Fatalf("create marker table on B: %v", err)
+	}
+	db.Close()
+
+	runDescribeSchema := func(t *testing.T, archivePath string) string {
+		t.Helper()
+		stdout := new(bytes.Buffer)
+		stderr := new(bytes.Buffer)
+		code := run([]string{"describe-schema", "--db", archivePath, "--json"}, stdout, stderr)
+		if code != 0 {
+			t.Fatalf("describe-schema --db %s exit code = %d, stderr=%s", archivePath, code, stderr.String())
+		}
+		return stdout.String()
+	}
+
+	outA := runDescribeSchema(t, archiveA)
+	outB := runDescribeSchema(t, archiveB)
+
+	if outA == outB {
+		t.Fatalf("describe-schema --json produced identical output for two distinct archives — --db was not honoured\nA=%s\nB=%s", archiveA, archiveB)
+	}
+	if !strings.Contains(outB, "slice1_marker") {
+		t.Fatalf("archive B catalog missing slice1_marker table; output may be from default archive, not --db\nB=%s\n%s", archiveB, outB)
+	}
+	if strings.Contains(outA, "slice1_marker") {
+		t.Fatalf("archive A catalog unexpectedly includes slice1_marker; output may be from archive B\nA=%s\n%s", archiveA, outA)
 	}
 }
 

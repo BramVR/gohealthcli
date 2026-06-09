@@ -18,15 +18,17 @@ type queryResult struct {
 	Message     string   `json:"message"`
 }
 
-func runQuery(args []string, configPath, archivePath string, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer) int {
+func runQuery(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("query", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
 	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
-		ConfigPath:  configPath,
-		ArchivePath: archivePath,
-		JSONOutput:  mode.json,
-		PlainOutput: mode.plain,
+		ConfigPath:          configPath,
+		ArchivePath:         archivePath,
+		JSONOutput:          mode.json,
+		PlainOutput:         mode.plain,
+		ArchivePathExplicit: archivePathExplicit,
+		ConfigPathExplicit:  configPathExplicit,
 	})
 
 	if err := ParseCommon(flags, common, args); err != nil {
@@ -42,7 +44,12 @@ func runQuery(args []string, configPath, archivePath string, archivePathExplicit
 		}, stdout, stderr)
 	}
 
-	resolvedArchivePath, err := resolveConfiguredArchivePath(common.ConfigPath, common.ArchivePath, archivePathExplicit || common.ArchivePathExplicit)
+	resolvedArchivePath, err := readArchivePathResolver{
+		configPath:          common.ConfigPath,
+		configPathExplicit:  common.ConfigPathExplicit,
+		archivePath:         common.ArchivePath,
+		archivePathExplicit: common.ArchivePathExplicit,
+	}.Resolve()
 	if err != nil {
 		result := queryResult{Status: "query_failed", ArchivePath: common.ArchivePath, Message: err.Error()}
 		if writeErr := writeQueryResult(result, mode, stdout); writeErr != nil {

@@ -345,7 +345,7 @@ var commands = []commandDef{
 		// adapter sources it from CommonFlagValues, which the dispatch path
 		// populates from the FlagSet Visit pass.
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runStatus(args, common.ConfigPath, common.ArchivePath, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr)
+			return runStatus(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr)
 		},
 	},
 	{
@@ -360,7 +360,7 @@ var commands = []commandDef{
 		// hits the archive read-only, so the runtime adapter bundle is
 		// not needed.
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runQuery(args, common.ConfigPath, common.ArchivePath, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr)
+			return runQuery(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr)
 		},
 	},
 	{
@@ -385,7 +385,7 @@ var commands = []commandDef{
 		// adapter bundle is unused (export is read-only against the local
 		// archive).
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runExport(args, common.ConfigPath, common.ArchivePath, common.ArchivePathExplicit, stdout, stderr)
+			return runExport(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, stdout, stderr)
 		},
 	},
 	{
@@ -432,7 +432,7 @@ var commands = []commandDef{
 		),
 		CommonFlags: commonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runDescribeSchemaWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runDescribeSchemaWithRuntime(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr, runtime)
 		},
 	},
 	{
