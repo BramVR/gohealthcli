@@ -5254,6 +5254,96 @@ func TestBuildGoogleHealthRawRequestRejectsNonListableDataTypes(t *testing.T) {
 	}
 }
 
+// TestBuildGoogleHealthRawRequestEndpointCatalog pins PRD #142 slice 7:
+// every identity-style endpoint exposed by `raw endpoint <name>` must
+// source its requiredScopes from googleHealthIdentityEndpointScopes so
+// the scope contract for `raw` and the introspection commands (devices,
+// settings, profile, irn-profile) can never drift apart. When slice 2
+// of the PRD revises pairedDevices/getSettings scopes empirically, the
+// catalog entry changes and this test follows automatically — no inline
+// scope literals to update in main.go.
+func TestBuildGoogleHealthRawRequestEndpointCatalog(t *testing.T) {
+	tests := []struct {
+		name    string
+		wantURL string
+	}{
+		{name: "getIdentity", wantURL: googleHealthIdentityURL},
+		{name: "getProfile", wantURL: googleHealthProfileURL},
+		{name: "getSettings", wantURL: googleHealthSettingsURL},
+		{name: "pairedDevices", wantURL: googleHealthPairedDevicesURL},
+		{name: "getIrnProfile", wantURL: googleHealthIRNProfileURL},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request, err := buildGoogleHealthRawRequest([]string{"endpoint", tt.name}, "", "", 0, "")
+			if err != nil {
+				t.Fatalf("build raw request for %q: %v", tt.name, err)
+			}
+			if request.endpointName != tt.name {
+				t.Fatalf("endpointName = %q, want %q", request.endpointName, tt.name)
+			}
+			if request.url != tt.wantURL {
+				t.Fatalf("url = %q, want %q", request.url, tt.wantURL)
+			}
+			wantScopes := googleHealthIdentityEndpointScopes[tt.name]
+			if len(wantScopes) == 0 {
+				t.Fatalf("catalog missing entry for %q — slice 1 contract violated", tt.name)
+			}
+			if len(request.requiredScopes) != len(wantScopes) {
+				t.Fatalf("requiredScopes = %v, want %v (catalog entry)", request.requiredScopes, wantScopes)
+			}
+			for i, want := range wantScopes {
+				if request.requiredScopes[i] != want {
+					t.Fatalf("requiredScopes[%d] = %q, want %q (catalog entry)", i, request.requiredScopes[i], want)
+				}
+			}
+		})
+	}
+}
+
+// TestBuildGoogleHealthRawRequestUnknownEndpoint guards the
+// not-found fall-through so a typo (or a renamed endpoint that
+// outpaces a catalog update) still surfaces as a clear error rather
+// than a nil request.
+func TestBuildGoogleHealthRawRequestUnknownEndpoint(t *testing.T) {
+	_, err := buildGoogleHealthRawRequest([]string{"endpoint", "nonexistent"}, "", "", 0, "")
+	if err == nil {
+		t.Fatal("build raw request error = nil, want unsupported raw endpoint")
+	}
+	if !strings.Contains(err.Error(), `unsupported raw endpoint "nonexistent"`) {
+		t.Fatalf("error = %v, want unsupported raw endpoint %q", err, "nonexistent")
+	}
+}
+
+// TestBuildGoogleHealthRawRequestEndpointsReadFromCatalog pins PRD #142
+// slice 7 AC: no `[]string{googleHealthProfileReadonlyScope}` inline
+// literal remains in buildGoogleHealthRawRequest. The only source of
+// truth for endpoint scopes is the catalog. We verify behaviourally:
+// a catalog mutation for the duration of the test flows through to the
+// request's requiredScopes — proving the branch did a catalog lookup,
+// not a hard-coded literal.
+func TestBuildGoogleHealthRawRequestEndpointsReadFromCatalog(t *testing.T) {
+	for _, endpoint := range []string{"getIdentity", "getProfile", "getSettings", "pairedDevices", "getIrnProfile"} {
+		t.Run(endpoint, func(t *testing.T) {
+			original, ok := googleHealthIdentityEndpointScopes[endpoint]
+			if !ok {
+				t.Fatalf("catalog missing %q — slice 1 contract violated", endpoint)
+			}
+			sentinel := "https://example.invalid/scope/sentinel-" + endpoint
+			googleHealthIdentityEndpointScopes[endpoint] = []string{sentinel}
+			t.Cleanup(func() { googleHealthIdentityEndpointScopes[endpoint] = original })
+
+			request, err := buildGoogleHealthRawRequest([]string{"endpoint", endpoint}, "", "", 0, "")
+			if err != nil {
+				t.Fatalf("build raw request for %q: %v", endpoint, err)
+			}
+			if len(request.requiredScopes) != 1 || request.requiredScopes[0] != sentinel {
+				t.Fatalf("requiredScopes = %v, want catalog-driven %q — branch is using an inline scope literal", request.requiredScopes, sentinel)
+			}
+		})
+	}
+}
+
 func TestGoogleHealthRawFilterFieldsCoverFirstReleaseDataTypes(t *testing.T) {
 	for _, test := range []struct {
 		dataType string

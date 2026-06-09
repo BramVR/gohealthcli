@@ -2975,14 +2975,23 @@ func buildGoogleHealthRawRequest(target []string, from, to string, pageSize int6
 		if len(target) != 2 {
 			return rawProviderRequest{}, errors.New("endpoint mode requires exactly one endpoint name")
 		}
-		if target[1] == "getIdentity" {
-			return rawProviderRequest{endpointName: "getIdentity", url: googleHealthIdentityURL}, nil
-		}
-		if target[1] == "getProfile" {
-			return rawProviderRequest{endpointName: "getProfile", url: googleHealthProfileURL, requiredScopes: []string{googleHealthProfileReadonlyScope}}, nil
-		}
-		if target[1] == "getSettings" {
-			return rawProviderRequest{endpointName: "getSettings", url: googleHealthSettingsURL, requiredScopes: []string{googleHealthProfileReadonlyScope}}, nil
+		// Identity-style endpoints route through the catalog: URL
+		// lookup comes from googleHealthIdentityEndpointURLs, scopes
+		// from googleHealthIdentityEndpointScopes. PRD #142 slice 7
+		// makes `raw endpoint <name>` and the matching introspection
+		// command (`profile`, `settings`, `devices`, `irn-profile`)
+		// share one source of truth, so a scope revision (slice 2) is
+		// a one-row change.
+		if endpointURL, ok := googleHealthIdentityEndpointURLs[target[1]]; ok {
+			requiredScopes, hasScopes := googleHealthIdentityEndpointScopes[target[1]]
+			if !hasScopes || len(requiredScopes) == 0 {
+				return rawProviderRequest{}, fmt.Errorf("internal: identity endpoint %q present in URL catalog but missing from scope catalog", target[1])
+			}
+			return rawProviderRequest{
+				endpointName:   target[1],
+				url:            endpointURL,
+				requiredScopes: requiredScopes,
+			}, nil
 		}
 		if strings.HasPrefix(target[1], "dataTypes.") && strings.HasSuffix(target[1], ".list") {
 			dataType := strings.TrimSuffix(strings.TrimPrefix(target[1], "dataTypes."), ".list")
