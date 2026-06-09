@@ -51,6 +51,12 @@ jobs:
         run: |
           test -s dist/docs-site/index.html
           grep -q "gohealthcli" dist/docs-site/index.html
+          test -s dist/docs-site/sitemap.xml
+          test -s dist/docs-site/robots.txt
+          test -s dist/docs-site/llms.txt
+          test -s dist/docs-site/llms-full.txt
+          grep -q "application/ld+json" dist/docs-site/index.html
+          grep -q "SoftwareApplication" dist/docs-site/index.html
 
       - name: Configure Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
