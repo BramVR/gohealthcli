@@ -28,6 +28,12 @@ func runQuery(args []string, configPath, archivePath string, archivePathExplicit
 		JSONOutput:  mode.json,
 		PlainOutput: mode.plain,
 	})
+	// --raw-text opts out of the JSON-typed column passthrough that
+	// `--json` enables by default. Plain mode never participates in
+	// the passthrough, so the flag is a no-op there; we still accept
+	// it so script authors can pass `--raw-text` defensively.
+	var rawText bool
+	flags.BoolVar(&rawText, "raw-text", false, "in JSON mode, return JSON-typed columns as strings instead of nested objects")
 
 	if err := ParseCommon(flags, common, args); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
@@ -55,7 +61,8 @@ func runQuery(args []string, configPath, archivePath string, archivePathExplicit
 		}
 		return 1
 	}
-	result, err := querySetup(resolvedArchivePath, flags.Arg(0))
+	encoder := selectQueryRowEncoder(mode, rawText)
+	result, err := querySetup(resolvedArchivePath, flags.Arg(0), encoder)
 	if err != nil {
 		result.Status = "query_failed"
 		result.Message = err.Error()
@@ -339,13 +346,129 @@ func skipSQLParenthetical(statement string) (string, error) {
 	return "", errors.New("query SQL is incomplete")
 }
 
-func queryOutputValue(value any) any {
+// queryRowEncoder owns per-mode conversion of a single scanned column
+// value (`database/sql` hands raw scalars and []byte for TEXT/BLOB) into
+// the value that lands in queryResult.Rows. Two adapters exist:
+//
+//   - jsonModeEncoder: JSON-typed columns pass through as nested
+//     json.RawMessage so a stdlib JSON consumer sees an object, not an
+//     escaped string. Non-JSON columns (and JSON-typed columns whose
+//     payload is NULL, empty, or fails to parse) fall back to today's
+//     string behaviour.
+//   - plainModeEncoder: preserves today's escape-string behaviour
+//     byte-for-byte, regardless of column name.
+//
+// The interface is the test seam: per-adapter unit tests cover the
+// branching, and the BLOB slice (PRD #144 issue #167) adds a sibling
+// adapter method without touching the call sites.
+type queryRowEncoder interface {
+	encode(column string, value any) any
+}
+
+// jsonModeEncoder implements the JSON-passthrough behaviour for
+// `query --json`. The JSON-typed column allowlist is a curated set of
+// raw column names plus any column whose name ends in `_json`; this
+// matches every column the Health Archive's writer stores JSON into
+// today and the suffix convention every future Normalized View follows.
+type jsonModeEncoder struct{}
+
+// jsonModeAllowlist enumerates the JSON-typed column names that are NOT
+// captured by the `*_json` suffix rule. New JSON-typed columns whose
+// name does not end in `_json` (e.g. timezone_metadata) belong here.
+var jsonModeAllowlist = map[string]struct{}{
+	"raw_json":             {},
+	"data_source_json":     {},
+	"timezone_metadata":    {},
+	"token_metadata_json":  {},
+	"google_identity_json": {},
+}
+
+func newJSONModeEncoder() *jsonModeEncoder { return &jsonModeEncoder{} }
+
+// encode applies the JSON-typed passthrough rule. NULLs and non-byte
+// scalars flow through untouched so JSON Number/Bool/null shapes are
+// preserved. Byte slices and strings on a JSON-typed column that parse
+// as valid JSON become json.RawMessage; anything else falls back to a
+// string so users see the literal stored bytes instead of a parse
+// error.
+//
+// Both []byte and string need handling because the SQLite driver
+// returns TEXT columns as Go strings while BLOB columns come back as
+// []byte; the value is JSON-shaped either way.
+func (e *jsonModeEncoder) encode(column string, value any) any {
+	bytesValue, ok := bytesFromScanValue(value)
+	if !ok {
+		return value
+	}
+	if !isJSONTypedColumn(column) {
+		return string(bytesValue)
+	}
+	if len(bytesValue) == 0 {
+		return string(bytesValue)
+	}
+	if !json.Valid(bytesValue) {
+		return string(bytesValue)
+	}
+	// Copy the bytes: database/sql reuses the scan buffer across rows
+	// and we hand this slice to the JSON encoder later (after the next
+	// row.Scan call, possibly).
+	copied := make(json.RawMessage, len(bytesValue))
+	copy(copied, bytesValue)
+	return copied
+}
+
+// bytesFromScanValue normalises the TEXT/BLOB scan result to []byte.
+// The SQLite driver hands TEXT back as string and BLOB as []byte; the
+// JSON-passthrough rule treats both the same way.
+func bytesFromScanValue(value any) ([]byte, bool) {
 	switch typed := value.(type) {
 	case []byte:
-		return string(typed)
+		return typed, true
+	case string:
+		return []byte(typed), true
 	default:
-		return typed
+		return nil, false
 	}
+}
+
+// plainModeEncoder implements today's escape-string behaviour. The
+// PRD wants `--plain` output byte-identical to the pre-change build,
+// so this adapter does NOT consult the JSON-typed allowlist — every
+// []byte value becomes a string, full stop. queryPlainValue still
+// applies its control-character escaping downstream.
+type plainModeEncoder struct{}
+
+func newPlainModeEncoder() *plainModeEncoder { return &plainModeEncoder{} }
+
+func (e *plainModeEncoder) encode(_ string, value any) any {
+	if bytesValue, ok := value.([]byte); ok {
+		return string(bytesValue)
+	}
+	return value
+}
+
+// isJSONTypedColumn returns true when the column name is on the
+// curated allowlist or ends in the `_json` suffix every JSON-typed
+// Normalized View column uses.
+func isJSONTypedColumn(column string) bool {
+	if _, ok := jsonModeAllowlist[column]; ok {
+		return true
+	}
+	return strings.HasSuffix(column, "_json")
+}
+
+// selectQueryRowEncoder picks the encoder adapter for the requested
+// output mode. `--raw-text` opts out of the JSON-passthrough even in
+// JSON mode, giving users the literal stored bytes when they need
+// them (regression-debugging, snapshotting an upstream payload).
+// Default mode (the unparseable `Row N: k=v` shape) keeps today's
+// string-cast behaviour via the plain-mode encoder; PRD #144 slice 8
+// removes the default mode itself.
+func selectQueryRowEncoder(mode outputMode, rawText bool) queryRowEncoder {
+	if mode.json && !rawText {
+		return newJSONModeEncoder()
+	}
+	return newPlainModeEncoder()
 }
 
 func writeQueryResult(result queryResult, mode outputMode, stdout io.Writer) error {
