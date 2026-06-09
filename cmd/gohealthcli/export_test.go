@@ -110,6 +110,189 @@ func TestExportDatasetLookupRejectsMissingNames(t *testing.T) {
 	})
 }
 
+// TestExportDatasetCatalogNamesSortedAndDeduped pins the discovery
+// adapter's Names() contract: the slice is sorted alphabetically and
+// contains no duplicates, even if the underlying registry would ever
+// pick up two entries with the same name (defensive — exportDatasetSpecByName
+// already panics on duplicates, but Names() owns the public surface, so
+// it should not assume that).
+func TestExportDatasetCatalogNamesSortedAndDeduped(t *testing.T) {
+	catalog := newExportDatasetCatalog([]exportDatasetSpec{
+		{name: "weight-samples"},
+		{name: "daily-steps"},
+		{name: "daily-steps"},
+		{name: "heart-rate-samples"},
+	})
+	names := catalog.Names()
+	want := []string{"daily-steps", "heart-rate-samples", "weight-samples"}
+	if len(names) != len(want) {
+		t.Fatalf("Names() = %v, want %v", names, want)
+	}
+	for i, n := range want {
+		if names[i] != n {
+			t.Fatalf("Names()[%d] = %q, want %q (full: %v)", i, names[i], n, names)
+		}
+	}
+}
+
+// TestExportDatasetCatalogFindHitAndMiss pins Find() returns (spec, true)
+// for a known dataset and (zero, false) for an unknown one.
+func TestExportDatasetCatalogFindHitAndMiss(t *testing.T) {
+	catalog := newExportDatasetCatalog(exportDatasetDefinitions)
+	if spec, ok := catalog.Find("daily-steps"); !ok || spec.name != "daily-steps" {
+		t.Fatalf("Find(\"daily-steps\") = (%+v, %v), want spec with name daily-steps and ok=true", spec, ok)
+	}
+	if spec, ok := catalog.Find("totally-not-a-dataset"); ok || spec.name != "" {
+		t.Fatalf("Find(\"totally-not-a-dataset\") = (%+v, %v), want (zero spec, false)", spec, ok)
+	}
+}
+
+// TestExportDatasetCatalogSuggestRanking covers the Suggest() contract
+// per the PRD slice 3 acceptance criteria: a one-edit typo returns the
+// closest match first; a three-edit typo still surfaces a list; a
+// gibberish input (distance > 3 from every name) returns an empty
+// slice (not nil — the same shape contract commandRegistry.Suggest uses).
+func TestExportDatasetCatalogSuggestRanking(t *testing.T) {
+	catalog := newExportDatasetCatalog(exportDatasetDefinitions)
+
+	// One-edit typo: "daily-step" → "daily-steps" (insert one char).
+	suggestions := catalog.Suggest("daily-step")
+	if len(suggestions) == 0 || suggestions[0] != "daily-steps" {
+		t.Fatalf("Suggest(\"daily-step\") = %v, want first entry daily-steps", suggestions)
+	}
+	if len(suggestions) > 3 {
+		t.Fatalf("Suggest(\"daily-step\") = %v, want at most 3 entries", suggestions)
+	}
+
+	// Three-edit typo: should still surface at least one suggestion.
+	// "heart-rate-sample" is 1 edit from "heart-rate-samples" (insert 's').
+	// Use a deliberately further typo to exercise the ≤3 cutoff.
+	suggestions = catalog.Suggest("hart-rate-sample")
+	if len(suggestions) == 0 {
+		t.Fatalf("Suggest(\"hart-rate-sample\") = empty, want at least one heart-rate-samples-ish entry")
+	}
+	if suggestions[0] != "heart-rate-samples" {
+		t.Fatalf("Suggest(\"hart-rate-sample\")[0] = %q, want heart-rate-samples", suggestions[0])
+	}
+
+	// Gibberish: no name within Levenshtein 3 → empty slice (not nil).
+	suggestions = catalog.Suggest("xxxxxxxxxxxxxxxxxxxx")
+	if suggestions == nil {
+		t.Fatalf("Suggest gibberish = nil, want empty slice")
+	}
+	if len(suggestions) != 0 {
+		t.Fatalf("Suggest gibberish = %v, want empty", suggestions)
+	}
+}
+
+// TestExportDatasetCatalogSuggestCapAndTieBreak pins that Suggest returns
+// at most 3 entries and that ties on distance break alphabetically.
+func TestExportDatasetCatalogSuggestCapAndTieBreak(t *testing.T) {
+	catalog := newExportDatasetCatalog([]exportDatasetSpec{
+		{name: "bcde"}, // distance 1 from "abcde"
+		{name: "abcdf"}, // distance 1
+		{name: "abcdz"}, // distance 1
+		{name: "abxxx"}, // distance 3
+		{name: "yyyyy"}, // distance 5 → excluded
+	})
+	got := catalog.Suggest("abcde")
+	if len(got) > 3 {
+		t.Fatalf("Suggest cap exceeded: %v", got)
+	}
+	// Three names tie at distance 1: abcdf, abcdz, bcde. Alphabetical
+	// order: abcdf, abcdz, bcde.
+	want := []string{"abcdf", "abcdz", "bcde"}
+	for i, w := range want {
+		if i >= len(got) || got[i] != w {
+			t.Fatalf("Suggest(\"abcde\") = %v, want %v", got, want)
+		}
+	}
+}
+
+// TestExportHelpListsEveryDataset is the end-to-end drift guard for
+// PRD #144 slice 3 AC: `gohealthcli export --help` stdout (or stderr —
+// flag.PrintDefaults writes to FlagSet.Output()) must enumerate every
+// name returned by the catalog so the binary's help text stays the
+// authoritative surface for LLM and script consumers.
+func TestExportHelpListsEveryDataset(t *testing.T) {
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"export", "--help"}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("export --help exit code = %d, want 0\nstdout=%s\nstderr=%s", code, stdout.String(), stderr.String())
+	}
+	// stdlib flag package writes --help output to FlagSet.Output(); the
+	// export command sets that to stderr. Concatenate so we don't pin a
+	// brittle stream choice and only assert content.
+	combined := stdout.String() + stderr.String()
+	if !strings.Contains(combined, "Supported datasets:") {
+		t.Fatalf("export --help missing \"Supported datasets:\" section header\nstdout=%s\nstderr=%s", stdout.String(), stderr.String())
+	}
+	for _, spec := range exportDatasetDefinitions {
+		if !strings.Contains(combined, spec.name) {
+			t.Errorf("export --help missing dataset name %q\nstdout=%s\nstderr=%s", spec.name, stdout.String(), stderr.String())
+		}
+	}
+}
+
+// TestExportTypoMentionsDidYouMeanAndHelp covers the AC pair: a typo
+// like `daily-step` must produce stderr containing both "did you mean"
+// and the closest match (daily-steps); a gibberish dataset name must
+// produce stderr that points to `export --help`.
+func TestExportTypoMentionsDidYouMeanAndHelp(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"export",
+		"--config", configPath,
+		"--db", archivePath,
+		"daily-step",
+		"--stdout",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("export daily-step exit code = %d, want 1\nstdout=%s\nstderr=%s", code, stdout.String(), stderr.String())
+	}
+	lower := strings.ToLower(stderr.String())
+	if !strings.Contains(lower, "did you mean") {
+		t.Fatalf("stderr missing \"did you mean\" line: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "daily-steps") {
+		t.Fatalf("stderr missing suggestion daily-steps: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "export --help") {
+		t.Fatalf("stderr missing \"export --help\" pointer: %q", stderr.String())
+	}
+}
+
+// TestExportGibberishDatasetPointsAtHelp covers the AC variant where the
+// typo is far enough that no suggestion fires; stderr must still point
+// at `export --help` so the user knows where to discover the full list.
+func TestExportGibberishDatasetPointsAtHelp(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"export",
+		"--config", configPath,
+		"--db", archivePath,
+		"totally-not-a-dataset",
+		"--stdout",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("export gibberish exit code = %d, want 1\nstdout=%s\nstderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "export --help") {
+		t.Fatalf("stderr missing \"export --help\" pointer: %q", stderr.String())
+	}
+}
+
 // TestREADMEListsEveryExportDataset is the drift guard for issue #146:
 // the README's "Normalized export datasets" section must enumerate every
 // entry in exportDatasetDefinitions. If a new dataset is added to the
