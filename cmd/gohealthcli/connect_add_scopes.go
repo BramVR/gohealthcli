@@ -6,6 +6,30 @@ import (
 	"strings"
 )
 
+// googleHealthIdentityEndpointScopes is the declarative scope catalog
+// keyed by Google Health identity-endpoint identifier. Each entry
+// pins the OAuth scope URL(s) the upstream call requires, so the
+// per-command scope literals (devices.go, settings.go, profile setup
+// in main.go) and the `raw` endpoint dispatcher can converge on one
+// source of truth — adding a new endpoint or revising a scope is a
+// one-row change here.
+//
+// Today's values are pulled from PRD #142 §"Further Notes": getProfile,
+// getSettings, pairedDevices, and getIdentity are believed to require
+// `profile.readonly`; getIrnProfile requires the IRN scope. Slice 2 of
+// the PRD will revise the `pairedDevices` and `getSettings` entries
+// after empirical probing (Google currently 403s those endpoints with
+// only `profile.readonly`, suggesting they want a different scope).
+// When that discovery work lands, exactly the matching test value in
+// TestGoogleHealthIdentityEndpointScopesCatalog changes.
+var googleHealthIdentityEndpointScopes = map[string][]string{
+	"getProfile":    {googleHealthProfileReadonlyScope},
+	"getSettings":   {googleHealthProfileReadonlyScope},
+	"pairedDevices": {googleHealthProfileReadonlyScope},
+	"getIrnProfile": {googleHealthIrnReadonlyScope},
+	"getIdentity":   {googleHealthProfileReadonlyScope},
+}
+
 // connectAddScopeKeywords maps the user-facing `--add-scopes` keyword
 // to the actual Google Health API scope URL. PRD #93 §"Tier 2 Data
 // Types" picks `ecg` (electrocardiogram) and `irn`

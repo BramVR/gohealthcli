@@ -1872,13 +1872,20 @@ func requireConnectionScopes(metadata string, requiredScopes []string) error {
 		}
 	}
 	if len(missing) > 0 {
+		// Wrap the typed sentinel so callers can switch on
+		// errors.Is(err, errCurrentConnectionScopeMissing) to set
+		// per-command "<command>_scope_missing" status without
+		// duplicating this pre-check. The user-facing message keeps
+		// naming the precise `--add-scopes <keyword>` recovery (or the
+		// generic `connect` fallback for non-keyword scopes) — only the
+		// error type changes.
 		if keywords := addScopeKeywordsForScopes(missing); len(keywords) == len(missing) {
 			// Every missing scope is an opt-in Tier 2 scope — point
 			// the user at the lightweight `connect --add-scopes` flow
 			// rather than re-running the full base-set connect.
-			return fmt.Errorf("Connection token is missing required Google Health scope %s; run `gohealthcli connect --add-scopes %s`", missing[0], strings.Join(keywords, ","))
+			return fmt.Errorf("%w %s; run `gohealthcli connect --add-scopes %s`", errCurrentConnectionScopeMissing, missing[0], strings.Join(keywords, ","))
 		}
-		return fmt.Errorf("Connection token is missing required Google Health scope %s; run `gohealthcli connect` again", missing[0])
+		return fmt.Errorf("%w %s; run `gohealthcli connect` again", errCurrentConnectionScopeMissing, missing[0])
 	}
 	return nil
 }

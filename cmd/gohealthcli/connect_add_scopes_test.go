@@ -65,6 +65,42 @@ func TestExpandConnectAddScopesMapsKeywordsToScopeStrings(t *testing.T) {
 	}
 }
 
+// TestGoogleHealthIdentityEndpointScopesCatalog pins the AC for PRD
+// #142 slice 1: googleHealthIdentityEndpointScopes is a declarative
+// map keyed by endpoint identifier with entries for getProfile,
+// getSettings, pairedDevices, getIrnProfile, getIdentity. This slice
+// captures today's known values; slice 2 will revise pairedDevices
+// and getSettings after empirical probing — at that point exactly
+// one test value here changes.
+func TestGoogleHealthIdentityEndpointScopesCatalog(t *testing.T) {
+	tests := []struct {
+		endpoint   string
+		wantScopes []string
+	}{
+		{endpoint: "getProfile", wantScopes: []string{googleHealthProfileReadonlyScope}},
+		{endpoint: "getSettings", wantScopes: []string{googleHealthProfileReadonlyScope}},
+		{endpoint: "pairedDevices", wantScopes: []string{googleHealthProfileReadonlyScope}},
+		{endpoint: "getIrnProfile", wantScopes: []string{googleHealthIrnReadonlyScope}},
+		{endpoint: "getIdentity", wantScopes: []string{googleHealthProfileReadonlyScope}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.endpoint, func(t *testing.T) {
+			got, ok := googleHealthIdentityEndpointScopes[tt.endpoint]
+			if !ok {
+				t.Fatalf("googleHealthIdentityEndpointScopes missing entry for %q", tt.endpoint)
+			}
+			if len(got) != len(tt.wantScopes) {
+				t.Fatalf("scopes for %q = %v, want %v", tt.endpoint, got, tt.wantScopes)
+			}
+			for i, want := range tt.wantScopes {
+				if got[i] != want {
+					t.Fatalf("scopes[%d] for %q = %q, want %q", i, tt.endpoint, got[i], want)
+				}
+			}
+		})
+	}
+}
+
 // TestConnectAddScopesIsCommunicatedToOAuthFlow is the slice A
 // end-to-end behaviour: `connect --add-scopes irn` produces an OAuth
 // authorisation URL whose scope parameter includes the IRN scope on

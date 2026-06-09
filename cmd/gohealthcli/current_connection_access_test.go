@@ -92,6 +92,146 @@ func TestRequireConnectionScopesAddScopesHint(t *testing.T) {
 	}
 }
 
+// TestCurrentConnectionAccessTokenScopeMissingSentinel pins the AC for
+// PRD #142 slice 1: AccessToken returns an error matching
+// errors.Is(err, errCurrentConnectionScopeMissing) exactly when a
+// required scope is absent from the stored Connection. Other failure
+// modes (expired token, missing access token, Provider 401-style
+// errors) must NOT match the sentinel so callers can switch on it to
+// set per-command "<command>_scope_missing" status without false
+// positives.
+func TestCurrentConnectionAccessTokenScopeMissingSentinel(t *testing.T) {
+	expiresFuture := time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)
+	expiresPast := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name           string
+		setup          func(t *testing.T) currentConnectionAccess
+		requiredScopes []string
+		wantSentinel   bool
+	}{
+		{
+			name: "missing required scope matches sentinel",
+			setup: func(t *testing.T) currentConnectionAccess {
+				access := newCurrentConnectionAccess(
+					credentialStoreConfig{kind: "bogus"},
+					archivedConnection{
+						id:                "googlehealth:111",
+						tokenMetadataJSON: tokenMetadataJSON(t, expiresFuture, []string{googleHealthActivityReadonlyScope}),
+					},
+					nil,
+				)
+				access.runtime.now = func() time.Time { return now }
+				return access
+			},
+			requiredScopes: []string{googleHealthIrnReadonlyScope},
+			wantSentinel:   true,
+		},
+		{
+			name: "expired token without auto-refresh does not match sentinel",
+			setup: func(t *testing.T) currentConnectionAccess {
+				access := newCurrentConnectionAccess(
+					credentialStoreConfig{kind: "bogus"},
+					archivedConnection{
+						id:                "googlehealth:111",
+						tokenMetadataJSON: tokenMetadataJSON(t, expiresPast, []string{googleHealthIrnReadonlyScope}),
+					},
+					nil,
+				)
+				access.runtime.now = func() time.Time { return now }
+				return access
+			},
+			requiredScopes: []string{googleHealthIrnReadonlyScope},
+			wantSentinel:   false,
+		},
+		{
+			name: "missing access token in credential store does not match sentinel",
+			setup: func(t *testing.T) currentConnectionAccess {
+				fixture := setupAutoRefreshFixture(t, map[string]any{
+					"refresh_token": "stored-refresh",
+					"token_type":    "Bearer",
+				})
+				access := newCurrentConnectionAccess(
+					fixture.credentialStore,
+					archivedConnection{
+						id:                "googlehealth:111",
+						tokenMetadataJSON: tokenMetadataJSON(t, expiresFuture, []string{googleHealthIrnReadonlyScope}),
+					},
+					nil,
+				)
+				access.runtime.now = func() time.Time { return now }
+				return access
+			},
+			requiredScopes: []string{googleHealthIrnReadonlyScope},
+			wantSentinel:   false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			access := tt.setup(t)
+			_, err := access.AccessToken(tt.requiredScopes)
+			if err == nil {
+				t.Fatalf("AccessToken returned nil, want error")
+			}
+			gotSentinel := errors.Is(err, errCurrentConnectionScopeMissing)
+			if gotSentinel != tt.wantSentinel {
+				t.Fatalf("errors.Is(err, errCurrentConnectionScopeMissing) = %v, want %v (err=%v)", gotSentinel, tt.wantSentinel, err)
+			}
+		})
+	}
+}
+
+// TestCurrentConnectionAccessTokenScopeMissingNamesAddScopesRecovery
+// pins the AC that the sentinel error's Error() still names the
+// precise `connect --add-scopes <keyword>` recovery for Tier-2 scopes
+// and falls back to `gohealthcli connect` for non-keyword scopes —
+// preserving requireConnectionScopes's existing message verbatim.
+func TestCurrentConnectionAccessTokenScopeMissingNamesAddScopesRecovery(t *testing.T) {
+	expiresFuture := time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name           string
+		requiredScopes []string
+		wantContains   string
+	}{
+		{
+			name:           "tier-2 irn scope names add-scopes keyword",
+			requiredScopes: []string{googleHealthIrnReadonlyScope},
+			wantContains:   "run `gohealthcli connect --add-scopes irn`",
+		},
+		{
+			name:           "non-keyword scope falls back to generic connect",
+			requiredScopes: []string{googleHealthSleepReadonlyScope},
+			wantContains:   "run `gohealthcli connect` again",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			access := newCurrentConnectionAccess(
+				credentialStoreConfig{kind: "bogus"},
+				archivedConnection{
+					id:                "googlehealth:111",
+					tokenMetadataJSON: tokenMetadataJSON(t, expiresFuture, []string{googleHealthActivityReadonlyScope}),
+				},
+				nil,
+			)
+			access.runtime.now = func() time.Time { return now }
+
+			_, err := access.AccessToken(tt.requiredScopes)
+			if err == nil {
+				t.Fatalf("AccessToken returned nil, want missing-scope error")
+			}
+			if !errors.Is(err, errCurrentConnectionScopeMissing) {
+				t.Fatalf("err = %v, want errCurrentConnectionScopeMissing match", err)
+			}
+			if !strings.Contains(err.Error(), tt.wantContains) {
+				t.Fatalf("err.Error() = %q, want substring %q", err.Error(), tt.wantContains)
+			}
+		})
+	}
+}
+
 func TestCurrentConnectionAccessFetchVerifiedIdentityNormalizesUnauthorized(t *testing.T) {
 	runtime := productionRuntimeAdapters()
 	runtime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
