@@ -116,9 +116,24 @@ func identitySnapshotCommonFlagNames() []string {
 // whose runtime CommonFlagSpec.Accepted is a strict subset of the
 // five shared flags, so the help block and `--json` schema reflect
 // the runtime contract exactly.
+//
+// Unknown or duplicated names panic at init() — registry-build mistakes
+// are programmer errors, not runtime conditions, and silently dropping
+// a misspelled name would reintroduce the help/schema drift this
+// helper exists to prevent (mirroring withCommonOverrides' contract).
 func withCommonSubset(names []string, extra ...flagSpec) []flagSpec {
+	known := make(map[string]bool, len(commonFlags))
+	for _, flag := range commonFlags {
+		known[flag.Name] = true
+	}
 	include := make(map[string]bool, len(names))
 	for _, name := range names {
+		if !known[name] {
+			panic("withCommonSubset: unknown common flag " + name)
+		}
+		if include[name] {
+			panic("withCommonSubset: duplicate common flag " + name)
+		}
 		include[name] = true
 	}
 	out := make([]flagSpec, 0, len(names)+len(extra))
