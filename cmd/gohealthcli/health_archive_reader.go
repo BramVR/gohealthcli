@@ -72,9 +72,21 @@ func (archive *sqliteHealthArchiveReader) StatusSummary() (statusResult, error) 
 	if err != nil {
 		return result, err
 	}
+	// KnownDataTypes is computed once here so the plain and JSON
+	// writers share a single source — PRD #144 slice 9 (status key
+	// parity). DataTypes is already sorted by readStatusDataTypes +
+	// attachStatusSyncCursors, so the flat array tracks the
+	// per-Data-Type stanza order exactly.
+	result.KnownDataTypes = statusDataTypeNames(result.DataTypes)
 	result.IdentitySnapshotsFreshness, err = readStatusSnapshotFreshness(archive.db)
 	if err != nil {
 		return result, err
+	}
+	if result.IdentitySnapshotsFreshness != nil {
+		// Hoist paired_device_count to a top-level JSON key so it
+		// matches the plain `paired_device_count: N` line (PRD #144
+		// slice 9). The nested field stays for back-compat.
+		result.PairedDeviceCount = result.IdentitySnapshotsFreshness.PairedDeviceCount
 	}
 	result.Tier2, err = readStatusTier2(archive.db, result.DataTypes)
 	if err != nil {

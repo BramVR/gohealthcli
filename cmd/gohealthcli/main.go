@@ -157,15 +157,27 @@ type syncResult struct {
 }
 
 type statusResult struct {
-	Status                     string                   `json:"status"`
-	ArchivePath                string                   `json:"archive_path"`
-	SchemaVersion              int                      `json:"schema_version,omitempty"`
-	DataPointCount             int                      `json:"data_point_count"`
-	RollupCount                int                      `json:"rollup_count"`
-	ProfileSnapshotCount       int                      `json:"profile_snapshot_count"`
-	IdentitySnapshotCount      int                      `json:"identity_snapshot_count"`
-	SyncRunCount               int                      `json:"sync_run_count"`
-	DataTypes                  []statusDataType         `json:"data_types,omitempty"`
+	Status                string `json:"status"`
+	ArchivePath           string `json:"archive_path"`
+	SchemaVersion         int    `json:"schema_version,omitempty"`
+	DataPointCount        int    `json:"data_point_count"`
+	RollupCount           int    `json:"rollup_count"`
+	ProfileSnapshotCount  int    `json:"profile_snapshot_count"`
+	IdentitySnapshotCount int    `json:"identity_snapshot_count"`
+	SyncRunCount          int    `json:"sync_run_count"`
+	// KnownDataTypes is the flat array of Data Type names also
+	// emitted as the `known_data_types: a,b,c` plain line (PRD #144
+	// slice 9). Computed once in StatusSummary from DataTypes so the
+	// plain and JSON writers share a single source. omitempty keeps
+	// the JSON shape clean on a brand-new archive.
+	KnownDataTypes []string         `json:"known_data_types,omitempty"`
+	DataTypes      []statusDataType `json:"data_types,omitempty"`
+	// PairedDeviceCount is a top-level mirror of
+	// IdentitySnapshotsFreshness.PairedDeviceCount so `--json` carries
+	// the same key as `--plain` (PRD #144 slice 9). The nested
+	// location is preserved for back-compat. omitempty so a clean
+	// archive does not advertise a misleading zero.
+	PairedDeviceCount          int                      `json:"paired_device_count,omitempty"`
 	IdentitySnapshotsFreshness *statusSnapshotFreshness `json:"identity_snapshots_freshness,omitempty"`
 	Tier2                      *statusTier2             `json:"tier_2,omitempty"`
 	LatestSuccessfulRun        *statusSyncRun           `json:"latest_successful_sync_run,omitempty"`
@@ -4790,7 +4802,10 @@ func writeStatusResult(result statusResult, mode outputMode, stdout io.Writer) e
 			return err
 		}
 		if len(result.DataTypes) != 0 {
-			if _, err := fmt.Fprintf(stdout, "known_data_types: %s\n", strings.Join(statusDataTypeNames(result.DataTypes), ",")); err != nil {
+			// Read the shared KnownDataTypes field instead of
+			// re-synthesising from DataTypes — PRD #144 slice 9
+			// guarantees both modes carry the same array.
+			if _, err := fmt.Fprintf(stdout, "known_data_types: %s\n", strings.Join(result.KnownDataTypes, ",")); err != nil {
 				return err
 			}
 			for _, dataType := range result.DataTypes {
