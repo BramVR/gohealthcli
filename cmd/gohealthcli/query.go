@@ -451,12 +451,16 @@ func (e *plainModeEncoder) encode(_ string, value any) any {
 
 // isJSONTypedColumn returns true when the column name is on the
 // curated allowlist or ends in the `_json` suffix every JSON-typed
-// Normalized View column uses.
+// Normalized View column uses. Match is case-insensitive: SQLite
+// identifiers are case-insensitive and `rows.Columns()` preserves the
+// query/alias casing, so `SELECT raw_json AS Raw_JSON ...` must still
+// route through the JSON encoder.
 func isJSONTypedColumn(column string) bool {
-	if _, ok := jsonModeAllowlist[column]; ok {
+	lower := strings.ToLower(column)
+	if _, ok := jsonModeAllowlist[lower]; ok {
 		return true
 	}
-	return strings.HasSuffix(column, "_json")
+	return strings.HasSuffix(lower, "_json")
 }
 
 // selectQueryRowEncoder picks the encoder adapter for the requested

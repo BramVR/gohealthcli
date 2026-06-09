@@ -228,7 +228,9 @@ func TestJSONModeEncoderEndToEndQueryDataSourceJSONReturnsNestedObject(t *testin
 
 	// data_source_json is "{}" in the fixture — still a valid JSON
 	// object that should pass through as an object, not a string.
-	stdout, stderr := captureQuery(t, configPath, "--json", "SELECT data_source_json FROM data_points LIMIT 1")
+	// ORDER BY rowid keeps LIMIT 1 deterministic regardless of insertion
+	// order or future planner changes.
+	stdout, stderr := captureQuery(t, configPath, "--json", "SELECT data_source_json FROM data_points ORDER BY rowid LIMIT 1")
 	if stderr != "" {
 		t.Fatalf("stderr = %q, want empty", stderr)
 	}
