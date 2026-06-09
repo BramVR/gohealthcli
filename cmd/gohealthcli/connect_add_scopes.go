@@ -30,6 +30,20 @@ var googleHealthIdentityEndpointScopes = map[string][]string{
 	"getIdentity":   {googleHealthProfileReadonlyScope},
 }
 
+// googleHealthIdentityEndpointURLs pairs each catalog entry with its
+// upstream Google Health URL constant, so `raw endpoint <name>` can
+// dispatch through a single lookup without re-listing the endpoint
+// names. The URL constants live next to their owning introspection
+// command (settings.go, devices.go, irn_profile.go) — this map only
+// references them.
+var googleHealthIdentityEndpointURLs = map[string]string{
+	"getIdentity":   googleHealthIdentityURL,
+	"getProfile":    googleHealthProfileURL,
+	"getSettings":   googleHealthSettingsURL,
+	"pairedDevices": googleHealthPairedDevicesURL,
+	"getIrnProfile": googleHealthIRNProfileURL,
+}
+
 // connectAddScopeKeywords maps the user-facing `--add-scopes` keyword
 // to the actual Google Health API scope URL. PRD #93 §"Tier 2 Data
 // Types" picks `ecg` (electrocardiogram) and `irn`
