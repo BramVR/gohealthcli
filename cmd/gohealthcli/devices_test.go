@@ -257,3 +257,19 @@ func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
 		t.Fatalf("RawJSON empty; want round-tripped paired-devices payload")
 	}
 }
+
+// TestDevicesRejectsNoInputFlag pins issue #171: the dead --no-input flag
+// is removed from devices' spec. The command never blocks on browser
+// input, so accepting --no-input would imply a behaviour it does not
+// have. Passing it now produces the Common Flag Set's targeted
+// "--no-input is not supported by devices" rejection and exits non-zero.
+func TestDevicesRejectsNoInputFlag(t *testing.T) {
+	code, stdout, stderr := runCommand(t, "devices", "--no-input")
+	if code == 0 {
+		t.Fatalf("exit code = 0, want non-zero; stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	const want = "--no-input is not supported by devices"
+	if !strings.Contains(stderr.String(), want) {
+		t.Fatalf("stderr = %q, want substring %q", stderr.String(), want)
+	}
+}

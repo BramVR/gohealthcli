@@ -53,7 +53,12 @@ func runDevicesWithRuntime(args []string, configPath, archivePath string, mode o
 	flags := flag.NewFlagSet("devices", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
-	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
+	// devices does no prompting and never blocks on browser input, so
+	// --no-input would imply a behaviour the command does not have.
+	// The Common Flag Set's pre-Parse scan turns a stray --no-input
+	// into a targeted "--no-input is not supported by devices" message
+	// (issue #171), so the help block and the runtime spec agree.
+	common := RegisterCommon(flags, CommonFlagSpec{Accepted: []string{"config", "db", "json", "plain"}}, CommonFlagValues{
 		ConfigPath:  configPath,
 		ArchivePath: archivePath,
 		JSONOutput:  mode.json,

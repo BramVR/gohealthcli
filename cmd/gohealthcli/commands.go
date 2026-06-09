@@ -98,6 +98,39 @@ func withCommon(extra ...flagSpec) []flagSpec {
 	return out
 }
 
+// identitySnapshotCommonFlagNames returns the subset of common flag
+// names the three Identity Snapshot reach commands (settings, devices,
+// irn-profile) accept. They never block on browser input, so --no-input
+// is intentionally omitted: declaring it would imply a behaviour the
+// commands do not have (issue #171). The Common Flag Set's pre-Parse
+// scan rejects a stray --no-input with the targeted "--no-input is
+// not supported by <cmd>" wording. Returned fresh each call to mirror
+// commonFlagNames so per-entry CommonFlags slices stay independent.
+func identitySnapshotCommonFlagNames() []string {
+	return []string{"config", "db", "json", "plain"}
+}
+
+// withCommonSubset is the per-subcommand variant of withCommon that
+// projects only the named shared flags (in the canonical commonFlags
+// order) into the registry entry's Flags slice. Used by subcommands
+// whose runtime CommonFlagSpec.Accepted is a strict subset of the
+// five shared flags, so the help block and `--json` schema reflect
+// the runtime contract exactly.
+func withCommonSubset(names []string, extra ...flagSpec) []flagSpec {
+	include := make(map[string]bool, len(names))
+	for _, name := range names {
+		include[name] = true
+	}
+	out := make([]flagSpec, 0, len(names)+len(extra))
+	for _, flag := range commonFlags {
+		if include[flag.Name] {
+			out = append(out, flag)
+		}
+	}
+	out = append(out, extra...)
+	return out
+}
+
 // withCommonOverrides returns the shared flagSpec slice with the Usage
 // strings for the named common flags overridden. The Project Site's
 // command-reference pages and `gohealthcli schema --json` both read the
@@ -228,31 +261,43 @@ var commands = []commandDef{
 		},
 	},
 	{
-		Name:        "settings",
-		Short:       "Archive a Settings Snapshot from the provider.",
-		Long:        "Fetch the upstream `users.getSettings` payload and append it to the Health Archive as a new Identity Snapshot of kind `settings`. The `current_settings` Normalized View projects the latest snapshot's measurement system, timezone, and stride-length type into columns for `query` and `export`.\n\n`settings` is read-only against the provider and writes the raw response to the archive; the JSON shape stays the source of truth, so new fields can be projected into the view without a re-sync.",
-		Flags:       withCommon(),
-		CommonFlags: commonFlagNames(),
+		Name:  "settings",
+		Short: "Archive a Settings Snapshot from the provider.",
+		Long:  "Fetch the upstream `users.getSettings` payload and append it to the Health Archive as a new Identity Snapshot of kind `settings`. The `current_settings` Normalized View projects the latest snapshot's measurement system, timezone, and stride-length type into columns for `query` and `export`.\n\n`settings` is read-only against the provider and writes the raw response to the archive; the JSON shape stays the source of truth, so new fields can be projected into the view without a re-sync.",
+		// settings does no prompting and never blocks on browser input,
+		// so --no-input is intentionally omitted from both Flags and
+		// CommonFlags (issue #171): the help block, the schema, and
+		// the runtime spec agree.
+		Flags:       withCommonSubset(identitySnapshotCommonFlagNames()),
+		CommonFlags: identitySnapshotCommonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 			return runSettingsWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
 		},
 	},
 	{
-		Name:        "devices",
-		Short:       "Archive a Paired Devices Snapshot from the provider.",
-		Long:        "Fetch the upstream `users.pairedDevices.list` payload and append it to the Health Archive as a new Identity Snapshot of kind `paired-devices`. The `paired_devices` Normalized View explodes the latest snapshot via `json_each`, returning one row per device with `device_type`, `model`, `manufacturer`, `battery_percentage`, `last_sync_time`, and `features`.\n\nThis is the LLM's path to questions like \"which Pixel Watch synced last?\" or \"what's my Fitbit battery?\" — every projection is read-only against the raw snapshot, so new fields can be added without re-syncing.",
-		Flags:       withCommon(),
-		CommonFlags: commonFlagNames(),
+		Name:  "devices",
+		Short: "Archive a Paired Devices Snapshot from the provider.",
+		Long:  "Fetch the upstream `users.pairedDevices.list` payload and append it to the Health Archive as a new Identity Snapshot of kind `paired-devices`. The `paired_devices` Normalized View explodes the latest snapshot via `json_each`, returning one row per device with `device_type`, `model`, `manufacturer`, `battery_percentage`, `last_sync_time`, and `features`.\n\nThis is the LLM's path to questions like \"which Pixel Watch synced last?\" or \"what's my Fitbit battery?\" — every projection is read-only against the raw snapshot, so new fields can be added without re-syncing.",
+		// devices does no prompting and never blocks on browser input,
+		// so --no-input is intentionally omitted from both Flags and
+		// CommonFlags (issue #171): the help block, the schema, and
+		// the runtime spec agree.
+		Flags:       withCommonSubset(identitySnapshotCommonFlagNames()),
+		CommonFlags: identitySnapshotCommonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 			return runDevicesWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
 		},
 	},
 	{
-		Name:        "irn-profile",
-		Short:       "Archive an IRN Profile Snapshot from the provider.",
-		Long:        "Fetch the upstream `users.getIrnProfile` payload (onboarding state, enrollment state for Google's irregular-rhythm-notification feature) and append it to the Health Archive as a new Identity Snapshot of kind `irn-profile`. The `current_irn_profile` Normalized View projects the latest snapshot as columns.\n\nRequires the `irn.readonly` OAuth scope — run `gohealthcli connect --add-scopes irn` once to grant it. If the scope is not granted, `irn-profile` exits with a clear reconnect instruction and does **not** trigger the browser flow.",
-		Flags:       withCommon(),
-		CommonFlags: commonFlagNames(),
+		Name:  "irn-profile",
+		Short: "Archive an IRN Profile Snapshot from the provider.",
+		Long:  "Fetch the upstream `users.getIrnProfile` payload (onboarding state, enrollment state for Google's irregular-rhythm-notification feature) and append it to the Health Archive as a new Identity Snapshot of kind `irn-profile`. The `current_irn_profile` Normalized View projects the latest snapshot as columns.\n\nRequires the `irn.readonly` OAuth scope — run `gohealthcli connect --add-scopes irn` once to grant it. If the scope is not granted, `irn-profile` exits with a clear reconnect instruction and does **not** trigger the browser flow.",
+		// irn-profile does no prompting and never blocks on browser
+		// input, so --no-input is intentionally omitted from both
+		// Flags and CommonFlags (issue #171): the help block, the
+		// schema, and the runtime spec agree.
+		Flags:       withCommonSubset(identitySnapshotCommonFlagNames()),
+		CommonFlags: identitySnapshotCommonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 			return runIRNProfileWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
 		},

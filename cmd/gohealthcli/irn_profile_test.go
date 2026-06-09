@@ -284,3 +284,20 @@ func TestIRNProfileCommandFailsFastWhenScopeMissing(t *testing.T) {
 		t.Fatalf("result.Message = %q, want it to name `connect --add-scopes irn`", result.Message)
 	}
 }
+
+// TestIRNProfileRejectsNoInputFlag pins issue #171: the dead --no-input
+// flag is removed from irn-profile's spec. The command never blocks on
+// browser input, so accepting --no-input would imply a behaviour it
+// does not have. Passing it now produces the Common Flag Set's
+// targeted "--no-input is not supported by irn-profile" rejection and
+// exits non-zero.
+func TestIRNProfileRejectsNoInputFlag(t *testing.T) {
+	code, stdout, stderr := runCommand(t, "irn-profile", "--no-input")
+	if code == 0 {
+		t.Fatalf("exit code = 0, want non-zero; stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	const want = "--no-input is not supported by irn-profile"
+	if !strings.Contains(stderr.String(), want) {
+		t.Fatalf("stderr = %q, want substring %q", stderr.String(), want)
+	}
+}
