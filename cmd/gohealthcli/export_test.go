@@ -876,6 +876,126 @@ func TestExportRejectsPlainWithConflictingFormatJSONL(t *testing.T) {
 	}
 }
 
+// TestExportFailureHonorsJSONMode pins that runExport's ReportFailure
+// call sites pass Mode so a `--json` invocation emits the unified
+// `{"status":"...","message":"..."}` envelope on stdout (matching the
+// failure_reporter contract every other migrated subcommand follows),
+// instead of falling back to the default `<cmd>: <msg>` line on stderr.
+// Regression for PRD #143 follow-up: the slice-9 export migration
+// dropped Mode on every ReportFailure inside runExport.
+func TestExportFailureHonorsJSONMode(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"export",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+		"bogus-dataset",
+		"--stdout",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("export --json bogus exit code = %d, want 1\nstdout=%s\nstderr=%s", code, stdout.String(), stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr should be empty in --json mode, got %q", stderr.String())
+	}
+	var envelope struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatalf("stdout is not a single-line JSON envelope: %v\nstdout=%q", err, stdout.String())
+	}
+	if envelope.Status != "flag_invalid" {
+		t.Fatalf("envelope.status = %q, want flag_invalid", envelope.Status)
+	}
+	if !strings.Contains(envelope.Message, "bogus-dataset") {
+		t.Fatalf("envelope.message = %q, want contains \"bogus-dataset\"", envelope.Message)
+	}
+}
+
+// TestExportMultiPositionalFailureHonorsJSONMode pins that the multi-
+// dataset rejection (e.g. `export --json a b`) emits the unified JSON
+// envelope on stdout. The check used to fire inside splitExportArgs
+// BEFORE ParseCommon ran, so common.JSONOutput had not yet been
+// populated from the inner --json flag and the failure fell back to
+// default mode. The fix defers the multi-positional rejection to AFTER
+// ParseCommon so Mode is known when ReportFailure runs.
+func TestExportMultiPositionalFailureHonorsJSONMode(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"export",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+		"daily-steps",
+		"extra-arg",
+		"--stdout",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("export --json daily-steps extra-arg exit code = %d, want 1\nstdout=%s\nstderr=%s", code, stdout.String(), stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr should be empty in --json mode, got %q", stderr.String())
+	}
+	var envelope struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatalf("stdout is not a single-line JSON envelope: %v\nstdout=%q", err, stdout.String())
+	}
+	if envelope.Status != "flag_invalid" {
+		t.Fatalf("envelope.status = %q, want flag_invalid", envelope.Status)
+	}
+	if !strings.Contains(envelope.Message, "exactly one dataset") {
+		t.Fatalf("envelope.message = %q, want contains \"exactly one dataset\"", envelope.Message)
+	}
+}
+
+// TestExportFailureHonorsPlainMode mirrors the JSON-mode test for
+// --plain: the failure should print the `<cmd>: <msg>` line on stderr
+// AND the `status: <s>\nmessage: <m>\n` block on stdout. Without Mode
+// threading, the stdout block is missing.
+func TestExportFailureHonorsPlainMode(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"export",
+		"--config", configPath,
+		"--db", archivePath,
+		"--plain",
+		"bogus-dataset",
+		"--stdout",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("export --plain bogus exit code = %d, want 1\nstdout=%s\nstderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "export: ") {
+		t.Fatalf("stderr missing `export: ` prefix in --plain mode: %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "status: flag_invalid") {
+		t.Fatalf("stdout missing `status: flag_invalid` block in --plain mode: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "message: ") {
+		t.Fatalf("stdout missing `message: ` line in --plain mode: %q", stdout.String())
+	}
+}
+
 // TestExportPlainAndJSONMutuallyExclusive pins the CommonFlagSet
 // mutual-exclusion contract for the export verb.
 func TestExportPlainAndJSONMutuallyExclusive(t *testing.T) {
