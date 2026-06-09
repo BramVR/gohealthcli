@@ -120,7 +120,14 @@ func TestQueryPlainOutputEscapesControlCharacters(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
-func TestQueryDefaultOutputIncludesRows(t *testing.T) {
+// TestQueryDefaultOutputEmitsPlainShape pins the PRD #144 slice 7 contract:
+// when neither --json nor --plain is set, `query` emits the --plain key/value
+// shape (parseable, byte-for-byte the same as --plain) instead of the legacy
+// `Row N: column=value column=value` format. The legacy format is gone from
+// every code path — see TestQueryDefaultOutputDoesNotEmitLegacyRowFormat and
+// TestQueryDefaultOutputMatchesPlainModeByteForByte for the negative and
+// equivalence assertions.
+func TestQueryDefaultOutputEmitsPlainShape(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -138,18 +145,93 @@ func TestQueryDefaultOutputIncludesRows(t *testing.T) {
 	if stderr.String() != "" {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
-	wantParts := []string{
-		"Query completed: 1 rows\n",
-		"Columns: data_type, end_time_utc\n",
-		"Row 1: data_type=steps end_time_utc=2026-01-01T08:15:00Z\n",
-		"Message: Query completed\n",
+	wantLines := []string{
+		"status: query_completed\n",
+		"archive_path: " + archivePath + "\n",
+		"columns: data_type,end_time_utc\n",
+		"row_count: 1\n",
+		"row.1.1: steps\n",
+		"row.1.2: 2026-01-01T08:15:00Z\n",
+		"message: Query completed\n",
 	}
-	for _, want := range wantParts {
+	for _, want := range wantLines {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
 		}
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+// TestQueryDefaultOutputDoesNotEmitLegacyRowFormat guards the PRD #144 slice 7
+// removal of the unparseable `Row N: column=value column=value` format. A
+// value containing a space (the classic silent-footgun shape — `SELECT
+// 'a b' AS x` would have produced `Row 1: x=a b`) is the test fixture so a
+// future regression that reintroduces the format is caught even if the column
+// names happen to be space-free.
+func TestQueryDefaultOutputDoesNotEmitLegacyRowFormat(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"query",
+		"--config", configPath,
+		"SELECT 'hello world' AS greeting",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("query exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	out := stdout.String()
+	// The legacy format wrapped every row in `Row N:` and joined columns
+	// with ` k=v` pairs separated by spaces. None of those markers may
+	// appear in the default output anywhere.
+	for _, banned := range []string{"Row 1:", "Row 1: ", "Query completed: ", "Columns: ", "Message: "} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("stdout contains banned legacy default marker %q:\n%s", banned, out)
+		}
+	}
+	// The value should round-trip verbatim in the --plain shape so a
+	// downstream parser can split on the first `: ` and recover it.
+	want := "row.1.1: hello world\n"
+	if !strings.Contains(out, want) {
+		t.Fatalf("stdout missing parseable value line %q:\n%s", want, out)
+	}
+}
+
+// TestQueryDefaultOutputMatchesPlainModeByteForByte asserts that the no-flag
+// default and `--plain` produce identical bytes on the same query. The two
+// modes are the same code path post-slice-7; this test catches a future
+// divergence (an accidental stderr warning, a header line added to one mode
+// only) before it ships.
+func TestQueryDefaultOutputMatchesPlainModeByteForByte(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	statement := "SELECT data_type, end_time_utc FROM data_points WHERE data_type = 'steps' ORDER BY end_time_utc"
+
+	defaultStdout := new(bytes.Buffer)
+	defaultStderr := new(bytes.Buffer)
+	if code := run([]string{"query", "--config", configPath, statement}, defaultStdout, defaultStderr); code != 0 {
+		t.Fatalf("default exit code = %d, want 0\nstderr: %s\nstdout: %s", code, defaultStderr.String(), defaultStdout.String())
+	}
+
+	plainStdout := new(bytes.Buffer)
+	plainStderr := new(bytes.Buffer)
+	if code := run([]string{"query", "--config", configPath, "--plain", statement}, plainStdout, plainStderr); code != 0 {
+		t.Fatalf("plain exit code = %d, want 0\nstderr: %s\nstdout: %s", code, plainStderr.String(), plainStdout.String())
+	}
+
+	if defaultStdout.String() != plainStdout.String() {
+		t.Fatalf("default stdout differs from --plain stdout\ndefault:\n%s\n---\nplain:\n%s", defaultStdout.String(), plainStdout.String())
+	}
+	if defaultStderr.String() != plainStderr.String() {
+		t.Fatalf("default stderr differs from --plain stderr\ndefault: %q\nplain:   %q", defaultStderr.String(), plainStderr.String())
+	}
+	if defaultStderr.Len() != 0 {
+		t.Fatalf("default stderr is non-empty (silent default expected): %q", defaultStderr.String())
+	}
 }
 
 func TestQueryMigratesLegacyV3ArchiveBeforeValidation(t *testing.T) {
