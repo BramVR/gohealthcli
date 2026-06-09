@@ -919,6 +919,50 @@ func TestExportFailureHonorsJSONMode(t *testing.T) {
 	}
 }
 
+// TestExportMultiPositionalFailureHonorsJSONMode pins that the multi-
+// dataset rejection (e.g. `export --json a b`) emits the unified JSON
+// envelope on stdout. The check used to fire inside splitExportArgs
+// BEFORE ParseCommon ran, so common.JSONOutput had not yet been
+// populated from the inner --json flag and the failure fell back to
+// default mode. The fix defers the multi-positional rejection to AFTER
+// ParseCommon so Mode is known when ReportFailure runs.
+func TestExportMultiPositionalFailureHonorsJSONMode(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"export",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+		"daily-steps",
+		"extra-arg",
+		"--stdout",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("export --json daily-steps extra-arg exit code = %d, want 1\nstdout=%s\nstderr=%s", code, stdout.String(), stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr should be empty in --json mode, got %q", stderr.String())
+	}
+	var envelope struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatalf("stdout is not a single-line JSON envelope: %v\nstdout=%q", err, stdout.String())
+	}
+	if envelope.Status != "flag_invalid" {
+		t.Fatalf("envelope.status = %q, want flag_invalid", envelope.Status)
+	}
+	if !strings.Contains(envelope.Message, "exactly one dataset") {
+		t.Fatalf("envelope.message = %q, want contains \"exactly one dataset\"", envelope.Message)
+	}
+}
+
 // TestExportFailureHonorsPlainMode mirrors the JSON-mode test for
 // --plain: the failure should print the `<cmd>: <msg>` line on stderr
 // AND the `status: <s>\nmessage: <m>\n` block on stdout. Without Mode

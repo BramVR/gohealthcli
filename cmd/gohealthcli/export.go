@@ -1222,15 +1222,19 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 	exportOutputPath := flags.String("output", "", "write export to path")
 	exportStdout := flags.Bool("stdout", false, "write export data to stdout")
 
-	dataset, parseArgs, err := splitExportArgs(args)
+	positionals, parseArgs, err := splitExportArgs(args)
 	if err != nil {
 		// splitExportArgs runs BEFORE ParseCommon, so common.JSONOutput /
 		// common.PlainOutput are not yet populated from inner flags. The
 		// only failure shape splitExportArgs surfaces is "flag needs an
 		// argument: --foo", which is a flag-shape error that defaults to
-		// the bare `<cmd>: <msg>` line on stderr. Every other ReportFailure
-		// in runExport runs AFTER ParseCommon and carries Mode so the
-		// unified --json / --plain failure contract is honoured.
+		// the bare `<cmd>: <msg>` line on stderr. The multi-positional
+		// "export requires exactly one dataset" rejection used to fire
+		// here too, but it was deferred to AFTER ParseCommon below so its
+		// ReportFailure can honour --json / --plain. Every other
+		// ReportFailure in runExport runs AFTER ParseCommon and carries
+		// Mode so the unified --json / --plain failure contract is
+		// honoured.
 		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: err.Error()}, stdout, stderr)
 	}
 
@@ -1245,9 +1249,16 @@ func runExport(args []string, configPath, archivePath string, archivePathExplici
 	// without dragging an `outputMode` parameter through runExport's
 	// signature (the runtime adapter still owns the registry-driven shape).
 	mode := outputMode{json: common.JSONOutput, plain: common.PlainOutput}
-	if dataset == "" || flags.NArg() != 0 {
+	if len(positionals) == 0 || flags.NArg() != 0 {
 		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: "export requires exactly one dataset", Mode: mode}, stdout, stderr)
 	}
+	if len(positionals) > 1 {
+		// Multi-positional rejection deferred from splitExportArgs so the
+		// failure surface honours --json / --plain like every other
+		// post-ParseCommon ReportFailure below.
+		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: "export requires exactly one dataset", Mode: mode}, stdout, stderr)
+	}
+	dataset := positionals[0]
 	spec, ok := exportDatasetSpecs[dataset]
 	if !ok {
 		return ReportFailure(FailureReport{
@@ -1339,8 +1350,22 @@ func resolveExportFormat(format string, formatExplicit, jsonSynonym, plainSynony
 	return format, nil
 }
 
-func splitExportArgs(args []string) (string, []string, error) {
-	var dataset string
+// splitExportArgs separates flag tokens from positional dataset args so
+// the inner FlagSet can parse the flag block while runExport keeps the
+// positional list intact for the post-ParseCommon dataset-count check.
+//
+// Returns the positional list (length 0 = missing dataset, length 1 =
+// the canonical case, length >= 2 = duplicate-dataset error surfaced
+// AFTER ParseCommon so its ReportFailure can honour --json / --plain),
+// the flag-token slice ready for ParseCommon, and an error reserved for
+// the rare "flag needs an argument: --foo" shape that only surfaces
+// when an operator passes a non-bool flag without its value. Multi-
+// positional rejection is intentionally NOT raised here: deferring it
+// to the post-parse path is what lets the failure_reporter contract
+// thread Mode through so `export --json a b` emits the JSON envelope
+// instead of falling back to default mode.
+func splitExportArgs(args []string) ([]string, []string, error) {
+	var positionals []string
 	var flagArgs []string
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -1349,18 +1374,15 @@ func splitExportArgs(args []string) (string, []string, error) {
 			if exportFlagNeedsValue(arg) && !strings.Contains(arg, "=") {
 				index++
 				if index >= len(args) {
-					return "", nil, fmt.Errorf("flag needs an argument: %s", arg)
+					return nil, nil, fmt.Errorf("flag needs an argument: %s", arg)
 				}
 				flagArgs = append(flagArgs, args[index])
 			}
 			continue
 		}
-		if dataset != "" {
-			return "", nil, errors.New("export requires exactly one dataset")
-		}
-		dataset = arg
+		positionals = append(positionals, arg)
 	}
-	return dataset, flagArgs, nil
+	return positionals, flagArgs, nil
 }
 
 func exportFlagNeedsValue(arg string) bool {
