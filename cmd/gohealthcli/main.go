@@ -1815,12 +1815,19 @@ func rawSetupWithRuntime(configPath, archivePath string, request rawProviderRequ
 	if err != nil {
 		return nil, fmt.Errorf("config check failed: %w", err)
 	}
-	archive, err := (healthArchiveLifecycle{path: archivePath}).Open(readOnlyArchive)
+	// PRD #142 slice 6 (issue #179): open the archive in writable mode
+	// via openHealthArchiveConnectionAPI so the handle satisfies
+	// connectionTokenWriter — WithAutoRefresh below can then persist a
+	// refreshed token's metadata the same way sync and irn-profile
+	// already do. ADR-0002 is not violated: the only write `raw`
+	// performs is updating connections.token_metadata_json, the same
+	// kind of write `sync` already performs on the same path.
+	archive, err := openHealthArchiveConnectionAPI(archivePath)
 	if err != nil {
 		return nil, err
 	}
 	defer archive.Close()
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := archive.CurrentConnection()
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errors.New("no Connection found; run `gohealthcli connect` first")
@@ -1828,6 +1835,9 @@ func rawSetupWithRuntime(configPath, archivePath string, request rawProviderRequ
 		return nil, err
 	}
 	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{configPath, archivePath}, runtime)
+	if config.oauthClient.kind == "file" {
+		connectionAccess = connectionAccess.WithAutoRefresh(config.oauthClient, archive)
+	}
 	accessToken, err := connectionAccess.AccessToken(request.requiredScopes)
 	if err != nil {
 		return nil, err
