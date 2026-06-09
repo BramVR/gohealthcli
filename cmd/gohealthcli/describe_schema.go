@@ -190,8 +190,23 @@ func writeSchemaJSON(db *sql.DB, stdout io.Writer) error {
 		// Augment with column types from pragma_table_info if the view
 		// has been materialised in the live archive. Skip silently when
 		// the archive doesn't have the view yet (older schema versions).
+		//
+		// SQLite views do not carry declared column types — pragma_table_info
+		// reports the underlying expression's affinity, which for any
+		// non-trivial JSON projection comes back as empty or `BLOB`. The
+		// JSON catalog is positioned as a contract for LLM consumers, so
+		// `BLOB` on a column whose runtime values are INTEGER/TEXT actively
+		// poisons agent reasoning. PRD #144 slice 8 (#159) deliberately
+		// rejects parsing the view's SELECT projection (a bespoke SQL
+		// parser sitting next to a working pragma call) and instead stamps
+		// the literal "unknown" — downstream consumers treat the runtime
+		// type as opaque rather than mis-declared. Tables stay untouched
+		// so real BLOB columns on real tables still report BLOB.
 		columns, err := readPragmaTableInfo(db, spec.view)
 		if err == nil && len(columns) > 0 {
+			for i := range columns {
+				columns[i].Type = normalizeViewColumnType(columns[i].Type)
+			}
 			view.ColumnsDetailed = columns
 		}
 		catalog.Views = append(catalog.Views, view)
@@ -276,6 +291,22 @@ func readPragmaTableInfo(db *sql.DB, name string) ([]schemaCatalogColumn, error)
 		columns = append(columns, col)
 	}
 	return columns, rows.Err()
+}
+
+// normalizeViewColumnType rewrites the type pragma_table_info reports for
+// a Normalized View column to the literal "unknown" when the underlying
+// expression has no declared SQLite affinity (empty string) or has been
+// reported as `BLOB` (the affinity SQLite assigns to any non-trivial JSON
+// projection). Real declared types (TEXT, INTEGER, REAL, NUMERIC, …) pass
+// through unchanged. The fallback is view-only — see writeSchemaJSON for
+// why tables keep their `BLOB` columns intact.
+func normalizeViewColumnType(declared string) string {
+	switch declared {
+	case "", "BLOB":
+		return "unknown"
+	default:
+		return declared
+	}
 }
 
 // assertNoSchemaDrift returns a non-nil error if any view in sqlite_master
