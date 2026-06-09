@@ -122,23 +122,41 @@ func extractREADMEExportDatasetsBlock(content string) (string, error) {
 // parseExportDatasetBlockNames pulls the inline-code names out of a
 // rendered block. Used by the drift guard to surface a useful "missing
 // X, extra Y" diff when the byte-equality check is too coarse to
-// pinpoint the drift. A line that does not match the `- ` + backtick
-// shape is silently skipped — the byte-equality test is the
-// load-bearing assertion for shape; this helper is for naming.
-func parseExportDatasetBlockNames(block string) []string {
+// pinpoint the drift. The bullet shape is strict — `- ` + backtick +
+// name + backtick + end-of-line, with no trailing characters — so a
+// hand-edit that breaks the contract (`- foo`, `- `foo`` with a stray
+// trailing token, missing closing backtick) is rejected loudly via the
+// returned non-nil error rather than silently producing a misleading
+// name list. Empty lines are tolerated so the helper composes with a
+// trailing-newline block.
+func parseExportDatasetBlockNames(block string) ([]string, error) {
 	var out []string
-	for _, line := range strings.Split(block, "\n") {
-		trimmed := strings.TrimPrefix(line, "- `")
-		if trimmed == line {
+	for lineNum, line := range strings.Split(block, "\n") {
+		if line == "" {
 			continue
 		}
-		trimmed = strings.TrimSuffix(trimmed, "`")
-		if trimmed == "" {
-			continue
+		rest, ok := strings.CutPrefix(line, "- `")
+		if !ok {
+			return nil, fmt.Errorf("line %d: expected `- `<name>``, got %q", lineNum+1, line)
 		}
-		out = append(out, trimmed)
+		name, ok := strings.CutSuffix(rest, "`")
+		if !ok {
+			return nil, fmt.Errorf("line %d: missing closing backtick: %q", lineNum+1, line)
+		}
+		if name == "" {
+			return nil, fmt.Errorf("line %d: empty dataset name", lineNum+1)
+		}
+		if strings.ContainsAny(name, "` ") {
+			// A stray space or extra backtick inside the inline-code
+			// span is structurally invalid for the auto-generated
+			// shape; the byte-equality drift guard catches the same
+			// shape error, but rejecting here keeps the
+			// "missing X, extra Y" diagnostic honest.
+			return nil, fmt.Errorf("line %d: malformed dataset name %q", lineNum+1, name)
+		}
+		out = append(out, name)
 	}
-	return out
+	return out, nil
 }
 
 // runDocsExportDatasets is the hidden subcommand the `make
@@ -154,6 +172,15 @@ func runDocsExportDatasets(args []string, stdout, stderr io.Writer) int {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
+		return 1
+	}
+	if flags.NArg() != 0 {
+		// docs-export-datasets is a build-time rewrite verb invoked by
+		// a Makefile target — silently accepting `docs-export-datasets
+		// --readme README.md extra-typo` would mask a misconfigured
+		// invocation (positional that should have been a flag, stray
+		// shell glob). Reject loudly so the failure is visible.
+		fmt.Fprintf(stderr, "docs-export-datasets: unexpected argument: %s\n", flags.Arg(0))
 		return 1
 	}
 	if strings.TrimSpace(*readmePath) == "" {

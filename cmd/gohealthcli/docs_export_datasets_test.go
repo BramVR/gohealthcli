@@ -109,7 +109,10 @@ func TestREADMEExportDatasetsBlockListsEveryRegistryName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extract block: %v", err)
 	}
-	got := parseExportDatasetBlockNames(block)
+	got, err := parseExportDatasetBlockNames(block)
+	if err != nil {
+		t.Fatalf("parseExportDatasetBlockNames: %v", err)
+	}
 	want := exportDatasetCatalogSingleton.Names()
 	if len(got) != len(want) {
 		t.Fatalf("name count mismatch: got %d, want %d\ngot:  %v\nwant: %v", len(got), len(want), got, want)
@@ -118,6 +121,50 @@ func TestREADMEExportDatasetsBlockListsEveryRegistryName(t *testing.T) {
 		if got[i] != name {
 			t.Errorf("position %d: got %q, want %q", i, got[i], name)
 		}
+	}
+}
+
+// TestParseExportDatasetBlockNamesRejectsMalformedLines pins the
+// stricter shape check Copilot review surfaced: a hand-edit that
+// breaks the `- `<name>`` contract surfaces a useful error instead of
+// silently producing a misleading name list.
+func TestParseExportDatasetBlockNamesRejectsMalformedLines(t *testing.T) {
+	cases := []struct {
+		name  string
+		block string
+		want  string
+	}{
+		{name: "missing dash", block: "alpha\n", want: "expected"},
+		{name: "missing opening backtick", block: "- alpha\n", want: "expected"},
+		{name: "missing closing backtick", block: "- `alpha\n", want: "missing closing"},
+		{name: "trailing token", block: "- `alpha` extra\n", want: "missing closing"},
+		{name: "empty name", block: "- ``\n", want: "empty"},
+		{name: "name with space", block: "- `a b`\n", want: "malformed"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := parseExportDatasetBlockNames(c.block)
+			if err == nil {
+				t.Fatalf("expected error for malformed block %q", c.block)
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("error should contain %q, got: %v", c.want, err)
+			}
+		})
+	}
+}
+
+// TestParseExportDatasetBlockNamesTrailingNewlineOK guards the empty-
+// line tolerance: a block produced by renderExportDatasetsBlock always
+// ends with a newline, so an empty line at the tail must not trip the
+// strict shape check.
+func TestParseExportDatasetBlockNamesTrailingNewlineOK(t *testing.T) {
+	got, err := parseExportDatasetBlockNames("- `alpha`\n- `beta`\n")
+	if err != nil {
+		t.Fatalf("trailing newline rejected: %v", err)
+	}
+	if len(got) != 2 || got[0] != "alpha" || got[1] != "beta" {
+		t.Fatalf("got %v, want [alpha beta]", got)
 	}
 }
 
@@ -218,5 +265,25 @@ func TestRunDocsExportDatasetsRequiresREADMEFlag(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--readme") {
 		t.Fatalf("stderr should mention --readme, got: %q", stderr.String())
+	}
+}
+
+// TestRunDocsExportDatasetsRejectsUnexpectedPositional pins the
+// strict-arg check Copilot review surfaced: a positional argument
+// after --readme must be rejected so a misconfigured Makefile target
+// (e.g. an unquoted shell glob) fails loudly instead of silently
+// rewriting the wrong file or ignoring the extra token.
+func TestRunDocsExportDatasetsRejectsUnexpectedPositional(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	code := runDocsExportDatasets([]string{"--readme", "README.md", "stray-typo"}, stdout, stderr)
+	if code == 0 {
+		t.Fatalf("runDocsExportDatasets with stray positional should fail; got exit 0\nstderr=%s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "unexpected argument") {
+		t.Fatalf("stderr should mention unexpected argument, got: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "stray-typo") {
+		t.Fatalf("stderr should name the stray arg, got: %q", stderr.String())
 	}
 }
