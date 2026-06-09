@@ -46,8 +46,12 @@ func resolveReadArchivePath(common CommonFlagValues) (string, error) {
 // Resolve returns the Health Archive path a read command should open.
 //
 // Rules:
-//   - If the config file does not exist, the `--db` value (explicit or
-//     default) is used directly. No config is required.
+//   - When the config file is at the binary's default location AND is
+//     absent (the user has never set up a config), the `--db` value
+//     (explicit or default) is used directly — no config is required for
+//     a read command. An EXPLICITLY-passed `--config /missing/path` is
+//     NOT tolerated and surfaces the stat error verbatim (the user named
+//     a file they expected to be there).
 //   - If the config file exists and is valid, the config's `archive_path`
 //     wins unless `--db` was explicit. When `--db` was explicit it wins
 //     over the config's path (the read-side relaxation).
