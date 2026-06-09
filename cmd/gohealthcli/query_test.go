@@ -182,6 +182,11 @@ func TestQueryDefaultOutputDoesNotEmitLegacyRowFormat(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("query exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
+	// Silent default: PRD #144 slice 7 chose no stderr warning, so any
+	// stray bytes on stderr are a regression in the documented contract.
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty (silent default)", stderr.String())
+	}
 	out := stdout.String()
 	// The legacy format wrapped every row in `Row N:` and joined columns
 	// with ` k=v` pairs separated by spaces. None of those markers may
@@ -197,6 +202,7 @@ func TestQueryDefaultOutputDoesNotEmitLegacyRowFormat(t *testing.T) {
 	if !strings.Contains(out, want) {
 		t.Fatalf("stdout missing parseable value line %q:\n%s", want, out)
 	}
+	assertNoSecretWords(t, out+stderr.String())
 }
 
 // TestQueryDefaultOutputMatchesPlainModeByteForByte asserts that the no-flag
@@ -232,6 +238,7 @@ func TestQueryDefaultOutputMatchesPlainModeByteForByte(t *testing.T) {
 	if defaultStderr.Len() != 0 {
 		t.Fatalf("default stderr is non-empty (silent default expected): %q", defaultStderr.String())
 	}
+	assertNoSecretWords(t, defaultStdout.String()+defaultStderr.String()+plainStdout.String()+plainStderr.String())
 }
 
 func TestQueryMigratesLegacyV3ArchiveBeforeValidation(t *testing.T) {
