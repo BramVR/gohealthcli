@@ -2983,10 +2983,14 @@ func buildGoogleHealthRawRequest(target []string, from, to string, pageSize int6
 		// share one source of truth, so a scope revision (slice 2) is
 		// a one-row change.
 		if endpointURL, ok := googleHealthIdentityEndpointURLs[target[1]]; ok {
+			requiredScopes, hasScopes := googleHealthIdentityEndpointScopes[target[1]]
+			if !hasScopes || len(requiredScopes) == 0 {
+				return rawProviderRequest{}, fmt.Errorf("internal: identity endpoint %q present in URL catalog but missing from scope catalog", target[1])
+			}
 			return rawProviderRequest{
 				endpointName:   target[1],
 				url:            endpointURL,
-				requiredScopes: googleHealthIdentityEndpointScopes[target[1]],
+				requiredScopes: requiredScopes,
 			}, nil
 		}
 		if strings.HasPrefix(target[1], "dataTypes.") && strings.HasSuffix(target[1], ".list") {

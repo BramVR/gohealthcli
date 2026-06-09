@@ -5267,6 +5267,7 @@ func TestBuildGoogleHealthRawRequestEndpointCatalog(t *testing.T) {
 		name    string
 		wantURL string
 	}{
+		{name: "getIdentity", wantURL: googleHealthIdentityURL},
 		{name: "getProfile", wantURL: googleHealthProfileURL},
 		{name: "getSettings", wantURL: googleHealthSettingsURL},
 		{name: "pairedDevices", wantURL: googleHealthPairedDevicesURL},
@@ -5314,15 +5315,15 @@ func TestBuildGoogleHealthRawRequestUnknownEndpoint(t *testing.T) {
 	}
 }
 
-// TestBuildGoogleHealthRawRequestEndpointsHaveNoInlineScopeLiterals
-// pins PRD #142 slice 7 AC: no `[]string{googleHealthProfileReadonlyScope}`
-// inline literal remains in buildGoogleHealthRawRequest. The only
-// source of truth for endpoint scopes is the catalog. We verify
-// behaviourally: a catalog mutation for the duration of the test
-// flows through to the request's requiredScopes — proving the
-// branch did a catalog lookup, not a hard-coded literal.
+// TestBuildGoogleHealthRawRequestEndpointsReadFromCatalog pins PRD #142
+// slice 7 AC: no `[]string{googleHealthProfileReadonlyScope}` inline
+// literal remains in buildGoogleHealthRawRequest. The only source of
+// truth for endpoint scopes is the catalog. We verify behaviourally:
+// a catalog mutation for the duration of the test flows through to the
+// request's requiredScopes — proving the branch did a catalog lookup,
+// not a hard-coded literal.
 func TestBuildGoogleHealthRawRequestEndpointsReadFromCatalog(t *testing.T) {
-	for _, endpoint := range []string{"getProfile", "getSettings", "pairedDevices", "getIrnProfile"} {
+	for _, endpoint := range []string{"getIdentity", "getProfile", "getSettings", "pairedDevices", "getIrnProfile"} {
 		t.Run(endpoint, func(t *testing.T) {
 			original, ok := googleHealthIdentityEndpointScopes[endpoint]
 			if !ok {
