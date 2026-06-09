@@ -1608,9 +1608,27 @@ func profileSetupWithRuntime(configPath, archivePath string, runtime runtimeAdap
 		GoogleHealthUserID: connection.googleHealthUserID,
 		LegacyFitbitUserID: connection.legacyFitbitUserID,
 	}
+	// The deepened currentConnectionAccess pattern (PRD #142): wire
+	// WithAutoRefresh when the OAuth client is a file source — the
+	// archive handle openHealthArchiveConnectionAPI returned already
+	// satisfies connectionTokenWriter — so an expired access token
+	// refreshes and persists transparently, the way
+	// sync_run_lifecycle.go already does. The required scope comes
+	// from googleHealthIdentityEndpointScopes["getProfile"] so a
+	// slice-2 revision of the catalog (PRD #142 #176) flows into
+	// profile automatically. The scope pre-check happens inside
+	// AccessToken via the errCurrentConnectionScopeMissing sentinel,
+	// so we set the per-command status without re-implementing the
+	// scope-list comparison locally.
 	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{configPath, archivePath}, runtime)
-	accessToken, err := connectionAccess.AccessToken([]string{googleHealthProfileReadonlyScope})
+	if config.oauthClient.kind == "file" {
+		connectionAccess = connectionAccess.WithAutoRefresh(config.oauthClient, archive)
+	}
+	accessToken, err := connectionAccess.AccessToken(googleHealthIdentityEndpointScopes["getProfile"])
 	if err != nil {
+		if errors.Is(err, errCurrentConnectionScopeMissing) {
+			result.Status = "profile_scope_missing"
+		}
 		return result, err
 	}
 	profile, err := runtime.fetchProfile(accessToken)
