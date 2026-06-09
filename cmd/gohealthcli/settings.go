@@ -38,7 +38,15 @@ func runSettingsWithRuntime(args []string, configPath, archivePath string, mode 
 	flags := flag.NewFlagSet("settings", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
-	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
+	// settings does no prompting and never blocks on browser input, so
+	// --no-input would imply a behaviour the command does not have.
+	// The Common Flag Set's pre-Parse scan turns a stray --no-input
+	// into a targeted "--no-input is not supported by settings" message
+	// (issue #171), so the help block and the runtime spec agree. The
+	// accepted-flag list is sourced from the same identitySnapshotCommon-
+	// FlagNames helper the registry uses, so runtime parsing and the
+	// published schema cannot drift apart.
+	common := RegisterCommon(flags, CommonFlagSpec{Accepted: identitySnapshotCommonFlagNames()}, CommonFlagValues{
 		ConfigPath:  configPath,
 		ArchivePath: archivePath,
 		JSONOutput:  mode.json,
