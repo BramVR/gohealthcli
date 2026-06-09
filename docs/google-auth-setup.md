@@ -133,11 +133,11 @@ post-#176) is the only path that unlocks `gohealthcli settings` and
 
 | Endpoint | CLI surface | Required scope | `--add-scopes` keyword |
 | -------- | ----------- | -------------- | ---------------------- |
-| `users.getIdentity` | `gohealthcli identity` / `raw endpoint getIdentity` | `googlehealth.profile.readonly` | default-granted (Tier 1) |
-| `users.getProfile` | `gohealthcli profile` / `raw endpoint getProfile` | `googlehealth.profile.readonly` | default-granted (Tier 1) |
-| `users.getSettings` | `gohealthcli settings` / `raw endpoint getSettings` | `googlehealth.settings.readonly` | `settings` (Tier 2, #176) |
-| `users.pairedDevices.list` | `gohealthcli devices` / `raw endpoint pairedDevices` | `googlehealth.settings.readonly` | `settings` (Tier 2, #176) |
-| `users.getIrnProfile` | `gohealthcli irn-profile` / `raw endpoint getIrnProfile` | `googlehealth.irn.readonly` | `irn` (Tier 2) |
+| `users.getIdentity` | `gohealthcli identity` / `raw endpoint getIdentity` | `https://www.googleapis.com/auth/googlehealth.profile.readonly` | default-granted (Tier 1) |
+| `users.getProfile` | `gohealthcli profile` / `raw endpoint getProfile` | `https://www.googleapis.com/auth/googlehealth.profile.readonly` | default-granted (Tier 1) |
+| `users.getSettings` | `gohealthcli settings` / `raw endpoint getSettings` | `https://www.googleapis.com/auth/googlehealth.settings.readonly` | `settings` (Tier 2, #176) |
+| `users.pairedDevices.list` | `gohealthcli devices` / `raw endpoint pairedDevices` | `https://www.googleapis.com/auth/googlehealth.settings.readonly` | `settings` (Tier 2, #176) |
+| `users.getIrnProfile` | `gohealthcli irn-profile` / `raw endpoint getIrnProfile` | `https://www.googleapis.com/auth/googlehealth.irn.readonly` | `irn` (Tier 2) |
 
 If a Tier 2 command is called without the matching scope on the stored
 Connection, the command exits with a structured status
