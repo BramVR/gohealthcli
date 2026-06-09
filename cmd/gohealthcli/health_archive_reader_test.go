@@ -30,7 +30,8 @@ func TestHealthArchiveReaderSummarizesQueriesAndExportsReadOnly(t *testing.T) {
 		t.Fatalf("latest successful run = %+v, want sync_completed", status.LatestSuccessfulRun)
 	}
 
-	query, err := reader.Query(`SELECT count(*) AS data_point_count FROM data_points`)
+	encoder := newPlainModeEncoder()
+	query, err := reader.Query(`SELECT count(*) AS data_point_count FROM data_points`, encoder)
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
@@ -41,7 +42,7 @@ func TestHealthArchiveReaderSummarizesQueriesAndExportsReadOnly(t *testing.T) {
 		t.Fatalf("query row value = %T(%v), want int64(3)", query.Rows[0][0], query.Rows[0][0])
 	}
 
-	if _, err := reader.Query(`DELETE FROM data_points`); err == nil {
+	if _, err := reader.Query(`DELETE FROM data_points`, encoder); err == nil {
 		t.Fatal("mutating query error = nil, want rejected")
 	}
 

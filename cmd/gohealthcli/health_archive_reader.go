@@ -13,7 +13,7 @@ import (
 type healthArchiveReader interface {
 	Close() error
 	StatusSummary() (statusResult, error)
-	Query(statement string) (queryResult, error)
+	Query(statement string, encoder queryRowEncoder) (queryResult, error)
 	DailySteps() ([]dailyStepsExportRow, error)
 	ExportRows(spec exportDatasetSpec) ([]exportRow, error)
 }
@@ -105,7 +105,7 @@ func (archive *sqliteHealthArchiveReader) StatusSummary() (statusResult, error) 
 	return result, nil
 }
 
-func (archive *sqliteHealthArchiveReader) Query(statement string) (queryResult, error) {
+func (archive *sqliteHealthArchiveReader) Query(statement string, encoder queryRowEncoder) (queryResult, error) {
 	result := queryResult{
 		Status:      "query_failed",
 		ArchivePath: archive.archivePath,
@@ -135,7 +135,7 @@ func (archive *sqliteHealthArchiveReader) Query(statement string) (queryResult, 
 			return result, err
 		}
 		for index, value := range values {
-			values[index] = queryOutputValue(value)
+			values[index] = encoder.encode(columns[index], value)
 		}
 		result.Rows = append(result.Rows, values)
 	}
@@ -232,7 +232,7 @@ func statusSetup(archivePath string) (statusResult, error) {
 	return reader.StatusSummary()
 }
 
-func querySetup(archivePath, statement string) (queryResult, error) {
+func querySetup(archivePath, statement string, encoder queryRowEncoder) (queryResult, error) {
 	result := queryResult{
 		Status:      "query_failed",
 		ArchivePath: archivePath,
@@ -245,7 +245,7 @@ func querySetup(archivePath, statement string) (queryResult, error) {
 		return result, err
 	}
 	defer reader.Close()
-	return reader.Query(statement)
+	return reader.Query(statement, encoder)
 }
 
 func dailyStepsExportRows(archivePath string) ([]dailyStepsExportRow, error) {
