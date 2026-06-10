@@ -30,7 +30,7 @@ surface (`status`,
 `query`, `export`, `describe-schema`) with predictable `--plain` /
 `--json` contracts for scripted and LLM consumers (PRD #144). The Tier 1 daily + hydration catalog slice is
 sealed, and CI runs gofmt, build, tests, and the command-reference drift
-guard (`make docs-check`) on every push. The Command Registry in
+guard (`make docs-check`) on every pull request and push to `main`. The Command Registry in
 `cmd/gohealthcli/commands.go` is the single source of truth for the user-facing
 surface; the list below mirrors each entry's `Short` description and stays in
 sync with `gohealthcli --help`.
