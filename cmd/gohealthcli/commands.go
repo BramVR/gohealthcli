@@ -100,24 +100,14 @@ func lookupCommand(name string) (commandDef, bool) {
 	return commands[i], true
 }
 
-// commonFlags are the five shared flags that the standard output subcommands
-// (init, doctor, connect, identity, profile, sync, status, query) accept.
-// `export` and `raw` use different flag sets — see their explicit Flags slices
-// below — because their output semantics differ.
-//
-// Centralising the shared flags here keeps the registry concise; the dedicated
-// commonFlagsSpec module that #76 introduces will collapse them further.
-var commonFlags = []flagSpec{
-	{Name: "config", Type: "string", Default: "", Usage: "config file path"},
-	{Name: "db", Type: "string", Default: "", Usage: "SQLite Health Archive path"},
-	{Name: "json", Type: "bool", Default: "false", Usage: "write stable JSON to stdout"},
-	{Name: "plain", Type: "bool", Default: "false", Usage: "write plain key/value output to stdout"},
-	{Name: "no-input", Type: "bool", Default: "false", Usage: "never prompt, never wait for browser input"},
-}
-
+// withCommon projects commonFlagsSpec (the issue #76 single source of
+// truth for the five shared flags, defined in common_flags.go) plus the
+// subcommand-specific extras into a registry entry's Flags slice. The
+// runtime side of the same spec is RegisterCommon, so the schema and the
+// FlagSet a subcommand actually parses cannot disagree.
 func withCommon(extra ...flagSpec) []flagSpec {
-	out := make([]flagSpec, 0, len(commonFlags)+len(extra))
-	out = append(out, commonFlags...)
+	out := make([]flagSpec, 0, len(commonFlagsSpec)+len(extra))
+	out = append(out, commonFlagsSpec...)
 	out = append(out, extra...)
 	return out
 }
@@ -134,8 +124,21 @@ func identitySnapshotCommonFlagNames() []string {
 	return []string{"config", "db", "json", "plain"}
 }
 
+// rawCommonFlagNames returns the subset of common flag names `raw`
+// accepts. raw's success output is the provider's raw bytes on stdout,
+// so --json / --plain / --no-input would have no useful effect; the
+// Common Flag Set's pre-Parse scan rejects them with the targeted
+// "--<flag> is not supported by raw" wording instead of letting them
+// silently lose values. The registry entry's Flags / CommonFlags and
+// runRawWithRuntime's CommonFlagSpec all read this one function, so the
+// schema and the runtime contract cannot disagree. Returned fresh each
+// call to mirror commonFlagNames so per-entry slices stay independent.
+func rawCommonFlagNames() []string {
+	return []string{"config", "db"}
+}
+
 // withCommonSubset is the per-subcommand variant of withCommon that
-// projects only the named shared flags (in the canonical commonFlags
+// projects only the named shared flags (in the canonical commonFlagsSpec
 // order) into the registry entry's Flags slice. Used by subcommands
 // whose runtime CommonFlagSpec.Accepted is a strict subset of the
 // five shared flags, so the help block and `--json` schema reflect
@@ -146,8 +149,8 @@ func identitySnapshotCommonFlagNames() []string {
 // a misspelled name would reintroduce the help/schema drift this
 // helper exists to prevent (mirroring withCommonOverrides' contract).
 func withCommonSubset(names []string, extra ...flagSpec) []flagSpec {
-	known := make(map[string]bool, len(commonFlags))
-	for _, flag := range commonFlags {
+	known := make(map[string]bool, len(commonFlagsSpec))
+	for _, flag := range commonFlagsSpec {
 		known[flag.Name] = true
 	}
 	include := make(map[string]bool, len(names))
@@ -161,7 +164,7 @@ func withCommonSubset(names []string, extra ...flagSpec) []flagSpec {
 		include[name] = true
 	}
 	out := make([]flagSpec, 0, len(names)+len(extra))
-	for _, flag := range commonFlags {
+	for _, flag := range commonFlagsSpec {
 		if include[flag.Name] {
 			out = append(out, flag)
 		}
@@ -182,8 +185,8 @@ func withCommonSubset(names []string, extra ...flagSpec) []flagSpec {
 // unknown names panic at init() because registry-build mistakes are
 // programmer errors, not runtime conditions.
 func withCommonOverrides(overrides map[string]string, extra ...flagSpec) []flagSpec {
-	out := make([]flagSpec, 0, len(commonFlags)+len(extra))
-	for _, flag := range commonFlags {
+	out := make([]flagSpec, 0, len(commonFlagsSpec)+len(extra))
+	for _, flag := range commonFlagsSpec {
 		if override, ok := overrides[flag.Name]; ok {
 			flag.Usage = override
 		}
@@ -191,7 +194,7 @@ func withCommonOverrides(overrides map[string]string, extra ...flagSpec) []flagS
 	}
 	for name := range overrides {
 		found := false
-		for _, flag := range commonFlags {
+		for _, flag := range commonFlagsSpec {
 			if flag.Name == name {
 				found = true
 				break
@@ -206,13 +209,13 @@ func withCommonOverrides(overrides map[string]string, extra ...flagSpec) []flagS
 }
 
 // commonFlagNames returns the five shared flag names in their canonical
-// commonFlags order. Registry entries for subcommands whose runtime flag
+// commonFlagsSpec order. Registry entries for subcommands whose runtime flag
 // setup goes through the CommonFlagSet module (issue #166) carry this
 // slice as their `common_flags` schema field, so downstream tooling can
 // see at a glance which subset of shared flags each subcommand accepts.
 func commonFlagNames() []string {
-	names := make([]string, 0, len(commonFlags))
-	for _, f := range commonFlags {
+	names := make([]string, 0, len(commonFlagsSpec))
+	for _, f := range commonFlagsSpec {
 		names = append(names, f.Name)
 	}
 	return names
@@ -407,11 +410,7 @@ var commands = []commandDef{
 		Long:           "Render one of the curated normalised datasets (daily-steps, heart-rate-samples, resting-heart-rate-by-day, sleep-sessions, exercise-sessions, weight-samples, and many more) from the Health Archive. Exports are read-only; nothing in the archive is mutated.\n\nRun `gohealthcli export --help` to see the full list of supported datasets, sorted alphabetically. If you pass a name that does not exist, the error message includes the closest matches (Levenshtein ≤ 3, top 3) and a pointer back to `export --help`.\n\nExactly one of `--output PATH` or `--stdout` must be supplied — the explicit destination prevents an accidental terminal dump of a long export.\n\n`--json` is a Common Flag Set synonym for `--format jsonl`; `--plain` is a synonym for `--format csv`. Passing a synonym alongside a contradictory `--format` value (`--json --format csv`, `--plain --format jsonl`) fails with a `--<synonym> conflicts with --format <value>` error. `--plain --json` together fails with the documented mutual-exclusion error from the Common Flag Set seam.",
 		PositionalArgs: "<dataset>",
 		Flags: withCommonOverrides(
-			map[string]string{
-				"json":     "synonym for --format jsonl",
-				"plain":    "synonym for --format csv",
-				"no-input": "accepted for uniformity; export does no prompting",
-			},
+			exportCommonFlagUsageOverrides,
 			flagSpec{Name: "format", Type: "string", Default: "csv", Usage: "export format: csv or jsonl (synonyms: --json → jsonl, --plain → csv)"},
 			flagSpec{Name: "output", Type: "string", Default: "", Usage: "write export to path"},
 			flagSpec{Name: "stdout", Type: "bool", Default: "false", Usage: "write export data to stdout"},
@@ -431,20 +430,19 @@ var commands = []commandDef{
 		Short:          "Print raw provider JSON for endpoint exploration.",
 		Long:           "Fetch a single upstream Google Health API response and print the raw body to stdout. Useful for endpoint exploration without committing the response to the Health Archive.\n\nFirst positional argument is `endpoint <name>` (for example `endpoint getIdentity`) or `data-type <data-type>` (for example `data-type steps --from 2026-01-01 --to 2026-01-02`). `--from` and `--to` constrain time ranges where the endpoint supports them; `--page-size` and `--page-token` drive pagination.\n\n`raw` is provider-shaped on purpose — the JSON you see is what the provider returns, not the normalised shape the archive stores.",
 		PositionalArgs: "<target> [<args>...]",
-		Flags: []flagSpec{
-			{Name: "config", Type: "string", Default: "", Usage: "config file path"},
-			{Name: "db", Type: "string", Default: "", Usage: "SQLite Health Archive path"},
-			{Name: "from", Type: "string", Default: "", Usage: "inclusive time-range start (where supported by the endpoint)"},
-			{Name: "to", Type: "string", Default: "", Usage: "exclusive time-range end (where supported by the endpoint)"},
-			{Name: "page-size", Type: "int", Default: "", Usage: "pagination page size (positive integer; where supported by the endpoint)"},
-			{Name: "page-token", Type: "string", Default: "", Usage: "pagination page token from a prior response"},
-		},
+		Flags: withCommonSubset(rawCommonFlagNames(),
+			flagSpec{Name: "from", Type: "string", Default: "", Usage: "inclusive time-range start (where supported by the endpoint)"},
+			flagSpec{Name: "to", Type: "string", Default: "", Usage: "exclusive time-range end (where supported by the endpoint)"},
+			flagSpec{Name: "page-size", Type: "int", Default: "", Usage: "pagination page size (positive integer; where supported by the endpoint)"},
+			flagSpec{Name: "page-token", Type: "string", Default: "", Usage: "pagination page token from a prior response"},
+		),
 		// raw's success output is the provider's raw bytes on stdout, so
 		// --plain / --json / --no-input would have no useful effect. Its
 		// CommonFlagSpec at the runtime layer (see runRawWithRuntime in
-		// main.go) declares only {config, db}; CommonFlags here mirrors
-		// that contract so the schema reflects the divergence honestly.
-		CommonFlags: []string{"config", "db"},
+		// main.go) declares the same rawCommonFlagNames() subset;
+		// CommonFlags here mirrors that contract so the schema reflects
+		// the divergence honestly.
+		CommonFlags: rawCommonFlagNames(),
 		// raw owns its own --from / --to / --page-size / --page-token flag
 		// surface and writes the provider's raw bytes. runRawWithRuntime's
 		// signature already declares the outputMode arg unused (`_`), but
@@ -461,11 +459,7 @@ var commands = []commandDef{
 		Short: "Self-describe the Health Archive for LLM consumption.",
 		Long:  "Emit the archive's schema in one of two modes.\n\n`--sql` dumps live DDL straight from `sqlite_master`, excluding internal `sqlite_*` objects. Use this when you want the actual truth of what tables and views exist right now.\n\nThe JSON catalog is the success-mode default: it emits a curated document combining the Normalized Views Registry's per-view metadata (name, migration version, declared columns), the live table+column shape from `pragma_table_info`, the merged hand-curated narrative file, and a stable wire-shape version field. Downstream tools (a Claude skill, an MCP server, a dashboard) read the JSON catalog as the contract. The Common Flag Set `--json` flag is accepted for the uniform-flag contract but does not change behaviour — the catalog is emitted unless `--sql` overrides.\n\n`--plain` is accepted as a no-op — the schema catalog has no key/value plain shape, so `describe-schema --plain` emits the JSON catalog and surfaces a `// note: --plain is a no-op …` comment line on stderr; stdout stays valid JSON so users redirecting it to a file are unaffected. `--plain --json` together fails with the documented mutual-exclusion error.\n\n`--db <path>` is honoured on its own — passing a Health Archive path without `--config` opens that archive directly, matching the other read commands (PRD #144 slice 1). When `--config` is left at its default and only `--db` is explicit, `--db` wins without an agreement check; when both `--config` and `--db` are explicit and disagree, the error names `--db` and `--config` rather than the internal `archive_path` field.\n\nA drift test in CI fails when a public view exists in `sqlite_master` without a matching catalog entry — the JSON shape and the live schema cannot diverge silently.\n\n### Normalized View column types\n\nSQLite views don't carry declared column types. `pragma_table_info` reports the type of each view column from the underlying expression's affinity, which for any non-trivial JSON projection comes back as either an empty string or the literal `BLOB`. The JSON catalog is read as a contract by LLM consumers, so a column like `daily_steps.step_count` (an INTEGER projection over `data_points`) being reported as `BLOB` actively poisons agent reasoning.\n\nThe catalog rewrites those misleading values to the literal `\"unknown\"`. Every entry in `views[*].columns_detailed[*].type` is therefore either a real SQL type (`TEXT`, `INTEGER`, `REAL`, `NUMERIC`, …) or the literal `\"unknown\"` — never `BLOB`, never empty. Treat `\"unknown\"` as \"the runtime type is opaque from the catalog alone — inspect a row or consult the view DDL\".\n\nTable columns (in `tables[*].columns`) are unaffected: real `BLOB` columns on real tables still report `BLOB`. The fallback is view-only.",
 		Flags: withCommonOverrides(
-			map[string]string{
-				"json":     "accepted for uniformity; the JSON catalog is the success-mode default",
-				"plain":    "no-op (schema catalog has no plain shape); emits JSON catalog + stderr note",
-				"no-input": "accepted for uniformity; describe-schema does no prompting",
-			},
+			describeSchemaCommonFlagUsageOverrides,
 			flagSpec{Name: "sql", Type: "bool", Default: "false", Usage: "dump live DDL from sqlite_master (excludes internal sqlite_* objects)"},
 		),
 		CommonFlags: commonFlagNames(),

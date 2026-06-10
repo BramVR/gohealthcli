@@ -19,6 +19,19 @@ import (
 //go:embed llm-schema.json
 var curatedSchemaCatalogJSON []byte
 
+// describeSchemaCommonFlagUsageOverrides is describe-schema's divergence
+// from the canonical commonFlagsSpec wording, declared once: the
+// registry entry (commands.go, via withCommonOverrides) and the runtime
+// CommonFlagSpec below both consume this map, so `describe-schema
+// --help`, the `schema --json` contract, and the generated
+// docs/commands/describe-schema.md page render identical strings by
+// construction (issue #76).
+var describeSchemaCommonFlagUsageOverrides = map[string]string{
+	"json":     "accepted for uniformity; the JSON catalog is the success-mode default",
+	"plain":    "no-op (schema catalog has no plain shape); emits JSON catalog + stderr note",
+	"no-input": "accepted for uniformity; describe-schema does no prompting",
+}
+
 func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer, _ runtimeAdapters) int {
 	flags := flag.NewFlagSet("describe-schema", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -34,7 +47,15 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 	// `// note: …` comment line on stderr so the catalog itself stays
 	// uncluttered for users redirecting stdout to a file. `--no-input` is
 	// likewise accepted but ignored — describe-schema does no prompting.
-	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
+	// The usage strings for the describe-schema-specific shared-flag
+	// semantics come from describeSchemaCommonFlagUsageOverrides — the
+	// same map the registry entry renders into the published schema — so
+	// `describe-schema --help` reflects the documented no-op /
+	// accepted-but-ignored semantics instead of the generic "write stable
+	// JSON to stdout" wording, without a second hand-typed copy.
+	spec := AllCommonFlagsSpec()
+	spec.UsageOverrides = describeSchemaCommonFlagUsageOverrides
+	common := RegisterCommon(flags, spec, CommonFlagValues{
 		ConfigPath:          configPath,
 		ArchivePath:         archivePath,
 		JSONOutput:          mode.json,
@@ -42,19 +63,11 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 		ArchivePathExplicit: archivePathExplicit,
 		ConfigPathExplicit:  configPathExplicit,
 	})
-	// Override the generic CommonFlagSet Usage strings for the flags
-	// whose meaning is describe-schema-specific. `describe-schema --help`
-	// now reflects the documented no-op / accepted-but-ignored semantics
-	// instead of the misleading "write stable JSON to stdout" wording
-	// inherited from the shared module.
-	flags.Lookup("json").Usage = "accepted for uniformity; the JSON catalog is the success-mode default"
-	flags.Lookup("plain").Usage = "no-op (schema catalog has no plain shape); emits JSON catalog + stderr note"
-	flags.Lookup("no-input").Usage = "accepted for uniformity; describe-schema does no prompting"
 	// --sql is a describe-schema-specific override that wins over the JSON
 	// catalog default. We register it AFTER RegisterCommon so the Common
 	// Flag Set seam keeps owning the shared invariants; the override is
 	// applied locally below.
-	describeSQL := flags.Bool("sql", false, "emit live DDL from sqlite_master instead of the JSON catalog")
+	describeSQL := flags.Bool("sql", false, "dump live DDL from sqlite_master (excludes internal sqlite_* objects)")
 
 	if err := ParseCommon(flags, common, args); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)

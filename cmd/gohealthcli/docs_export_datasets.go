@@ -168,6 +168,7 @@ func runDocsExportDatasets(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("docs-export-datasets", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	readmePath := flags.String("readme", "", "path to README.md to rewrite in place")
+	notifySubcommandFlagSetObserver(flags)
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
