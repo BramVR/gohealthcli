@@ -87,6 +87,10 @@ The drift guard in `cmd/gohealthcli/readme_sync_types_test.go`
 added to the Google Health catalog without a matching entry in the list
 above or the caveat sentence.
 
+For a plain-language description of each Data Type — what it captures,
+the upstream record shape, required scope, and the normalized view it
+projects into — see [docs/data-types.md](./docs/data-types.md).
+
 Normalized export datasets. `gohealthcli export` accepts any of the
 names below as its positional argument. The list is auto-generated from
 `exportDatasetCatalogSingleton.Names()` by `make docs-export-datasets`;

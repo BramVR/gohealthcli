@@ -135,7 +135,7 @@ main{min-width:0;padding:48px clamp(22px,5vw,72px) 96px;max-width:1180px;margin:
 .cta-foot{margin:0 0 28px;color:var(--muted);font-size:.86rem;font-style:italic;letter-spacing:.005em}
 .home-services{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0;padding-top:6px}
 .home-services .cap{display:inline-flex;align-items:center;gap:7px;padding:6px 13px 6px 10px;border:1px solid var(--pill-border);border-radius:999px;font-size:.78rem;font-weight:500;color:var(--text);background:var(--paper);letter-spacing:.005em;transition:border-color .15s,color .15s,background-color .15s}
-.home-services .cap:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.home-services .cap:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);text-decoration:none}
 .home-services .cap-icon{width:16px;height:16px;flex:0 0 16px;color:var(--accent);transition:color .15s}
 .home-services .cap:hover .cap-icon{color:var(--accent-strong)}
 .doc-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:48px;margin-top:28px}
