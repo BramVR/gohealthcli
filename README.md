@@ -24,9 +24,9 @@ data, delete health data, run a server, upload archives, or share exports.
 
 The full command surface is live: setup (`init`, `doctor`), OAuth and
 identity snapshots (`connect` through `irn-profile`), archiving (`sync`),
-and a stable read surface (`status`, `query`, `export`, `describe-schema`,
-`raw`) with predictable `--plain` / `--json` contracts for scripted and
-LLM consumers (PRD #144). The Tier 1 daily + hydration catalog slice is
+raw provider exploration (`raw`), and a stable read surface (`status`,
+`query`, `export`, `describe-schema`) with predictable `--plain` /
+`--json` contracts for scripted and LLM consumers (PRD #144). The Tier 1 daily + hydration catalog slice is
 sealed, and CI runs build and tests on every push. The Command Registry in
 `cmd/gohealthcli/commands.go` is the single source of truth for the user-facing
 surface; the list below mirrors each entry's `Short` description and stays in
