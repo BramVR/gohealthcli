@@ -330,6 +330,127 @@ func TestInitCreatesAttachmentRootDirOwnerOnly(t *testing.T) {
 	}
 }
 
+// TestAttachmentStoreWalkRejectsTraversalPathRelative pins #248: a
+// tampered/foreign archive can carry a data_point_attachments row whose
+// path_relative escapes the attachment root ("../../../../etc/passwd").
+// Walk must treat that row as an integrity violation (row-missing-file
+// orphan) rather than statting outside rootDir — i.e. the reported
+// AbsolutePath must never resolve outside the attachment root.
+func TestAttachmentStoreWalkRejectsTraversalPathRelative(t *testing.T) {
+	tempDir := t.TempDir()
+	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+	insertExportDataPoint(t, archivePath, exportDataPointFixture{
+		dataType: "exercise", resourceName: "users/me/dataTypes/exercise/dataPoints/trav",
+		recordKind: "session", startUTC: "2026-06-08T17:00:00Z", endUTC: "2026-06-08T17:30:00Z",
+		startCivil: "2026-06-08T18:00:00", endCivil: "2026-06-08T18:30:00", civilDate: "2026-06-08",
+		dataSource: `{}`, rawJSON: `{}`,
+	})
+	store, err := openAttachmentStore(archivePath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	// Seed a row whose path_relative climbs out of the attachment root.
+	if _, err := store.db.Exec(`INSERT INTO data_point_attachments (data_point_id, kind, sha256, path_relative, byte_size, fetched_at) VALUES (1, 'tcx', ?, ?, 7, ?)`,
+		"cafe000000000000000000000000000000000000000000000000000000000000",
+		"../../../../etc/passwd",
+		"2026-06-08T17:35:00Z"); err != nil {
+		t.Fatalf("seed traversal row: %v", err)
+	}
+	// And a row whose path_relative is absolute.
+	if _, err := store.db.Exec(`INSERT INTO data_point_attachments (data_point_id, kind, sha256, path_relative, byte_size, fetched_at) VALUES (1, 'tcx', ?, ?, 7, ?)`,
+		"beef000000000000000000000000000000000000000000000000000000000000",
+		"/etc/passwd",
+		"2026-06-08T17:36:00Z"); err != nil {
+		t.Fatalf("seed absolute row: %v", err)
+	}
+
+	store.Close()
+	store, err = openAttachmentStore(archivePath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer store.Close()
+
+	var orphans []attachmentOrphan
+	if err := store.Walk(func(o attachmentOrphan) error {
+		orphans = append(orphans, o)
+		return nil
+	}); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+
+	gotTraversalOrphan := false
+	gotAbsoluteOrphan := false
+	for _, o := range orphans {
+		switch o.SHA256 {
+		case "cafe000000000000000000000000000000000000000000000000000000000000":
+			gotTraversalOrphan = true
+		case "beef000000000000000000000000000000000000000000000000000000000000":
+			gotAbsoluteOrphan = true
+		default:
+			continue
+		}
+		if o.Kind != attachmentOrphanRowMissingFile {
+			t.Errorf("escaping row %s reported as %q, want %q", o.SHA256, o.Kind, attachmentOrphanRowMissingFile)
+		}
+		// The reported absolute path must never escape the root.
+		cleaned := filepath.Clean(o.AbsolutePath)
+		if cleaned != store.rootDir && !strings.HasPrefix(cleaned, store.rootDir+string(filepath.Separator)) {
+			t.Errorf("escaping row %s AbsolutePath %q escapes attachment root %q", o.SHA256, o.AbsolutePath, store.rootDir)
+		}
+	}
+	if !gotTraversalOrphan {
+		t.Errorf("Walk did not flag the traversal row as an orphan; orphans=%+v", orphans)
+	}
+	if !gotAbsoluteOrphan {
+		t.Errorf("Walk did not flag the absolute-path row as an orphan; orphans=%+v", orphans)
+	}
+}
+
+// TestAttachmentStoreResolveRejectsEscapingPathRelative pins #248 for
+// the Resolve seam: a stored path_relative that is absolute or contains
+// a "../" traversal must surface an error instead of handing back an
+// arbitrary-file-read path outside the attachment root.
+func TestAttachmentStoreResolveRejectsEscapingPathRelative(t *testing.T) {
+	tempDir := t.TempDir()
+	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+	insertExportDataPoint(t, archivePath, exportDataPointFixture{
+		dataType: "exercise", resourceName: "users/me/dataTypes/exercise/dataPoints/resolvetrav",
+		recordKind: "session", startUTC: "2026-06-08T17:00:00Z", endUTC: "2026-06-08T17:30:00Z",
+		startCivil: "2026-06-08T18:00:00", endCivil: "2026-06-08T18:30:00", civilDate: "2026-06-08",
+		dataSource: `{}`, rawJSON: `{}`,
+	})
+	store, err := openAttachmentStore(archivePath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer store.Close()
+
+	cases := []struct {
+		name         string
+		sha          string
+		pathRelative string
+	}{
+		{"traversal", "cafe000000000000000000000000000000000000000000000000000000000000", "../../../../etc/passwd"},
+		{"absolute", "beef000000000000000000000000000000000000000000000000000000000000", "/etc/passwd"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := store.db.Exec(`INSERT INTO data_point_attachments (data_point_id, kind, sha256, path_relative, byte_size, fetched_at) VALUES (1, 'tcx', ?, ?, 7, ?)`,
+				tc.sha, tc.pathRelative, "2026-06-08T17:35:00Z"); err != nil {
+				t.Fatalf("seed row: %v", err)
+			}
+			resolved, err := store.Resolve(tc.sha)
+			if err == nil {
+				t.Fatalf("Resolve(%s) = %q, want error for escaping path_relative", tc.name, resolved)
+			}
+		})
+	}
+}
+
 func countAttachmentRows(t *testing.T, archivePath string) int {
 	t.Helper()
 	db, err := openArchive(archivePath)
