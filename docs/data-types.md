@@ -17,7 +17,7 @@ The catalog is authoritative in `cmd/gohealthcli/google_health_data_types.go`; t
 
 ## How long does each type take to sync?
 
-Sync cost is proportional to Data Point count. Sustained throughput measures roughly 2,000–5,000 Data Points per minute on real runs; the table plans with the conservative ~2,000/min. Densities were measured 2026-06-10 from one real watch-backed account (continuous heart-rate sampling) — your numbers scale with what your devices record. Cursor-resumed incremental syncs cover only the gap since the last run and finish in seconds regardless of type; Rollup syncs land one row per day or window and are always trivial.
+Sync cost is proportional to Data Point count. Sustained throughput measures roughly 2,000–5,000 Data Points per minute on real runs; the table plans with the conservative ~2,000/min. Densities were measured 2026-06-10 from one real account backed by a Pixel Watch 4 (continuous heart-rate sampling) — your numbers scale with what your devices record. Cursor-resumed incremental syncs cover only the gap since the last run and finish in seconds regardless of type; Rollup syncs land one row per day or window and are always trivial.
 
 | Sync key | Points/day | Two weeks ≈ | Sync time ≈ |
 | --- | --- | --- | --- |

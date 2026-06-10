@@ -239,8 +239,9 @@ How long does a sync take? Cursor-resumed incremental syncs finish in
 seconds. Explicit backfills cost time in proportion to Data Point count —
 sustained throughput measures roughly 2,000–5,000 Data Points/minute on
 real runs (plan with ~2,000/min) — so the Data Type's density decides the
-wall-clock. Densities measured 2026-06-10 from a real watch-backed archive
-(continuous heart-rate sampling), and what two weeks of data costs:
+wall-clock. Densities measured 2026-06-10 from a real archive backed by a
+Pixel Watch 4 (continuous heart-rate sampling), and what two weeks of
+data costs:
 
 | Data Type                 | Density (points/day) | Two weeks ≈  | Sync time ≈              |
 | ------------------------- | -------------------- | ------------ | ------------------------ |

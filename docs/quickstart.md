@@ -92,7 +92,7 @@ gohealthcli sync --types heart-rate,sleep --from 2026-01-01 --to 2026-01-07 --pl
 
 ## How long will a sync take?
 
-Cursor-resumed incremental syncs (no `--from`) finish in seconds. An explicit backfill window costs time in proportion to how many Data Points it covers, and that depends on the Data Type's density. Sustained throughput measures roughly 2,000–5,000 Data Points per minute on real runs; the table plans with the conservative ~2,000/min, using densities measured 2026-06-10 from a real watch-backed archive (continuous heart-rate sampling):
+Cursor-resumed incremental syncs (no `--from`) finish in seconds. An explicit backfill window costs time in proportion to how many Data Points it covers, and that depends on the Data Type's density. Sustained throughput measures roughly 2,000–5,000 Data Points per minute on real runs; the table plans with the conservative ~2,000/min, using densities measured 2026-06-10 from a real archive backed by a Pixel Watch 4 (continuous heart-rate sampling):
 
 | Data Type | Density (points/day) | Two weeks ≈ | Sync time ≈ |
 | --- | --- | --- | --- |
