@@ -312,6 +312,120 @@ func TestSyncRunExecutorRecordsPartialCountsWhenLaterPageFails(t *testing.T) {
 	assertSyncRunForDataType(t, archivePath, 1, "sync_failed", "steps", "list", 1, 1, 0, "not valid JSON")
 }
 
+// TestSyncRunExecutorRefreshesAccessTokenMidRunAndPersists covers the
+// long-backfill shape: the access token is valid when the Sync Run
+// starts, then expires between pages. Page 2 comes back 401 with the
+// original token; the run must refresh via the stored refresh token,
+// retry page 2 with the rotated token, finish, and persist the rotated
+// token's metadata — instead of failing and leaving the Sync Cursor
+// un-advanced.
+func TestSyncRunExecutorRefreshesAccessTokenMidRunAndPersists(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	connectAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+		now:                connectAt,
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+		t.Fatalf("connect setup: %v", err)
+	}
+
+	// 00:30: the stored token (expires 01:00) is still valid at run
+	// start, so the pre-run AccessToken path does NOT refresh.
+	syncNow := connectAt.Add(30 * time.Minute)
+	refreshedExpiresAt := syncNow.Add(time.Hour)
+	testRuntime.now = func() time.Time { return syncNow }
+	refreshCalls := 0
+	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
+		refreshCalls++
+		if refreshToken != "connect-refresh-secret" {
+			t.Fatalf("refresh token = %q, want connect-refresh-secret", refreshToken)
+		}
+		return oauthTokenResponse{
+			accessToken:  "rotated-access-secret",
+			refreshToken: "connect-refresh-secret",
+			tokenType:    "Bearer",
+			scopes:       fallbackScopes,
+			expiresAt:    refreshedExpiresAt,
+			rawTokenMaterialObject: map[string]any{
+				"access_token":  "rotated-access-secret",
+				"refresh_token": "connect-refresh-secret",
+				"token_type":    "Bearer",
+				"expires_in":    float64(3600),
+			},
+		}, nil
+	}
+
+	dataPointPage := func(name, nextPageToken string) string {
+		return `{
+			"dataPoints": [{
+				"name": "users/me/dataTypes/steps/dataPoints/` + name + `",
+				"dataSource": {"platform": "FITBIT"},
+				"steps": {
+					"interval": {
+						"startTime": "2026-01-01T08:00:00Z",
+						"endTime": "2026-01-01T08:15:00Z"
+					},
+					"count": "512"
+				}
+			}],
+			"nextPageToken": "` + nextPageToken + `"
+		}`
+	}
+	var fetches []string
+	testRuntime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		pageToken := mustURLQuery(t, request.url).Get("pageToken")
+		fetches = append(fetches, pageToken+":"+accessToken)
+		switch {
+		case accessToken == "connect-access-secret" && pageToken == "":
+			return []byte(dataPointPage("page-one-point", "page-2")), nil
+		case accessToken == "connect-access-secret" && pageToken == "page-2":
+			// The access token expired between pages.
+			return nil, &googleHealthHTTPError{StatusCode: 401}
+		case accessToken == "rotated-access-secret" && pageToken == "page-2":
+			return []byte(dataPointPage("page-two-point", "")), nil
+		default:
+			t.Fatalf("unexpected fetch (pageToken=%q, accessToken=%q)", pageToken, accessToken)
+			return nil, nil
+		}
+	}
+
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+		configPath:  configPath,
+		archivePath: archivePath,
+		dataTypes:   []string{"steps"},
+		from:        "2026-01-01",
+		to:          "2026-01-01T12:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("execute Sync Run: %v", err)
+	}
+	if result.Status != "sync_completed" {
+		t.Fatalf("Sync Run status = (%q, %q), want sync_completed", result.Status, result.Message)
+	}
+	if result.DataPointsSeen != 2 || result.DataPointsNew != 2 {
+		t.Fatalf("Data Point counts = (%d, %d), want (2, 2)", result.DataPointsSeen, result.DataPointsNew)
+	}
+	if refreshCalls != 1 {
+		t.Fatalf("refresh calls = %d, want 1", refreshCalls)
+	}
+	wantFetches := ":connect-access-secret,page-2:connect-access-secret,page-2:rotated-access-secret"
+	if strings.Join(fetches, ",") != wantFetches {
+		t.Fatalf("fetches = %v, want %s", fetches, wantFetches)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 2)
+	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "steps", "list", 2, 2, 0, "")
+
+	gotMetadata := archivedConnectionTokenMetadata(t, archivePath)
+	if !strings.Contains(gotMetadata, refreshedExpiresAt.Format(time.RFC3339)) {
+		t.Fatalf("token metadata after sync = %s, want refreshed expires_at %s", gotMetadata, refreshedExpiresAt.Format(time.RFC3339))
+	}
+}
+
 func TestSyncRunExecutorAutoRefreshesExpiredAccessTokenAndPersists(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)

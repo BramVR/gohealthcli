@@ -320,6 +320,13 @@ func TestCurrentConnectionAccessTokenMissingCategory(t *testing.T) {
 	}
 }
 
+func TestMidRunTokenRefresherNilWithoutAutoRefresh(t *testing.T) {
+	access := newCurrentConnectionAccessWithRuntime(credentialStoreConfig{}, archivedConnection{}, nil, runtimeAdapters{})
+	if access.MidRunTokenRefresher() != nil {
+		t.Fatal("MidRunTokenRefresher = non-nil, want nil without WithAutoRefresh")
+	}
+}
+
 func TestCurrentConnectionAccessTokenAutoRefreshesExpiredToken(t *testing.T) {
 	fixture := setupAutoRefreshFixture(t, map[string]any{
 		"access_token":  "stale-access",

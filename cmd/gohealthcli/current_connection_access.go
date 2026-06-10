@@ -118,6 +118,20 @@ func (access currentConnectionAccess) refreshAndPersistAccessToken() (string, er
 	return check.accessToken, nil
 }
 
+// MidRunTokenRefresher exposes the refresh-and-persist hook to callers
+// whose access token can outlive its ~1h validity while they hold it —
+// today that is sync ingestion, whose pagination loops can run longer
+// than one access token (googleHealthIngestionRequest.refreshAccessToken).
+// Returns nil when auto-refresh was not opted into via WithAutoRefresh,
+// so callers can assign the result unconditionally and keep the
+// fail-on-401 behavior for Connections that cannot refresh.
+func (access currentConnectionAccess) MidRunTokenRefresher() func() (string, error) {
+	if access.autoRefresh == nil {
+		return nil
+	}
+	return access.refreshAndPersistAccessToken
+}
+
 func wrapAutoRefreshFailure(err error) error {
 	return fmt.Errorf("auto-refresh of Connection access token failed: %w; run `gohealthcli doctor --online` to diagnose or `gohealthcli connect` to re-link", err)
 }

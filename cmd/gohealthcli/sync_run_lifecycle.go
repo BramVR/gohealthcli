@@ -198,6 +198,7 @@ func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
 		seen, newCount, updated := syncResultTotalCounts(snapshot)
 		_ = archive.HeartbeatSyncRun(syncRunID, seen, newCount, updated, runtime.now().UTC().Format(time.RFC3339))
 	}
+	ingestionRequest.refreshAccessToken = connectionAccess.MidRunTokenRefresher()
 	ingestionResult, err := ingestion.Execute(archive, ingestionRequest)
 	applyGoogleHealthIngestionCounts(&result, ingestionResult)
 	if err != nil {
