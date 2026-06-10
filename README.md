@@ -225,6 +225,17 @@ abandoned runs: a `sync_running` row with no heartbeat for 5 minutes flips to
 `sync_failed` with `error_summary='abandoned (no heartbeat for 5m)'`, and the
 Sync Cursor stays put so the next run re-reads the same window.
 
+What to expect, timing-wise: cursor-resumed incremental syncs finish in
+seconds; wide explicit ranges over sample-dense Data Types are slow
+(heart-rate sustained ≈1,200 Data Points/minute when measured live). Keep any
+single Data Type's run under about one hour — the OAuth access token is
+refreshed at run start only, so a run that outlives it fails mid-flight with
+`Google Health rejected stored Connection token` and, because the failed run's
+cursor never advances, a plain retry re-reads the same too-wide window. Chunk
+big backfills of dense types with explicit `--from`/`--to` (a few days per run
+for heart-rate); `--all` is safe in aggregate since every per-type run gets a
+fresh token.
+
 Archive daily step Rollups or wearable-filtered Data Points when needed:
 
 ```bash
