@@ -103,7 +103,7 @@ Cursor-resumed incremental syncs (no `--from`) finish in seconds. An explicit ba
 | `steps` | ~260 | ~3,600 pts | ~2 min |
 | `sleep`, `daily-*` types | ~1 | ~14 pts | seconds |
 
-Two caveats. Density is account-specific — a phone-only account without a continuously-sampling wearable runs far lower across the board. And a single run's OAuth token lives about an hour and is only fetched at run start, so chunk dense backfills to 2–3 days of heart-rate per `--from`/`--to` run; `--all` is safe in aggregate because every per-Data-Type run gets a fresh token.
+One caveat: density is account-specific — a phone-only account without a continuously-sampling wearable runs far lower across the board. Long backfills are safe to run in one go: when a run outlives its OAuth access token (about an hour), the token is refreshed mid-run and the failed page retried automatically in the standard `init --oauth-client-file` setup.
 
 The full per-type table — every measured Data Type, not just these anchors — is on the [Data Types page](data-types.html#how-long-does-each-type-take-to-sync).
 

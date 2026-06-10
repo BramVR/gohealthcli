@@ -256,13 +256,12 @@ and a sleep point is an entire night with its stage breakdown.
 | `sleep`, `daily-*` types  | ~1                   | ~14 pts      | seconds                  |
 
 Density is account-specific — a phone-only account with no
-continuously-sampling wearable runs far lower. The hard cap is OAuth: a
-run's access token is fetched at run start and lives about an hour, so
-keep any single Data Type's window under roughly 100,000 points — 2–3
-days of continuously-sampled heart-rate per `--from`/`--to` run. `--all`
-is safe in aggregate because every per-type run gets a fresh token; watch
-long runs from another terminal with `sync --status`. The full per-type
-table covering every measured Data Type is in
+continuously-sampling wearable runs far lower. Long runs survive OAuth
+token expiry: a mid-run 401 triggers a single token refresh and a retry
+of the failed page, so a multi-hour heart-rate backfill can run as one
+`--from`/`--to` window in the standard `init --oauth-client-file` setup.
+Watch long runs from another terminal with `sync --status`. The full
+per-type table covering every measured Data Type is in
 [docs/data-types.md](./docs/data-types.md).
 
 Archive daily step Rollups or wearable-filtered Data Points when needed:

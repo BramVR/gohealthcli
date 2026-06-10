@@ -42,7 +42,7 @@ Points-per-day spans orders of magnitude because a Data Point is the upstream re
 
 Not yet measured on this account: `floors`, `calories-in-heart-rate-zone`, `electrocardiogram`, `irregular-rhythm-notification`, `weight`, `body-fat`, `height`, `blood-glucose`, `core-body-temperature`, and `hydration-log`. Most of these are sparse user-logged or per-event records (weigh-ins, ECG sessions, hydration entries) and should sync in seconds; a continuously-recording source — a CGM feeding `blood-glucose`, for instance — raises density and cost accordingly.
 
-One hard limit to plan around: a Sync Run's OAuth token is fetched at run start and lives about an hour, which caps a single run near ~100,000 points at the conservative rate. That is why dense `heart-rate` backfills need explicit `--from`/`--to` chunks of 2–3 days; everything else in the table fits comfortably in one run. The [sync reference](commands/sync.html) has the full timing prose, and `sync --status` watches a long run live from a second terminal.
+A run longer than an OAuth access token's ~1-hour lifetime survives it: the token is refreshed mid-run on the first 401 and the failed page retried, so even a two-week `heart-rate` backfill can run as a single `--from`/`--to` window in the standard `init --oauth-client-file` setup. The [sync reference](commands/sync.html) has the full timing prose, and `sync --status` watches a long run live from a second terminal.
 
 ## Activity and fitness
 
