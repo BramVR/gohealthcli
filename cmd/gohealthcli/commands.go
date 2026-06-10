@@ -62,18 +62,42 @@ type flagSpec struct {
 // markdown.
 const commandSchemaVersion = 1
 
+// commandIndex keys the registry by Name so dispatch is a map lookup
+// (#75) rather than a linear scan. Values are indices into `commands`
+// — not copied commandDef values — because the `schema` entry's Run
+// adapter is wired by init() after the slice literal is initialised;
+// storing indices keeps the index coherent with that late binding (and
+// with tests that temporarily swap an entry's Run) regardless of init
+// order. Built once at startup by the init() below.
+var commandIndex = make(map[string]int, len(commands))
+
+// init builds commandIndex from the registry. A duplicate Name panics:
+// two entries sharing a name would make one unreachable from dispatch,
+// which is a registry-build programmer error, not a runtime condition —
+// the same convention withCommonSubset / withCommonOverrides follow.
+// This panic is the actual enforcement: it fires during package init,
+// before any test runs. TestCommandNamesAreUnique documents and pins
+// the same invariant in the suite.
+func init() {
+	for i, cmd := range commands {
+		if _, dup := commandIndex[cmd.Name]; dup {
+			panic("duplicate command name in registry: " + cmd.Name)
+		}
+		commandIndex[cmd.Name] = i
+	}
+}
+
 // lookupCommand returns the registry entry whose Name matches the given
 // subcommand. It deliberately INCLUDES hidden entries: the `help <cmd>` verb
 // (PRD #143 slice 2) must surface the prose for hidden build-time commands
 // like `schema` when asked explicitly, even though they are filtered from the
 // top-level `--help` listing.
 func lookupCommand(name string) (commandDef, bool) {
-	for _, cmd := range commands {
-		if cmd.Name == name {
-			return cmd, true
-		}
+	i, ok := commandIndex[name]
+	if !ok {
+		return commandDef{}, false
 	}
-	return commandDef{}, false
+	return commands[i], true
 }
 
 // commonFlags are the five shared flags that the standard output subcommands
