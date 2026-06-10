@@ -30,7 +30,6 @@ const capabilities = [
   { name: "HRV",              icon: "monitor_heart" },
   { name: "ECG",              icon: "ecg_heart" },
   { name: "Rhythm",           icon: "vital_signs" },
-  { name: "VO₂ Max",     icon: "exercise" },
   { name: "Sleep",            icon: "bedtime" },
   { name: "Respiratory",      icon: "air" },
   { name: "Exercise",         icon: "fitness_center" },
