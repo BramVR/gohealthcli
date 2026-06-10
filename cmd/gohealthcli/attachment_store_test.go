@@ -451,6 +451,29 @@ func TestAttachmentStoreResolveRejectsEscapingPathRelative(t *testing.T) {
 	}
 }
 
+func TestResolveContainedPathCleansRootBeforeBoundaryCheck(t *testing.T) {
+	// rootDir derives from the archive path and may carry internal dot
+	// segments (e.g. `--db a/../archive.sqlite`). filepath.Join collapses
+	// them, so the containment check must compare against the cleaned root
+	// or it would reject legitimate in-root attachments.
+	root := filepath.Join("base", "x", "..", "attachments") // == base/attachments after Clean
+	rel := filepath.ToSlash(filepath.Join("tcx", "ab", "file.tcx"))
+
+	got, err := resolveContainedPath(root, rel)
+	if err != nil {
+		t.Fatalf("resolveContainedPath(%q, %q) returned error for a legitimate in-root path: %v", root, rel, err)
+	}
+	want := filepath.Join(filepath.Clean(root), filepath.FromSlash(rel))
+	if got != want {
+		t.Fatalf("resolveContainedPath = %q, want %q", got, want)
+	}
+
+	// Escapes must still be rejected even with an unclean root.
+	if _, err := resolveContainedPath(root, "../../etc/passwd"); err == nil {
+		t.Fatal("resolveContainedPath accepted a traversal path_relative, want error")
+	}
+}
+
 func countAttachmentRows(t *testing.T, archivePath string) int {
 	t.Helper()
 	db, err := openArchive(archivePath)

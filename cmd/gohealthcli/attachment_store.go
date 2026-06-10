@@ -349,13 +349,20 @@ func resolveContainedPath(rootDir, pathRelative string) (string, error) {
 	if filepath.IsAbs(osRelative) {
 		return "", fmt.Errorf("attachment path_relative %q is absolute", pathRelative)
 	}
-	for _, segment := range strings.Split(pathRelative, "/") {
+	// Scan segments on the OS-native path so a "..\\" segment is caught on
+	// Windows too, not only the forward-slash "../" form.
+	for _, segment := range strings.Split(osRelative, string(filepath.Separator)) {
 		if segment == ".." {
 			return "", fmt.Errorf("attachment path_relative %q contains a parent (\"..\") segment", pathRelative)
 		}
 	}
-	abs := filepath.Join(rootDir, osRelative)
-	if abs != rootDir && !strings.HasPrefix(abs, rootDir+string(filepath.Separator)) {
+	// Clean rootDir before the boundary comparison: it derives from the
+	// archive path (e.g. `--db a/../archive.sqlite`) and may carry internal
+	// dot segments that filepath.Join collapses, which would otherwise make
+	// the prefix check reject legitimate in-root attachments.
+	cleanRoot := filepath.Clean(rootDir)
+	abs := filepath.Join(cleanRoot, osRelative)
+	if abs != cleanRoot && !strings.HasPrefix(abs, cleanRoot+string(filepath.Separator)) {
 		return "", fmt.Errorf("attachment path_relative %q escapes attachment root", pathRelative)
 	}
 	return abs, nil
