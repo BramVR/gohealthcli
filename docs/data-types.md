@@ -21,7 +21,7 @@ Sync cost is proportional to Data Point count. Sustained throughput measures rou
 
 | Sync key | Points/day | Two weeks ≈ | Sync time ≈ |
 | --- | --- | --- | --- |
-| `heart-rate` | ~27,500 | ~385,000 pts | 1.5–3 h, in 2–3-day runs |
+| `heart-rate` | ~27,500 | ~385,000 pts | 1.5–3 h |
 | `time-in-heart-rate-zone` | ~960 | ~13,400 pts | ~5 min |
 | `active-energy-burned` | ~630 | ~8,800 pts | ~4 min |
 | `activity-level` | ~540 | ~7,600 pts | ~4 min |

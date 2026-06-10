@@ -96,7 +96,7 @@ Cursor-resumed incremental syncs (no `--from`) finish in seconds. An explicit ba
 
 | Data Type | Density (points/day) | Two weeks ≈ | Sync time ≈ |
 | --- | --- | --- | --- |
-| `heart-rate` | ~27,500 | ~385,000 pts | 1.5–3 h, in 2–3-day runs |
+| `heart-rate` | ~27,500 | ~385,000 pts | 1.5–3 h |
 | `time-in-heart-rate-zone` | ~960 | ~13,400 pts | ~5 min |
 | `active-energy-burned` | ~630 | ~8,800 pts | ~4 min |
 | `oxygen-saturation` | ~480 | ~6,700 pts | ~3 min |
