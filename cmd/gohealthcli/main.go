@@ -2540,10 +2540,9 @@ func loadOAuthClientConfig(path string) (oauthClientConfig, error) {
 
 func parseOAuthClientConfigContent(content []byte) (oauthClientConfig, error) {
 	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(content, &raw); err != nil {
-		return oauthClientConfig{}, errors.New("OAuth client file must contain a JSON object")
-	}
-	if len(raw) == 0 {
+	// A JSON "null" unmarshals into a nil map without error, so it is
+	// rejected here together with non-object input.
+	if err := json.Unmarshal(content, &raw); err != nil || raw == nil {
 		return oauthClientConfig{}, errors.New("OAuth client file must contain a JSON object")
 	}
 	var client struct {
@@ -2562,6 +2561,9 @@ func parseOAuthClientConfigContent(content []byte) (oauthClientConfig, error) {
 			clientKind = key
 			break
 		}
+	}
+	if clientKind == "" {
+		return oauthClientConfig{}, errors.New(`OAuth client file is missing the "installed" object (Google Desktop client JSON shape: {"installed": {"client_id": "...", "client_secret": "..."}})`)
 	}
 	if clientKind == "web" {
 		return oauthClientConfig{}, errors.New("OAuth client file must be an installed desktop client, not a web client")

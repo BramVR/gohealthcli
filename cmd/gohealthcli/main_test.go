@@ -6226,6 +6226,129 @@ func TestInitRejectsInvalidOAuthClientFileBeforeCreatingSetup(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestInitNamesMissingInstalledObjectForEmptyOAuthClientJSON(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	clientPath := filepath.Join(tempDir, "empty.json")
+	if err := os.WriteFile(clientPath, []byte(`{}`), 0o600); err != nil {
+		t.Fatalf("write empty OAuth client file: %v", err)
+	}
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+
+	code := runInit(
+		[]string{
+			"--config", configPath,
+			"--db", archivePath,
+			"--oauth-client-file", clientPath,
+		},
+		defaultConfigPath(),
+		defaultArchivePath(),
+		outputMode{},
+		stdout,
+		stderr,
+	)
+
+	if code == 0 {
+		t.Fatalf("exit code = 0, want failure")
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	// Regression guard for issue #149: {} IS a JSON object, so the error
+	// must name the missing "installed" structure instead.
+	if !strings.Contains(stderr.String(), `missing the "installed" object`) {
+		t.Fatalf("stderr missing \"installed\" object error: %q", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "must contain a JSON object") {
+		t.Fatalf("stderr still claims {} is not a JSON object: %q", stderr.String())
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("config stat err = %v, want not exist", err)
+	}
+	if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
+		t.Fatalf("archive stat err = %v, want not exist", err)
+	}
+}
+
+func TestInitRejectsWebOAuthClientFile(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	clientPath := filepath.Join(tempDir, "web-client.json")
+	content := []byte(`{"web":{"client_id":"test-client","client_secret":"test-secret","redirect_uris":["http://127.0.0.1:8080/oauth2callback"]}}`)
+	if err := os.WriteFile(clientPath, content, 0o600); err != nil {
+		t.Fatalf("write web OAuth client file: %v", err)
+	}
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+
+	code := runInit(
+		[]string{
+			"--config", configPath,
+			"--db", archivePath,
+			"--oauth-client-file", clientPath,
+		},
+		defaultConfigPath(),
+		defaultArchivePath(),
+		outputMode{},
+		stdout,
+		stderr,
+	)
+
+	if code == 0 {
+		t.Fatalf("exit code = 0, want failure")
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "must be an installed desktop client, not a web client") {
+		t.Fatalf("stderr missing web client rejection: %q", stderr.String())
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("config stat err = %v, want not exist", err)
+	}
+	if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
+		t.Fatalf("archive stat err = %v, want not exist", err)
+	}
+}
+
+func TestInitKeepsNonObjectMessageForNullOAuthClientJSON(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	clientPath := filepath.Join(tempDir, "null.json")
+	// JSON "null" unmarshals into a nil map without error, so it must keep
+	// the non-object message rather than the missing-"installed" one.
+	if err := os.WriteFile(clientPath, []byte(`null`), 0o600); err != nil {
+		t.Fatalf("write null OAuth client file: %v", err)
+	}
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+
+	code := runInit(
+		[]string{
+			"--config", configPath,
+			"--db", archivePath,
+			"--oauth-client-file", clientPath,
+		},
+		defaultConfigPath(),
+		defaultArchivePath(),
+		outputMode{},
+		stdout,
+		stderr,
+	)
+
+	if code == 0 {
+		t.Fatalf("exit code = 0, want failure")
+	}
+	if !strings.Contains(stderr.String(), "must contain a JSON object") {
+		t.Fatalf("stderr missing non-object error: %q", stderr.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestInitIsIdempotentForExistingSetup(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
