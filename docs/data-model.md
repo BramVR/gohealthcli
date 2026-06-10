@@ -245,17 +245,46 @@ design (see ADR-0008).
 
 ## Normalized Views
 
-First Release views:
+Normalized Views are SQLite views over `data_points.raw_json` (and
+`identity_snapshots.raw_json` for `current_*` and `paired_devices`)
+that project the principal scalars of each Data Type as typed columns,
+so downstream consumers can `SELECT ... FROM <view>` instead of walking
+JSON paths. Every view registered through the **Normalized Views
+Registry** (`cmd/gohealthcli/normalized_views.go`) is also exposed as
+a CSV/JSONL export dataset and is mentioned in the schema catalog
+contract.
 
-- daily steps
-- heart rate samples
-- resting heart rate by day
-- sleep sessions
-- exercise sessions
-- weight samples
+The live catalog is the source of truth — list it without drift via:
 
-Later views can be added after raw archive fixtures prove Data Type shape and
-history quality.
+```bash
+gohealthcli describe-schema --json | jq '[.views[].name] | sort'
+```
+
+The current catalog spans (grouped, with PRD anchors):
+
+- **Activity & fitness** — `daily_steps`, `floors_intervals`,
+  `active_minutes_intervals`, `active_zone_minutes_intervals`,
+  `activity_level_intervals`, `altitude_intervals`,
+  `sedentary_period_intervals`, `swim_lengths_data_intervals`,
+  `time_in_heart_rate_zone_intervals`.
+- **Heart rate & cardiovascular** — `heart_rate_samples`,
+  `resting_heart_rate_by_day`, `daily_heart_rate_zones`,
+  `vo2_max_samples`, `run_vo2_max_samples`, `daily_vo2_max`,
+  `electrocardiogram_sessions`, `irregular_rhythm_notifications`.
+- **Body composition & metrics** — `weight_samples`, `body_fat_samples`,
+  `height_samples`, `current_height`, `blood_glucose_samples`,
+  `core_body_temperature_samples`.
+- **Sleep & recovery** — `sleep_sessions`, `sleep_stages`,
+  `respiratory_rate_sleep_summary`, `daily_sleep_temperature_derivations`.
+- **Exercise & hydration** — `exercise_sessions`, `exercise_splits`,
+  `hydration_log_sessions`.
+- **Identity & search** — `current_settings`, `paired_devices`,
+  `current_irn_profile`, `searchable_text`.
+
+Adding a Data Type adds its catalog row plus one Registry entry; the
+view name follows the dataset name with `-` → `_`. ECG and IRN are
+Tier 2 and only populate when the user opts into the corresponding
+scope via `connect --add-scopes ecg,irn`.
 
 ## Dedupe Questions
 

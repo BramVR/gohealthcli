@@ -25,20 +25,23 @@ const brewAvailable = false;
 const goInstall = "go install github.com/BramVR/gohealthcli/cmd/gohealthcli@latest";
 
 const capabilities = [
-  { name: "Steps",      icon: "directions_walk" },
-  { name: "Heart Rate", icon: "favorite" },
-  { name: "HRV",        icon: "monitor_heart" },
-  { name: "ECG",        icon: "ecg_heart" },
-  { name: "Rhythm",     icon: "vital_signs" },
-  { name: "Sleep",      icon: "bedtime" },
-  { name: "Exercise",   icon: "fitness_center" },
-  { name: "Weight",     icon: "monitor_weight" },
-  { name: "Body Fat",   icon: "scale" },
-  { name: "Glucose",    icon: "glucose" },
-  { name: "Oxygen",     icon: "bloodtype" },
-  { name: "Distance",   icon: "route" },
-  { name: "Wearable",   icon: "watch" },
-  { name: "Rollups",    icon: "bar_chart" },
+  { name: "Steps",            icon: "directions_walk" },
+  { name: "Heart Rate",       icon: "favorite" },
+  { name: "HRV",              icon: "monitor_heart" },
+  { name: "ECG",              icon: "ecg_heart" },
+  { name: "Rhythm",           icon: "vital_signs" },
+  { name: "VO₂ Max",     icon: "exercise" },
+  { name: "Sleep",            icon: "bedtime" },
+  { name: "Respiratory",      icon: "air" },
+  { name: "Exercise",         icon: "fitness_center" },
+  { name: "Hydration",        icon: "water_drop" },
+  { name: "Weight",           icon: "monitor_weight" },
+  { name: "Body Fat",         icon: "scale" },
+  { name: "Glucose",          icon: "glucose" },
+  { name: "Oxygen",           icon: "bloodtype" },
+  { name: "Distance",         icon: "route" },
+  { name: "Wearable",         icon: "watch" },
+  { name: "Rollups",          icon: "bar_chart" },
 ];
 
 // A sections entry can list explicit markdown paths or a directory wildcard
