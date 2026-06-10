@@ -4,10 +4,12 @@
 
 # gohealthcli
 
+[![CI](https://github.com/BramVR/gohealthcli/actions/workflows/ci.yml/badge.svg)](https://github.com/BramVR/gohealthcli/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/BramVR/gohealthcli.svg)](https://pkg.go.dev/github.com/BramVR/gohealthcli)
 [![Go Report Card](https://goreportcard.com/badge/github.com/BramVR/gohealthcli)](https://goreportcard.com/report/github.com/BramVR/gohealthcli)
 ![Go version](https://img.shields.io/github/go-mod/go-version/BramVR/gohealthcli)
 [![GitHub repository](https://img.shields.io/badge/GitHub-BramVR%2Fgohealthcli-24292f?logo=github)](https://github.com/BramVR/gohealthcli)
+[![Project Site](https://img.shields.io/badge/Project%20Site-gohealthcli.bramvanrompuy.be-0b7285)](https://gohealthcli.bramvanrompuy.be)
 
 Local-first, read-only Google Health archive CLI.
 
@@ -20,7 +22,12 @@ data, delete health data, run a server, upload archives, or share exports.
 
 ## Status
 
-First CLI tracer in progress. The Command Registry in
+The full command surface is live: setup (`init`, `doctor`), OAuth and
+identity snapshots (`connect` through `irn-profile`), archiving (`sync`),
+and a stable read surface (`status`, `query`, `export`, `describe-schema`,
+`raw`) with predictable `--plain` / `--json` contracts for scripted and
+LLM consumers (PRD #144). The Tier 1 daily + hydration catalog slice is
+sealed, and CI runs build and tests on every push. The Command Registry in
 `cmd/gohealthcli/commands.go` is the single source of truth for the user-facing
 surface; the list below mirrors each entry's `Short` description and stays in
 sync with `gohealthcli --help`.
@@ -367,8 +374,27 @@ reachability checks.
   `--output`.
 - Keep the SQLite archive, token files, and exported CSV/JSONL files private.
 
+## Roadmap
+
+In-flight work, tracked as open pull requests:
+
+- Homebrew tap install (`brew install BramVR/tap/gohealthcli`) backed by
+  GoReleaser release automation —
+  [#235](https://github.com/BramVR/gohealthcli/pull/235). Until it merges,
+  `go install` is the supported install path.
+- Sync run observability: a per-page heartbeat on long runs, a read-only
+  `sync --status [--window <dur>]` view over past and running syncs, and
+  automatic fencing of abandoned runs —
+  [#239](https://github.com/BramVR/gohealthcli/pull/239). Until it merges,
+  `status` and `query` over `sync_runs` are the way to inspect a sync.
+
+Each of these lands with its own README and reference-page updates, so
+this section shrinks as they merge.
+
 ## Docs
 
+- [Project Site](https://gohealthcli.bramvanrompuy.be): rendered install,
+  quickstart, Data Types, and command reference pages.
 - [CONTEXT.md](./CONTEXT.md): project glossary only, used by grill-style review.
 - [docs/google-auth-setup.md](./docs/google-auth-setup.md): local Google
   Health OAuth setup checklist.

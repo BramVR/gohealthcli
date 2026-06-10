@@ -39,3 +39,7 @@ Normalised CSV or JSONL exports cover every Data Type the catalog supports. Roll
 ## Project
 
 `gohealthcli` is open source and in active development under [BramVR/gohealthcli](https://github.com/BramVR/gohealthcli). First Release is in progress: the command surface and storage shape are designed as durable foundations rather than a disposable MVP, because health data is sensitive and local archives are hard to rebuild casually.
+
+**Live today:** the full command surface from `init` to `describe-schema`, the Tier 1 daily + hydration catalog slice, identity / device / settings / profile snapshots, stable `--plain` and `--json` read contracts for scripted and LLM consumers, and CI running build and tests on every change.
+
+**Landing next:** a Homebrew tap (`brew install BramVR/tap/gohealthcli`) backed by GoReleaser, and sync run observability — a per-page heartbeat on long runs, a read-only `sync --status` view, and automatic fencing of abandoned runs. Both are open pull requests on the repo.
