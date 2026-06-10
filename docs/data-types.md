@@ -15,6 +15,33 @@ A plain-language guide to every Data Type the Google Health catalog exposes thro
 
 The catalog is authoritative in `cmd/gohealthcli/google_health_data_types.go`; this page is its narrative companion.
 
+## How long does each type take to sync?
+
+Sync cost is proportional to Data Point count. Sustained throughput measures roughly 2,000–5,000 Data Points per minute on real runs; the table plans with the conservative ~2,000/min. Densities were measured 2026-06-10 from one real watch-backed account (continuous heart-rate sampling) — your numbers scale with what your devices record. Cursor-resumed incremental syncs cover only the gap since the last run and finish in seconds regardless of type; Rollup syncs land one row per day or window and are always trivial.
+
+| Sync key | Points/day | Two weeks ≈ | Sync time ≈ |
+| --- | --- | --- | --- |
+| `heart-rate` | ~27,500 | ~385,000 pts | 1.5–3 h, in 2–3-day runs |
+| `time-in-heart-rate-zone` | ~960 | ~13,400 pts | ~5 min |
+| `active-energy-burned` | ~630 | ~8,800 pts | ~4 min |
+| `activity-level` | ~540 | ~7,600 pts | ~4 min |
+| `oxygen-saturation` | ~480 | ~6,700 pts | ~3 min |
+| `active-minutes` | ~280 | ~3,900 pts | ~2 min |
+| `steps` | ~260 | ~3,600 pts | ~2 min |
+| `distance` | ~210 | ~2,900 pts | ~1–2 min |
+| `heart-rate-variability` | ~60 | ~800 pts | under a minute |
+| `sedentary-period` | ~14 | ~190 pts | seconds |
+| `active-zone-minutes` | ~13 | ~180 pts | seconds |
+| `altitude` | ~8 | ~120 pts | seconds |
+| `swim-lengths-data` | ~7 | ~100 pts | seconds |
+| `exercise` | ~2 | ~30 pts | seconds |
+| `sleep` | ~1 | ~18 pts | seconds |
+| `vo2-max`, `run-vo2-max`, `respiratory-rate-sleep-summary`, the `daily-*` types | ~1 | ~14 pts | seconds |
+
+Not yet measured on this account: `floors`, `calories-in-heart-rate-zone`, `electrocardiogram`, `irregular-rhythm-notification`, `weight`, `body-fat`, `height`, `blood-glucose`, `core-body-temperature`, and `hydration-log`. Most of these are sparse user-logged or per-event records (weigh-ins, ECG sessions, hydration entries) and should sync in seconds; a continuously-recording source — a CGM feeding `blood-glucose`, for instance — raises density and cost accordingly.
+
+One hard limit to plan around: a Sync Run's OAuth token is fetched at run start and lives about an hour, which caps a single run near ~100,000 points at the conservative rate. That is why dense `heart-rate` backfills need explicit `--from`/`--to` chunks of 2–3 days; everything else in the table fits comfortably in one run. The [sync reference](commands/sync.html) has the full timing prose, and `sync --status` watches a long run live from a second terminal.
+
 ## Activity and fitness
 
 ### Steps

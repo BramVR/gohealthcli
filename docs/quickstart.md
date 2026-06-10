@@ -105,6 +105,8 @@ Cursor-resumed incremental syncs (no `--from`) finish in seconds. An explicit ba
 
 Two caveats. Density is account-specific — a phone-only account without a continuously-sampling wearable runs far lower across the board. And a single run's OAuth token lives about an hour and is only fetched at run start, so chunk dense backfills to 2–3 days of heart-rate per `--from`/`--to` run; `--all` is safe in aggregate because every per-Data-Type run gets a fresh token.
 
+The full per-type table — every measured Data Type, not just these anchors — is on the [Data Types page](data-types.html#how-long-does-each-type-take-to-sync).
+
 Watch a long run from a second terminal while it is in flight:
 
 ```bash

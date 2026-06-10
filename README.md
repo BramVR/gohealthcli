@@ -257,7 +257,9 @@ run's access token is fetched at run start and lives about an hour, so
 keep any single Data Type's window under roughly 100,000 points — 2–3
 days of continuously-sampled heart-rate per `--from`/`--to` run. `--all`
 is safe in aggregate because every per-type run gets a fresh token; watch
-long runs from another terminal with `sync --status`.
+long runs from another terminal with `sync --status`. The full per-type
+table covering every measured Data Type is in
+[docs/data-types.md](./docs/data-types.md).
 
 Archive daily step Rollups or wearable-filtered Data Points when needed:
 
