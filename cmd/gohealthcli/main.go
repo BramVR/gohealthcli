@@ -1949,7 +1949,13 @@ func parseOAuthClientSource(oauthClientFile, secretProvider, oauthClientItem str
 		return oauthClientSource{kind: "file", path: absPath}, nil
 	}
 	if secretProvider != "" || oauthClientItem != "" {
-		if secretProvider == "" || oauthClientItem == "" {
+		// Name the flag the user actually provided first, then the
+		// missing one, so the error reads in the right dependency
+		// direction (issue #150).
+		if secretProvider == "" {
+			return oauthClientSource{}, errors.New("--oauth-client-item requires --secret-provider")
+		}
+		if oauthClientItem == "" {
 			return oauthClientSource{}, errors.New("--secret-provider requires --oauth-client-item")
 		}
 		return oauthClientSource{kind: "secret_provider", provider: secretProvider, item: oauthClientItem}, nil

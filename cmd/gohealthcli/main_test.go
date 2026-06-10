@@ -6130,6 +6130,64 @@ func TestInitRequiresExactOAuthClientSource(t *testing.T) {
 	}
 }
 
+func TestInitOAuthClientItemWithoutSecretProviderNamesProvidedFlag(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.toml")
+	archivePath := filepath.Join(tempDir, "gohealthcli.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--oauth-client-item", "Google Health OAuth",
+	)
+
+	if code == 0 {
+		t.Fatalf("exit code = 0, want failure")
+	}
+	// Issue #150: the message must name the flag the user actually
+	// provided (--oauth-client-item) and the flag that is missing
+	// (--secret-provider), not the other way around.
+	if !strings.Contains(stderr.String(), "init: --oauth-client-item requires --secret-provider") {
+		t.Fatalf("stderr missing direction-correct dependency error: %q", stderr.String())
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("config stat err = %v, want not exist", err)
+	}
+	if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
+		t.Fatalf("archive stat err = %v, want not exist", err)
+	}
+}
+
+func TestInitSecretProviderWithoutOAuthClientItemNamesProvidedFlag(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.toml")
+	archivePath := filepath.Join(tempDir, "gohealthcli.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--secret-provider", "1password",
+	)
+
+	if code == 0 {
+		t.Fatalf("exit code = 0, want failure")
+	}
+	// Regression guard for issue #150: this direction was already
+	// correct — --secret-provider was provided, --oauth-client-item
+	// is the missing flag.
+	if !strings.Contains(stderr.String(), "init: --secret-provider requires --oauth-client-item") {
+		t.Fatalf("stderr missing direction-correct dependency error: %q", stderr.String())
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("config stat err = %v, want not exist", err)
+	}
+	if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
+		t.Fatalf("archive stat err = %v, want not exist", err)
+	}
+}
+
 func TestInitRejectsInvalidOAuthClientFileBeforeCreatingSetup(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
