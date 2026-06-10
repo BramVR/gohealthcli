@@ -94,7 +94,7 @@ func TestConnectHelpAddScopesUsageListsEveryAcceptedKeyword(t *testing.T) {
 	}
 
 	help := stderr.String()
-	want := "extend the OAuth grant with optional scope keywords (csv): " + supportedAddScopeKeywords()
+	want := connectAddScopesUsage()
 	if !strings.Contains(help, want) {
 		t.Fatalf("connect --help output missing canonical --add-scopes usage line\nwant substring: %q\ngot:\n%s", want, help)
 	}
