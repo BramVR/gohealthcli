@@ -4,10 +4,12 @@
 
 # gohealthcli
 
+[![CI](https://github.com/BramVR/gohealthcli/actions/workflows/ci.yml/badge.svg)](https://github.com/BramVR/gohealthcli/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/BramVR/gohealthcli.svg)](https://pkg.go.dev/github.com/BramVR/gohealthcli)
 [![Go Report Card](https://goreportcard.com/badge/github.com/BramVR/gohealthcli)](https://goreportcard.com/report/github.com/BramVR/gohealthcli)
 ![Go version](https://img.shields.io/github/go-mod/go-version/BramVR/gohealthcli)
 [![GitHub repository](https://img.shields.io/badge/GitHub-BramVR%2Fgohealthcli-24292f?logo=github)](https://github.com/BramVR/gohealthcli)
+[![Project Site](https://img.shields.io/badge/Project%20Site-gohealthcli.bramvanrompuy.be-0b7285)](https://gohealthcli.bramvanrompuy.be)
 
 Local-first, read-only Google Health archive CLI.
 
@@ -20,7 +22,15 @@ data, delete health data, run a server, upload archives, or share exports.
 
 ## Status
 
-First CLI tracer in progress. The Command Registry in
+The full command surface is live: setup (`init`, `doctor`), OAuth and
+identity snapshots (`connect` through `irn-profile`), archiving (`sync`,
+with heartbeat-backed `sync --status` observability and auto-fencing of
+abandoned runs), raw provider exploration (`raw`), and a stable read
+surface (`status`,
+`query`, `export`, `describe-schema`) with predictable `--plain` /
+`--json` contracts for scripted and LLM consumers (PRD #144). The Tier 1 daily + hydration catalog slice is
+sealed, and CI runs gofmt, build, tests, and the command-reference drift
+guard (`make docs-check`) on every pull request and push to `main`. The Command Registry in
 `cmd/gohealthcli/commands.go` is the single source of truth for the user-facing
 surface; the list below mirrors each entry's `Short` description and stays in
 sync with `gohealthcli --help`.
@@ -225,16 +235,34 @@ abandoned runs: a `sync_running` row with no heartbeat for 5 minutes flips to
 `sync_failed` with `error_summary='abandoned (no heartbeat for 5m)'`, and the
 Sync Cursor stays put so the next run re-reads the same window.
 
-What to expect, timing-wise: cursor-resumed incremental syncs finish in
-seconds; wide explicit ranges over sample-dense Data Types are slow
-(heart-rate sustained ≈1,200 Data Points/minute when measured live). Keep any
-single Data Type's run under about one hour — the OAuth access token is
-refreshed at run start only, so a run that outlives it fails mid-flight with
-`Google Health rejected stored Connection token` and, because the failed run's
-cursor never advances, a plain retry re-reads the same too-wide window. Chunk
-big backfills of dense types with explicit `--from`/`--to` (a few days per run
-for heart-rate); `--all` is safe in aggregate since every per-type run gets a
-fresh token.
+How long does a sync take? Cursor-resumed incremental syncs finish in
+seconds. Explicit backfills cost time in proportion to Data Point count —
+sustained throughput measures roughly 2,000–5,000 Data Points/minute on
+real runs (plan with ~2,000/min) — so the Data Type's density decides the
+wall-clock. Densities measured 2026-06-10 from a real archive backed by a
+Pixel Watch 4 (continuous heart-rate sampling), and what two weeks of
+data costs. A Data Point is the upstream record unit, which is why the
+counts differ so wildly per type: a heart-rate point is a single reading
+(every ~3 seconds on the watch), a steps point is a one-minute bucket,
+and a sleep point is an entire night with its stage breakdown.
+
+| Data Type                 | Density (points/day) | Two weeks ≈  | Sync time ≈              |
+| ------------------------- | -------------------- | ------------ | ------------------------ |
+| `heart-rate`              | ~27,500              | ~385,000 pts | 1.5–3 h                  |
+| `time-in-heart-rate-zone` | ~960                 | ~13,400 pts  | ~5 min                   |
+| `active-energy-burned`    | ~630                 | ~8,800 pts   | ~4 min                   |
+| `oxygen-saturation`       | ~480                 | ~6,700 pts   | ~3 min                   |
+| `steps`                   | ~260                 | ~3,600 pts   | ~2 min                   |
+| `sleep`, `daily-*` types  | ~1                   | ~14 pts      | seconds                  |
+
+Density is account-specific — a phone-only account with no
+continuously-sampling wearable runs far lower. Long runs survive OAuth
+token expiry: a mid-run 401 triggers a single token refresh and a retry
+of the failed page, so a multi-hour heart-rate backfill can run as one
+`--from`/`--to` window in the standard `init --oauth-client-file` setup.
+Watch long runs from another terminal with `sync --status`. The full
+per-type table covering every measured Data Type is in
+[docs/data-types.md](./docs/data-types.md).
 
 Archive daily step Rollups or wearable-filtered Data Points when needed:
 
@@ -390,12 +418,33 @@ reachability checks.
 - Read-only provider behavior: no health writes or deletes.
 - Local-first archive: no cloud service and no background upload.
 - OAuth token values are not printed in normal command output.
+- OAuth endpoints from the client JSON are pinned to https Google hosts,
+  and the client file must stay owner-only — enforced both at `connect`
+  and on the token auto-refresh path.
 - Exports can reveal health history; commands require explicit `--stdout` or
-  `--output`.
+  `--output`, and `export` refuses to write through a symlinked `--output`.
+- `query` and `status` plain output escapes control characters, so archived
+  provider data cannot inject terminal escape sequences.
+- Data Point Attachment paths are validated against path traversal before
+  they are joined to the attachments root.
 - Keep the SQLite archive, token files, and exported CSV/JSONL files private.
+
+## Roadmap
+
+In-flight work, tracked as open pull requests:
+
+- Homebrew tap install (`brew install BramVR/tap/gohealthcli`) backed by
+  GoReleaser release automation —
+  [#235](https://github.com/BramVR/gohealthcli/pull/235). Until it merges,
+  `go install` is the supported install path.
+
+It lands with its own README and reference-page updates, so this section
+shrinks as it merges.
 
 ## Docs
 
+- [Project Site](https://gohealthcli.bramvanrompuy.be): rendered install,
+  quickstart, Data Types, and command reference pages.
 - [CONTEXT.md](./CONTEXT.md): project glossary only, used by grill-style review.
 - [docs/google-auth-setup.md](./docs/google-auth-setup.md): local Google
   Health OAuth setup checklist.

@@ -90,6 +90,29 @@ gohealthcli status --plain
 gohealthcli sync --types heart-rate,sleep --from 2026-01-01 --to 2026-01-07 --plain
 ```
 
+## How long will a sync take?
+
+Cursor-resumed incremental syncs (no `--from`) finish in seconds. An explicit backfill window costs time in proportion to how many Data Points it covers, and that depends on the Data Type's density. Sustained throughput measures roughly 2,000–5,000 Data Points per minute on real runs; the table plans with the conservative ~2,000/min, using densities measured 2026-06-10 from a real archive backed by a Pixel Watch 4 (continuous heart-rate sampling). A Data Point is the upstream record unit, which is why the counts differ so wildly per type: a heart-rate point is a single reading (every ~3 seconds on the watch), a steps point is a one-minute bucket, and a sleep point is an entire night with its stage breakdown.
+
+| Data Type | Density (points/day) | Two weeks ≈ | Sync time ≈ |
+| --- | --- | --- | --- |
+| `heart-rate` | ~27,500 | ~385,000 pts | 1.5–3 h |
+| `time-in-heart-rate-zone` | ~960 | ~13,400 pts | ~5 min |
+| `active-energy-burned` | ~630 | ~8,800 pts | ~4 min |
+| `oxygen-saturation` | ~480 | ~6,700 pts | ~3 min |
+| `steps` | ~260 | ~3,600 pts | ~2 min |
+| `sleep`, `daily-*` types | ~1 | ~14 pts | seconds |
+
+One caveat: density is account-specific — a phone-only account without a continuously-sampling wearable runs far lower across the board. Long backfills are safe to run in one go: when a run outlives its OAuth access token (about an hour), the token is refreshed mid-run and the failed page retried automatically in the standard `init --oauth-client-file` setup.
+
+The full per-type table — every measured Data Type, not just these anchors — is on the [Data Types page](data-types.html#how-long-does-each-type-take-to-sync).
+
+Watch a long run from a second terminal while it is in flight:
+
+```bash
+gohealthcli sync --status
+```
+
 ## Daily Rollups and wearable-only filtering
 
 Daily Rollups summarise raw Data Points over a day — useful for time-series charting without re-aggregating in your own code. Wearable-only filtering returns Data Points whose Data Source is a watch or tracker.
