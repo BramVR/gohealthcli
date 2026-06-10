@@ -1196,7 +1196,7 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 	syncAll := flags.Bool("all", false, "sync every default Data Type")
 	syncFrom := flags.String("from", "", "inclusive sync range start")
 	syncTo := flags.String("to", "", "exclusive sync range end")
-	syncRollup := flags.String("rollup", "", "rollup kind to sync; supported: daily")
+	syncRollup := flags.String("rollup", "", "rollup kind to sync; supported: daily | hourly | weekly | window=<duration>")
 	syncSourceFamily := flags.String("source-family", "", "source family filter; supported: wearable")
 
 	if err := ParseCommon(flags, common, args); err != nil {
