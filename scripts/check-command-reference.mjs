@@ -39,8 +39,10 @@ async function main() {
       input: schemaJSON,
       encoding: "utf8",
     });
-    if (gen.status !== 0) {
-      console.error("check-command-reference: generator failed");
+    if (gen.error || gen.status !== 0) {
+      const status = gen.status == null ? "" : ` (exit status ${gen.status})`;
+      console.error(`check-command-reference: generator failed${status}`);
+      if (gen.error) console.error(`  ${gen.error}`);
       if (gen.stderr) console.error(gen.stderr.trimEnd());
       process.exit(1);
     }
@@ -104,6 +106,11 @@ function compareFile(committedRoot, regeneratedRoot, rel, drifted) {
   const regeneratedPath = path.join(regeneratedRoot, rel);
   if (!fs.existsSync(committedPath)) {
     console.error(`drift: ${rel} is missing from the repository but a fresh regeneration produces it`);
+    drifted.push(rel);
+    return false;
+  }
+  if (!fs.existsSync(regeneratedPath)) {
+    console.error(`drift: ${rel} is committed but a fresh regeneration did not produce it`);
     drifted.push(rel);
     return false;
   }
