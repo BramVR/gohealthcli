@@ -2,6 +2,8 @@ module github.com/BramVR/gohealthcli
 
 go 1.22
 
+toolchain go1.26.4
+
 require modernc.org/sqlite v1.35.0
 
 require (
