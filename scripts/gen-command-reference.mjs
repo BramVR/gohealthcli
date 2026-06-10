@@ -18,8 +18,10 @@ const VALID_COMMAND_NAME = /^[a-z][a-z0-9-]*$/;
 // registry entry), and `version` is a top-level flag (no registry entry).
 // Both pages are referenced from README.md and docs/quickstart.md; deleting
 // them on every `make docs-commands` would break those links and silently
-// drop the surface from the Project Site sidebar.
-const PRESERVED_DOC_FILES = new Set(["help.md", "version.md"]);
+// drop the surface from the Project Site sidebar. Exported so the drift
+// check (check-command-reference.mjs) skips the same files when comparing
+// committed pages against a fresh regeneration.
+export const PRESERVED_DOC_FILES = new Set(["help.md", "version.md"]);
 
 export function renderIndex(commands, binary) {
   const visible = commands.filter((c) => !c.hidden);
