@@ -114,6 +114,7 @@ just the bullets without touching the surrounding prose.
 - `floors-intervals`
 - `heart-rate-samples`
 - `height-samples`
+- `hydration-log-sessions`
 - `irregular-rhythm-notifications`
 - `paired-devices`
 - `respiratory-rate-sleep-summary`

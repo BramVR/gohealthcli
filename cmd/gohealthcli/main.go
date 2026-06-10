@@ -28,7 +28,7 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 20
+const currentSchemaVersion = 21
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
 const googleHealthSleepReadonlyScope = "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
@@ -4268,7 +4268,10 @@ func applyMigrations(db *sql.DB) error {
 	if err := applyTier2EcgIrnViewsMigration(tx, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 20`); err != nil {
+	if err := applyHydrationLogSessionsViewMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 21`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -4288,7 +4291,7 @@ func applyPendingMigrations(db *sql.DB) error {
 	switch userVersion {
 	case currentSchemaVersion:
 		return nil
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20:
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -4385,10 +4388,15 @@ func applyPendingMigrations(db *sql.DB) error {
 				return err
 			}
 		}
-		if err := applyTier2EcgIrnViewsMigration(tx, now); err != nil {
+		if userVersion <= 19 {
+			if err := applyTier2EcgIrnViewsMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if err := applyHydrationLogSessionsViewMigration(tx, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`PRAGMA user_version = 20`); err != nil {
+		if _, err := tx.Exec(`PRAGMA user_version = 21`); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -4471,10 +4479,9 @@ func applyTier1HealthMetricsViewsMigration(tx *sql.Tx, appliedAt string) error {
 // applyTier1DailyHydrationViewsMigration installs the four daily/sample
 // Normalized Views for #103: daily_vo2_max, daily_heart_rate_zones,
 // daily_sleep_temperature_derivations, respiratory_rate_sleep_summary.
-// The hydration_log_sessions view is not registered yet (waiting on real
-// hydration-log payloads from the live API to pin the JSON shape) but
-// users can now grant the scope via `connect --add-scopes nutrition` and
-// archive raw rows.
+// The session-shaped hydration_log_sessions view ships separately at
+// schema version 21 (applyHydrationLogSessionsViewMigration) so the
+// migration row history records the two payload shapes independently.
 func applyTier1DailyHydrationViewsMigration(tx *sql.Tx, appliedAt string) error {
 	for _, statement := range normalizedViewsRegistry().MigrationStatements(19) {
 		if _, err := tx.Exec(statement); err != nil {
@@ -4482,6 +4489,21 @@ func applyTier1DailyHydrationViewsMigration(tx *sql.Tx, appliedAt string) error 
 		}
 	}
 	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (19, 'add_tier1_daily_hydration_views', ?)`, appliedAt)
+	return err
+}
+
+// applyHydrationLogSessionsViewMigration installs the session-shaped
+// hydration_log_sessions Normalized View (#103). The view projects
+// $.hydrationLog.volume.liters (TEXT for precision) plus the standard
+// session timing columns. Pinned to schema version 21 — the daily/sample
+// Tier 1 daily+hydration views shipped at v19; this seals the slice.
+func applyHydrationLogSessionsViewMigration(tx *sql.Tx, appliedAt string) error {
+	for _, statement := range normalizedViewsRegistry().MigrationStatements(21) {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (21, 'add_hydration_log_sessions_view', ?)`, appliedAt)
 	return err
 }
 
@@ -4682,6 +4704,7 @@ func expectedSchemaMigrations() map[int]string {
 		18: "add_tier1_health_metrics_views",
 		19: "add_tier1_daily_hydration_views",
 		20: "add_tier2_ecg_irn_views",
+		21: "add_hydration_log_sessions_view",
 	}
 }
 
