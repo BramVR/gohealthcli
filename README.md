@@ -27,7 +27,8 @@ identity snapshots (`connect` through `irn-profile`), archiving (`sync`),
 raw provider exploration (`raw`), and a stable read surface (`status`,
 `query`, `export`, `describe-schema`) with predictable `--plain` /
 `--json` contracts for scripted and LLM consumers (PRD #144). The Tier 1 daily + hydration catalog slice is
-sealed, and CI runs build and tests on every push. The Command Registry in
+sealed, and CI runs gofmt, build, tests, and the command-reference drift
+guard (`make docs-check`) on every push. The Command Registry in
 `cmd/gohealthcli/commands.go` is the single source of truth for the user-facing
 surface; the list below mirrors each entry's `Short` description and stays in
 sync with `gohealthcli --help`.
@@ -370,8 +371,15 @@ reachability checks.
 - Read-only provider behavior: no health writes or deletes.
 - Local-first archive: no cloud service and no background upload.
 - OAuth token values are not printed in normal command output.
+- OAuth endpoints from the client JSON are pinned to https Google hosts,
+  and the client file must stay owner-only — enforced both at `connect`
+  and on the token auto-refresh path.
 - Exports can reveal health history; commands require explicit `--stdout` or
-  `--output`.
+  `--output`, and `export` refuses to write through a symlinked `--output`.
+- `query` and `status` plain output escapes control characters, so archived
+  provider data cannot inject terminal escape sequences.
+- Data Point Attachment paths are validated against path traversal before
+  they are joined to the attachments root.
 - Keep the SQLite archive, token files, and exported CSV/JSONL files private.
 
 ## Roadmap
