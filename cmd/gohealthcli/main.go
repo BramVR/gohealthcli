@@ -5045,7 +5045,7 @@ func writeStatusSyncRunPlain(stdout io.Writer, prefix string, run *statusSyncRun
 		}
 	}
 	if run.SourceFamilyFilter != "" {
-		if _, err := fmt.Fprintf(stdout, "%s_source_family_filter: %s\n", prefix, run.SourceFamilyFilter); err != nil {
+		if _, err := fmt.Fprintf(stdout, "%s_source_family_filter: %s\n", prefix, escapePlainControlChars(run.SourceFamilyFilter)); err != nil {
 			return err
 		}
 	}
@@ -5069,7 +5069,7 @@ func writeStatusSyncRunPlain(stdout io.Writer, prefix string, run *statusSyncRun
 		}
 	}
 	if run.ErrorSummary != "" {
-		if _, err := fmt.Fprintf(stdout, "%s_error_summary: %s\n", prefix, run.ErrorSummary); err != nil {
+		if _, err := fmt.Fprintf(stdout, "%s_error_summary: %s\n", prefix, escapePlainControlChars(run.ErrorSummary)); err != nil {
 			return err
 		}
 	}

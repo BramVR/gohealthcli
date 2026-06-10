@@ -120,6 +120,83 @@ func TestQueryPlainOutputEscapesControlCharacters(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+// TestQueryPlainOutputEscapesEscAndBelControlBytes pins issue #244: a Data
+// Point value containing the JSON-escaped ESC/BEL that SQLite's json_extract
+// decodes into raw ESC (0x1b) and BEL (0x07) bytes must render those bytes in
+// a visible, reversible escape form in the plain/default `query` output —
+// terminal escape-sequence injection (CWE-150) must not reach the terminal raw.
+// char(27) and char(7) stand in for the decoded provider-derived control bytes.
+func TestQueryPlainOutputEscapesEscAndBelControlBytes(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"query",
+		"--config", configPath,
+		"--plain",
+		`SELECT 'a' || char(27) || 'b' || char(7) || 'c' AS note`,
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("query exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	out := stdout.String()
+	want := `row.1.1: a\x1bb\x07c` + "\n"
+	if !strings.Contains(out, want) {
+		t.Fatalf("stdout missing %q:\n%s", want, out)
+	}
+	if strings.ContainsAny(out, "\x1b\x07") {
+		t.Fatalf("stdout contains a raw control byte:\n%q", out)
+	}
+	assertNoSecretWords(t, out+stderr.String())
+}
+
+// TestQueryJSONOutputUnchangedForControlBytes guards the issue #244
+// boundary: JSON output mode is explicitly out of scope. A value carrying
+// raw ESC (0x1b)/BEL (0x07) bytes must still emit valid JSON with the
+// encoding/json \u escapes intact (not the plain-mode \xHH form), and no
+// raw control byte may reach stdout.
+func TestQueryJSONOutputUnchangedForControlBytes(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"query",
+		"--config", configPath,
+		"--json",
+		`SELECT 'a' || char(27) || 'b' || char(7) || 'c' AS note`,
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("query exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	out := stdout.String()
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, out)
+	}
+	// JSON mode escapes control bytes as \u001b / \u0007 (encoding/json),
+	// not the plain-mode \xHH form, and never leaks a raw control byte.
+	if !strings.Contains(out, `\u001b`) || !strings.Contains(out, `\u0007`) {
+		t.Fatalf("JSON output missing \\u-escaped control bytes:\n%s", out)
+	}
+	if strings.Contains(out, `\x1b`) || strings.Contains(out, `\x07`) {
+		t.Fatalf("JSON output leaked plain-mode \\xHH escapes:\n%s", out)
+	}
+	if strings.ContainsAny(out, "\x1b\x07") {
+		t.Fatalf("JSON output contains a raw control byte:\n%q", out)
+	}
+	assertNoSecretWords(t, out+stderr.String())
+}
+
 // TestQueryDefaultOutputEmitsPlainShape pins the PRD #144 slice 7 contract:
 // when neither --json nor --plain is set, `query` emits the --plain key/value
 // shape (parseable, byte-for-byte the same as --plain) instead of the legacy
