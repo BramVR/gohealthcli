@@ -174,6 +174,21 @@ func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
 		return lifecycle.finalize(archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeFailed, err)
 	}
 	ingestionRequest.accessToken = accessToken
+	// Per-page heartbeat (#236): after every archived page the running
+	// counts plus last_progress_at land on the sync_running row, so a
+	// concurrent `sync --status` poller sees live progress instead of
+	// 0/0/0 until finalize. Best-effort by design — a heartbeat that
+	// loses a SQLITE_BUSY race is dropped, the next page writes a fresh
+	// one, and FinalizeSyncRun remains the authoritative terminal write.
+	ingestionRequest.progress = func(counts googleHealthIngestionResult) {
+		_ = archive.HeartbeatSyncRun(
+			syncRunID,
+			counts.dataPointsSeen+counts.rollupsSeen,
+			counts.dataPointsNew+counts.rollupsNew,
+			counts.dataPointsUpdated+counts.rollupsUpdated,
+			runtime.now().UTC().Format(time.RFC3339),
+		)
+	}
 	ingestionResult, err := ingestion.Execute(archive, ingestionRequest)
 	applyGoogleHealthIngestionCounts(&result, ingestionResult)
 	if err != nil {

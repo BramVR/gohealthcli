@@ -38,6 +38,12 @@ SIGINT (Ctrl-C) during a fan-out marks the in-flight Sync Run `sync_canceled`, l
 
 Terminal writes are resilient to SQLite contention: on `SQLITE_BUSY`, the terminal write retries with bounded exponential backoff plus full jitter. If the retry budget is exhausted, the run surfaces as `sync_failed` with a contention-aware message and a separate short-transaction recovery write drives the row to a terminal state under the same retry budget so a `sync_running` row never lingers. `sync_canceled` outcomes are preserved through the recovery path — they are never reclassified as `sync_failed`.
 
+Live progress (#236): after every archived page the Sync Run heartbeats — the running counts plus a `last_progress_at` timestamp land on the `sync_runs` row as a best-effort autocommit write — so a concurrent reader can watch progress from another terminal while the run is in flight. Heartbeats are advisory; the finalize transaction's terminal counts stay authoritative, and a heartbeat write failure never fails the sync.
+
+`sync --status` is that concurrent reader, packaged: it lists recent Sync Runs from the local archive — one row per run with id, Data Types, status, counts, duration, heartbeat age, and a truncated error summary — and performs no provider I/O. Finished runs are listed when they finished inside `--window` (Go duration, default `15m`, max `24h`); `sync_running` rows are window-exempt, so a long in-flight run never ages out of the default view. `--status` cannot be combined with `--types`, `--all`, `--from`, `--to`, `--rollup`, or `--source-family`, and `--window` requires `--status`. The shared `--json` / `--plain` flags shape the output like every other read command.
+
+Abandoned-run fencing: on entry to `sync`, `sync --status`, and `status`, any `sync_running` row whose heartbeat (or `started_at`, for rows that died before their first page) is older than 5 minutes is flipped to `sync_failed` with `error_summary` `abandoned (no heartbeat for 5m)` and `finished_at` set — so orphans from killed processes stop reading as alive without manual SQL. The fence is idempotent and never touches the Sync Cursor (ADR-0008: only a completed finalize advances it). Because it keys on heartbeat staleness rather than wall-clock age, a multi-hour backfill with a fresh heartbeat is never mis-flagged; and if a fenced process turns out to be alive after all, its eventual finalize overwrites the fence so the row converges to its true terminal status.
+
 ## Flags
 
 | Flag | Type | Default | Description |
@@ -53,3 +59,5 @@ Terminal writes are resilient to SQLite contention: on `SQLITE_BUSY`, the termin
 | `--to` | string | — | exclusive sync range end |
 | `--rollup` | string | — | rollup kind to sync; supported: daily \| hourly \| weekly \| window=<duration> |
 | `--source-family` | string | — | source family filter; supported: wearable |
+| `--status` | bool | `false` | list recent Sync Runs from the local archive instead of syncing |
+| `--window` | string | — | with --status: how far back to list finished Sync Runs (Go duration, default 15m, max 24h) |

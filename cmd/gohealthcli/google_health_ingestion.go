@@ -61,6 +61,23 @@ type googleHealthIngestionRequest struct {
 	// nil disables cancellation (used by single-type syncs without SIGINT
 	// instrumentation).
 	cancelCh <-chan struct{}
+	// progress, when non-nil, is invoked after every archived page with
+	// the running counts so the caller can persist a heartbeat on the
+	// sync_runs row (#236). The callback owns its own error policy —
+	// ingestion never fails a Sync Run because a progress write
+	// misfired, which is why the hook takes no error return. nil
+	// disables heartbeats (raw fetch paths and tests that predate #236).
+	progress func(result googleHealthIngestionResult)
+}
+
+// reportIngestionProgress fires the optional per-page progress hook.
+// Shared by all three pagination drivers so the heartbeat semantics
+// ("after every archived page") cannot drift between endpoint families.
+func reportIngestionProgress(request googleHealthIngestionRequest, result *googleHealthIngestionResult) {
+	if request.progress == nil {
+		return
+	}
+	request.progress(*result)
 }
 
 // errSyncCanceled is the sentinel returned by ingestion when the cancel
@@ -219,6 +236,7 @@ func (ingestion googleHealthIngestion) executeDailyRollupPages(archive googleHea
 					result.rollupsUpdated++
 				}
 			}
+			reportIngestionProgress(request, result)
 			if page.nextPageToken == "" {
 				break
 			}
@@ -273,6 +291,7 @@ func (ingestion googleHealthIngestion) executeWindowRollupPages(archive googleHe
 				result.rollupsUpdated++
 			}
 		}
+		reportIngestionProgress(request, result)
 		if page.nextPageToken == "" {
 			break
 		}
@@ -324,6 +343,7 @@ func (ingestion googleHealthIngestion) executeDataPointPages(archive googleHealt
 				return err
 			}
 		}
+		reportIngestionProgress(request, result)
 		if page.nextPageToken == "" {
 			break
 		}

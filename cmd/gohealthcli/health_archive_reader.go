@@ -232,6 +232,19 @@ func statusSetup(archivePath string) (statusResult, error) {
 		Status:      "status_failed",
 		ArchivePath: archivePath,
 	}
+	// Fence abandoned sync_running rows before summarizing (#236), so
+	// the latest_failed_sync_run stanza reports the orphan instead of
+	// the summary silently skipping a phantom in-flight run. The fence
+	// opens through the same lifecycle as the reader below, so its
+	// errors carry the same healthArchiveOpenError shape — decode the
+	// schema version the same way the reader-open branch does.
+	if _, err := fenceAbandonedSyncRunsAtPath(archivePath, currentTime().UTC()); err != nil {
+		var openErr healthArchiveReaderOpenError
+		if errors.As(err, &openErr) {
+			result.SchemaVersion = openErr.schemaVersion
+		}
+		return result, err
+	}
 	reader, err := openHealthArchiveReader(archivePath)
 	if err != nil {
 		var openErr healthArchiveReaderOpenError

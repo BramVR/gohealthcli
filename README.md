@@ -209,6 +209,22 @@ gohealthcli sync --types steps --from 2026-01-01 --to 2026-01-02 --plain
 gohealthcli status --plain
 ```
 
+Watch a long sync from another terminal (or an agent) while it runs:
+
+```bash
+gohealthcli sync --status
+gohealthcli sync --status --window 2h --json
+```
+
+`sync --status` reads the local `sync_runs` audit table — no provider calls.
+Every Sync Run heartbeats after each archived page (counts plus
+`last_progress_at`), so in-flight rows show live progress; finished runs are
+listed inside the `--window` (default 15m, max 24h) while running rows never
+age out of view. On entry, `sync`, `sync --status`, and `status` fence
+abandoned runs: a `sync_running` row with no heartbeat for 5 minutes flips to
+`sync_failed` with `error_summary='abandoned (no heartbeat for 5m)'`, and the
+Sync Cursor stays put so the next run re-reads the same window.
+
 Archive daily step Rollups or wearable-filtered Data Points when needed:
 
 ```bash

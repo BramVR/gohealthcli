@@ -12,6 +12,12 @@ type healthArchiveWriter interface {
 	Close() error
 	CurrentConnection() (archivedConnection, error)
 	StartSyncRun(connection archivedConnection, dataTypes []string, from, to, endpointFamily, sourceFamilyFilter, startedAt string) (int64, error)
+	// HeartbeatSyncRun refreshes the running counts and the
+	// last_progress_at heartbeat on an in-flight sync_running row
+	// (#236). Heartbeats are advisory snapshots for concurrent
+	// `sync --status` readers; FinalizeSyncRun stays the authoritative
+	// terminal write.
+	HeartbeatSyncRun(id int64, seenCount, newCount, updatedCount int, at string) error
 	FinishSyncRun(id int64, status string, seenCount, newCount, updatedCount int, finishedAt, errorSummary string) error
 	FinalizeSyncRun(finalize syncRunFinalize) error
 	UpsertDataPoint(point archivedDataPoint, now string) (string, error)
@@ -85,6 +91,23 @@ func (archive *sqliteHealthArchiveWriter) StartSyncRun(connection archivedConnec
 
 func (archive *sqliteHealthArchiveWriter) FinishSyncRun(id int64, status string, seenCount, newCount, updatedCount int, finishedAt, errorSummary string) error {
 	return finishSyncRunRecord(archive.db, id, status, seenCount, newCount, updatedCount, finishedAt, errorSummary)
+}
+
+// HeartbeatSyncRun is a single autocommit UPDATE — deliberately not a
+// transaction and not retried. A heartbeat that loses a SQLITE_BUSY
+// race is simply skipped by the caller; the next page writes a fresh
+// one, and the finalize transaction still owns the terminal counts.
+// The WHERE clause keeps the heartbeat from resurrecting a row that a
+// concurrent fence (or finalize) already drove to a terminal status:
+// a late heartbeat against a non-running row touches zero rows.
+func (archive *sqliteHealthArchiveWriter) HeartbeatSyncRun(id int64, seenCount, newCount, updatedCount int, at string) error {
+	_, err := archive.db.Exec(`UPDATE sync_runs SET
+		seen_count = ?,
+		new_count = ?,
+		updated_count = ?,
+		last_progress_at = ?
+	WHERE id = ? AND status = 'sync_running'`, seenCount, newCount, updatedCount, at, id)
+	return err
 }
 
 func (archive *sqliteHealthArchiveWriter) UpsertDataPoint(point archivedDataPoint, now string) (string, error) {
