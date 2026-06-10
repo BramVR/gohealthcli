@@ -121,6 +121,7 @@ for (const page of pages) {
 fs.writeFileSync(path.join(outDir, "favicon.svg"), faviconSvg(), "utf8");
 copyStaticAsset("social-card.svg");
 copyStaticAsset("social-card.png");
+copyVerificationFiles();
 fs.writeFileSync(path.join(outDir, ".nojekyll"), "", "utf8");
 if (cname) fs.writeFileSync(path.join(outDir, "CNAME"), cname, "utf8");
 validateLinks(outDir);
@@ -304,6 +305,19 @@ function readCname() {
 function copyStaticAsset(name) {
   const source = path.join(docsDir, name);
   if (fs.existsSync(source)) fs.copyFileSync(source, path.join(outDir, name));
+}
+
+// Webmaster-tool ownership tokens (Google Search Console "google<hash>.html",
+// Bing Webmaster "BingSiteAuth.xml"). They live at the root of docs/ and must
+// be served verbatim at the site root, so they ride through the build without
+// being parsed as markdown or wrapped in a layout.
+function copyVerificationFiles() {
+  for (const entry of fs.readdirSync(docsDir, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    if (/^google[0-9a-f]+\.html$/i.test(entry.name) || entry.name === "BingSiteAuth.xml") {
+      copyStaticAsset(entry.name);
+    }
+  }
 }
 
 function parseFrontmatter(raw) {
