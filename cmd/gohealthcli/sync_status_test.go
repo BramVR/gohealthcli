@@ -2,11 +2,45 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 )
+
+// probedSyncRunRow captures the sync_runs columns the #236 tests
+// assert on, read back directly from the archive. One shared probe for
+// the heartbeat and fence suites so the column list cannot drift.
+type probedSyncRunRow struct {
+	status         string
+	seenCount      int
+	newCount       int
+	updatedCount   int
+	finishedAt     sql.NullString
+	lastProgressAt sql.NullString
+	errorSummary   sql.NullString
+}
+
+// probeSyncRunRow opens a second, read-only archive handle — the same
+// way a `sync --status` poller in another terminal would — and returns
+// the sync_runs row with the given id.
+func probeSyncRunRow(t *testing.T, archivePath string, id int64) probedSyncRunRow {
+	t.Helper()
+	db, err := openArchiveReadOnly(archivePath)
+	if err != nil {
+		t.Fatalf("open archive read-only: %v", err)
+	}
+	defer db.Close()
+	var row probedSyncRunRow
+	if err := db.QueryRow(`SELECT status, seen_count, new_count, updated_count, finished_at, last_progress_at, error_summary
+		FROM sync_runs WHERE id = ?`, id).Scan(
+		&row.status, &row.seenCount, &row.newCount, &row.updatedCount, &row.finishedAt, &row.lastProgressAt, &row.errorSummary,
+	); err != nil {
+		t.Fatalf("read sync_runs row %d: %v", id, err)
+	}
+	return row
+}
 
 // syncStatusFixtureRun seeds one sync_runs row for `sync --status`
 // tests. Pointers model the NULLable columns (finished_at,

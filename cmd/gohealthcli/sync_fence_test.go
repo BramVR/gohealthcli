@@ -2,36 +2,10 @@ package main
 
 import (
 	"bytes"
-	"database/sql"
 	"strings"
 	"testing"
 	"time"
 )
-
-// fencedSyncRunRow captures the columns the fence writes, read back
-// directly from the archive.
-type fencedSyncRunRow struct {
-	status         string
-	finishedAt     sql.NullString
-	errorSummary   sql.NullString
-	lastProgressAt sql.NullString
-}
-
-func readFencedSyncRunRow(t *testing.T, archivePath string, id int64) fencedSyncRunRow {
-	t.Helper()
-	db, err := openArchiveReadOnly(archivePath)
-	if err != nil {
-		t.Fatalf("open archive read-only: %v", err)
-	}
-	defer db.Close()
-	var row fencedSyncRunRow
-	if err := db.QueryRow(`SELECT status, finished_at, error_summary, last_progress_at FROM sync_runs WHERE id = ?`, id).Scan(
-		&row.status, &row.finishedAt, &row.errorSummary, &row.lastProgressAt,
-	); err != nil {
-		t.Fatalf("read sync_runs row %d: %v", id, err)
-	}
-	return row
-}
 
 // TestSyncStatusFencesAbandonedRunningRowsIdempotently is the issue
 // #236 slice 4 tracer bullet. A sync_running row whose heartbeat went
@@ -79,7 +53,7 @@ func TestSyncStatusFencesAbandonedRunningRowsIdempotently(t *testing.T) {
 			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
 		}
 	}
-	fenced := readFencedSyncRunRow(t, archivePath, 1)
+	fenced := probeSyncRunRow(t, archivePath, 1)
 	if fenced.status != "sync_failed" {
 		t.Fatalf("fenced status = %q, want sync_failed", fenced.status)
 	}
@@ -103,7 +77,7 @@ func TestSyncStatusFencesAbandonedRunningRowsIdempotently(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("second sync --status exit code = %d, want 0", code)
 	}
-	refenced := readFencedSyncRunRow(t, archivePath, 1)
+	refenced := probeSyncRunRow(t, archivePath, 1)
 	if refenced.finishedAt.String != "2026-06-10T12:00:00Z" {
 		t.Fatalf("finished_at after second fence = %q, want unchanged 2026-06-10T12:00:00Z", refenced.finishedAt.String)
 	}
@@ -157,7 +131,7 @@ func TestSyncCommandFencesAbandonedRunningRowsOnEntry(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
-	fenced := readFencedSyncRunRow(t, archivePath, 1)
+	fenced := probeSyncRunRow(t, archivePath, 1)
 	if fenced.status != "sync_failed" {
 		t.Fatalf("orphan row after sync entry = %q, want sync_failed", fenced.status)
 	}
@@ -251,7 +225,7 @@ func TestFinalizeAfterFenceConvergesToTrueTerminalStatus(t *testing.T) {
 	if err := writer.HeartbeatSyncRun(syncRunID, 10, 10, 0, "2026-06-10T12:00:30Z"); err != nil {
 		t.Fatalf("late heartbeat: %v", err)
 	}
-	afterHeartbeat := readFencedSyncRunRow(t, archivePath, syncRunID)
+	afterHeartbeat := probeSyncRunRow(t, archivePath, syncRunID)
 	if afterHeartbeat.status != "sync_failed" {
 		t.Fatalf("late heartbeat resurrected the fenced row to %q", afterHeartbeat.status)
 	}
@@ -276,7 +250,7 @@ func TestFinalizeAfterFenceConvergesToTrueTerminalStatus(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("FinalizeSyncRun after fence: %v", err)
 	}
-	converged := readFencedSyncRunRow(t, archivePath, syncRunID)
+	converged := probeSyncRunRow(t, archivePath, syncRunID)
 	if converged.status != "sync_completed" {
 		t.Fatalf("row after finalize = %q, want sync_completed", converged.status)
 	}
@@ -376,7 +350,7 @@ func TestStatusCommandFencesAbandonedRunningRows(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("status exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
-	fenced := readFencedSyncRunRow(t, archivePath, 1)
+	fenced := probeSyncRunRow(t, archivePath, 1)
 	if fenced.status != "sync_failed" {
 		t.Fatalf("status after `status` entry = %q, want sync_failed", fenced.status)
 	}

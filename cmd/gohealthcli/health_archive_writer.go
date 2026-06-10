@@ -18,6 +18,11 @@ type healthArchiveWriter interface {
 	// `sync --status` readers; FinalizeSyncRun stays the authoritative
 	// terminal write.
 	HeartbeatSyncRun(id int64, seenCount, newCount, updatedCount int, at string) error
+	// FenceAbandonedSyncRuns drives orphaned sync_running rows to
+	// sync_failed on the writer's own handle (#236) — the sync
+	// lifecycle runs it on entry so a killed process's corpse row
+	// never sits next to a live one. See fenceAbandonedSyncRuns.
+	FenceAbandonedSyncRuns(now time.Time) (int64, error)
 	FinishSyncRun(id int64, status string, seenCount, newCount, updatedCount int, finishedAt, errorSummary string) error
 	FinalizeSyncRun(finalize syncRunFinalize) error
 	UpsertDataPoint(point archivedDataPoint, now string) (string, error)
@@ -108,6 +113,10 @@ func (archive *sqliteHealthArchiveWriter) HeartbeatSyncRun(id int64, seenCount, 
 		last_progress_at = ?
 	WHERE id = ? AND status = 'sync_running'`, seenCount, newCount, updatedCount, at, id)
 	return err
+}
+
+func (archive *sqliteHealthArchiveWriter) FenceAbandonedSyncRuns(now time.Time) (int64, error) {
+	return fenceAbandonedSyncRuns(archive.db, now)
 }
 
 func (archive *sqliteHealthArchiveWriter) UpsertDataPoint(point archivedDataPoint, now string) (string, error) {

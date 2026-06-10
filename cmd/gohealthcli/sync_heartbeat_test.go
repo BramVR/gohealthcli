@@ -2,41 +2,9 @@ package main
 
 import (
 	"bytes"
-	"database/sql"
 	"testing"
 	"time"
 )
-
-// midRunSyncRunRow captures what a concurrent reader saw on the
-// sync_runs row while the Sync Run was still paginating.
-type midRunSyncRunRow struct {
-	status         string
-	seenCount      int
-	newCount       int
-	updatedCount   int
-	lastProgressAt sql.NullString
-	finishedAt     sql.NullString
-}
-
-// readMidRunSyncRunRow opens a second, read-only archive handle — the
-// same way a `sync --status` poller in another terminal would — and
-// returns the newest sync_runs row.
-func readMidRunSyncRunRow(t *testing.T, archivePath string) midRunSyncRunRow {
-	t.Helper()
-	db, err := openArchiveReadOnly(archivePath)
-	if err != nil {
-		t.Fatalf("open archive read-only mid-run: %v", err)
-	}
-	defer db.Close()
-	var row midRunSyncRunRow
-	if err := db.QueryRow(`SELECT status, seen_count, new_count, updated_count, last_progress_at, finished_at
-		FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(
-		&row.status, &row.seenCount, &row.newCount, &row.updatedCount, &row.lastProgressAt, &row.finishedAt,
-	); err != nil {
-		t.Fatalf("read mid-run sync_runs row: %v", err)
-	}
-	return row
-}
 
 // TestSyncWritesHeartbeatAfterEachPage is the issue #236 slice 1
 // tracer bullet: while a Sync Run paginates, each archived page must
@@ -57,9 +25,7 @@ func TestSyncWritesHeartbeatAfterEachPage(t *testing.T) {
 	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	originalCurrentTime := currentTime
-	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
+	fixedSyncStatusClock(t, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
 
 	firstPage := `{
 		"dataPoints": [{
@@ -93,7 +59,7 @@ func TestSyncWritesHeartbeatAfterEachPage(t *testing.T) {
 	// asks for page-2, page 1 has been fully archived, so this is
 	// exactly the moment a `sync --status` reader in another process
 	// would observe the in-flight row.
-	var midRun *midRunSyncRunRow
+	var midRun *probedSyncRunRow
 	originalFetchRawProvider := fetchRawProvider
 	fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
 		pageToken := mustURLQuery(t, request.url).Get("pageToken")
@@ -101,7 +67,7 @@ func TestSyncWritesHeartbeatAfterEachPage(t *testing.T) {
 		case "":
 			return []byte(firstPage), nil
 		case "page-2":
-			observed := readMidRunSyncRunRow(t, archivePath)
+			observed := probeSyncRunRow(t, archivePath, 1)
 			midRun = &observed
 			return []byte(secondPage), nil
 		default:

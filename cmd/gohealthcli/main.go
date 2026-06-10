@@ -1249,14 +1249,6 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 	defer stopSignalHandler()
 	options.cancelCh = cancelCh
 
-	// Fence abandoned sync_running rows before starting new ones
-	// (#236), so the audit trail never shows a corpse from a killed
-	// process alongside this invocation's live rows. Best-effort: when
-	// the archive is missing or broken the preflight gate downstream
-	// owns the error surface (no-audit-row contract, targeted
-	// messages), and a fence failure must not preempt those shapes.
-	_, _ = fenceAbandonedSyncRunsAtPath(options.archivePath, runtime.withDefaults().now().UTC())
-
 	orchestrator := newSyncOrchestrator(runtime, cancelCh)
 	results, err := orchestrator.Sync(options)
 	if err != nil {

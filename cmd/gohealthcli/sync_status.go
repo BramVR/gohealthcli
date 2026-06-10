@@ -30,21 +30,26 @@ const (
 	// cannot turn the live-oriented view into a full-table dump —
 	// `query` is the right tool for archaeology.
 	syncStatusMaxWindow = 24 * time.Hour
-	// syncRunFenceStaleAfter is how long a sync_running row may go
-	// without a heartbeat before the fence declares it abandoned. The
-	// fence keys on heartbeat staleness, NOT wall-clock age: a
-	// legitimate single-type run has been observed at 1422s (~24 min),
-	// so any started_at-based threshold either mis-flags live runs or
-	// reacts uselessly slowly. With per-page heartbeats, five silent
-	// minutes means the process is gone (or wedged mid-page beyond any
-	// retry budget) — and rows that predate heartbeats fall back to
-	// started_at via the COALESCE in fenceAbandonedSyncRuns.
-	syncRunFenceStaleAfter = 5 * time.Minute
-	// syncRunFenceErrorSummary is the audit-trail marker for fenced
-	// rows. Tests and operators grep for it verbatim; keep in sync
-	// with syncRunFenceStaleAfter.
-	syncRunFenceErrorSummary = "abandoned (no heartbeat for 5m)"
+	// syncRunFenceStaleMinutes is the single source of truth for how
+	// long a sync_running row may go without a heartbeat before the
+	// fence declares it abandoned — syncRunFenceStaleAfter and the
+	// audit-trail marker both derive from it. The fence keys on
+	// heartbeat staleness, NOT wall-clock age: a legitimate
+	// single-type run has been observed at 1422s (~24 min), so any
+	// started_at-based threshold either mis-flags live runs or reacts
+	// uselessly slowly. With pre-fetch heartbeats, five silent minutes
+	// means the process is gone (or wedged inside a single page beyond
+	// any retry budget) — and rows that predate heartbeats fall back
+	// to started_at via the COALESCE in fenceAbandonedSyncRuns.
+	syncRunFenceStaleMinutes = 5
+	syncRunFenceStaleAfter   = syncRunFenceStaleMinutes * time.Minute
 )
+
+// syncRunFenceErrorSummary is the audit-trail marker for fenced rows;
+// operators and tests grep for it verbatim. Derived from
+// syncRunFenceStaleMinutes so retuning the threshold cannot leave the
+// marker lying about the rule that fired.
+var syncRunFenceErrorSummary = fmt.Sprintf("abandoned (no heartbeat for %dm)", syncRunFenceStaleMinutes)
 
 // fenceAbandonedSyncRuns drives orphaned sync_running rows (killed
 // terminal, SIGKILL — anything that skipped the finalize path) to
@@ -58,20 +63,32 @@ const (
 // the fence — the row converges to its true terminal status.
 func fenceAbandonedSyncRuns(db *sql.DB, now time.Time) (int64, error) {
 	cutoff := now.Add(-syncRunFenceStaleAfter).UTC().Format(time.RFC3339)
-	result, err := db.Exec(`UPDATE sync_runs SET
-		status = 'sync_failed',
-		error_summary = ?,
-		finished_at = ?
-	WHERE status = 'sync_running'
-	  AND COALESCE(last_progress_at, started_at) < ?`,
-		syncRunFenceErrorSummary,
-		now.UTC().Format(time.RFC3339),
-		cutoff,
-	)
+	var fenced int64
+	// The UPDATE runs under the same SQLITE_BUSY retry budget the
+	// terminal writes use: the fence fires exactly when another
+	// process may be mid-sync, so brief lock contention is the
+	// expected case, not the exception.
+	err := retryFinalizeSyncRunOnBusy(finalizeSyncRunRetryBudget, func() error {
+		result, err := db.Exec(`UPDATE sync_runs SET
+			status = 'sync_failed',
+			error_summary = ?,
+			finished_at = ?
+		WHERE status = 'sync_running'
+		  AND COALESCE(last_progress_at, started_at) < ?`,
+			syncRunFenceErrorSummary,
+			now.UTC().Format(time.RFC3339),
+			cutoff,
+		)
+		if err != nil {
+			return err
+		}
+		fenced, err = result.RowsAffected()
+		return err
+	})
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	return fenced, nil
 }
 
 // fenceAbandonedSyncRunsAtPath is the entry-point flavor for callers
@@ -120,20 +137,18 @@ type syncStatusResult struct {
 var syncExecutionFlagNames = []string{"types", "all", "from", "to", "rollup", "source-family"}
 
 // validateSyncStatusFlagSet enforces the --status flag-surface rules
-// against the flags the user ACTUALLY passed (flag.Visit only walks
-// set flags, so defaults never trip it).
+// against the flags the user ACTUALLY passed (flagWasProvided walks
+// the set flags, so defaults never trip it).
 func validateSyncStatusFlagSet(flags *flag.FlagSet, statusRequested bool) error {
-	passed := map[string]bool{}
-	flags.Visit(func(item *flag.Flag) { passed[item.Name] = true })
 	if statusRequested {
 		for _, name := range syncExecutionFlagNames {
-			if passed[name] {
+			if flagWasProvided(flags, name) {
 				return fmt.Errorf("--%s cannot be combined with --status", name)
 			}
 		}
 		return nil
 	}
-	if passed["window"] {
+	if flagWasProvided(flags, "window") {
 		return fmt.Errorf("--window requires --status")
 	}
 	return nil
@@ -153,33 +168,29 @@ func runSyncStatusWithRuntime(common CommonFlagValues, windowValue string, mode 
 	// `sync --status` is a read command in sync's clothing: archive
 	// path resolution follows the status/query/export resolver rules,
 	// not the write-side config requirement.
+	now := runtime.now().UTC()
 	resolvedArchivePath, err := resolveReadArchivePath(common)
 	if err != nil {
-		return writeSyncStatusFailure(syncStatusResult{
+		return writeSyncStatusResultWithExit(syncStatusResult{
 			Status:      "sync_status_failed",
 			ArchivePath: common.ArchivePath,
 			Window:      window.String(),
 			Message:     err.Error(),
-		}, mode, runtime.now().UTC(), stdout, stderr)
+		}, 1, mode, now, stdout, stderr)
 	}
-	now := runtime.now().UTC()
 	result, err := syncStatusSetup(resolvedArchivePath, now, window)
 	if err != nil {
 		result.Message = err.Error()
-		return writeSyncStatusFailure(result, mode, now, stdout, stderr)
+		return writeSyncStatusResultWithExit(result, 1, mode, now, stdout, stderr)
 	}
-	if err := writeSyncStatusResult(result, mode, now, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "sync",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
-	}
-	return 0
+	return writeSyncStatusResultWithExit(result, 0, mode, now, stdout, stderr)
 }
 
-func writeSyncStatusFailure(result syncStatusResult, mode outputMode, now time.Time, stdout, stderr io.Writer) int {
+// writeSyncStatusResultWithExit renders the envelope and returns
+// exitCode, except when the rendering itself fails — then the
+// write-output failure contract takes over. One helper for the
+// success and failure paths so that contract cannot fork.
+func writeSyncStatusResultWithExit(result syncStatusResult, exitCode int, mode outputMode, now time.Time, stdout, stderr io.Writer) int {
 	if err := writeSyncStatusResult(result, mode, now, stdout); err != nil {
 		return ReportFailure(FailureReport{
 			Command: "sync",
@@ -188,7 +199,7 @@ func writeSyncStatusFailure(result syncStatusResult, mode outputMode, now time.T
 			Mode:    mode,
 		}, stdout, stderr)
 	}
-	return 1
+	return exitCode
 }
 
 func parseSyncStatusWindow(windowValue string) (time.Duration, error) {
@@ -214,19 +225,19 @@ func syncStatusSetup(archivePath string, now time.Time, window time.Duration) (s
 		ArchivePath: archivePath,
 		Window:      window.String(),
 	}
-	// Write mode, not read-only: entering `sync --status` fences
-	// abandoned sync_running rows first (#236), so the rows this very
-	// invocation renders are already truthful. The Health Archive is
-	// owner-only by construction (0600, enforced on every open), so
-	// requiring writability here costs nothing real.
-	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(writeArchive)
+	// Fence abandoned sync_running rows first (#236), so the rows this
+	// very invocation renders are already truthful. Best-effort, on a
+	// separate short-lived write handle: the view itself reads through
+	// a read-only open below, so `sync --status` keeps working on
+	// read-only media and never fails because a fence write lost its
+	// SQLITE_BUSY retry budget — the worst case is one stale corpse
+	// row that the next entry point fences.
+	_, _ = fenceAbandonedSyncRunsAtPath(archivePath, now)
+	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(readOnlyArchive)
 	if err != nil {
 		return result, err
 	}
 	defer handle.Close()
-	if _, err := fenceAbandonedSyncRuns(handle.db, now); err != nil {
-		return result, err
-	}
 	runs, err := readSyncStatusRuns(handle.db, now, window)
 	if err != nil {
 		return result, err
