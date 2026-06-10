@@ -58,3 +58,16 @@ jobs:
       # the fix is `make docs-commands` plus committing the result.
       - name: Command-reference drift check
         run: make docs-check
+
+      # PRD #77 docs-site smoke test (issue #265): build the Project Site on
+      # every PR so generator errors and broken internal links (the generator's
+      # validateLinks() runs inside `make docs-site`) fail here instead of
+      # post-merge in pages.yml. The fuller pre-deploy smoke test in pages.yml
+      # stays as the deploy gate.
+      - name: Build Project Site
+        run: make docs-site
+
+      - name: Smoke-test Project Site output
+        run: |
+          test -s dist/docs-site/index.html
+          grep -q "gohealthcli" dist/docs-site/index.html
