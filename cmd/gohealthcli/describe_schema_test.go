@@ -101,7 +101,7 @@ func TestDescribeSchemaJSONIncludesCuratedNarrative(t *testing.T) {
 	}
 	var catalog struct {
 		Narrative struct {
-			Guidance                 []string                  `json:"guidance"`
+			Guidance                   []string          `json:"guidance"`
 			PreferredViewsByQueryClass map[string]string `json:"preferred_views_by_query_class"`
 		} `json:"narrative"`
 	}

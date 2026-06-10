@@ -124,8 +124,8 @@ func extractREADMEExportDatasetsBlock(content string) (string, error) {
 // X, extra Y" diff when the byte-equality check is too coarse to
 // pinpoint the drift. The bullet shape is strict — `- ` + backtick +
 // name + backtick + end-of-line, with no trailing characters — so a
-// hand-edit that breaks the contract (`- foo`, `- `foo`` with a stray
-// trailing token, missing closing backtick) is rejected loudly via the
+// hand-edit that breaks the contract (a name without backticks, a
+// stray trailing token, a missing closing backtick) is rejected loudly via the
 // returned non-nil error rather than silently producing a misleading
 // name list. Empty lines are tolerated so the helper composes with a
 // trailing-newline block.

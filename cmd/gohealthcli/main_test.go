@@ -7431,7 +7431,7 @@ func insertStatusFixtureRows(t *testing.T, archivePath string) {
 	if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='profile_snapshots'`).Scan(&legacyName); err == nil {
 		snapshotTable = "profile_snapshots"
 	}
-	if _, err := db.Exec(`INSERT INTO ` + snapshotTable + ` (
+	if _, err := db.Exec(`INSERT INTO `+snapshotTable+` (
 		provider_name,
 		connection_id,
 		raw_json,

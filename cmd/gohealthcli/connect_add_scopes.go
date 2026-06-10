@@ -24,6 +24,7 @@ import (
 //   - https://developers.google.com/health/api/reference/rest/v4/users.pairedDevices/list
 //   - https://developers.google.com/health/api/reference/rest/v4/users/getIrnProfile
 //   - https://developers.google.com/health/api/reference/rest/v4/users/getIdentity
+//
 // TestGoogleHealthIdentityEndpointScopesCatalog pins the per-endpoint
 // values so any future revision is a one-row change here plus a
 // matching test-value flip.

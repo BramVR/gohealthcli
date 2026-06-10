@@ -241,4 +241,3 @@ func TestGoogleHealthRollupRequestBodyCarriesWindowSize(t *testing.T) {
 		t.Errorf("range.endTime = %q, want 2026-01-01T02:00:00Z", body.Range.EndTime)
 	}
 }
-

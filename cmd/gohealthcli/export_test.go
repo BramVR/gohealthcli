@@ -189,7 +189,7 @@ func TestExportDatasetCatalogSuggestRanking(t *testing.T) {
 // at most 3 entries and that ties on distance break alphabetically.
 func TestExportDatasetCatalogSuggestCapAndTieBreak(t *testing.T) {
 	catalog := newExportDatasetCatalog([]exportDatasetSpec{
-		{name: "bcde"}, // distance 1 from "abcde"
+		{name: "bcde"},  // distance 1 from "abcde"
 		{name: "abcdf"}, // distance 1
 		{name: "abcdz"}, // distance 1
 		{name: "abxxx"}, // distance 3

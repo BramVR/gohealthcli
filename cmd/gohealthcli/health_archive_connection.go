@@ -119,7 +119,6 @@ func readCurrentConnection(db *sql.DB) (archivedConnection, error) {
 	return connections[0], nil
 }
 
-
 func upsertConnection(db *sql.DB, connectionID string, identity googleIdentity, token oauthTokenResponse, now time.Time) error {
 	metadataJSON, err := connectionTokenMetadataJSON(connectionID, token)
 	if err != nil {

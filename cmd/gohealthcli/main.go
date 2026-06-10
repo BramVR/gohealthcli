@@ -62,18 +62,18 @@ const googleHealthProfileURL = "https://health.googleapis.com/v4/users/me/profil
 const googleHealthRawResponseLimit = 10 << 20
 
 type doctorResult struct {
-	Status              string                  `json:"status"`
-	ConfigPath          string                  `json:"config_path"`
-	ArchivePath         string                  `json:"archive_path"`
-	OAuthClientSource   string                  `json:"oauth_client_source"`
-	CredentialStore     string                  `json:"credential_store"`
-	SchemaVersion       *int                    `json:"schema_version"`
-	ConnectionCount     *int                    `json:"connection_count"`
-	TokenStatus         string                  `json:"token_status"`
-	AttachmentRootPath  string                  `json:"attachment_root_path,omitempty"`
-	AttachmentRootMode  string                  `json:"attachment_root_mode,omitempty"`
-	Attachments         *doctorAttachmentReport `json:"attachments,omitempty"`
-	Message             string                  `json:"message"`
+	Status             string                  `json:"status"`
+	ConfigPath         string                  `json:"config_path"`
+	ArchivePath        string                  `json:"archive_path"`
+	OAuthClientSource  string                  `json:"oauth_client_source"`
+	CredentialStore    string                  `json:"credential_store"`
+	SchemaVersion      *int                    `json:"schema_version"`
+	ConnectionCount    *int                    `json:"connection_count"`
+	TokenStatus        string                  `json:"token_status"`
+	AttachmentRootPath string                  `json:"attachment_root_path,omitempty"`
+	AttachmentRootMode string                  `json:"attachment_root_mode,omitempty"`
+	Attachments        *doctorAttachmentReport `json:"attachments,omitempty"`
+	Message            string                  `json:"message"`
 }
 
 type doctorAttachmentReport struct {
@@ -4692,14 +4692,14 @@ func syncCursorsMigrationStatements() []string {
 
 func expectedSchemaMigrations() map[int]string {
 	return map[int]string{
-		1: "initial_archive_schema",
-		2: "add_google_identity_json",
-		3: "add_source_family_filter",
-		4: "add_daily_steps_view",
-		5: "add_first_release_normalized_views",
-		6: "add_sync_cursors",
-		7: "rename_profile_snapshots_to_identity_snapshots",
-		8: "add_current_settings_view",
+		1:  "initial_archive_schema",
+		2:  "add_google_identity_json",
+		3:  "add_source_family_filter",
+		4:  "add_daily_steps_view",
+		5:  "add_first_release_normalized_views",
+		6:  "add_sync_cursors",
+		7:  "rename_profile_snapshots_to_identity_snapshots",
+		8:  "add_current_settings_view",
 		9:  "add_paired_devices_view",
 		10: "add_current_irn_profile_view",
 		11: "add_sleep_stages_and_exercise_splits_views",

@@ -1,4 +1,4 @@
-.PHONY: build build-info docs-site docs-site-clean docs-commands docs-export-datasets
+.PHONY: build build-info fmt fmt-check docs-site docs-site-clean docs-commands docs-export-datasets
 
 # build embeds the three Version-module identifiers (version/commit/built)
 # at link time via -ldflags. Defaults are "dev" so an unstamped `go build`
@@ -20,6 +20,19 @@ build-info:
 	@echo "VERSION=$(VERSION)"
 	@echo "COMMIT=$(COMMIT)"
 	@echo "BUILT=$(BUILT)"
+
+# fmt rewrites the tree to canonical gofmt form; fmt-check is the
+# read-only guard the ci workflow runs on every push/PR so formatting
+# drift cannot accumulate on main again.
+fmt:
+	@gofmt -w .
+
+fmt-check:
+	@out="$$(gofmt -l .)" || { echo "gofmt failed"; exit 1; }; \
+	if [ -n "$$out" ]; then \
+		echo "gofmt drift in:"; echo "$$out"; \
+		echo "run 'make fmt' to fix"; exit 1; \
+	fi
 
 docs-site:
 	@node scripts/build-docs-site.mjs

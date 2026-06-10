@@ -11,17 +11,17 @@ import (
 // user-facing concept the operator can reason about:
 //
 //   - StatusFlagInvalid          — flag parse, mutual-exclusion, unknown flag,
-//                                  missing required flag, "no SQL statement".
+//     missing required flag, "no SQL statement".
 //   - StatusUnexpectedArgument   — positional arg the subcommand did not expect
-//                                  ("unexpected sync argument: foo").
+//     ("unexpected sync argument: foo").
 //   - StatusSetupMissing         — config + Health Archive absent; the only
-//                                  status that returns exit code 2 to match the
-//                                  prior `setupMissingExitCode` semantics.
+//     status that returns exit code 2 to match the
+//     prior `setupMissingExitCode` semantics.
 //   - StatusArchiveUnwritable    — writing stdout/stdout-result/export-file
-//                                  failed at the io.Writer layer.
+//     failed at the io.Writer layer.
 //   - StatusProviderUnreachable  — provider HTTP error (403, 503, network).
 //   - StatusOperationFailed      — any other operation error (DB, schema,
-//                                  config check, OAuth, etc.).
+//     config check, OAuth, etc.).
 //
 // The enum's wire shape (snake_case strings) is part of the --json
 // failure contract; downstream tooling pivots on the literal value.
