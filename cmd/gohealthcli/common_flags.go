@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 )
 
@@ -141,6 +142,45 @@ func ParseCommon(fs *flag.FlagSet, values *CommonFlagValues, args []string) erro
 			values.ConfigPathExplicit = true
 		}
 	})
+	if err := requireAnchoredDefaultPaths(values); err != nil {
+		return err
+	}
+	return nil
+}
+
+// errUnanchoredDefaultPath is the issue #249 loud failure: a default
+// config/archive path could not be anchored to the user's home directory
+// (HOME unset and no usable absolute XDG_* override), so it resolved to a
+// CWD-relative path. Writing personal health data under the current
+// working directory is a silent privacy footgun, so ParseCommon rejects
+// it before any command touches the filesystem. The message names the two
+// escape hatches: set HOME, or pass --config/--db explicitly. It routes
+// through commonFlagsExitCode like the other custom ParseCommon errors.
+var errUnanchoredDefaultPath = errors.New(
+	"cannot determine home directory; set HOME or pass --config/--db explicitly")
+
+// requireAnchoredDefaultPaths enforces that a --config/--db value the user
+// did NOT pass explicitly resolves to an ABSOLUTE path. The gate fires
+// only when the in-flight value is BOTH the home-anchored default
+// (defaultConfigPath / defaultArchivePath) AND relative — the single shape
+// that means os.UserHomeDir() failed and no usable absolute XDG_* override
+// stepped in, so the default would otherwise resolve against the current
+// working directory. An explicit flag is the user's own choice and is
+// exempt (it may legitimately be relative); a non-default value seeded by a
+// caller (e.g. a unit-test harness) is likewise none of this gate's
+// business, so the equality check against the real default keeps the gate
+// inert outside the genuine HOME-less footgun.
+func requireAnchoredDefaultPaths(values *CommonFlagValues) error {
+	if !values.ConfigPathExplicit &&
+		values.ConfigPath == defaultConfigPath() &&
+		!filepath.IsAbs(values.ConfigPath) {
+		return errUnanchoredDefaultPath
+	}
+	if !values.ArchivePathExplicit &&
+		values.ArchivePath == defaultArchivePath() &&
+		!filepath.IsAbs(values.ArchivePath) {
+		return errUnanchoredDefaultPath
+	}
 	return nil
 }
 

@@ -5734,8 +5734,22 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
+// defaultConfigPath / defaultArchivePath return the home-anchored default
+// locations documented in docs/security.md. Per the XDG Base Directory
+// spec a RELATIVE XDG_CONFIG_HOME / XDG_DATA_HOME value "MUST be ignored"
+// (it must be an absolute path), so a relative override is treated the
+// same as unset and the resolver falls through to the HOME-anchored path.
+// When HOME is also unset/empty the os.UserHomeDir() error leaves home
+// empty and the returned path is RELATIVE — a non-absolute return value
+// is the in-band signal that the default could not be anchored. The
+// ParseCommon gate (requireAnchoredDefaultPaths, issue #249) rejects that
+// case loudly before any command touches the filesystem; these helpers
+// stay string-valued so the flag defaults and the
+// `configPath == defaultConfigPath()` default-config detection at the call
+// site keep comparing cleanly.
+
 func defaultConfigPath() string {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(xdg) {
 		return filepath.Join(xdg, "gohealthcli", "config.toml")
 	}
 	home, _ := os.UserHomeDir()
@@ -5743,7 +5757,7 @@ func defaultConfigPath() string {
 }
 
 func defaultArchivePath() string {
-	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+	if xdg := os.Getenv("XDG_DATA_HOME"); filepath.IsAbs(xdg) {
 		return filepath.Join(xdg, "gohealthcli", "gohealthcli.sqlite")
 	}
 	home, _ := os.UserHomeDir()
