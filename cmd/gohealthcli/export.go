@@ -1608,22 +1608,24 @@ func writeExportFile(rows []exportRow, spec exportDatasetSpec, format, path stri
 			return err
 		}
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	// exportOpenNoFollow (O_NOFOLLOW on POSIX) makes this open fail rather than
+	// follow a symlink at the final path component, closing the TOCTOU window
+	// between restrictExistingExportOutput's Lstat check and this open.
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|exportOpenNoFollow, 0o600)
 	if err != nil {
 		return err
 	}
 	writeErr := writeExport(rows, spec, format, file)
+	if writeErr == nil && usesPOSIXPermissions() {
+		// Tighten via the open descriptor (fchmod), not a path-based chmod, so
+		// the permission change cannot be redirected through a raced symlink.
+		writeErr = file.Chmod(0o600)
+	}
 	closeErr := file.Close()
 	if writeErr != nil {
 		return writeErr
 	}
-	if closeErr != nil {
-		return closeErr
-	}
-	if usesPOSIXPermissions() {
-		return os.Chmod(path, 0o600)
-	}
-	return nil
+	return closeErr
 }
 
 func writeDailyStepsExportFile(rows []dailyStepsExportRow, format, path string) error {
@@ -1635,10 +1637,17 @@ func writeDailyStepsExportFile(rows []dailyStepsExportRow, format, path string) 
 // target; the caller surfaces this as a flag-invalid failure.
 var errExportOutputSymlink = errors.New("symbolic link")
 
+// restrictExistingExportOutput validates the --output path before the export
+// writer opens it: it refuses a symbolic link (so the link target is never
+// chmod'd or truncated) and a directory. Permission tightening of the written
+// file happens fd-based in writeExportFile (fchmod), not here, so there is no
+// path-based chmod that a raced symlink could redirect.
 func restrictExistingExportOutput(path string) error {
 	// os.Lstat does not follow symlinks, so it sees the link itself. Check it
 	// BEFORE os.Stat (which follows symlinks) so a symlinked --output is
-	// refused rather than chmod'd or truncated through the link target.
+	// refused rather than chmod'd or truncated through the link target. This
+	// gives a friendly error in the common case; the O_NOFOLLOW open in
+	// writeExportFile is the race-proof backstop.
 	linkInfo, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1647,7 +1656,7 @@ func restrictExistingExportOutput(path string) error {
 		return err
 	}
 	if linkInfo.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%w: --output %s names a symbolic link; pass the resolved target path explicitly", errExportOutputSymlink, path)
+		return fmt.Errorf("%w: --output %q names a symbolic link; pass the resolved target path explicitly", errExportOutputSymlink, path)
 	}
 	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -1657,10 +1666,7 @@ func restrictExistingExportOutput(path string) error {
 		return err
 	}
 	if info.IsDir() {
-		return fmt.Errorf("%s is a directory", path)
-	}
-	if info.Mode().Perm() != 0o600 {
-		return os.Chmod(path, 0o600)
+		return fmt.Errorf("%q is a directory", path)
 	}
 	return nil
 }
