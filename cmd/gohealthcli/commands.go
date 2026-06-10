@@ -75,8 +75,9 @@ var commandIndex = make(map[string]int, len(commands))
 // two entries sharing a name would make one unreachable from dispatch,
 // which is a registry-build programmer error, not a runtime condition —
 // the same convention withCommonSubset / withCommonOverrides follow.
-// TestCommandNamesAreUnique surfaces the same mistake as a readable
-// test failure before this panic is ever reached in CI.
+// This panic is the actual enforcement: it fires during package init,
+// before any test runs. TestCommandNamesAreUnique documents and pins
+// the same invariant in the suite.
 func init() {
 	for i, cmd := range commands {
 		if _, dup := commandIndex[cmd.Name]; dup {

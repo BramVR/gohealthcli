@@ -113,9 +113,10 @@ func TestLookupCommandRejectsUnknownName(t *testing.T) {
 
 // TestCommandNamesAreUnique pins the registry invariant that name-keyed
 // dispatch (#75) silently depends on: two entries sharing a Name would
-// make one of them unreachable. The init()-time index build panics on a
-// duplicate; this test surfaces the same mistake as a readable build-time
-// failure instead of an init panic in an unrelated test binary.
+// make one of them unreachable. The init()-time index build is the actual
+// enforcement — a duplicate panics during package init, before this test
+// ever runs — so this test documents and pins the invariant rather than
+// catching it first.
 func TestCommandNamesAreUnique(t *testing.T) {
 	seen := make(map[string]bool, len(commands))
 	for _, cmd := range commands {
