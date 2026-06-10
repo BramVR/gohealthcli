@@ -2563,7 +2563,7 @@ func parseOAuthClientConfigContent(content []byte) (oauthClientConfig, error) {
 		}
 	}
 	if clientKind == "" {
-		return oauthClientConfig{}, errors.New(`OAuth client file is missing the "installed" object (Google Desktop client JSON shape: {"installed": {"client_id": "...", "client_secret": "..."}})`)
+		return oauthClientConfig{}, errors.New(`OAuth client file is missing the "installed" object (Google Desktop client JSON shape: {"installed": {"client_id": "...", ...}} with the client ID and client secret)`)
 	}
 	if clientKind == "web" {
 		return oauthClientConfig{}, errors.New("OAuth client file must be an installed desktop client, not a web client")

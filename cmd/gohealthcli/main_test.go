@@ -6264,6 +6264,7 @@ func TestInitNamesMissingInstalledObjectForEmptyOAuthClientJSON(t *testing.T) {
 	if strings.Contains(stderr.String(), "must contain a JSON object") {
 		t.Fatalf("stderr still claims {} is not a JSON object: %q", stderr.String())
 	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
 	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
 		t.Fatalf("config stat err = %v, want not exist", err)
 	}
@@ -6306,6 +6307,7 @@ func TestInitRejectsWebOAuthClientFile(t *testing.T) {
 	if !strings.Contains(stderr.String(), "must be an installed desktop client, not a web client") {
 		t.Fatalf("stderr missing web client rejection: %q", stderr.String())
 	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
 	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
 		t.Fatalf("config stat err = %v, want not exist", err)
 	}
