@@ -2390,9 +2390,10 @@ func validateOAuthClientConfig(source oauthClientSource) error {
 }
 
 // readOwnerOnlyOAuthClientFile enforces the owner-only invariant on the OAuth
-// client file before reading it: on POSIX platforms it rejects a path that is
-// missing, a directory, or a regular file with a mode other than 0600. Sharing
-// this between validateOAuthClientFile and loadOAuthClientConfig keeps the
+// client file before reading it: it rejects a path that is missing, a
+// directory, or any other non-regular file (FIFO, socket, device), and on
+// POSIX platforms a regular file with a mode other than 0600. Sharing this
+// between validateOAuthClientFile and loadOAuthClientConfig keeps the
 // connect/init/doctor validation path and the sync auto-refresh path from
 // drifting on what counts as an acceptable client file.
 func readOwnerOnlyOAuthClientFile(path string) ([]byte, error) {
@@ -2405,6 +2406,11 @@ func readOwnerOnlyOAuthClientFile(path string) ([]byte, error) {
 	}
 	if info.IsDir() {
 		return nil, errors.New("OAuth client file path is a directory")
+	}
+	// Reject FIFOs, sockets, and devices before os.ReadFile, which could hang
+	// or behave unexpectedly on them; only a regular file is a valid client.
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("OAuth client file is not a regular file")
 	}
 	if usesPOSIXPermissions() && info.Mode().Perm() != 0o600 {
 		return nil, fmt.Errorf("OAuth client file is not owner-only: mode %04o, want 0600", info.Mode().Perm())
