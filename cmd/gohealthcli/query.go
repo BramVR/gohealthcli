@@ -517,9 +517,10 @@ func (e *plainModeEncoder) encode(_, databaseTypeName string, value any) any {
 //     but `DatabaseTypeName()` is driver-defined, so we normalize.
 //  2. `DatabaseTypeName()` is empty (typeless: view columns, SQL
 //     literals, or builtins like `randomblob()`) AND the scan value
-//     is `[]byte`. go-sqlite3 returns TEXT cells as Go strings and
-//     BLOB cells as []byte, so a typeless column whose scan value is
-//     []byte is observationally a BLOB.
+//     is `[]byte`. modernc.org/sqlite (the driver this binary links)
+//     hands TEXT cells back as Go strings and BLOB cells as []byte,
+//     so a typeless column whose scan value is []byte is
+//     observationally a BLOB.
 //
 // Signal (2) is the path the PRD's randomblob acceptance criterion
 // goes through: `randomblob(8)` carries no declared type but the
