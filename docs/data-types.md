@@ -21,26 +21,28 @@ Sync cost is proportional to Data Point count. Sustained throughput measures rou
 
 Points-per-day spans orders of magnitude because a Data Point is the upstream record unit, and that unit varies by shape: a `sample` point is a single reading (the watch emits a heart-rate sample every ~3 seconds), an `interval` point is one time-bucket (a steps point covers about a minute of walking), a `session` point is one whole activity (a sleep point is an entire night, stage breakdown included), and a `daily` point is one row per civil date.
 
+Each sync key links to its full description further down this page.
+
 | Sync key | Shape | Points/day | Two weeks ≈ | Sync time ≈ |
 | --- | --- | --- | --- | --- |
-| `heart-rate` | sample | ~27,500 | ~385,000 pts | 1.5–3 h |
-| `time-in-heart-rate-zone` | interval | ~960 | ~13,400 pts | ~5 min |
-| `active-energy-burned` | interval | ~630 | ~8,800 pts | ~4 min |
-| `activity-level` | interval | ~540 | ~7,600 pts | ~4 min |
-| `oxygen-saturation` | sample | ~480 | ~6,700 pts | ~3 min |
-| `active-minutes` | interval | ~280 | ~3,900 pts | ~2 min |
-| `steps` | interval | ~260 | ~3,600 pts | ~2 min |
-| `distance` | interval | ~210 | ~2,900 pts | ~1–2 min |
-| `heart-rate-variability` | sample | ~60 | ~800 pts | under a minute |
-| `sedentary-period` | interval | ~14 | ~190 pts | seconds |
-| `active-zone-minutes` | interval | ~13 | ~180 pts | seconds |
-| `altitude` | interval | ~8 | ~120 pts | seconds |
-| `swim-lengths-data` | interval | ~7 | ~100 pts | seconds |
-| `exercise` | session | ~2 | ~30 pts | seconds |
-| `sleep` | session | ~1 | ~18 pts | seconds |
-| `vo2-max`, `run-vo2-max`, `respiratory-rate-sleep-summary`, the `daily-*` types | sample / daily | ~1 | ~14 pts | seconds |
+| [`heart-rate`](#heart-rate) | sample | ~27,500 | ~385,000 pts | 1.5–3 h |
+| [`time-in-heart-rate-zone`](#time-in-heart-rate-zone) | interval | ~960 | ~13,400 pts | ~5 min |
+| [`active-energy-burned`](#active-energy-burned) | interval | ~630 | ~8,800 pts | ~4 min |
+| [`activity-level`](#activity-level) | interval | ~540 | ~7,600 pts | ~4 min |
+| [`oxygen-saturation`](#oxygen-saturation) | sample | ~480 | ~6,700 pts | ~3 min |
+| [`active-minutes`](#active-minutes) | interval | ~280 | ~3,900 pts | ~2 min |
+| [`steps`](#steps) | interval | ~260 | ~3,600 pts | ~2 min |
+| [`distance`](#distance) | interval | ~210 | ~2,900 pts | ~1–2 min |
+| [`heart-rate-variability`](#heart-rate-variability) | sample | ~60 | ~800 pts | under a minute |
+| [`sedentary-period`](#sedentary-period) | interval | ~14 | ~190 pts | seconds |
+| [`active-zone-minutes`](#active-zone-minutes) | interval | ~13 | ~180 pts | seconds |
+| [`altitude`](#altitude) | interval | ~8 | ~120 pts | seconds |
+| [`swim-lengths-data`](#swim-lengths-data) | interval | ~7 | ~100 pts | seconds |
+| [`exercise`](#exercise) | session | ~2 | ~30 pts | seconds |
+| [`sleep`](#sleep) | session | ~1 | ~18 pts | seconds |
+| [`vo2-max`](#vo2-max), [`run-vo2-max`](#run-vo2-max), [`respiratory-rate-sleep-summary`](#respiratory-rate-sleep-summary), the `daily-*` types | sample / daily | ~1 | ~14 pts | seconds |
 
-Not yet measured on this account: `floors`, `calories-in-heart-rate-zone`, `electrocardiogram`, `irregular-rhythm-notification`, `weight`, `body-fat`, `height`, `blood-glucose`, `core-body-temperature`, and `hydration-log`. Most of these are sparse user-logged or per-event records (weigh-ins, ECG sessions, hydration entries) and should sync in seconds; a continuously-recording source — a CGM feeding `blood-glucose`, for instance — raises density and cost accordingly.
+Not yet measured on this account: [`floors`](#floors), [`calories-in-heart-rate-zone`](#calories-in-heart-rate-zone), [`electrocardiogram`](#electrocardiogram), [`irregular-rhythm-notification`](#irregular-rhythm-notification), [`weight`](#weight), [`body-fat`](#body-fat), [`height`](#height), [`blood-glucose`](#blood-glucose), [`core-body-temperature`](#core-body-temperature), and [`hydration-log`](#hydration-log). Most of these are sparse user-logged or per-event records (weigh-ins, ECG sessions, hydration entries) and should sync in seconds; a continuously-recording source — a CGM feeding `blood-glucose`, for instance — raises density and cost accordingly.
 
 A run longer than an OAuth access token's ~1-hour lifetime survives it: the token is refreshed mid-run on the first 401 and the failed page retried, so even a two-week `heart-rate` backfill can run as a single `--from`/`--to` window in the standard `init --oauth-client-file` setup. The [sync reference](commands/sync.html) has the full timing prose, and `sync --status` watches a long run live from a second terminal.
 
