@@ -11,7 +11,7 @@ The JSON catalog is the success-mode default: it emits a curated document combin
 
 `--plain` is accepted as a no-op — the schema catalog has no key/value plain shape, so `describe-schema --plain` emits the JSON catalog and surfaces a `// note: --plain is a no-op …` comment line on stderr; stdout stays valid JSON so users redirecting it to a file are unaffected. `--plain --json` together fails with the documented mutual-exclusion error.
 
-`--db <path>` is honoured on its own — passing a Health Archive path without `--config` opens that archive directly, matching the other read commands (PRD #144 slice 1). When both `--config` and `--db` are passed for a read command, `--db` wins; the error path names `--db` and `--config` rather than the internal `archive_path` field.
+`--db <path>` is honoured on its own — passing a Health Archive path without `--config` opens that archive directly, matching the other read commands (PRD #144 slice 1). When `--config` is left at its default and only `--db` is explicit, `--db` wins without an agreement check; when both `--config` and `--db` are explicit and disagree, the error names `--db` and `--config` rather than the internal `archive_path` field.
 
 A drift test in CI fails when a public view exists in `sqlite_master` without a matching catalog entry — the JSON shape and the live schema cannot diverge silently.
 

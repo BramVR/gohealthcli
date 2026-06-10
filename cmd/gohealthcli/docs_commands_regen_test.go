@@ -42,7 +42,7 @@ func TestDocsCommandsRegenIsStable(t *testing.T) {
 	}
 	docsDir := filepath.Join(repoRoot, "docs", "commands")
 	indexPath := filepath.Join(repoRoot, "docs", "commands.md")
-	snapshot := snapshotDocsCommandsDir(t, docsDir)
+	snapshot := readDocsCommandsDir(t, docsDir)
 	indexBefore, err := os.ReadFile(indexPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", indexPath, err)
@@ -79,8 +79,9 @@ func TestDocsCommandsRegenIsStable(t *testing.T) {
 }
 
 // readDocsCommandsDir reads every *.md page under dir into a
-// name→bytes map. Mirror of snapshotDocsCommandsDir without the
-// t.Fatalf wrapping that t.Cleanup-driven snapshotting needs.
+// name→bytes map. Used both to capture the pre-regen snapshot (so
+// the test cleanup can restore the working tree) and to read the
+// regenerated pages for byte-comparison.
 func readDocsCommandsDir(t *testing.T, dir string) map[string][]byte {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
@@ -125,30 +126,6 @@ func compareDocsCommandsSnapshots(snap, got map[string][]byte) []string {
 		}
 	}
 	return drift
-}
-
-// snapshotDocsCommandsDir captures every file under docs/commands/ as
-// a name→bytes map so the test cleanup can restore the developer's
-// working tree even when the regen rewrites pages.
-func snapshotDocsCommandsDir(t *testing.T, dir string) map[string][]byte {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read %s: %v", dir, err)
-	}
-	snap := make(map[string][]byte, len(entries))
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
-			continue
-		}
-		path := filepath.Join(dir, e.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
-		}
-		snap[e.Name()] = data
-	}
-	return snap
 }
 
 // restoreDocsCommandsDir writes the snapshot back, removing any files

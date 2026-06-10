@@ -290,10 +290,11 @@ behaviour that is now stable. See each command's reference page under
 
 - `--db <path>` works on its own for every read command. Passing
   `gohealthcli --db /tmp/scratch.sqlite status` opens that archive
-  directly without requiring a matching `--config` file. When both are
-  passed and disagree, the error names `--db` and `--config` rather than
-  the internal `archive_path` field. `describe-schema --db` is honoured
-  the same way (PRD #144 slice 1).
+  directly without requiring a matching `--config` file. When only
+  `--db` is explicit it wins without an agreement check; when both
+  `--config` and `--db` are explicit and disagree, the error names
+  `--db` and `--config` rather than the internal `archive_path` field.
+  `describe-schema --db` is honoured the same way (PRD #144 slice 1).
 - `status --plain` and `status --json` carry the same information. The
   plain `known_data_types: a,b,c` line maps to a top-level
   `known_data_types` JSON array; `paired_device_count` is a top-level
