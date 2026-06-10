@@ -23,8 +23,10 @@ data, delete health data, run a server, upload archives, or share exports.
 ## Status
 
 The full command surface is live: setup (`init`, `doctor`), OAuth and
-identity snapshots (`connect` through `irn-profile`), archiving (`sync`),
-raw provider exploration (`raw`), and a stable read surface (`status`,
+identity snapshots (`connect` through `irn-profile`), archiving (`sync`,
+with heartbeat-backed `sync --status` observability and auto-fencing of
+abandoned runs), raw provider exploration (`raw`), and a stable read
+surface (`status`,
 `query`, `export`, `describe-schema`) with predictable `--plain` /
 `--json` contracts for scripted and LLM consumers (PRD #144). The Tier 1 daily + hydration catalog slice is
 sealed, and CI runs gofmt, build, tests, and the command-reference drift
@@ -417,14 +419,9 @@ In-flight work, tracked as open pull requests:
   GoReleaser release automation —
   [#235](https://github.com/BramVR/gohealthcli/pull/235). Until it merges,
   `go install` is the supported install path.
-- Sync run observability: a per-page heartbeat on long runs, a read-only
-  `sync --status [--window <dur>]` view over past and running syncs, and
-  automatic fencing of abandoned runs —
-  [#239](https://github.com/BramVR/gohealthcli/pull/239). Until it merges,
-  `status` and `query` over `sync_runs` are the way to inspect a sync.
 
-Each of these lands with its own README and reference-page updates, so
-this section shrinks as they merge.
+It lands with its own README and reference-page updates, so this section
+shrinks as it merges.
 
 ## Docs
 
