@@ -149,8 +149,11 @@ func TestSyncHelpRollupUsageListsEveryKind(t *testing.T) {
 					t.Errorf("sync registry flagSpec rollup usage %q does not list kind %q", spec.Usage, kind)
 				}
 			}
+			return
 		}
+		t.Fatal("sync commandDef has no rollup flagSpec")
 	}
+	t.Fatal("command registry has no sync commandDef")
 }
 
 // rollupFlagUsageFromHelp extracts the usage text printed under the
