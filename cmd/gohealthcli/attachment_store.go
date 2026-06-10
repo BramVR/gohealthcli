@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 )
 
 // attachmentStore is the Data Point Attachment Store from PRD #93 and
@@ -219,7 +220,7 @@ func (store *attachmentStore) Resolve(hashHex string) (string, error) {
 	if canonical == "" {
 		return "", fmt.Errorf("attachment %s not found", hashHex)
 	}
-	return filepath.Join(store.rootDir, filepath.FromSlash(canonical)), nil
+	return resolveContainedPath(store.rootDir, canonical)
 }
 
 func (store *attachmentStore) findExisting(dataPointID int64, hashHex string) (attachmentRecord, bool, error) {
@@ -277,7 +278,23 @@ func (store *attachmentStore) Walk(fn func(attachmentOrphan) error) error {
 			rows.Close()
 			return err
 		}
-		abs := filepath.Join(store.rootDir, pathRelative)
+		abs, containErr := resolveContainedPath(store.rootDir, pathRelative)
+		if containErr != nil {
+			// A path that escapes the attachment root is an integrity
+			// violation: never stat it, and never let it claim a knownPaths
+			// key. Report it as a row whose sidecar is unresolvable.
+			if cbErr := fn(attachmentOrphan{
+				Kind:         attachmentOrphanRowMissingFile,
+				SHA256:       sha,
+				AbsolutePath: store.rootDir,
+				PathRelative: pathRelative,
+				DataPointID:  dataPointID,
+			}); cbErr != nil {
+				rows.Close()
+				return cbErr
+			}
+			continue
+		}
 		knownPaths[abs] = struct{}{}
 		if _, statErr := os.Stat(abs); errors.Is(statErr, os.ErrNotExist) {
 			if cbErr := fn(attachmentOrphan{
@@ -316,6 +333,39 @@ func (store *attachmentStore) Walk(fn func(attachmentOrphan) error) error {
 			AbsolutePath: path,
 		})
 	})
+}
+
+// resolveContainedPath joins a stored path_relative onto rootDir and
+// rejects anything that escapes the attachment root. A foreign or
+// tampered archive (see docs/security.md threat model: "archive
+// contents written by earlier runs") could carry an absolute path, a
+// "../" traversal, or any value that — after filepath.Join+Clean — no
+// longer sits under rootDir. Walk and Resolve share this helper so the
+// containment rule cannot drift between them. path_relative is stored
+// with forward slashes; FromSlash maps it to the OS separator before
+// joining (matching Store).
+func resolveContainedPath(rootDir, pathRelative string) (string, error) {
+	osRelative := filepath.FromSlash(pathRelative)
+	if filepath.IsAbs(osRelative) {
+		return "", fmt.Errorf("attachment path_relative %q is absolute", pathRelative)
+	}
+	// Scan segments on the OS-native path so a "..\\" segment is caught on
+	// Windows too, not only the forward-slash "../" form.
+	for _, segment := range strings.Split(osRelative, string(filepath.Separator)) {
+		if segment == ".." {
+			return "", fmt.Errorf("attachment path_relative %q contains a parent (\"..\") segment", pathRelative)
+		}
+	}
+	// Clean rootDir before the boundary comparison: it derives from the
+	// archive path (e.g. `--db a/../archive.sqlite`) and may carry internal
+	// dot segments that filepath.Join collapses, which would otherwise make
+	// the prefix check reject legitimate in-root attachments.
+	cleanRoot := filepath.Clean(rootDir)
+	abs := filepath.Join(cleanRoot, osRelative)
+	if abs != cleanRoot && !strings.HasPrefix(abs, cleanRoot+string(filepath.Separator)) {
+		return "", fmt.Errorf("attachment path_relative %q escapes attachment root", pathRelative)
+	}
+	return abs, nil
 }
 
 func attachmentFileExtension(kind string) string {
