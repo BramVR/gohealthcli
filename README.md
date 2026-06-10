@@ -280,6 +280,51 @@ output:
   `--json`, and `--no-input`; passing any of them directly on `raw` is
   rejected at parse time with a targeted "not supported by raw" message.
 
+## Read surface
+
+The four read commands — `status`, `query`, `export`, `describe-schema` —
+are the primary interface for LLM consumers and scripted users. PRD #144
+made the contract predictable across them; the notes below summarise the
+behaviour that is now stable. See each command's reference page under
+[docs/commands/](./docs/commands/) for the full prose.
+
+- `--db <path>` works on its own for every read command. Passing
+  `gohealthcli --db /tmp/scratch.sqlite status` opens that archive
+  directly without requiring a matching `--config` file. When both are
+  passed and disagree, the error names `--db` and `--config` rather than
+  the internal `archive_path` field. `describe-schema --db` is honoured
+  the same way (PRD #144 slice 1).
+- `status --plain` and `status --json` carry the same information. The
+  plain `known_data_types: a,b,c` line maps to a top-level
+  `known_data_types` JSON array; `paired_device_count` is a top-level
+  JSON key as well as the back-compat nested
+  `identity_snapshots_freshness.paired_device_count`. A consumer who
+  picks one mode never loses fields the other mode carries (PRD #144
+  slice 9).
+- `query` with no flags emits the same `row.<row>.<column>: <value>`
+  shape as `--plain` — the legacy `Row N: column=value column=value`
+  output (which silently broke on values containing spaces or `=`) was
+  removed in PRD #144 slice 7. Scripted and LLM consumers get a
+  parseable shape by default.
+- `query --json` returns JSON-typed columns (`raw_json`,
+  `data_source_json`, `timezone_metadata`, `token_metadata_json`,
+  `google_identity_json`, and any column whose name ends in `_json`) as
+  nested JSON objects so downstream consumers parse once instead of
+  twice. Pass `--raw-text` to opt out. BLOB columns are wrapped in a
+  `{"__blob_base64__": "<base64>"}` marker object so raw bytes survive
+  the JSON path without UTF-8 corruption (PRD #144 slices 5–6).
+- `export --help` lists every supported dataset alphabetically (PRD #144
+  slice 3). The full list is auto-generated above between the
+  `<!-- export-datasets:start -->` / `<!-- export-datasets:end -->`
+  markers from the same registry (PRD #144 slice 4). `export <typo>`
+  surfaces the closest matches (Levenshtein ≤ 3, top 3) and a pointer
+  back to `export --help`.
+- `describe-schema --json` reports view column types as the literal
+  `"unknown"` rather than a misleading `BLOB` or empty string when the
+  underlying expression's affinity does not carry a declared type.
+  Table columns still report their declared types — the fallback is
+  view-only (PRD #144 slice 8).
+
 ## Configuration
 
 Default local paths:
