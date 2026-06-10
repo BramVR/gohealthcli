@@ -14,9 +14,9 @@ import (
 // status="sync_failed" (never the empty string, AC #5) and MUST NOT
 // contain a sync_run_id field, since no audit row was written.
 type preflightFailureExpectation struct {
-	name           string
-	args           []string
-	wantErrSubstr  string
+	name          string
+	args          []string
+	wantErrSubstr string
 }
 
 // TestRunSyncPreflightFailuresDoNotWriteAuditRow exercises the no-audit-row

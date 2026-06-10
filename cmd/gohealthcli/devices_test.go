@@ -49,11 +49,11 @@ func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
 	var jsonResult struct {
 		DeviceCount int `json:"device_count"`
 		Devices     []struct {
-			DeviceType        string  `json:"device_type"`
-			Model             string  `json:"model"`
-			Manufacturer      string  `json:"manufacturer"`
-			BatteryPercentage *int    `json:"battery_percentage"`
-			LastSyncTime      string  `json:"last_sync_time"`
+			DeviceType        string   `json:"device_type"`
+			Model             string   `json:"model"`
+			Manufacturer      string   `json:"manufacturer"`
+			BatteryPercentage *int     `json:"battery_percentage"`
+			LastSyncTime      string   `json:"last_sync_time"`
 			Features          []string `json:"features"`
 		} `json:"devices"`
 	}

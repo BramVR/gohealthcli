@@ -50,14 +50,14 @@ func TestReadArchivePathResolverResolves(t *testing.T) {
 	}
 
 	tests := []struct {
-		name              string
-		configPath        string
-		configExplicit    bool
-		archivePath       string
-		archiveExplicit   bool
-		wantResolved      string
-		wantErrContains   []string
-		wantErrOmits      []string
+		name            string
+		configPath      string
+		configExplicit  bool
+		archivePath     string
+		archiveExplicit bool
+		wantResolved    string
+		wantErrContains []string
+		wantErrOmits    []string
 	}{
 		{
 			name:            "config missing and --db default uses --db value",

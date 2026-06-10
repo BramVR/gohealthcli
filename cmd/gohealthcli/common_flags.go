@@ -150,10 +150,10 @@ func ParseCommon(fs *flag.FlagSet, values *CommonFlagValues, args []string) erro
 //   - flag.ErrHelp        → exit 0 (fs.Parse already wrote the usage block)
 //   - ErrFlagParseFailed  → exit 1 (fs.Parse already wrote error + usage)
 //   - any other error     → route through the unified Failure Reporter
-//                           (slice 7, issue #178) so the custom invariant
-//                           errors (mutual exclusion, unsupported global)
-//                           land in the same `<cmd>: <msg>` shape every
-//                           other failure path uses.
+//     (slice 7, issue #178) so the custom invariant
+//     errors (mutual exclusion, unsupported global)
+//     land in the same `<cmd>: <msg>` shape every
+//     other failure path uses.
 //
 // fs.Name() supplies the Command prefix; callers do not pass it in. The
 // reporter sees no Mode here because the in-flight `--plain` / `--json`

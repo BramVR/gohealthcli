@@ -126,7 +126,8 @@ func TestREADMEExportDatasetsBlockListsEveryRegistryName(t *testing.T) {
 
 // TestParseExportDatasetBlockNamesRejectsMalformedLines pins the
 // stricter shape check Copilot review surfaced: a hand-edit that
-// breaks the `- `<name>`` contract surfaces a useful error instead of
+// breaks the strict bullet shape (`- ` + backticked name) surfaces a
+// useful error instead of
 // silently producing a misleading name list.
 func TestParseExportDatasetBlockNamesRejectsMalformedLines(t *testing.T) {
 	cases := []struct {

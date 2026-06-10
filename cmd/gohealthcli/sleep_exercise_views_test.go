@@ -13,15 +13,15 @@ func TestSleepStagesViewExplodesEachStage(t *testing.T) {
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
 	insertExportDataPoint(t, archivePath, exportDataPointFixture{
-		dataType:             "sleep",
-		resourceName:         "users/me/dataTypes/sleep/dataPoints/sleep-2026-06-08",
-		recordKind:           "session",
-		startUTC:             "2026-06-08T21:30:00Z",
-		endUTC:               "2026-06-09T05:45:00Z",
-		startCivil:           "2026-06-08T22:30:00",
-		endCivil:             "2026-06-09T06:45:00",
-		civilDate:            "2026-06-08",
-		dataSource:           `{"platform":"FITBIT"}`,
+		dataType:     "sleep",
+		resourceName: "users/me/dataTypes/sleep/dataPoints/sleep-2026-06-08",
+		recordKind:   "session",
+		startUTC:     "2026-06-08T21:30:00Z",
+		endUTC:       "2026-06-09T05:45:00Z",
+		startCivil:   "2026-06-08T22:30:00",
+		endCivil:     "2026-06-09T06:45:00",
+		civilDate:    "2026-06-08",
+		dataSource:   `{"platform":"FITBIT"}`,
 		rawJSON: `{"sleep":{"stages":[
 			{"type":"LIGHT","startTime":"2026-06-08T22:30:00Z","endTime":"2026-06-08T23:30:00Z"},
 			{"type":"DEEP","startTime":"2026-06-08T23:30:00Z","endTime":"2026-06-09T00:30:00Z"},
@@ -78,15 +78,15 @@ func TestExerciseSplitsViewExplodesEachSplit(t *testing.T) {
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
 	insertExportDataPoint(t, archivePath, exportDataPointFixture{
-		dataType:             "exercise",
-		resourceName:         "users/me/dataTypes/exercise/dataPoints/run-2026-06-08",
-		recordKind:           "session",
-		startUTC:             "2026-06-08T17:00:00Z",
-		endUTC:               "2026-06-08T17:30:00Z",
-		startCivil:           "2026-06-08T18:00:00",
-		endCivil:             "2026-06-08T18:30:00",
-		civilDate:            "2026-06-08",
-		dataSource:           `{"platform":"FITBIT"}`,
+		dataType:     "exercise",
+		resourceName: "users/me/dataTypes/exercise/dataPoints/run-2026-06-08",
+		recordKind:   "session",
+		startUTC:     "2026-06-08T17:00:00Z",
+		endUTC:       "2026-06-08T17:30:00Z",
+		startCivil:   "2026-06-08T18:00:00",
+		endCivil:     "2026-06-08T18:30:00",
+		civilDate:    "2026-06-08",
+		dataSource:   `{"platform":"FITBIT"}`,
 		// Real Google Health API shape: distanceMillimeters lives under
 		// metricsSummary, not at the split root. Live testing in #105
 		// caught the earlier wrong-path bug.
@@ -133,16 +133,16 @@ func TestSleepStagesViewHandlesSessionWithoutStages(t *testing.T) {
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
 	insertExportDataPoint(t, archivePath, exportDataPointFixture{
-		dataType:             "sleep",
-		resourceName:         "users/me/dataTypes/sleep/dataPoints/sleep-no-stages",
-		recordKind:           "session",
-		startUTC:             "2026-06-08T21:30:00Z",
-		endUTC:               "2026-06-09T05:45:00Z",
-		startCivil:           "2026-06-08T22:30:00",
-		endCivil:             "2026-06-09T06:45:00",
-		civilDate:            "2026-06-08",
-		dataSource:           `{"platform":"FITBIT"}`,
-		rawJSON:              `{"sleep":{}}`,
+		dataType:     "sleep",
+		resourceName: "users/me/dataTypes/sleep/dataPoints/sleep-no-stages",
+		recordKind:   "session",
+		startUTC:     "2026-06-08T21:30:00Z",
+		endUTC:       "2026-06-09T05:45:00Z",
+		startCivil:   "2026-06-08T22:30:00",
+		endCivil:     "2026-06-09T06:45:00",
+		civilDate:    "2026-06-08",
+		dataSource:   `{"platform":"FITBIT"}`,
+		rawJSON:      `{"sleep":{}}`,
 	})
 
 	db, err := openArchive(archivePath)

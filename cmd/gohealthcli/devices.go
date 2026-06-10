@@ -26,15 +26,15 @@ type googlePairedDevices struct {
 var fetchPairedDevices = fetchGooglePairedDevices
 
 type devicesResult struct {
-	Status             string                  `json:"status"`
-	ConnectionID       string                  `json:"connection_id,omitempty"`
-	ProviderName       string                  `json:"provider_name,omitempty"`
-	GoogleHealthUserID string                  `json:"google_health_user_id,omitempty"`
-	SnapshotID         int64                   `json:"snapshot_id,omitempty"`
-	DeviceCount        int                     `json:"device_count"`
-	Devices            []devicesResultDevice   `json:"devices,omitempty"`
-	FetchedAt          string                  `json:"fetched_at,omitempty"`
-	Message            string                  `json:"message"`
+	Status             string                `json:"status"`
+	ConnectionID       string                `json:"connection_id,omitempty"`
+	ProviderName       string                `json:"provider_name,omitempty"`
+	GoogleHealthUserID string                `json:"google_health_user_id,omitempty"`
+	SnapshotID         int64                 `json:"snapshot_id,omitempty"`
+	DeviceCount        int                   `json:"device_count"`
+	Devices            []devicesResultDevice `json:"devices,omitempty"`
+	FetchedAt          string                `json:"fetched_at,omitempty"`
+	Message            string                `json:"message"`
 }
 
 // devicesResultDevice mirrors the columns the paired_devices Normalized

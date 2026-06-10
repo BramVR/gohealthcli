@@ -613,8 +613,8 @@ func TestSyncRunLifecycleCanceledOutcomePreservedThroughRecovery(t *testing.T) {
 	// with syncRunOutcomeCanceled.
 	cancelCh := make(chan struct{})
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
-		"":           `{"dataPoints":[],"nextPageToken":"page-2"}`,
-		"page-2":     `{"dataPoints":[]}`,
+		"":       `{"dataPoints":[],"nextPageToken":"page-2"}`,
+		"page-2": `{"dataPoints":[]}`,
 	})
 	wrappedFetch := testRuntime.fetchRawProvider
 	testRuntime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {

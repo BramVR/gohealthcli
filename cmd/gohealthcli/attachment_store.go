@@ -24,14 +24,14 @@ type attachmentStore struct {
 }
 
 type attachmentRecord struct {
-	ID            int64
-	DataPointID   int64
-	Kind          string
-	SHA256        string
-	PathRelative  string
-	AbsolutePath  string
-	ByteSize      int64
-	FetchedAt     string
+	ID           int64
+	DataPointID  int64
+	Kind         string
+	SHA256       string
+	PathRelative string
+	AbsolutePath string
+	ByteSize     int64
+	FetchedAt    string
 }
 
 func attachmentRootDirForArchive(archivePath string) string {

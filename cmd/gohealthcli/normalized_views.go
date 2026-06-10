@@ -2,11 +2,11 @@ package main
 
 // normalizedViewsRegistryHandle is the entry point through which every
 // consumer reads Normalized View specs:
-// - The export writer (export.go) looks up a spec by name to render CSV/JSONL.
-// - Archive migrations apply MigrationStatements(version) so a fresh
-//   archive's CREATE VIEWs match what an upgraded archive sees.
-// - A future describe-schema --json (#109) emits the catalog so an LLM
-//   reading the archive knows what views are available.
+//   - The export writer (export.go) looks up a spec by name to render CSV/JSONL.
+//   - Archive migrations apply MigrationStatements(version) so a fresh
+//     archive's CREATE VIEWs match what an upgraded archive sees.
+//   - A future describe-schema --json (#109) emits the catalog so an LLM
+//     reading the archive knows what views are available.
 //
 // The spec storage currently lives in export.go (as the historical
 // exportDatasetDefinitions slice) for transitional reasons; #109 splits

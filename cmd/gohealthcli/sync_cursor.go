@@ -122,4 +122,3 @@ func commitSyncCursorExec(executor sqlExecutor, key syncCursorKey, outcome syncR
 	}
 	return nil
 }
-

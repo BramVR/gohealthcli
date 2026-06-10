@@ -13,15 +13,15 @@ import "io"
 //   - long            (string)              — full prose for the per-page body
 //   - hidden          (bool)                — hidden from --help and reference
 //   - positional_args (string, optional)    — usage hint for trailing positional
-//                                             arguments (e.g. "<SQL>"); omitted
-//                                             entirely when empty
+//     arguments (e.g. "<SQL>"); omitted
+//     entirely when empty
 //   - flags           (array of flagSpec)   — flag specifications
 //   - common_flags    (array of strings, optional) — subset of the five shared
-//                                             flag names that the subcommand
-//                                             accepts via the runtime
-//                                             CommonFlagSet module (issue #166).
-//                                             Omitted entirely when empty so
-//                                             the wire shape stays additive.
+//     flag names that the subcommand
+//     accepts via the runtime
+//     CommonFlagSet module (issue #166).
+//     Omitted entirely when empty so
+//     the wire shape stays additive.
 //
 // Run is the dispatch adapter — invoked by runWithRuntime after a successful
 // registry lookup (PRD #143 slice 6, issue #175). The `json:"-"` tag keeps
