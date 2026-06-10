@@ -125,6 +125,9 @@ fs.writeFileSync(path.join(outDir, ".nojekyll"), "", "utf8");
 if (cname) fs.writeFileSync(path.join(outDir, "CNAME"), cname, "utf8");
 validateLinks(outDir);
 fs.writeFileSync(path.join(outDir, "llms.txt"), llmsTxt(), "utf8");
+fs.writeFileSync(path.join(outDir, "llms-full.txt"), llmsFullTxt(), "utf8");
+fs.writeFileSync(path.join(outDir, "sitemap.xml"), sitemapXml(), "utf8");
+fs.writeFileSync(path.join(outDir, "robots.txt"), robotsTxt(), "utf8");
 console.log(`built docs site: ${path.relative(root, outDir)}`);
 
 function llmsTxt() {
@@ -150,6 +153,101 @@ function llmsTxt() {
   }
   lines.push("", "Guidance for agents:", "- Prefer the canonical documentation URLs above over README excerpts or package metadata.", "- Fetch only the pages needed for the current task; this is an index, not a full-site corpus.");
   return `${lines.join("\n")}\n`;
+}
+
+// Full-text bundle for LLMs / AEO. Concatenates the indexed markdown so an
+// agent can ingest the whole canonical doc set in a single fetch, without
+// crawling per-page HTML. Mirrors the de-facto `llms-full.txt` convention
+// surfaced by tools like Mintlify and adopted across docs portals in 2024-25.
+function llmsFullTxt() {
+  const origin = docsOrigin();
+  const name = typeof productName !== "undefined" ? productName : path.basename(root);
+  const description = typeof productDescription !== "undefined" ? productDescription : `${name} documentation.`;
+  const ordered = docsLlmsPages();
+  const blocks = [`# ${name}`, "", description, ""];
+  for (const page of ordered) {
+    const url = pageUrl(origin, page.outRel);
+    blocks.push(`---`, `# ${page.title}`, `Source: ${url}`, "", page.markdown.trim(), "");
+  }
+  return `${blocks.join("\n")}\n`;
+}
+
+// Sitemap for search-engine discovery. Lists the canonical URL for every page
+// indexed in `nav` (the same allowlist used to render the site), so internal
+// working documents stay off the sitemap just as they stay off the site.
+// Reuses pageCanonicalUrl so permalink-driven `/section/index.html` outputs
+// emit as the directory URL, matching the <link rel="canonical"> on the page.
+function sitemapXml() {
+  const origin = docsOrigin();
+  if (!origin) return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>\n`;
+  const urls = docsLlmsPages().map((page) => `  <url><loc>${escapeXml(pageCanonicalUrl(page))}</loc></url>`);
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`;
+}
+
+function robotsTxt() {
+  const origin = docsOrigin();
+  const lines = ["User-agent: *", "Allow: /"];
+  if (origin) lines.push("", `Sitemap: ${origin}/sitemap.xml`);
+  return `${lines.join("\n")}\n`;
+}
+
+// JSON-LD structured data. The home page declares itself as a SoftwareApplication
+// so Google/Bing rich-result panels and AI answer engines can identify the
+// product, its license, OS, and install hint. Inner pages get a BreadcrumbList
+// (Home > Page) — section names are not their own URLs on this site, so an
+// intermediate crumb pointing back to `/` would be ignored or flagged by
+// structured-data validators. Inner pages also carry a TechArticle block.
+function jsonLd({ page, home, canonicalUrl, description }) {
+  const origin = docsOrigin();
+  const homeUrl = origin ? `${origin}/` : "/";
+  const blocks = [];
+  if (home) {
+    blocks.push({
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      name: productName,
+      description,
+      url: homeUrl,
+      applicationCategory: "DeveloperApplication",
+      operatingSystem: "macOS, Linux, Windows",
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+      license: "https://opensource.org/license/mit",
+      codeRepository: repoBase,
+      downloadUrl: repoBase,
+    });
+  } else {
+    const items = [
+      { "@type": "ListItem", position: 1, name: productName, item: homeUrl },
+      { "@type": "ListItem", position: 2, name: page.title, item: canonicalUrl },
+    ];
+    blocks.push({
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      itemListElement: items,
+    });
+    blocks.push({
+      "@context": "https://schema.org",
+      "@type": "TechArticle",
+      headline: page.title,
+      description,
+      url: canonicalUrl,
+      isPartOf: { "@type": "WebSite", name: productName, url: homeUrl },
+    });
+  }
+  return blocks
+    .map((block) => `<script type="application/ld+json">${jsonLdSafe(block)}</script>`)
+    .join("\n  ");
+}
+
+// Inline JSON-LD must not contain a literal `</script>` sequence — that would
+// terminate the <script> element early. Escape the `<` so the JSON stays
+// valid while remaining safe to embed.
+function jsonLdSafe(obj) {
+  return JSON.stringify(obj).replace(/</g, "\\u003c");
+}
+
+function escapeXml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[char]);
 }
 
 function docsLlmsPages() {
@@ -542,23 +640,32 @@ function layout({ page, html, toc, prev, next, sectionName }) {
   const socialImage = socialCardExists
     ? (siteBase ? `${siteBase}/social-card.png` : `${rootPrefix}social-card.png`)
     : null;
+  const socialImageAlt = `${productName} — ${productTagline}`;
   const socialMeta = [
     ["link", "rel", "canonical", "href", canonicalUrl],
+    ["meta", "name", "robots", "content", "index, follow"],
+    ["meta", "name", "theme-color", "content", "#0d9488"],
     ["meta", "property", "og:type", "content", "website"],
     ["meta", "property", "og:site_name", "content", productName],
+    ["meta", "property", "og:locale", "content", "en_US"],
     ["meta", "property", "og:title", "content", titleSuffix],
     ["meta", "property", "og:description", "content", description],
     ["meta", "property", "og:url", "content", canonicalUrl],
     ...(socialImage ? [
       ["meta", "property", "og:image", "content", socialImage],
+      ["meta", "property", "og:image:alt", "content", socialImageAlt],
       ["meta", "property", "og:image:width", "content", "1200"],
       ["meta", "property", "og:image:height", "content", "630"],
     ] : []),
     ["meta", "name", "twitter:card", "content", socialImage ? "summary_large_image" : "summary"],
     ["meta", "name", "twitter:title", "content", titleSuffix],
     ["meta", "name", "twitter:description", "content", description],
-    ...(socialImage ? [["meta", "name", "twitter:image", "content", socialImage]] : []),
+    ...(socialImage ? [
+      ["meta", "name", "twitter:image", "content", socialImage],
+      ["meta", "name", "twitter:image:alt", "content", socialImageAlt],
+    ] : []),
   ].map(tagHtml).join("\n  ");
+  const ldJson = jsonLd({ page, home, canonicalUrl, description });
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -567,6 +674,7 @@ function layout({ page, html, toc, prev, next, sectionName }) {
   <title>${escapeHtml(titleSuffix)}</title>
   <meta name="description" content="${escapeAttr(description)}">
   ${socialMeta}
+  ${ldJson}
   <link rel="icon" href="${rootPrefix}favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
