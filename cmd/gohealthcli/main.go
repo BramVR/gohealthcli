@@ -2608,7 +2608,10 @@ func parseOAuthClientConfigContent(content []byte) (oauthClientConfig, error) {
 // auth_uri/token_uri endpoints.
 func requireGoogleOAuthHTTPS(rawURI, host string) error {
 	parsed, err := url.Parse(rawURI)
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() != host {
+	// URL schemes and DNS hostnames are case-insensitive, so compare them
+	// case-insensitively while still pinning to the exact Google host — a
+	// valid config like "HTTPS://Accounts.Google.Com/..." must be accepted.
+	if err != nil || !strings.EqualFold(parsed.Scheme, "https") || !strings.EqualFold(parsed.Hostname(), host) {
 		return errors.New("OAuth client auth_uri/token_uri must use https and a Google OAuth host")
 	}
 	return nil

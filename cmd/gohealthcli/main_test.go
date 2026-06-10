@@ -5776,6 +5776,11 @@ func TestParseOAuthClientConfigContentPinsHTTPSAndGoogleHosts(t *testing.T) {
 			content: `{"installed":{"client_id":"test-client","client_secret":"test-secret","auth_uri":"https://accounts.google.com/o/oauth2/v2/auth","token_uri":"https://oauth2.googleapis.com/token"}}`,
 			wantErr: false,
 		},
+		{
+			name:    "uppercase scheme and host accepted (case-insensitive)",
+			content: `{"installed":{"client_id":"test-client","client_secret":"test-secret","auth_uri":"HTTPS://Accounts.Google.Com/o/oauth2/v2/auth","token_uri":"HTTPS://OAuth2.GoogleAPIs.Com/token"}}`,
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
