@@ -1500,9 +1500,13 @@ func runExport(args []string, configPath, archivePath string, configPathExplicit
 		return 0
 	}
 	if err := writeExportFile(rows, spec, resolvedFormat, *exportOutputPath); err != nil {
+		status := StatusArchiveUnwritable
+		if errors.Is(err, errExportOutputSymlink) {
+			status = StatusFlagInvalid
+		}
 		return ReportFailure(FailureReport{
 			Command: "export",
-			Status:  StatusArchiveUnwritable,
+			Status:  status,
 			Message: fmt.Sprintf("write export: %v", err),
 			Mode:    mode,
 		}, stdout, stderr)
@@ -1626,7 +1630,25 @@ func writeDailyStepsExportFile(rows []dailyStepsExportRow, format, path string) 
 	return writeExportFile(dailyStepsExportRowsToExportRows(rows), exportDatasetSpecs["daily-steps"], format, path)
 }
 
+// errExportOutputSymlink reports that --output names a symbolic link. The
+// export writer refuses such paths so it never chmods or truncates the link
+// target; the caller surfaces this as a flag-invalid failure.
+var errExportOutputSymlink = errors.New("symbolic link")
+
 func restrictExistingExportOutput(path string) error {
+	// os.Lstat does not follow symlinks, so it sees the link itself. Check it
+	// BEFORE os.Stat (which follows symlinks) so a symlinked --output is
+	// refused rather than chmod'd or truncated through the link target.
+	linkInfo, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if linkInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%w: --output %s names a symbolic link; pass the resolved target path explicitly", errExportOutputSymlink, path)
+	}
 	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
