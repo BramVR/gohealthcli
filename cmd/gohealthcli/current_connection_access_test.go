@@ -401,6 +401,46 @@ func setupAutoRefreshFixture(t *testing.T, seedTokenMaterial map[string]any) aut
 	return autoRefreshFixture{oauthClientPath: oauthClientPath, credentialStore: credentialStore}
 }
 
+func TestCurrentConnectionAccessTokenAutoRefreshRejectsGroupReadableOAuthClientFile(t *testing.T) {
+	if !usesPOSIXPermissions() {
+		t.Skip("POSIX permission test")
+	}
+	fixture := setupAutoRefreshFixture(t, map[string]any{
+		"access_token":  "stale-access",
+		"refresh_token": "stored-refresh",
+		"token_type":    "Bearer",
+	})
+	if err := os.Chmod(fixture.oauthClientPath, 0o644); err != nil {
+		t.Fatalf("chmod oauth client file: %v", err)
+	}
+
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	runtime := runtimeAdapters{}
+	runtime.now = func() time.Time { return now }
+	runtime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
+		t.Fatalf("refreshOAuthToken called for group-readable OAuth client file")
+		return oauthTokenResponse{}, nil
+	}
+	archive := &fakeHealthArchiveConnectionAPI{}
+	access := newCurrentConnectionAccessWithRuntime(
+		fixture.credentialStore,
+		archivedConnection{
+			id:                "googlehealth:111",
+			tokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope}),
+		},
+		nil,
+		runtime,
+	).WithAutoRefresh(oauthClientSource{kind: "file", path: fixture.oauthClientPath}, archive)
+
+	_, err := access.AccessToken([]string{googleHealthProfileReadonlyScope})
+	if err == nil {
+		t.Fatalf("AccessToken error = nil, want owner-only rejection")
+	}
+	if !strings.Contains(err.Error(), "OAuth client file is not owner-only") {
+		t.Fatalf("AccessToken error = %v, want not owner-only diagnostic", err)
+	}
+}
+
 func TestCurrentConnectionAccessTokenAutoRefreshPersistsToCredentialStoreAndArchive(t *testing.T) {
 	fixture := setupAutoRefreshFixture(t, map[string]any{
 		"access_token":  "stale-access",

@@ -2157,12 +2157,14 @@ func inspectIdentityConfig(configPath, archivePath string) (fullConfigCheck, err
 	return fullConfigCheck{
 		archivePath:      config.archivePath,
 		defaultDataTypes: config.defaultDataTypes,
-		// oauthClient is returned unvalidated so the sync auto-refresh
-		// path can reach it without forcing every identity-only command
-		// to validate the OAuth client file. validateOAuthClientFile is
-		// still triggered inside loadOAuthClientConfig when a refresh
-		// actually runs, so an invalid file fails the refresh, not the
-		// happy-path read.
+		// oauthClient is returned without parsing/shape validation so the
+		// sync auto-refresh path can reach it without forcing every
+		// identity-only command to fully validate the OAuth client file.
+		// The owner-only permission invariant is still enforced when a
+		// refresh actually runs: loadOAuthClientConfig reads the file via
+		// readOwnerOnlyOAuthClientFile (the same check validateOAuthClientFile
+		// uses), so a loose-permission or missing file fails the refresh
+		// rather than the happy-path read.
 		oauthClient:     config.oauthClient,
 		credentialStore: config.credentialStore,
 	}, nil
@@ -2387,23 +2389,43 @@ func validateOAuthClientConfig(source oauthClientSource) error {
 	return nil
 }
 
-func validateOAuthClientFile(path string) error {
+// readOwnerOnlyOAuthClientFile enforces the owner-only invariant on the OAuth
+// client file before reading it: it rejects a path that is missing, a
+// directory, or any other non-regular file (FIFO, socket, device), and on
+// POSIX platforms a regular file with a mode other than 0600. Sharing this
+// between validateOAuthClientFile and loadOAuthClientConfig keeps the
+// connect/init/doctor validation path and the sync auto-refresh path from
+// drifting on what counts as an acceptable client file.
+func readOwnerOnlyOAuthClientFile(path string) ([]byte, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return errors.New("OAuth client file is missing")
+			return nil, errors.New("OAuth client file is missing")
 		}
-		return errors.New("OAuth client file cannot be checked")
+		return nil, errors.New("OAuth client file cannot be checked")
 	}
 	if info.IsDir() {
-		return errors.New("OAuth client file path is a directory")
+		return nil, errors.New("OAuth client file path is a directory")
+	}
+	// Reject FIFOs, sockets, and devices before os.ReadFile, which could hang
+	// or behave unexpectedly on them; only a regular file is a valid client.
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("OAuth client file is not a regular file")
 	}
 	if usesPOSIXPermissions() && info.Mode().Perm() != 0o600 {
-		return fmt.Errorf("OAuth client file is not owner-only: mode %04o, want 0600", info.Mode().Perm())
+		return nil, fmt.Errorf("OAuth client file is not owner-only: mode %04o, want 0600", info.Mode().Perm())
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return errors.New("OAuth client file cannot be read")
+		return nil, errors.New("OAuth client file cannot be read")
+	}
+	return content, nil
+}
+
+func validateOAuthClientFile(path string) error {
+	content, err := readOwnerOnlyOAuthClientFile(path)
+	if err != nil {
+		return err
 	}
 	if _, err := parseOAuthClientConfigContent(content); err != nil {
 		return err
@@ -2534,9 +2556,9 @@ func validateDefaultDataTypes(dataTypes []string) error {
 }
 
 func loadOAuthClientConfig(path string) (oauthClientConfig, error) {
-	content, err := os.ReadFile(path)
+	content, err := readOwnerOnlyOAuthClientFile(path)
 	if err != nil {
-		return oauthClientConfig{}, errors.New("OAuth client file cannot be read")
+		return oauthClientConfig{}, err
 	}
 	return parseOAuthClientConfigContent(content)
 }
