@@ -2921,6 +2921,38 @@ func TestStatusReportsHealthArchiveCountsAndSyncRunsReadOnly(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+// TestWriteStatusSyncRunPlainEscapesControlBytes pins issue #244 for the
+// status plain writers: provider-influenced fields (error_summary from a Sync
+// Run's failure, source_family_filter) must have their C0/C1 control bytes
+// rendered in a visible, reversible escape form so terminal escape-sequence
+// injection (CWE-150) can never reach the terminal raw. ESC (0x1b) and BEL
+// (0x07) stand in for the decoded provider-derived control bytes.
+func TestWriteStatusSyncRunPlainEscapesControlBytes(t *testing.T) {
+	run := &statusSyncRun{
+		ID:                 3,
+		Status:             "sync_failed",
+		SourceFamilyFilter: "wear\x1bable",
+		ErrorSummary:       "Provider \x1btimeout\x07 after 30s",
+	}
+	stdout := new(bytes.Buffer)
+	if err := writeStatusSyncRunPlain(stdout, "latest_failed_sync_run", run); err != nil {
+		t.Fatalf("writeStatusSyncRunPlain: %v", err)
+	}
+	out := stdout.String()
+	wantLines := []string{
+		`latest_failed_sync_run_source_family_filter: wear\x1bable` + "\n",
+		`latest_failed_sync_run_error_summary: Provider \x1btimeout\x07 after 30s` + "\n",
+	}
+	for _, want := range wantLines {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status plain output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.ContainsAny(out, "\x1b\x07") {
+		t.Fatalf("status plain output contains a raw control byte:\n%q", out)
+	}
+}
+
 func TestStatusPlainReportsEmptyHealthArchive(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
