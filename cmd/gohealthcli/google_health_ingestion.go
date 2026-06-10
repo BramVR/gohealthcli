@@ -706,11 +706,26 @@ func buildGoogleHealthExportExerciseTcxRawRequest(dataPointName string) (rawProv
 		parts[4] != "dataPoints" || parts[5] == "" {
 		return rawProviderRequest{}, fmt.Errorf("exportExerciseTcx requires an exercise Data Point name, got %q", dataPointName)
 	}
+	// Rebuild the path from its validated segments, percent-encoding the
+	// two provider-controlled free segments (the `<user>` and data point
+	// `<id>`). The name comes from the upstream JSON `name` field, so a
+	// crafted `?`/`#`/`%` would otherwise inject a query string, fragment,
+	// or decoded `/` and shift the `:exportExerciseTcx` custom-method
+	// suffix off the path. This mirrors the `url.PathEscape` convention
+	// already used by the rollUp/dailyRollUp/reconcile builders.
+	escapedName := strings.Join([]string{
+		parts[0],
+		url.PathEscape(parts[1]),
+		parts[2],
+		parts[3],
+		parts[4],
+		url.PathEscape(parts[5]),
+	}, "/")
 	return rawProviderRequest{
 		endpointName:   "dataTypes.exercise.exportExerciseTcx",
 		dataType:       "exercise",
 		method:         http.MethodGet,
-		url:            googleHealthBaseURL + "/" + dataPointName + ":exportExerciseTcx",
+		url:            googleHealthBaseURL + "/" + escapedName + ":exportExerciseTcx",
 		requiredScopes: googleHealthScopesForDataType("exercise"),
 	}, nil
 }
