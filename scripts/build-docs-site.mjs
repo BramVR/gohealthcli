@@ -175,13 +175,12 @@ function llmsFullTxt() {
 // Sitemap for search-engine discovery. Lists the canonical URL for every page
 // indexed in `nav` (the same allowlist used to render the site), so internal
 // working documents stay off the sitemap just as they stay off the site.
+// Reuses pageCanonicalUrl so permalink-driven `/section/index.html` outputs
+// emit as the directory URL, matching the <link rel="canonical"> on the page.
 function sitemapXml() {
   const origin = docsOrigin();
   if (!origin) return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>\n`;
-  const urls = docsLlmsPages().map((page) => {
-    const loc = page.outRel === "index.html" ? `${origin}/` : `${origin}/${page.outRel}`;
-    return `  <url><loc>${escapeXml(loc)}</loc></url>`;
-  });
+  const urls = docsLlmsPages().map((page) => `  <url><loc>${escapeXml(pageCanonicalUrl(page))}</loc></url>`);
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`;
 }
 
@@ -195,8 +194,10 @@ function robotsTxt() {
 // JSON-LD structured data. The home page declares itself as a SoftwareApplication
 // so Google/Bing rich-result panels and AI answer engines can identify the
 // product, its license, OS, and install hint. Inner pages get a BreadcrumbList
-// (Home > Section > Page) for navigation rich results.
-function jsonLd({ page, home, canonicalUrl, description, sectionName }) {
+// (Home > Page) — section names are not their own URLs on this site, so an
+// intermediate crumb pointing back to `/` would be ignored or flagged by
+// structured-data validators. Inner pages also carry a TechArticle block.
+function jsonLd({ page, home, canonicalUrl, description }) {
   const origin = docsOrigin();
   const homeUrl = origin ? `${origin}/` : "/";
   const blocks = [];
@@ -217,8 +218,7 @@ function jsonLd({ page, home, canonicalUrl, description, sectionName }) {
   } else {
     const items = [
       { "@type": "ListItem", position: 1, name: productName, item: homeUrl },
-      { "@type": "ListItem", position: 2, name: sectionName, item: homeUrl },
-      { "@type": "ListItem", position: 3, name: page.title, item: canonicalUrl },
+      { "@type": "ListItem", position: 2, name: page.title, item: canonicalUrl },
     ];
     blocks.push({
       "@context": "https://schema.org",
@@ -239,9 +239,9 @@ function jsonLd({ page, home, canonicalUrl, description, sectionName }) {
     .join("\n  ");
 }
 
-// Inline JSON-LD must not contain a literal `</` sequence — that would close
-// the script element early. Escape the forward slash so the JSON stays valid
-// while remaining parser-safe inside <script>.
+// Inline JSON-LD must not contain a literal `</script>` sequence — that would
+// terminate the <script> element early. Escape the `<` so the JSON stays
+// valid while remaining safe to embed.
 function jsonLdSafe(obj) {
   return JSON.stringify(obj).replace(/</g, "\\u003c");
 }
@@ -665,7 +665,7 @@ function layout({ page, html, toc, prev, next, sectionName }) {
       ["meta", "name", "twitter:image:alt", "content", socialImageAlt],
     ] : []),
   ].map(tagHtml).join("\n  ");
-  const ldJson = jsonLd({ page, home, canonicalUrl, description, sectionName });
+  const ldJson = jsonLd({ page, home, canonicalUrl, description });
   return `<!doctype html>
 <html lang="en">
 <head>
