@@ -55,6 +55,15 @@ type googleHealthIngestionRequest struct {
 	// want to exercise the hook must inject the granting scope
 	// explicitly.
 	grantedScopes []string
+	// refreshAccessToken, when set, lets a Sync Run survive access-token
+	// expiry mid-run. Google access tokens live about an hour; a long
+	// backfill's pagination can outlive one. When an upstream call
+	// returns HTTP 401, ingestion calls this hook — sync wires it to the
+	// same refresh-and-persist path the pre-run auto-refresh uses — and
+	// retries the failed request once with the returned token. Later
+	// requests in the same run keep using the refreshed token. nil
+	// preserves the historical behavior: the first 401 fails the run.
+	refreshAccessToken func() (string, error)
 	// cancelCh, when closed, asks pagination to stop cleanly between pages.
 	// Returns errSyncCanceled. The in-flight Fetch (if any) is not aborted —
 	// SIGINT during a sync stops at the next page boundary, not mid-HTTP.
@@ -156,6 +165,52 @@ func (provider runtimeGoogleHealthIngestionProvider) Fetch(request rawProviderRe
 	return fetchWithRetry(provider.runtime.fetchRawProvider, provider.sleeper, provider.jitter, request, accessToken, cancelCh)
 }
 
+// midRunRefreshIngestionProvider wraps the ingestion provider when the
+// request carries a refreshAccessToken hook (Execute installs it). On
+// HTTP 401 it refreshes the access token once and retries the same
+// request; the refreshed token then supersedes the request-captured
+// token for every later Fetch in the run, because the pagination loops
+// keep passing the token they captured before the refresh happened.
+// Each Fetch gets at most one refresh+retry, so a Connection whose
+// refreshed token is still rejected (revoked grant) fails the run on
+// the retry's 401 instead of looping. A run long enough to outlive two
+// access tokens simply refreshes again on the next 401.
+type midRunRefreshIngestionProvider struct {
+	inner          googleHealthIngestionProvider
+	refresh        func() (string, error)
+	refreshedToken string
+}
+
+func (provider *midRunRefreshIngestionProvider) Fetch(request rawProviderRequest, accessToken string, cancelCh <-chan struct{}) ([]byte, error) {
+	if provider.refreshedToken != "" {
+		accessToken = provider.refreshedToken
+	}
+	body, err := provider.inner.Fetch(request, accessToken, cancelCh)
+	if err == nil || !isUnauthorizedHTTPError(err) {
+		return body, err
+	}
+	// A signal that landed while the failing request was in flight wins
+	// over the refresh: the next clean boundary is here, before spending
+	// a token refresh + retry the user no longer wants.
+	if ingestionCanceled(cancelCh) {
+		return nil, errSyncCanceled
+	}
+	refreshed, refreshErr := provider.refresh()
+	if refreshErr != nil {
+		return nil, refreshErr
+	}
+	provider.refreshedToken = refreshed
+	return provider.inner.Fetch(request, refreshed, cancelCh)
+}
+
+// isUnauthorizedHTTPError reports whether err is an upstream HTTP 401.
+// 401 is the only status that means "access token no longer valid";
+// 403 is a scope/authorization problem a fresh token cannot fix.
+func isUnauthorizedHTTPError(err error) bool {
+	var httpErr *googleHealthHTTPError
+	return errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusUnauthorized
+}
+
 func (ingestion googleHealthIngestion) Plan(request googleHealthIngestionRequest) (googleHealthIngestionPlan, error) {
 	entry, ok := googleHealthDataTypes.Lookup(request.dataType)
 	if !ok {
@@ -189,6 +244,12 @@ func (ingestion googleHealthIngestion) Execute(archive googleHealthIngestionArch
 	plan, err := ingestion.Plan(request)
 	if err != nil {
 		return googleHealthIngestionResult{}, err
+	}
+	if request.refreshAccessToken != nil {
+		ingestion.provider = &midRunRefreshIngestionProvider{
+			inner:   ingestion.provider,
+			refresh: request.refreshAccessToken,
+		}
 	}
 	result := googleHealthIngestionResult{endpointFamily: plan.endpointFamily}
 	switch plan.endpointFamily {
