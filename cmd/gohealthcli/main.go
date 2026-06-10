@@ -28,7 +28,7 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 21
+const currentSchemaVersion = 22
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
 const googleHealthSleepReadonlyScope = "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
@@ -1201,6 +1201,8 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 	syncTo := flags.String("to", "", "exclusive sync range end")
 	syncRollup := flags.String("rollup", "", "rollup kind to sync; supported: daily | hourly | weekly | window=<duration>")
 	syncSourceFamily := flags.String("source-family", "", "source family filter; supported: wearable")
+	syncStatus := flags.Bool("status", false, "list recent Sync Runs from the local archive instead of syncing")
+	syncWindow := flags.String("window", "", "with --status: how far back to list finished Sync Runs (Go duration, default 15m, max 24h)")
 
 	if err := ParseCommon(flags, common, args); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
@@ -1213,6 +1215,21 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 			Message: fmt.Sprintf("unexpected sync argument: %s", flags.Arg(0)),
 			Mode:    mode,
 		}, stdout, stderr)
+	}
+	// --status flips sync into a read-only view of recent Sync Runs
+	// (#236); any flag that shapes an actual sync is a usage error
+	// alongside it (silent ignoring would read as "my filters applied").
+	// --window inverts the rule: it only means something WITH --status.
+	if err := validateSyncStatusFlagSet(flags, *syncStatus); err != nil {
+		return ReportFailure(FailureReport{
+			Command: "sync",
+			Status:  StatusFlagInvalid,
+			Message: err.Error(),
+			Mode:    mode,
+		}, stdout, stderr)
+	}
+	if *syncStatus {
+		return runSyncStatusWithRuntime(*common, *syncWindow, mode, stdout, stderr, runtime)
 	}
 
 	dataTypes := parseCommaList(*syncTypes)
@@ -4331,7 +4348,10 @@ func applyMigrations(db *sql.DB) error {
 	if err := applyHydrationLogSessionsViewMigration(tx, now); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 21`); err != nil {
+	if err := applySyncRunHeartbeatMigration(tx, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 22`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -4351,7 +4371,7 @@ func applyPendingMigrations(db *sql.DB) error {
 	switch userVersion {
 	case currentSchemaVersion:
 		return nil
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21:
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -4453,10 +4473,15 @@ func applyPendingMigrations(db *sql.DB) error {
 				return err
 			}
 		}
-		if err := applyHydrationLogSessionsViewMigration(tx, now); err != nil {
+		if userVersion <= 20 {
+			if err := applyHydrationLogSessionsViewMigration(tx, now); err != nil {
+				return err
+			}
+		}
+		if err := applySyncRunHeartbeatMigration(tx, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`PRAGMA user_version = 21`); err != nil {
+		if _, err := tx.Exec(`PRAGMA user_version = 22`); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -4564,6 +4589,20 @@ func applyHydrationLogSessionsViewMigration(tx *sql.Tx, appliedAt string) error 
 		}
 	}
 	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (21, 'add_hydration_log_sessions_view', ?)`, appliedAt)
+	return err
+}
+
+// applySyncRunHeartbeatMigration adds the last_progress_at heartbeat
+// column to sync_runs (#236). The ingestion writes it (together with
+// the running counts) after every archived page, so a concurrent
+// `sync --status` reader can tell an alive long run from an abandoned
+// one. NULL on historical rows: those predate heartbeats, and the
+// stale-run fence falls back to started_at for them.
+func applySyncRunHeartbeatMigration(tx *sql.Tx, appliedAt string) error {
+	if _, err := tx.Exec(`ALTER TABLE sync_runs ADD COLUMN last_progress_at TEXT`); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (22, 'add_sync_run_heartbeat', ?)`, appliedAt)
 	return err
 }
 
@@ -4765,6 +4804,7 @@ func expectedSchemaMigrations() map[int]string {
 		19: "add_tier1_daily_hydration_views",
 		20: "add_tier2_ecg_irn_views",
 		21: "add_hydration_log_sessions_view",
+		22: "add_sync_run_heartbeat",
 	}
 }
 
