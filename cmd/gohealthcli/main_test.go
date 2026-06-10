@@ -5750,6 +5750,52 @@ func TestConnectRejectsWebOAuthClient(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestParseOAuthClientConfigContentPinsHTTPSAndGoogleHosts(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		wantErr bool
+	}{
+		{
+			name:    "http auth_uri rejected",
+			content: `{"installed":{"client_id":"test-client","client_secret":"test-secret","auth_uri":"http://accounts.google.com/o/oauth2/v2/auth"}}`,
+			wantErr: true,
+		},
+		{
+			name:    "attacker-host token_uri rejected",
+			content: `{"installed":{"client_id":"test-client","client_secret":"test-secret","token_uri":"https://attacker.example.com/token"}}`,
+			wantErr: true,
+		},
+		{
+			name:    "empty uris default to Google and accepted",
+			content: `{"installed":{"client_id":"test-client","client_secret":"test-secret"}}`,
+			wantErr: false,
+		},
+		{
+			name:    "valid Google https uris accepted",
+			content: `{"installed":{"client_id":"test-client","client_secret":"test-secret","auth_uri":"https://accounts.google.com/o/oauth2/v2/auth","token_uri":"https://oauth2.googleapis.com/token"}}`,
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseOAuthClientConfigContent([]byte(tt.content))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parseOAuthClientConfigContent error = nil, want https/Google host rejection")
+				}
+				if !strings.Contains(err.Error(), "https") || !strings.Contains(err.Error(), "Google OAuth host") {
+					t.Fatalf("error = %q, want mention of https and Google OAuth host", err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseOAuthClientConfigContent error = %v, want accepted", err)
+			}
+		})
+	}
+}
+
 func TestOAuthScopesUseRecognizedGoogleHealthScopes(t *testing.T) {
 	scopes := oauthScopesForDataTypes(defaultDataTypes)
 	wantScopes := []string{

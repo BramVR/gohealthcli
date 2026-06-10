@@ -2580,6 +2580,18 @@ func parseOAuthClientConfigContent(content []byte) (oauthClientConfig, error) {
 	if client.TokenURI == "" {
 		client.TokenURI = "https://oauth2.googleapis.com/token"
 	}
+	// Pin auth_uri/token_uri to https and a Google OAuth host so the
+	// client secret, authorization code, and refresh token can never be
+	// POSTed (or the browser opened) on an attacker-named or cleartext
+	// endpoint, even when the OAuth client file is attacker-influenced
+	// (see docs/security.md). This fails closed on both the connect
+	// exchange path and every auto-refresh path.
+	if err := requireGoogleOAuthHTTPS(client.AuthURI, "accounts.google.com"); err != nil {
+		return oauthClientConfig{}, err
+	}
+	if err := requireGoogleOAuthHTTPS(client.TokenURI, "oauth2.googleapis.com"); err != nil {
+		return oauthClientConfig{}, err
+	}
 	return oauthClientConfig{
 		kind:         clientKind,
 		clientID:     client.ClientID,
@@ -2588,6 +2600,18 @@ func parseOAuthClientConfigContent(content []byte) (oauthClientConfig, error) {
 		tokenURI:     client.TokenURI,
 		redirectURIs: client.RedirectURIs,
 	}, nil
+}
+
+// requireGoogleOAuthHTTPS enforces that an OAuth endpoint URI uses the
+// https scheme and a Google OAuth host, mirroring the http+loopback
+// enforcement in listenForOAuthRedirect for the credential-bearing
+// auth_uri/token_uri endpoints.
+func requireGoogleOAuthHTTPS(rawURI, host string) error {
+	parsed, err := url.Parse(rawURI)
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() != host {
+		return errors.New("OAuth client auth_uri/token_uri must use https and a Google OAuth host")
+	}
+	return nil
 }
 
 func oauthScopesForDataTypes(dataTypes []string) []string {
