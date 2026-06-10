@@ -654,11 +654,12 @@ func escapePlainControlChars(value string) string {
 	return builder.String()
 }
 
-// isPlainControlRune reports whether r is a C0 (0x00–0x1F) or C1
-// (0x7F–0x9F) control character that must be escaped before plain-mode
-// output. Backslash and the \r/\n/\t whitespace runes are not flagged here
-// because escapePlainControlChars handles their named/doubled forms ahead of
-// the generic \xHH fallback.
+// isPlainControlRune reports whether r needs escaping before plain-mode
+// output: backslash, or any C0 (0x00–0x1F, which includes \r/\n/\t) or C1
+// (0x7F–0x9F) control character. It flags backslash and \r/\n/\t too so the
+// fast-path strings.ContainsFunc guard in escapePlainControlChars fires for a
+// string that contains only those; that function's switch then renders their
+// doubled/named forms before the generic \xHH fallback ever sees them.
 func isPlainControlRune(r rune) bool {
 	if r == '\\' {
 		return true
