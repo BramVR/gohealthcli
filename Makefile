@@ -1,4 +1,4 @@
-.PHONY: build build-info fmt fmt-check docs-site docs-site-clean docs-commands docs-export-datasets
+.PHONY: build build-info fmt fmt-check docs-site docs-site-clean docs-commands docs-check docs-export-datasets
 
 # build embeds the three Version-module identifiers (version/commit/built)
 # at link time via -ldflags. Defaults are "dev" so an unstamped `go build`
@@ -42,6 +42,15 @@ docs-site-clean:
 
 docs-commands:
 	@go run ./cmd/gohealthcli schema --json | node scripts/gen-command-reference.mjs
+
+# docs-check is the ADR-0008 drift guard (issue #74): regenerate the
+# command-reference pages into a temp directory and byte-compare them
+# against the committed docs/commands.md + docs/commands/*.md. Exits
+# non-zero with a unified diff naming the drifted file; the fix is
+# `make docs-commands` plus committing the result. CI runs this after
+# the build so flag changes cannot land without a docs regen.
+docs-check:
+	@go run ./cmd/gohealthcli schema --json | node scripts/check-command-reference.mjs
 
 # docs-export-datasets rewrites README.md's "Normalized export
 # datasets" bullet block from exportDatasetCatalogSingleton.Names().

@@ -67,6 +67,14 @@ The default archive path does not include Google Identity. The archive stores
 that identity internally; multiple identities require explicit future design or
 explicit alternate `--db` paths.
 
+The defaults are anchored to the user's home directory. When `HOME` is unset and
+no absolute `XDG_CONFIG_HOME`/`XDG_DATA_HOME` override is set (a relative `XDG_*`
+value is ignored per the XDG Base Directory spec), the binary cannot anchor the
+default and fails loudly — "cannot determine home directory; set HOME or pass
+--config/--db explicitly" — instead of silently writing personal health data to
+a current-working-directory-relative path. Passing `--config`/`--db` explicitly
+is unaffected.
+
 ## Exports
 
 Exports can reveal sensitive health history. Commands should require explicit

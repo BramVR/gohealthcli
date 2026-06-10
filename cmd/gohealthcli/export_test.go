@@ -453,6 +453,63 @@ func TestExportDailyStepsRestrictsExistingOutputBeforeOverwrite(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String()+string(content))
 }
 
+func TestExportDailyStepsRefusesSymlinkedOutput(t *testing.T) {
+	if !usesPOSIXPermissions() {
+		t.Skip("symlink permission assertions are not meaningful on this platform")
+	}
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	targetPath := filepath.Join(tempDir, "target.csv")
+	const targetContent = "do not overwrite me\n"
+	if err := os.WriteFile(targetPath, []byte(targetContent), 0o644); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+	if err := os.Chmod(targetPath, 0o644); err != nil {
+		t.Fatalf("chmod seed target: %v", err)
+	}
+	outputPath := filepath.Join(tempDir, "daily-steps.csv")
+	if err := os.Symlink(targetPath, outputPath); err != nil {
+		t.Fatalf("seed symlink: %v", err)
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"export",
+		"--config", configPath,
+		"daily-steps",
+		"--format", "csv",
+		"--output", outputPath,
+	}, stdout, stderr)
+	if code == 0 {
+		t.Fatalf("export exit code = 0, want non-zero for symlinked --output\nstderr: %s\nstdout: %s", stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "symbolic link") {
+		t.Fatalf("stderr = %q, want a symbolic link refusal", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "resolved target path") {
+		t.Fatalf("stderr = %q, want guidance to pass the resolved target path", stderr.String())
+	}
+
+	content, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(content) != targetContent {
+		t.Fatalf("target content = %q, want %q (must be untouched)", string(content), targetContent)
+	}
+	info, err := os.Lstat(targetPath)
+	if err != nil {
+		t.Fatalf("lstat target: %v", err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("target mode = %04o, want 0644 (must be unchanged)", info.Mode().Perm())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestExportDailyStepsJSONLToStdout(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)

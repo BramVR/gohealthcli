@@ -734,8 +734,8 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("schema migration rows: %v", err)
 	}
-	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter,4:add_daily_steps_view,5:add_first_release_normalized_views,6:add_sync_cursors,7:rename_profile_snapshots_to_identity_snapshots,8:add_current_settings_view,9:add_paired_devices_view,10:add_current_irn_profile_view,11:add_sleep_stages_and_exercise_splits_views,12:fix_exercise_splits_real_shape,13:add_searchable_text_view,14:fix_searchable_text_latest_profile_and_empty_filter,15:add_data_point_attachments,16:add_floors_intervals_view,17:add_tier1_activity_views,18:add_tier1_health_metrics_views,19:add_tier1_daily_hydration_views,20:add_tier2_ecg_irn_views,21:add_hydration_log_sessions_view" {
-		t.Fatalf("migrations = %v, want all migrations 1..21", migrations)
+	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter,4:add_daily_steps_view,5:add_first_release_normalized_views,6:add_sync_cursors,7:rename_profile_snapshots_to_identity_snapshots,8:add_current_settings_view,9:add_paired_devices_view,10:add_current_irn_profile_view,11:add_sleep_stages_and_exercise_splits_views,12:fix_exercise_splits_real_shape,13:add_searchable_text_view,14:fix_searchable_text_latest_profile_and_empty_filter,15:add_data_point_attachments,16:add_floors_intervals_view,17:add_tier1_activity_views,18:add_tier1_health_metrics_views,19:add_tier1_daily_hydration_views,20:add_tier2_ecg_irn_views,21:add_hydration_log_sessions_view,22:add_sync_run_heartbeat" {
+		t.Fatalf("migrations = %v, want all migrations 1..22", migrations)
 	}
 
 	for _, table := range []string{
@@ -2919,6 +2919,38 @@ func TestStatusReportsHealthArchiveCountsAndSyncRunsReadOnly(t *testing.T) {
 		t.Fatalf("status inferred completeness or gaps:\n%s", stdout.String())
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+// TestWriteStatusSyncRunPlainEscapesControlBytes pins issue #244 for the
+// status plain writers: provider-influenced fields (error_summary from a Sync
+// Run's failure, source_family_filter) must have their C0/C1 control bytes
+// rendered in a visible, reversible escape form so terminal escape-sequence
+// injection (CWE-150) can never reach the terminal raw. ESC (0x1b) and BEL
+// (0x07) stand in for the decoded provider-derived control bytes.
+func TestWriteStatusSyncRunPlainEscapesControlBytes(t *testing.T) {
+	run := &statusSyncRun{
+		ID:                 3,
+		Status:             "sync_failed",
+		SourceFamilyFilter: "wear\x1bable",
+		ErrorSummary:       "Provider \x1btimeout\x07 after 30s",
+	}
+	stdout := new(bytes.Buffer)
+	if err := writeStatusSyncRunPlain(stdout, "latest_failed_sync_run", run); err != nil {
+		t.Fatalf("writeStatusSyncRunPlain: %v", err)
+	}
+	out := stdout.String()
+	wantLines := []string{
+		`latest_failed_sync_run_source_family_filter: wear\x1bable` + "\n",
+		`latest_failed_sync_run_error_summary: Provider \x1btimeout\x07 after 30s` + "\n",
+	}
+	for _, want := range wantLines {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status plain output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.ContainsAny(out, "\x1b\x07") {
+		t.Fatalf("status plain output contains a raw control byte:\n%q", out)
+	}
 }
 
 func TestStatusPlainReportsEmptyHealthArchive(t *testing.T) {
@@ -5748,6 +5780,57 @@ func TestConnectRejectsWebOAuthClient(t *testing.T) {
 		t.Fatalf("message = %T(%v), want web client rejection", got["message"], got["message"])
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestParseOAuthClientConfigContentPinsHTTPSAndGoogleHosts(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		wantErr bool
+	}{
+		{
+			name:    "http auth_uri rejected",
+			content: `{"installed":{"client_id":"test-client","client_secret":"test-secret","auth_uri":"http://accounts.google.com/o/oauth2/v2/auth"}}`,
+			wantErr: true,
+		},
+		{
+			name:    "attacker-host token_uri rejected",
+			content: `{"installed":{"client_id":"test-client","client_secret":"test-secret","token_uri":"https://attacker.example.com/token"}}`,
+			wantErr: true,
+		},
+		{
+			name:    "empty uris default to Google and accepted",
+			content: `{"installed":{"client_id":"test-client","client_secret":"test-secret"}}`,
+			wantErr: false,
+		},
+		{
+			name:    "valid Google https uris accepted",
+			content: `{"installed":{"client_id":"test-client","client_secret":"test-secret","auth_uri":"https://accounts.google.com/o/oauth2/v2/auth","token_uri":"https://oauth2.googleapis.com/token"}}`,
+			wantErr: false,
+		},
+		{
+			name:    "uppercase scheme and host accepted (case-insensitive)",
+			content: `{"installed":{"client_id":"test-client","client_secret":"test-secret","auth_uri":"HTTPS://Accounts.Google.Com/o/oauth2/v2/auth","token_uri":"HTTPS://OAuth2.GoogleAPIs.Com/token"}}`,
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseOAuthClientConfigContent([]byte(tt.content))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parseOAuthClientConfigContent error = nil, want https/Google host rejection")
+				}
+				if !strings.Contains(err.Error(), "https") || !strings.Contains(err.Error(), "Google OAuth host") {
+					t.Fatalf("error = %q, want mention of https and Google OAuth host", err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseOAuthClientConfigContent error = %v, want accepted", err)
+			}
+		})
+	}
 }
 
 func TestOAuthScopesUseRecognizedGoogleHealthScopes(t *testing.T) {

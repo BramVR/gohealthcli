@@ -81,6 +81,15 @@ func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
 		}), err
 	}
 	defer archive.Close()
+	// Fence abandoned sync_running rows on the handle we already hold
+	// (#236), so the audit trail never shows a corpse from a killed
+	// process alongside this run's live row. Sitting AFTER the gate
+	// means preflight rejections stay side-effect-free (no-audit-row
+	// contract: a rejected `sync --rollup bogus` neither migrates nor
+	// mutates the archive). Best-effort: a fence that loses a
+	// SQLITE_BUSY race is retried by the next entry point; it must not
+	// fail a sync that is otherwise ready to run.
+	_, _ = archive.FenceAbandonedSyncRuns(runtime.now().UTC())
 	config, err := inspectIdentityConfig(options.configPath, options.archivePath)
 	if err != nil {
 		wrapped := fmt.Errorf("config check failed: %w", err)
@@ -174,6 +183,21 @@ func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
 		return lifecycle.finalize(archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeFailed, err)
 	}
 	ingestionRequest.accessToken = accessToken
+	// Per-page heartbeat (#236): before every page fetch the counts so
+	// far plus last_progress_at land on the sync_running row, so a
+	// concurrent `sync --status` poller sees live progress instead of
+	// 0/0/0 until finalize. Best-effort by design — a heartbeat that
+	// loses a SQLITE_BUSY race is dropped, the next page writes a fresh
+	// one, and FinalizeSyncRun remains the authoritative terminal write.
+	// Totals go through the same applyGoogleHealthIngestionCounts +
+	// syncResultTotalCounts pair the finalize uses, so the advisory and
+	// authoritative counts cannot drift when a new count family is added.
+	ingestionRequest.progress = func(counts googleHealthIngestionResult) {
+		var snapshot syncResult
+		applyGoogleHealthIngestionCounts(&snapshot, counts)
+		seen, newCount, updated := syncResultTotalCounts(snapshot)
+		_ = archive.HeartbeatSyncRun(syncRunID, seen, newCount, updated, runtime.now().UTC().Format(time.RFC3339))
+	}
 	ingestionResult, err := ingestion.Execute(archive, ingestionRequest)
 	applyGoogleHealthIngestionCounts(&result, ingestionResult)
 	if err != nil {

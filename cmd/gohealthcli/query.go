@@ -614,10 +614,55 @@ func queryPlainValue(value any) string {
 	if value == nil {
 		return "null"
 	}
-	return strings.NewReplacer(
-		`\`, `\\`,
-		"\r", `\r`,
-		"\n", `\n`,
-		"\t", `\t`,
-	).Replace(fmt.Sprint(value))
+	return escapePlainControlChars(fmt.Sprint(value))
+}
+
+// escapePlainControlChars renders a plain/default-mode string so that no
+// C0 (0x00–0x1F) or C1 (0x7F–0x9F) control byte ever reaches the terminal
+// raw — the fix for terminal escape-sequence injection (CWE-150, issue #244).
+// Backslash is doubled first so the escaping is reversible, the familiar
+// \r/\n/\t named forms are preserved (keeping the established
+// line-parseability convention), and every other control byte — ESC (0x1b),
+// BEL (0x07), DEL (0x7f), and the rest — renders as a visible \xHH escape.
+// Bytes 0xA0–0xFF that are part of a valid multi-byte UTF-8 rune are left
+// intact; only the C1 control range is escaped. JSON output mode never routes
+// through here, so its \u escaping is untouched.
+func escapePlainControlChars(value string) string {
+	if !strings.ContainsFunc(value, isPlainControlRune) {
+		return value
+	}
+	var builder strings.Builder
+	builder.Grow(len(value))
+	for _, r := range value {
+		switch r {
+		case '\\':
+			builder.WriteString(`\\`)
+		case '\r':
+			builder.WriteString(`\r`)
+		case '\n':
+			builder.WriteString(`\n`)
+		case '\t':
+			builder.WriteString(`\t`)
+		default:
+			if isPlainControlRune(r) {
+				fmt.Fprintf(&builder, `\x%02x`, r)
+				continue
+			}
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
+}
+
+// isPlainControlRune reports whether r needs escaping before plain-mode
+// output: backslash, or any C0 (0x00–0x1F, which includes \r/\n/\t) or C1
+// (0x7F–0x9F) control character. It flags backslash and \r/\n/\t too so the
+// fast-path strings.ContainsFunc guard in escapePlainControlChars fires for a
+// string that contains only those; that function's switch then renders their
+// doubled/named forms before the generic \xHH fallback ever sees them.
+func isPlainControlRune(r rune) bool {
+	if r == '\\' {
+		return true
+	}
+	return r <= 0x1f || (r >= 0x7f && r <= 0x9f)
 }

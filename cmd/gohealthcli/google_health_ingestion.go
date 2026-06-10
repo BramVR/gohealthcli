@@ -61,6 +61,29 @@ type googleHealthIngestionRequest struct {
 	// nil disables cancellation (used by single-type syncs without SIGINT
 	// instrumentation).
 	cancelCh <-chan struct{}
+	// progress, when non-nil, is invoked at the TOP of every page
+	// iteration — before the fetch — with the counts archived so far,
+	// so the caller can persist a heartbeat on the sync_runs row
+	// (#236). Heartbeating before the fetch (rather than after the
+	// page's upserts) means a slow first page — large backfill, 429
+	// retry backoff — still shows a live heartbeat from second zero,
+	// so the abandoned-run fence cannot mis-flag a run that is merely
+	// waiting on upstream. The callback owns its own error policy —
+	// ingestion never fails a Sync Run because a progress write
+	// misfired, which is why the hook takes no error return. nil
+	// disables heartbeats (raw fetch paths and tests that predate #236).
+	progress func(result googleHealthIngestionResult)
+}
+
+// reportIngestionProgress fires the optional pre-fetch progress hook.
+// Shared by all three pagination drivers so the heartbeat semantics
+// ("before every page fetch, carrying the counts so far") cannot
+// drift between endpoint families.
+func reportIngestionProgress(request googleHealthIngestionRequest, result *googleHealthIngestionResult) {
+	if request.progress == nil {
+		return
+	}
+	request.progress(*result)
 }
 
 // errSyncCanceled is the sentinel returned by ingestion when the cancel
@@ -190,6 +213,7 @@ func (ingestion googleHealthIngestion) executeDailyRollupPages(archive googleHea
 			if ingestionCanceled(request.cancelCh) {
 				return errSyncCanceled
 			}
+			reportIngestionProgress(request, result)
 			rawRequest, err := buildGoogleHealthDailyRollupRawRequest(request.dataType, window.from, window.to, 0, pageToken)
 			if err != nil {
 				return err
@@ -244,6 +268,7 @@ func (ingestion googleHealthIngestion) executeWindowRollupPages(archive googleHe
 		if ingestionCanceled(request.cancelCh) {
 			return errSyncCanceled
 		}
+		reportIngestionProgress(request, result)
 		rawRequest, err := buildGoogleHealthRollupRawRequest(request.dataType, request.from, request.to, windowSize, 0, pageToken)
 		if err != nil {
 			return err
@@ -291,6 +316,7 @@ func (ingestion googleHealthIngestion) executeDataPointPages(archive googleHealt
 		if ingestionCanceled(request.cancelCh) {
 			return errSyncCanceled
 		}
+		reportIngestionProgress(request, result)
 		rawRequest, err := buildGoogleHealthSyncDataPointRawRequest(request.dataType, request.from, request.to, request.sourceFamily, 0, pageToken)
 		if err != nil {
 			return err
@@ -706,11 +732,26 @@ func buildGoogleHealthExportExerciseTcxRawRequest(dataPointName string) (rawProv
 		parts[4] != "dataPoints" || parts[5] == "" {
 		return rawProviderRequest{}, fmt.Errorf("exportExerciseTcx requires an exercise Data Point name, got %q", dataPointName)
 	}
+	// Rebuild the path from its validated segments, percent-encoding the
+	// two provider-controlled free segments (the `<user>` and data point
+	// `<id>`). The name comes from the upstream JSON `name` field, so a
+	// crafted `?`/`#`/`%` would otherwise inject a query string, fragment,
+	// or decoded `/` and shift the `:exportExerciseTcx` custom-method
+	// suffix off the path. This mirrors the `url.PathEscape` convention
+	// already used by the rollUp/dailyRollUp/reconcile builders.
+	escapedName := strings.Join([]string{
+		parts[0],
+		url.PathEscape(parts[1]),
+		parts[2],
+		parts[3],
+		parts[4],
+		url.PathEscape(parts[5]),
+	}, "/")
 	return rawProviderRequest{
 		endpointName:   "dataTypes.exercise.exportExerciseTcx",
 		dataType:       "exercise",
 		method:         http.MethodGet,
-		url:            googleHealthBaseURL + "/" + dataPointName + ":exportExerciseTcx",
+		url:            googleHealthBaseURL + "/" + escapedName + ":exportExerciseTcx",
 		requiredScopes: googleHealthScopesForDataType("exercise"),
 	}, nil
 }

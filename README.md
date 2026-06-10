@@ -217,6 +217,33 @@ gohealthcli sync --types steps --from 2026-01-01 --to 2026-01-02 --plain
 gohealthcli status --plain
 ```
 
+Watch a long sync from another terminal (or an agent) while it runs:
+
+```bash
+gohealthcli sync --status
+gohealthcli sync --status --window 2h --json
+```
+
+`sync --status` reads the local `sync_runs` audit table — no provider calls.
+Every Sync Run heartbeats before each page fetch (counts so far plus
+`last_progress_at`), so in-flight rows show live progress; finished runs are
+listed inside the `--window` (default 15m, max 24h) while running rows never
+age out of view. On entry, `sync`, `sync --status`, and `status` fence
+abandoned runs: a `sync_running` row with no heartbeat for 5 minutes flips to
+`sync_failed` with `error_summary='abandoned (no heartbeat for 5m)'`, and the
+Sync Cursor stays put so the next run re-reads the same window.
+
+What to expect, timing-wise: cursor-resumed incremental syncs finish in
+seconds; wide explicit ranges over sample-dense Data Types are slow
+(heart-rate sustained ≈1,200 Data Points/minute when measured live). Keep any
+single Data Type's run under about one hour — the OAuth access token is
+refreshed at run start only, so a run that outlives it fails mid-flight with
+`Google Health rejected stored Connection token` and, because the failed run's
+cursor never advances, a plain retry re-reads the same too-wide window. Chunk
+big backfills of dense types with explicit `--from`/`--to` (a few days per run
+for heart-rate); `--all` is safe in aggregate since every per-type run gets a
+fresh token.
+
 Archive daily step Rollups or wearable-filtered Data Points when needed:
 
 ```bash

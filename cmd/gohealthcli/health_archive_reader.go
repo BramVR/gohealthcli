@@ -232,6 +232,16 @@ func statusSetup(archivePath string) (statusResult, error) {
 		Status:      "status_failed",
 		ArchivePath: archivePath,
 	}
+	// Fence abandoned sync_running rows before summarizing (#236), so
+	// the latest_failed_sync_run stanza reports the orphan instead of
+	// the summary silently skipping a phantom in-flight run.
+	// Best-effort: `status` is a read surface, so a fence that cannot
+	// write (read-only media, lost SQLITE_BUSY race even after the
+	// retry budget) degrades to a slightly stale summary rather than
+	// failing the command. Open errors are not lost — the reader open
+	// below goes through the same lifecycle and surfaces the identical
+	// healthArchiveOpenError for the caller to decode.
+	_, _ = fenceAbandonedSyncRunsAtPath(archivePath, currentTime().UTC())
 	reader, err := openHealthArchiveReader(archivePath)
 	if err != nil {
 		var openErr healthArchiveReaderOpenError
