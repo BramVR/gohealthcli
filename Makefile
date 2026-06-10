@@ -28,7 +28,8 @@ fmt:
 	@gofmt -w .
 
 fmt-check:
-	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then \
+	@out="$$(gofmt -l .)" || { echo "gofmt failed"; exit 1; }; \
+	if [ -n "$$out" ]; then \
 		echo "gofmt drift in:"; echo "$$out"; \
 		echo "run 'make fmt' to fix"; exit 1; \
 	fi
