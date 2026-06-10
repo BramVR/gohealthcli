@@ -189,6 +189,12 @@ func (provider *midRunRefreshIngestionProvider) Fetch(request rawProviderRequest
 	if err == nil || !isUnauthorizedHTTPError(err) {
 		return body, err
 	}
+	// A signal that landed while the failing request was in flight wins
+	// over the refresh: the next clean boundary is here, before spending
+	// a token refresh + retry the user no longer wants.
+	if ingestionCanceled(cancelCh) {
+		return nil, errSyncCanceled
+	}
 	refreshed, refreshErr := provider.refresh()
 	if refreshErr != nil {
 		return nil, refreshErr

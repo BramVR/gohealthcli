@@ -168,6 +168,47 @@ func TestGoogleHealthIngestionSurfacesMidRunRefreshFailure(t *testing.T) {
 	}
 }
 
+// TestGoogleHealthIngestionDoesNotRefreshAfter401WhenCanceled pins the
+// cancellation contract on the refresh path: when SIGINT closes the
+// cancel channel while the 401-failing request is in flight, the next
+// boundary is BEFORE the token refresh — ingestion must surface
+// errSyncCanceled instead of spending a refresh + retry the user no
+// longer wants.
+func TestGoogleHealthIngestionDoesNotRefreshAfter401WhenCanceled(t *testing.T) {
+	archive := &fakeGoogleHealthIngestionArchive{}
+	cancelCh := make(chan struct{})
+	canceled := false
+	provider := funcIngestionProvider(func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		// Simulate the signal landing while the failing request is in
+		// flight: close the channel, then surface the 401.
+		if !canceled {
+			close(cancelCh)
+			canceled = true
+		}
+		return nil, &googleHealthHTTPError{StatusCode: 401}
+	})
+	ingestion := midRunRefreshTestIngestion(t, provider)
+	request := fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+		dataType: "steps",
+		from:     "2026-01-01",
+		to:       "2026-01-02T00:00:00Z",
+	})
+	request.cancelCh = cancelCh
+	refreshCalls := 0
+	request.refreshAccessToken = func() (string, error) {
+		refreshCalls++
+		return "fresh-access", nil
+	}
+
+	_, err := ingestion.Execute(archive, request)
+	if !errors.Is(err, errSyncCanceled) {
+		t.Fatalf("ingest error = %v, want errSyncCanceled", err)
+	}
+	if refreshCalls != 0 {
+		t.Fatalf("refresh calls = %d, want 0 after cancellation", refreshCalls)
+	}
+}
+
 func TestGoogleHealthIngestionWithoutRefreshHookSurfaces401(t *testing.T) {
 	archive := &fakeGoogleHealthIngestionArchive{}
 	fetchCalls := 0
