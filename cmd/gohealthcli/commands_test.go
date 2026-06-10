@@ -79,6 +79,53 @@ func TestRunWithRuntimeRejectsNilRunAdapter(t *testing.T) {
 	}
 }
 
+// TestLookupCommandFindsEveryRegistryEntryIncludingHidden pins the lookup
+// contract the registry-keyed dispatch depends on (#75): every entry —
+// visible OR hidden — is reachable by name, and the returned copy carries
+// the wired Run adapter. The Run assertion matters because the `schema`
+// entry's adapter is bound in init() after the `commands` literal is
+// initialised; an index that snapshotted entry VALUES before that wiring
+// would hand dispatch a nil Run for schema, and this test would catch it.
+func TestLookupCommandFindsEveryRegistryEntryIncludingHidden(t *testing.T) {
+	for _, cmd := range commands {
+		got, ok := lookupCommand(cmd.Name)
+		if !ok {
+			t.Errorf("lookupCommand(%q) reported not found; every registry entry must be reachable by name", cmd.Name)
+			continue
+		}
+		if got.Name != cmd.Name {
+			t.Errorf("lookupCommand(%q) returned entry %q", cmd.Name, got.Name)
+		}
+		if got.Run == nil {
+			t.Errorf("lookupCommand(%q) returned an entry with a nil Run adapter; lookup must observe the init()-wired adapters", cmd.Name)
+		}
+	}
+}
+
+// TestLookupCommandRejectsUnknownName pins the miss side of the contract:
+// an unknown name reports ok=false so runWithRuntime routes to the
+// unknown-command failure path (existing error text + exit code, #75 AC).
+func TestLookupCommandRejectsUnknownName(t *testing.T) {
+	if got, ok := lookupCommand("definitely-not-a-command"); ok {
+		t.Fatalf("lookupCommand(\"definitely-not-a-command\") = %q, want not found", got.Name)
+	}
+}
+
+// TestCommandNamesAreUnique pins the registry invariant that name-keyed
+// dispatch (#75) silently depends on: two entries sharing a Name would
+// make one of them unreachable. The init()-time index build panics on a
+// duplicate; this test surfaces the same mistake as a readable build-time
+// failure instead of an init panic in an unrelated test binary.
+func TestCommandNamesAreUnique(t *testing.T) {
+	seen := make(map[string]bool, len(commands))
+	for _, cmd := range commands {
+		if seen[cmd.Name] {
+			t.Errorf("duplicate command name %q in registry", cmd.Name)
+		}
+		seen[cmd.Name] = true
+	}
+}
+
 // TestSuggestReturnsCloseCommand exercises the canonical one-typo case from
 // the PRD: a single transposition in "status" should surface that command as
 // the suggestion. This test is intentionally narrow — it locks in the
