@@ -76,6 +76,63 @@ func TestExpandConnectAddScopesMapsKeywordsToScopeStrings(t *testing.T) {
 	}
 }
 
+// TestConnectHelpAddScopesUsageListsEveryAcceptedKeyword is the #148
+// drift guard for the `connect --help` flag block: the `--add-scopes`
+// usage text must name every keyword `expandConnectAddScopes` accepts,
+// rendered exactly as supportedAddScopeKeywords() renders them (the
+// same rendering the unknown-keyword error uses). Deriving the
+// expectation from connectAddScopeKeywords means adding a keyword to
+// the map without surfacing it in --help fails here instead of
+// shipping (the `nutrition` keyword shipped invisible to --help for
+// two days because nothing pinned the two together).
+func TestConnectHelpAddScopesUsageListsEveryAcceptedKeyword(t *testing.T) {
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runConnect([]string{"--help"}, "config.json", "archive.db", false, outputMode{}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("connect --help exit = %d, want 0 (stderr=%s)", code, stderr.String())
+	}
+
+	help := stderr.String()
+	want := "extend the OAuth grant with optional scope keywords (csv): " + supportedAddScopeKeywords()
+	if !strings.Contains(help, want) {
+		t.Fatalf("connect --help output missing canonical --add-scopes usage line\nwant substring: %q\ngot:\n%s", want, help)
+	}
+	for keyword := range connectAddScopeKeywords {
+		if !strings.Contains(help, keyword) {
+			t.Fatalf("connect --help output does not mention accepted --add-scopes keyword %q:\n%s", keyword, help)
+		}
+	}
+}
+
+// TestConnectSchemaAddScopesUsageMatchesAcceptedKeywords extends the
+// #148 drift guard to the published schema: the `schema --json`
+// contract (and the docs/commands/connect.md page generated from it)
+// renders the connect command's add-scopes usage from the same
+// commandDef entry, so that entry must carry the identical
+// canonically-rendered keyword list the runtime flag registration
+// uses. With both surfaces pinned to connectAddScopesUsage(), a new
+// keyword in connectAddScopeKeywords propagates to --help, the schema,
+// and the regenerated reference page without any hand-edited list.
+func TestConnectSchemaAddScopesUsageMatchesAcceptedKeywords(t *testing.T) {
+	for _, command := range commands {
+		if command.Name != "connect" {
+			continue
+		}
+		for _, spec := range command.Flags {
+			if spec.Name != "add-scopes" {
+				continue
+			}
+			if want := connectAddScopesUsage(); spec.Usage != want {
+				t.Fatalf("connect schema add-scopes usage = %q, want %q (derived from connectAddScopeKeywords)", spec.Usage, want)
+			}
+			return
+		}
+		t.Fatal("connect commandDef has no add-scopes flagSpec")
+	}
+	t.Fatal("command registry has no connect commandDef")
+}
+
 // TestGoogleHealthIdentityEndpointScopesCatalog pins the AC for PRD
 // #142 slice 1 plus the slice-2 revision (#176): the declarative
 // catalog has entries for getProfile, getSettings, pairedDevices,

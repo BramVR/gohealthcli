@@ -120,6 +120,15 @@ func unionScopes(base, extra []string) []string {
 	return result
 }
 
+// connectAddScopesUsage renders the --add-scopes flag's usage text
+// from connectAddScopeKeywords, so the help line, the schema entry in
+// commands.go, and the unknown-keyword error all describe the same
+// keyword set — adding a keyword to the map updates every surface at
+// once (#148).
+func connectAddScopesUsage() string {
+	return "extend the OAuth grant with optional scope keywords (csv): " + supportedAddScopeKeywords()
+}
+
 func supportedAddScopeKeywords() string {
 	keywords := make([]string, 0, len(connectAddScopeKeywords))
 	for keyword := range connectAddScopeKeywords {

@@ -1018,7 +1018,10 @@ func runConnectWithRuntime(args []string, configPath, archivePath string, global
 		PlainOutput: mode.plain,
 		NoInput:     globalNoInput,
 	})
-	connectAddScopes := flags.String("add-scopes", "", "extend the OAuth grant with optional scope keywords (csv): irn, ecg, nutrition, tcx, settings")
+	// The keyword list is rendered from connectAddScopeKeywords so the
+	// --help text can never drift from what expandConnectAddScopes
+	// accepts again (#148: `nutrition` was accepted but invisible).
+	connectAddScopes := flags.String("add-scopes", "", connectAddScopesUsage())
 
 	if err := ParseCommon(flags, common, args); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
