@@ -241,7 +241,10 @@ sustained throughput measures roughly 2,000–5,000 Data Points/minute on
 real runs (plan with ~2,000/min) — so the Data Type's density decides the
 wall-clock. Densities measured 2026-06-10 from a real archive backed by a
 Pixel Watch 4 (continuous heart-rate sampling), and what two weeks of
-data costs:
+data costs. A Data Point is the upstream record unit, which is why the
+counts differ so wildly per type: a heart-rate point is a single reading
+(every ~3 seconds on the watch), a steps point is a one-minute bucket,
+and a sleep point is an entire night with its stage breakdown.
 
 | Data Type                 | Density (points/day) | Two weeks ≈  | Sync time ≈              |
 | ------------------------- | -------------------- | ------------ | ------------------------ |

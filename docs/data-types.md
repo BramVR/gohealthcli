@@ -19,24 +19,26 @@ The catalog is authoritative in `cmd/gohealthcli/google_health_data_types.go`; t
 
 Sync cost is proportional to Data Point count. Sustained throughput measures roughly 2,000–5,000 Data Points per minute on real runs; the table plans with the conservative ~2,000/min. Densities were measured 2026-06-10 from one real account backed by a Pixel Watch 4 (continuous heart-rate sampling) — your numbers scale with what your devices record. Cursor-resumed incremental syncs cover only the gap since the last run and finish in seconds regardless of type; Rollup syncs land one row per day or window and are always trivial.
 
-| Sync key | Points/day | Two weeks ≈ | Sync time ≈ |
-| --- | --- | --- | --- |
-| `heart-rate` | ~27,500 | ~385,000 pts | 1.5–3 h |
-| `time-in-heart-rate-zone` | ~960 | ~13,400 pts | ~5 min |
-| `active-energy-burned` | ~630 | ~8,800 pts | ~4 min |
-| `activity-level` | ~540 | ~7,600 pts | ~4 min |
-| `oxygen-saturation` | ~480 | ~6,700 pts | ~3 min |
-| `active-minutes` | ~280 | ~3,900 pts | ~2 min |
-| `steps` | ~260 | ~3,600 pts | ~2 min |
-| `distance` | ~210 | ~2,900 pts | ~1–2 min |
-| `heart-rate-variability` | ~60 | ~800 pts | under a minute |
-| `sedentary-period` | ~14 | ~190 pts | seconds |
-| `active-zone-minutes` | ~13 | ~180 pts | seconds |
-| `altitude` | ~8 | ~120 pts | seconds |
-| `swim-lengths-data` | ~7 | ~100 pts | seconds |
-| `exercise` | ~2 | ~30 pts | seconds |
-| `sleep` | ~1 | ~18 pts | seconds |
-| `vo2-max`, `run-vo2-max`, `respiratory-rate-sleep-summary`, the `daily-*` types | ~1 | ~14 pts | seconds |
+Points-per-day spans orders of magnitude because a Data Point is the upstream record unit, and that unit varies by shape: a `sample` point is a single reading (the watch emits a heart-rate sample every ~3 seconds), an `interval` point is one time-bucket (a steps point covers about a minute of walking), a `session` point is one whole activity (a sleep point is an entire night, stage breakdown included), and a `daily` point is one row per civil date.
+
+| Sync key | Shape | Points/day | Two weeks ≈ | Sync time ≈ |
+| --- | --- | --- | --- | --- |
+| `heart-rate` | sample | ~27,500 | ~385,000 pts | 1.5–3 h |
+| `time-in-heart-rate-zone` | interval | ~960 | ~13,400 pts | ~5 min |
+| `active-energy-burned` | interval | ~630 | ~8,800 pts | ~4 min |
+| `activity-level` | interval | ~540 | ~7,600 pts | ~4 min |
+| `oxygen-saturation` | sample | ~480 | ~6,700 pts | ~3 min |
+| `active-minutes` | interval | ~280 | ~3,900 pts | ~2 min |
+| `steps` | interval | ~260 | ~3,600 pts | ~2 min |
+| `distance` | interval | ~210 | ~2,900 pts | ~1–2 min |
+| `heart-rate-variability` | sample | ~60 | ~800 pts | under a minute |
+| `sedentary-period` | interval | ~14 | ~190 pts | seconds |
+| `active-zone-minutes` | interval | ~13 | ~180 pts | seconds |
+| `altitude` | interval | ~8 | ~120 pts | seconds |
+| `swim-lengths-data` | interval | ~7 | ~100 pts | seconds |
+| `exercise` | session | ~2 | ~30 pts | seconds |
+| `sleep` | session | ~1 | ~18 pts | seconds |
+| `vo2-max`, `run-vo2-max`, `respiratory-rate-sleep-summary`, the `daily-*` types | sample / daily | ~1 | ~14 pts | seconds |
 
 Not yet measured on this account: `floors`, `calories-in-heart-rate-zone`, `electrocardiogram`, `irregular-rhythm-notification`, `weight`, `body-fat`, `height`, `blood-glucose`, `core-body-temperature`, and `hydration-log`. Most of these are sparse user-logged or per-event records (weigh-ins, ECG sessions, hydration entries) and should sync in seconds; a continuously-recording source — a CGM feeding `blood-glucose`, for instance — raises density and cost accordingly.
 
