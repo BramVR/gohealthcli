@@ -125,6 +125,18 @@ func (archive *sqliteHealthArchiveReader) Query(statement string, encoder queryR
 		return result, err
 	}
 	result.Columns = columns
+	// rows.ColumnTypes() exposes the per-column DatabaseTypeName the
+	// encoders need to detect BLOB columns. The slice is the same
+	// length as columns; we pre-extract the type names so the row loop
+	// stays cheap.
+	columnTypes, err := rows.ColumnTypes()
+	if err != nil {
+		return result, err
+	}
+	databaseTypeNames := make([]string, len(columnTypes))
+	for index, columnType := range columnTypes {
+		databaseTypeNames[index] = columnType.DatabaseTypeName()
+	}
 	for rows.Next() {
 		values := make([]any, len(columns))
 		destinations := make([]any, len(columns))
@@ -135,7 +147,7 @@ func (archive *sqliteHealthArchiveReader) Query(statement string, encoder queryR
 			return result, err
 		}
 		for index, value := range values {
-			values[index] = encoder.encode(columns[index], value)
+			values[index] = encoder.encode(columns[index], databaseTypeNames[index], value)
 		}
 		result.Rows = append(result.Rows, values)
 	}

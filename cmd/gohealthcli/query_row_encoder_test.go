@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -31,7 +32,7 @@ func captureQuery(t *testing.T, configPath string, queryArgs ...string) (stdout,
 // escaped string.
 func TestJSONModeEncoderJSONTypedColumnPassesThrough(t *testing.T) {
 	encoder := newJSONModeEncoder()
-	value := encoder.encode("raw_json", []byte(`{"steps":{"count":"512"}}`))
+	value := encoder.encode("raw_json", "TEXT", []byte(`{"steps":{"count":"512"}}`))
 	raw, ok := value.(json.RawMessage)
 	if !ok {
 		t.Fatalf("encoded value type = %T, want json.RawMessage", value)
@@ -59,7 +60,7 @@ func TestJSONModeEncoderJSONTypedColumnPassesThrough(t *testing.T) {
 // invent a string or empty object.
 func TestJSONModeEncoderJSONTypedColumnNULLStaysNull(t *testing.T) {
 	encoder := newJSONModeEncoder()
-	value := encoder.encode("raw_json", nil)
+	value := encoder.encode("raw_json", "TEXT", nil)
 	if value != nil {
 		t.Fatalf("encoded NULL = %T(%v), want nil", value, value)
 	}
@@ -71,7 +72,7 @@ func TestJSONModeEncoderJSONTypedColumnNULLStaysNull(t *testing.T) {
 // instead of an error.
 func TestJSONModeEncoderJSONTypedColumnInvalidJSONFallsBackToString(t *testing.T) {
 	encoder := newJSONModeEncoder()
-	value := encoder.encode("raw_json", []byte("not json {"))
+	value := encoder.encode("raw_json", "TEXT", []byte("not json {"))
 	got, ok := value.(string)
 	if !ok {
 		t.Fatalf("encoded value type = %T, want string", value)
@@ -87,7 +88,7 @@ func TestJSONModeEncoderJSONTypedColumnInvalidJSONFallsBackToString(t *testing.T
 // invalid JSON errors.
 func TestJSONModeEncoderJSONTypedColumnEmptyBytesFallsBackToString(t *testing.T) {
 	encoder := newJSONModeEncoder()
-	value := encoder.encode("raw_json", []byte{})
+	value := encoder.encode("raw_json", "TEXT", []byte{})
 	got, ok := value.(string)
 	if !ok {
 		t.Fatalf("encoded value type = %T, want string", value)
@@ -103,7 +104,7 @@ func TestJSONModeEncoderJSONTypedColumnEmptyBytesFallsBackToString(t *testing.T)
 // or "JSON-shaped" characters.
 func TestJSONModeEncoderNonJSONColumnWithSpacesStaysString(t *testing.T) {
 	encoder := newJSONModeEncoder()
-	value := encoder.encode("greeting", []byte("hello world"))
+	value := encoder.encode("greeting", "TEXT", []byte("hello world"))
 	got, ok := value.(string)
 	if !ok {
 		t.Fatalf("encoded value type = %T(%v), want string", value, value)
@@ -119,7 +120,7 @@ func TestJSONModeEncoderNonJSONColumnWithSpacesStaysString(t *testing.T) {
 // `payload_json`).
 func TestJSONModeEncoderJSONSuffixedColumnPassesThrough(t *testing.T) {
 	encoder := newJSONModeEncoder()
-	value := encoder.encode("payload_json", []byte(`{"ok":true}`))
+	value := encoder.encode("payload_json", "TEXT", []byte(`{"ok":true}`))
 	if _, ok := value.(json.RawMessage); !ok {
 		t.Fatalf("encoded value type = %T(%v), want json.RawMessage", value, value)
 	}
@@ -136,7 +137,7 @@ func TestJSONModeEncoderAllowlistedColumnNames(t *testing.T) {
 		"token_metadata_json",
 		"google_identity_json",
 	} {
-		value := encoder.encode(name, []byte(`{"k":"v"}`))
+		value := encoder.encode(name, "TEXT", []byte(`{"k":"v"}`))
 		if _, ok := value.(json.RawMessage); !ok {
 			t.Fatalf("column %q encoded as %T(%v), want json.RawMessage", name, value, value)
 		}
@@ -148,13 +149,13 @@ func TestJSONModeEncoderAllowlistedColumnNames(t *testing.T) {
 // gets the JSON-passthrough treatment.
 func TestJSONModeEncoderNonByteScalarsUnchanged(t *testing.T) {
 	encoder := newJSONModeEncoder()
-	if got := encoder.encode("count", int64(42)); got != int64(42) {
+	if got := encoder.encode("count", "INTEGER", int64(42)); got != int64(42) {
 		t.Fatalf("encode(int64) = %T(%v), want int64(42)", got, got)
 	}
-	if got := encoder.encode("ratio", 1.5); got != 1.5 {
+	if got := encoder.encode("ratio", "REAL", 1.5); got != 1.5 {
 		t.Fatalf("encode(float64) = %T(%v), want float64(1.5)", got, got)
 	}
-	if got := encoder.encode("flag", true); got != true {
+	if got := encoder.encode("flag", "INTEGER", true); got != true {
 		t.Fatalf("encode(bool) = %T(%v), want true", got, got)
 	}
 }
@@ -166,7 +167,7 @@ func TestJSONModeEncoderNonByteScalarsUnchanged(t *testing.T) {
 func TestPlainModeEncoderPreservesEscapeStringBehaviour(t *testing.T) {
 	encoder := newPlainModeEncoder()
 	// JSON-typed column: still a plain string (no passthrough).
-	value := encoder.encode("raw_json", []byte(`{"steps":{"count":"512"}}`))
+	value := encoder.encode("raw_json", "TEXT", []byte(`{"steps":{"count":"512"}}`))
 	got, ok := value.(string)
 	if !ok {
 		t.Fatalf("encoded value type = %T(%v), want string", value, value)
@@ -175,11 +176,11 @@ func TestPlainModeEncoderPreservesEscapeStringBehaviour(t *testing.T) {
 		t.Fatalf("encoded value = %q, want literal JSON string", got)
 	}
 	// NULL stays nil.
-	if encoder.encode("raw_json", nil) != nil {
+	if encoder.encode("raw_json", "TEXT", nil) != nil {
 		t.Fatalf("encode(NULL) != nil")
 	}
 	// Non-byte scalars unchanged.
-	if got := encoder.encode("count", int64(7)); got != int64(7) {
+	if got := encoder.encode("count", "INTEGER", int64(7)); got != int64(7) {
 		t.Fatalf("encode(int64) = %T(%v), want int64(7)", got, got)
 	}
 }
@@ -307,5 +308,216 @@ func TestJSONModeNonJSONColumnReturnsString(t *testing.T) {
 	}
 	if greeting != "hello world" {
 		t.Fatalf("rows[0][0] = %q, want %q", greeting, "hello world")
+	}
+}
+
+// TestJSONModeEncoderBLOBColumnBase64RoundTrip asserts a BLOB column
+// (signalled via the sql.ColumnType.DatabaseTypeName() == "BLOB" path)
+// is wrapped in the documented `{"__blob_base64__": "..."}` marker and
+// the payload base64-decodes back to the original bytes. The marker
+// shape is the contract `docs/commands/query.md` documents.
+func TestJSONModeEncoderBLOBColumnBase64RoundTrip(t *testing.T) {
+	encoder := newJSONModeEncoder()
+	payload := []byte{0x00, 0xFF, 0x10, 0xAB, 0xCD, 0xEF, 0x01, 0x7F}
+	value := encoder.encode("b", "BLOB", payload)
+	wrapper, ok := value.(map[string]string)
+	if !ok {
+		t.Fatalf("encoded value type = %T(%v), want map[string]string wrapper", value, value)
+	}
+	encoded, ok := wrapper[blobBase64MarkerKey]
+	if !ok {
+		t.Fatalf("encoded wrapper = %v, want key %q", wrapper, blobBase64MarkerKey)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("base64 decode: %v (payload=%q)", err, encoded)
+	}
+	if !bytes.Equal(decoded, payload) {
+		t.Fatalf("decoded bytes = %v, want %v", decoded, payload)
+	}
+}
+
+// TestJSONModeEncoderBLOBColumnRoundTripsThroughJSON asserts the
+// marker shape survives a marshal/unmarshal cycle as a JSON object
+// with a single string field, which is the contract every downstream
+// consumer reads.
+func TestJSONModeEncoderBLOBColumnRoundTripsThroughJSON(t *testing.T) {
+	encoder := newJSONModeEncoder()
+	payload := []byte{0xDE, 0xAD, 0xBE, 0xEF}
+	value := encoder.encode("b", "BLOB", payload)
+	marshalled, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(marshalled, &got); err != nil {
+		t.Fatalf("unmarshal: %v\nraw: %s", err, marshalled)
+	}
+	encoded, ok := got[blobBase64MarkerKey]
+	if !ok {
+		t.Fatalf("unmarshalled = %v, want key %q", got, blobBase64MarkerKey)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("base64 decode: %v", err)
+	}
+	if !bytes.Equal(decoded, payload) {
+		t.Fatalf("decoded = %v, want %v", decoded, payload)
+	}
+}
+
+// TestJSONModeEncoderBLOBColumnNULLStaysNull asserts a NULL BLOB
+// column stays nil — the marker wrapper is reserved for actual byte
+// payloads, never invented from thin air.
+func TestJSONModeEncoderBLOBColumnNULLStaysNull(t *testing.T) {
+	encoder := newJSONModeEncoder()
+	if got := encoder.encode("b", "BLOB", nil); got != nil {
+		t.Fatalf("encode(NULL BLOB) = %T(%v), want nil", got, got)
+	}
+}
+
+// TestJSONModeEncoderBLOBColumnEmptyBytesEncodesEmptyMarker asserts an
+// empty BLOB (zero-length but not NULL) still surfaces as the marker
+// wrapper with an empty base64 payload so consumers can distinguish
+// "stored zero bytes" from NULL.
+func TestJSONModeEncoderBLOBColumnEmptyBytesEncodesEmptyMarker(t *testing.T) {
+	encoder := newJSONModeEncoder()
+	value := encoder.encode("b", "BLOB", []byte{})
+	wrapper, ok := value.(map[string]string)
+	if !ok {
+		t.Fatalf("encoded value type = %T(%v), want marker wrapper", value, value)
+	}
+	encoded, ok := wrapper[blobBase64MarkerKey]
+	if !ok {
+		t.Fatalf("wrapper = %v, want key %q", wrapper, blobBase64MarkerKey)
+	}
+	if encoded != "" {
+		t.Fatalf("encoded = %q, want empty base64 payload", encoded)
+	}
+}
+
+// TestJSONModeEncoderBLOBOverridesJSONAllowlist asserts the BLOB
+// type-name signal takes precedence over the JSON-typed column-name
+// allowlist: a column named `raw_json` that comes back as a BLOB (e.g.
+// because someone stored raw bytes in it) is base64-encoded, never
+// double-parsed as JSON.
+func TestJSONModeEncoderBLOBOverridesJSONAllowlist(t *testing.T) {
+	encoder := newJSONModeEncoder()
+	payload := []byte{0x01, 0x02, 0x03}
+	value := encoder.encode("raw_json", "BLOB", payload)
+	wrapper, ok := value.(map[string]string)
+	if !ok {
+		t.Fatalf("encoded value type = %T(%v), want marker wrapper", value, value)
+	}
+	if _, ok := wrapper[blobBase64MarkerKey]; !ok {
+		t.Fatalf("wrapper = %v, want key %q", wrapper, blobBase64MarkerKey)
+	}
+}
+
+// TestPlainModeEncoderBLOBColumnPrefixedBase64 asserts the plain
+// encoder stamps the `<blob:base64>` prefix on a BLOB column so the
+// line stays parseable (no replacement characters from raw bytes
+// passed through fmt.Sprint). The payload after the prefix
+// base64-decodes back to the original bytes.
+func TestPlainModeEncoderBLOBColumnPrefixedBase64(t *testing.T) {
+	encoder := newPlainModeEncoder()
+	payload := []byte{0x00, 0xFF, 0x10, 0xAB, 0xCD, 0xEF, 0x01, 0x7F}
+	value := encoder.encode("b", "BLOB", payload)
+	got, ok := value.(string)
+	if !ok {
+		t.Fatalf("encoded value type = %T(%v), want string", value, value)
+	}
+	if !strings.HasPrefix(got, blobPlainPrefix) {
+		t.Fatalf("encoded = %q, want prefix %q", got, blobPlainPrefix)
+	}
+	if strings.ContainsRune(got, '�') {
+		t.Fatalf("encoded = %q, contains replacement character", got)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(got, blobPlainPrefix))
+	if err != nil {
+		t.Fatalf("base64 decode: %v", err)
+	}
+	if !bytes.Equal(decoded, payload) {
+		t.Fatalf("decoded = %v, want %v", decoded, payload)
+	}
+}
+
+// TestPlainModeEncoderBLOBColumnNULLStaysNull asserts a NULL BLOB
+// column stays nil — the prefix is reserved for byte payloads.
+func TestPlainModeEncoderBLOBColumnNULLStaysNull(t *testing.T) {
+	encoder := newPlainModeEncoder()
+	if got := encoder.encode("b", "BLOB", nil); got != nil {
+		t.Fatalf("encode(NULL BLOB) = %T(%v), want nil", got, got)
+	}
+}
+
+// TestJSONModeEncoderEndToEndQueryRandomBlobBase64RoundTrip is the
+// vertical tracer-bullet test: run the binary against a real archive,
+// project `randomblob(8)`, and assert the resulting cell carries an
+// 8-byte base64 payload under the documented marker key.
+func TestJSONModeEncoderEndToEndQueryRandomBlobBase64RoundTrip(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
+
+	stdout, stderr := captureQuery(t, configPath, "--json", "SELECT randomblob(8) AS b")
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty", stderr)
+	}
+	var got struct {
+		Rows [][]map[string]string `json:"rows"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout)
+	}
+	if len(got.Rows) != 1 || len(got.Rows[0]) != 1 {
+		t.Fatalf("rows shape = %v, want one row with one column", got.Rows)
+	}
+	encoded, ok := got.Rows[0][0][blobBase64MarkerKey]
+	if !ok {
+		t.Fatalf("rows[0][0] = %v, want key %q", got.Rows[0][0], blobBase64MarkerKey)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("base64 decode: %v (payload=%q)", err, encoded)
+	}
+	if len(decoded) != 8 {
+		t.Fatalf("decoded len = %d, want 8", len(decoded))
+	}
+}
+
+// TestPlainModeEncoderEndToEndQueryRandomBlobPrefixedBase64 asserts
+// the `--plain` path emits a single parseable line carrying the
+// `<blob:base64>` prefix and an 8-byte base64 payload — no replacement
+// characters, no embedded newlines.
+func TestPlainModeEncoderEndToEndQueryRandomBlobPrefixedBase64(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
+
+	stdout, stderr := captureQuery(t, configPath, "--plain", "SELECT randomblob(8) AS b")
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty", stderr)
+	}
+	if strings.ContainsRune(stdout, '�') {
+		t.Fatalf("stdout contains replacement character\nstdout: %s", stdout)
+	}
+	var line string
+	for _, candidate := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(candidate, "row.1.1: ") {
+			line = strings.TrimPrefix(candidate, "row.1.1: ")
+			break
+		}
+	}
+	if line == "" {
+		t.Fatalf("stdout missing row.1.1 line\nstdout: %s", stdout)
+	}
+	if !strings.HasPrefix(line, blobPlainPrefix) {
+		t.Fatalf("row.1.1 = %q, want prefix %q", line, blobPlainPrefix)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(line, blobPlainPrefix))
+	if err != nil {
+		t.Fatalf("base64 decode: %v (payload=%q)", err, line)
+	}
+	if len(decoded) != 8 {
+		t.Fatalf("decoded len = %d, want 8", len(decoded))
 	}
 }
