@@ -1353,6 +1353,18 @@ func (c *exportDatasetCatalog) Suggest(typo string) []string {
 // and typo error path do not pay the construction cost per invocation.
 var exportDatasetCatalogSingleton = newExportDatasetCatalog(exportDatasetDefinitions)
 
+// exportCommonFlagUsageOverrides is export's divergence from the
+// canonical commonFlagsSpec wording, declared once: the registry entry
+// (commands.go, via withCommonOverrides) and the runtime CommonFlagSpec
+// in runExport both consume this map, so `export --help`, the
+// `schema --json` contract, and the generated docs/commands/export.md
+// page render identical strings by construction (issue #76).
+var exportCommonFlagUsageOverrides = map[string]string{
+	"json":     "synonym for --format jsonl",
+	"plain":    "synonym for --format csv",
+	"no-input": "accepted for uniformity; export does no prompting",
+}
+
 func runExport(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("export", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -1365,19 +1377,20 @@ func runExport(args []string, configPath, archivePath string, configPathExplicit
 	// registered AFTER RegisterCommon. --no-input is accepted but unused
 	// by export (it's a read-only verb against the local archive); we
 	// keep it in the spec so the global-flag pre-scan does not reject it.
-	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
+	// The usage strings for the export-specific shared-flag semantics
+	// come from exportCommonFlagUsageOverrides — the same map the
+	// registry entry renders into the published schema — so `export
+	// --help` reflects the documented synonym semantics instead of the
+	// generic "write stable JSON to stdout" wording, without a second
+	// hand-typed copy.
+	commonSpec := AllCommonFlagsSpec()
+	commonSpec.UsageOverrides = exportCommonFlagUsageOverrides
+	common := RegisterCommon(flags, commonSpec, CommonFlagValues{
 		ConfigPath:          configPath,
 		ArchivePath:         archivePath,
 		ArchivePathExplicit: archivePathExplicit,
 		ConfigPathExplicit:  configPathExplicit,
 	})
-	// Override the generic CommonFlagSet Usage strings for the flags
-	// whose meaning is export-specific. `export --help` now reflects the
-	// documented synonym semantics instead of the misleading "write
-	// stable JSON to stdout" wording inherited from the shared module.
-	flags.Lookup("json").Usage = "synonym for --format jsonl"
-	flags.Lookup("plain").Usage = "synonym for --format csv"
-	flags.Lookup("no-input").Usage = "accepted for uniformity; export does no prompting"
 	exportFormat := flags.String("format", "csv", "export format: csv or jsonl (synonyms: --json → jsonl, --plain → csv)")
 	exportOutputPath := flags.String("output", "", "write export to path")
 	exportStdout := flags.Bool("stdout", false, "write export data to stdout")

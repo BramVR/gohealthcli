@@ -34,6 +34,7 @@ func runSchemaWithRegistry(args []string, registry []commandDef, stdout, stderr 
 	flags.SetOutput(stderr)
 	jsonOutput := flags.Bool("json", true, "emit the registry as JSON (default and currently the only output mode)")
 
+	notifySubcommandFlagSetObserver(flags)
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0

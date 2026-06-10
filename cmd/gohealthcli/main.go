@@ -464,11 +464,15 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 	flags := flag.NewFlagSet("gohealthcli", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
-	configPath := flags.String("config", defaultConfigPath(), "config file path")
-	archivePath := flags.String("db", defaultArchivePath(), "SQLite Health Archive path")
-	jsonOutput := flags.Bool("json", false, "write stable JSON to stdout")
-	plainOutput := flags.Bool("plain", false, "write plain key/value output to stdout")
-	noInput := flags.Bool("no-input", false, "never prompt, never wait for browser input")
+	// The shared flags' usage strings come from commonFlagsSpec via
+	// commonFlagUsage — the top-level set registers them directly (it
+	// carries --version, which the Common spec deliberately does not)
+	// but must render the same wording as every subcommand's --help.
+	configPath := flags.String("config", defaultConfigPath(), commonFlagUsage("config"))
+	archivePath := flags.String("db", defaultArchivePath(), commonFlagUsage("db"))
+	jsonOutput := flags.Bool("json", false, commonFlagUsage("json"))
+	plainOutput := flags.Bool("plain", false, commonFlagUsage("plain"))
+	noInput := flags.Bool("no-input", false, commonFlagUsage("no-input"))
 	versionOutput := flags.Bool("version", false, "print version and exit")
 
 	flags.Usage = func() { printTopLevelUsage(flags, stderr) }
@@ -1197,7 +1201,7 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 	})
 	syncTypes := flags.String("types", "", "comma-separated Data Types; defaults to \"steps\" when neither --types nor --all is set")
 	syncAll := flags.Bool("all", false, "sync every default Data Type")
-	syncFrom := flags.String("from", "", "inclusive sync range start")
+	syncFrom := flags.String("from", "", "inclusive sync range start; optional once a Sync Cursor exists")
 	syncTo := flags.String("to", "", "exclusive sync range end")
 	syncRollup := flags.String("rollup", "", "rollup kind to sync; supported: daily | hourly | weekly | window=<duration>")
 	syncSourceFamily := flags.String("source-family", "", "source family filter; supported: wearable")
@@ -1348,7 +1352,7 @@ func runRawWithRuntime(args []string, configPath, archivePath string, mode outpu
 	// targeted "--<flag> is not supported by raw" message when the user
 	// passes them on raw, instead of letting them silently lose values
 	// or fall through to stdlib's generic wording.
-	common := RegisterCommon(flags, CommonFlagSpec{Accepted: []string{"config", "db"}}, CommonFlagValues{
+	common := RegisterCommon(flags, CommonFlagSpec{Accepted: rawCommonFlagNames()}, CommonFlagValues{
 		ConfigPath:  configPath,
 		ArchivePath: archivePath,
 	})
