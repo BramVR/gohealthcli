@@ -235,16 +235,29 @@ abandoned runs: a `sync_running` row with no heartbeat for 5 minutes flips to
 `sync_failed` with `error_summary='abandoned (no heartbeat for 5m)'`, and the
 Sync Cursor stays put so the next run re-reads the same window.
 
-What to expect, timing-wise: cursor-resumed incremental syncs finish in
-seconds; wide explicit ranges over sample-dense Data Types are slow
-(heart-rate sustained ≈1,200 Data Points/minute when measured live). Keep any
-single Data Type's run under about one hour — the OAuth access token is
-refreshed at run start only, so a run that outlives it fails mid-flight with
-`Google Health rejected stored Connection token` and, because the failed run's
-cursor never advances, a plain retry re-reads the same too-wide window. Chunk
-big backfills of dense types with explicit `--from`/`--to` (a few days per run
-for heart-rate); `--all` is safe in aggregate since every per-type run gets a
-fresh token.
+How long does a sync take? Cursor-resumed incremental syncs finish in
+seconds. Explicit backfills cost time in proportion to Data Point count —
+sustained throughput measures roughly 2,000–5,000 Data Points/minute on
+real runs (plan with ~2,000/min) — so the Data Type's density decides the
+wall-clock. Densities measured 2026-06-10 from a real watch-backed archive
+(continuous heart-rate sampling), and what two weeks of data costs:
+
+| Data Type                 | Density (points/day) | Two weeks ≈  | Sync time ≈              |
+| ------------------------- | -------------------- | ------------ | ------------------------ |
+| `heart-rate`              | ~27,500              | ~385,000 pts | 1.5–3 h, in 2–3-day runs |
+| `time-in-heart-rate-zone` | ~960                 | ~13,400 pts  | ~5 min                   |
+| `active-energy-burned`    | ~630                 | ~8,800 pts   | ~4 min                   |
+| `oxygen-saturation`       | ~480                 | ~6,700 pts   | ~3 min                   |
+| `steps`                   | ~260                 | ~3,600 pts   | ~2 min                   |
+| `sleep`, `daily-*` types  | ~1                   | ~14 pts      | seconds                  |
+
+Density is account-specific — a phone-only account with no
+continuously-sampling wearable runs far lower. The hard cap is OAuth: a
+run's access token is fetched at run start and lives about an hour, so
+keep any single Data Type's window under roughly 100,000 points — 2–3
+days of continuously-sampled heart-rate per `--from`/`--to` run. `--all`
+is safe in aggregate because every per-type run gets a fresh token; watch
+long runs from another terminal with `sync --status`.
 
 Archive daily step Rollups or wearable-filtered Data Points when needed:
 

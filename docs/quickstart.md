@@ -90,6 +90,27 @@ gohealthcli status --plain
 gohealthcli sync --types heart-rate,sleep --from 2026-01-01 --to 2026-01-07 --plain
 ```
 
+## How long will a sync take?
+
+Cursor-resumed incremental syncs (no `--from`) finish in seconds. An explicit backfill window costs time in proportion to how many Data Points it covers, and that depends on the Data Type's density. Sustained throughput measures roughly 2,000–5,000 Data Points per minute on real runs; the table plans with the conservative ~2,000/min, using densities measured 2026-06-10 from a real watch-backed archive (continuous heart-rate sampling):
+
+| Data Type | Density (points/day) | Two weeks ≈ | Sync time ≈ |
+| --- | --- | --- | --- |
+| `heart-rate` | ~27,500 | ~385,000 pts | 1.5–3 h, in 2–3-day runs |
+| `time-in-heart-rate-zone` | ~960 | ~13,400 pts | ~5 min |
+| `active-energy-burned` | ~630 | ~8,800 pts | ~4 min |
+| `oxygen-saturation` | ~480 | ~6,700 pts | ~3 min |
+| `steps` | ~260 | ~3,600 pts | ~2 min |
+| `sleep`, `daily-*` types | ~1 | ~14 pts | seconds |
+
+Two caveats. Density is account-specific — a phone-only account without a continuously-sampling wearable runs far lower across the board. And a single run's OAuth token lives about an hour and is only fetched at run start, so chunk dense backfills to 2–3 days of heart-rate per `--from`/`--to` run; `--all` is safe in aggregate because every per-Data-Type run gets a fresh token.
+
+Watch a long run from a second terminal while it is in flight:
+
+```bash
+gohealthcli sync --status
+```
+
 ## Daily Rollups and wearable-only filtering
 
 Daily Rollups summarise raw Data Points over a day — useful for time-series charting without re-aggregating in your own code. Wearable-only filtering returns Data Points whose Data Source is a watch or tracker.
