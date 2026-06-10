@@ -766,6 +766,50 @@ var exportDatasetDefinitions = []exportDatasetSpec{
 		},
 	},
 	{
+		// hydration_log_sessions projects archived hydration-log session
+		// Data Points (#103) into one row per logged volume. Google
+		// Health's HydrationLog proto carries the principal volume under
+		// $.hydrationLog.volume.liters (double); stored as TEXT to
+		// preserve floating-point precision the same way vo2_max_samples
+		// does. Civil_date prefers the upstream provider_civil_date so a
+		// log entry that straddles midnight in the user's tz lands on
+		// its civil day.
+		name:             "hydration-log-sessions",
+		view:             "hydration_log_sessions",
+		migrationVersion: 21,
+		orderBy:          "start_time_utc, provider_name, connection_id",
+		viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			start_time_utc,
+			end_time_utc,
+			IFNULL(start_civil_time, '') AS start_civil_time,
+			IFNULL(end_civil_time, '') AS end_civil_time,
+			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
+			CAST(json_extract(raw_json, '$.hydrationLog.volume.liters') AS TEXT) AS volume_liters,
+			IFNULL(json_extract(data_source_json, '$.platform'), '') AS source_platform,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'hydration-log'
+			AND record_kind = 'session'
+			AND start_time_utc IS NOT NULL
+			AND json_extract(raw_json, '$.hydrationLog.volume.liters') IS NOT NULL`,
+		fields: []exportFieldSpec{
+			{name: "provider_name"},
+			{name: "connection_id"},
+			{name: "start_time_utc"},
+			{name: "end_time_utc"},
+			{name: "start_civil_time"},
+			{name: "end_civil_time"},
+			{name: "civil_date"},
+			{name: "volume_liters"},
+			{name: "source_platform"},
+			{name: "source_family_filter"},
+			{name: "upstream_resource_name"},
+		},
+	},
+	{
 		// searchable_text is the LLM's one-target free-text needle path.
 		// UNIONs categorical text from paired devices, Data Point data
 		// source JSON, the latest profile snapshot, and exercise labels,

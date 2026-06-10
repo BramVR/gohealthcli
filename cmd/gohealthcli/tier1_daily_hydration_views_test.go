@@ -196,3 +196,53 @@ func TestRespiratoryRateSleepSummaryViewProjectsPerStageScalars(t *testing.T) {
 		t.Errorf("scalars = (full=%q, deep=%q, light=%q, rem=%q), want (13.4, 13.4, 13.6, 14.2)", full, deep, light, rem)
 	}
 }
+
+// TestHydrationLogSessionsViewProjectsVolume pins the contract for
+// hydration_log_sessions: one row per archived session Data Point with
+// the principal volume (liters) plus the session timing columns. Volume
+// stored as TEXT to preserve floating-point precision; the raw JSON
+// path lives at $.hydrationLog.volume.liters (Google Health REST API
+// HydrationLog proto: HydrationLog.volume.liters).
+func TestHydrationLogSessionsViewProjectsVolume(t *testing.T) {
+	tempDir := t.TempDir()
+	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+	insertExportDataPoint(t, archivePath, exportDataPointFixture{
+		dataType:     "hydration-log",
+		resourceName: "users/me/dataTypes/hydration-log/dataPoints/log-2026-06-07-10-00",
+		recordKind:   "session",
+		startUTC:     "2026-06-07T10:00:00Z",
+		endUTC:       "2026-06-07T10:00:00Z",
+		startCivil:   "2026-06-07T12:00:00",
+		endCivil:     "2026-06-07T12:00:00",
+		civilDate:    "2026-06-07",
+		dataSource:   `{"platform":"FITBIT","applicationName":"Fitbit"}`,
+		rawJSON:      `{"hydrationLog":{"interval":{"startTime":"2026-06-07T10:00:00Z","endTime":"2026-06-07T10:00:00Z","startUtcOffset":"7200s","endUtcOffset":"7200s"},"volume":{"liters":0.25}}}`,
+	})
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer db.Close()
+
+	var startTime, endTime, civilDate, liters, platform string
+	if err := db.QueryRow(`SELECT start_time_utc, end_time_utc, civil_date, volume_liters, source_platform FROM hydration_log_sessions`).Scan(&startTime, &endTime, &civilDate, &liters, &platform); err != nil {
+		t.Fatalf("query hydration_log_sessions: %v", err)
+	}
+	if startTime != "2026-06-07T10:00:00Z" {
+		t.Errorf("start_time_utc = %q, want 2026-06-07T10:00:00Z", startTime)
+	}
+	if endTime != "2026-06-07T10:00:00Z" {
+		t.Errorf("end_time_utc = %q, want 2026-06-07T10:00:00Z", endTime)
+	}
+	if civilDate != "2026-06-07" {
+		t.Errorf("civil_date = %q, want 2026-06-07", civilDate)
+	}
+	if liters != "0.25" {
+		t.Errorf("volume_liters = %q, want 0.25", liters)
+	}
+	if platform != "FITBIT" {
+		t.Errorf("source_platform = %q, want FITBIT", platform)
+	}
+}
