@@ -14,15 +14,16 @@ import (
 // containing every Data Type name, matching the comma list emitted by
 // `--plain`. A consumer who picks `--json` must not lose this field.
 func TestStatusJSONHasTopLevelKnownDataTypes(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect: %d", code)
 	}
 	// Two Data Types so the array is non-trivial.
@@ -31,7 +32,7 @@ func TestStatusJSONHasTopLevelKnownDataTypes(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"status", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"status", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("status exit = %d, stderr=%s", code, stderr.String())
 	}
@@ -56,7 +57,7 @@ func TestStatusJSONHasTopLevelKnownDataTypes(t *testing.T) {
 	// matches the JSON array (order included).
 	plainStdout := new(bytes.Buffer)
 	plainStderr := new(bytes.Buffer)
-	if code := run([]string{"status", "--config", configPath, "--db", archivePath, "--plain"}, plainStdout, plainStderr); code != 0 {
+	if code := runWithRuntime([]string{"status", "--config", configPath, "--db", archivePath, "--plain"}, plainStdout, plainStderr, testRuntime); code != 0 {
 		t.Fatalf("status --plain exit = %d, stderr=%s", code, plainStderr.String())
 	}
 	plainList := extractPlainKnownDataTypes(t, plainStdout.String())
@@ -69,15 +70,16 @@ func TestStatusJSONHasTopLevelKnownDataTypes(t *testing.T) {
 // `--json` carries `paired_device_count` as a top-level integer,
 // matching `--plain`. The existing nested location is preserved.
 func TestStatusJSONHasTopLevelPairedDeviceCount(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect: %d", code)
 	}
 	snapshots, err := openIdentitySnapshotArchive(archivePath)
@@ -97,7 +99,7 @@ func TestStatusJSONHasTopLevelPairedDeviceCount(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"status", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"status", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("status exit = %d, stderr=%s", code, stderr.String())
 	}
@@ -128,6 +130,7 @@ func TestStatusJSONHasTopLevelPairedDeviceCount(t *testing.T) {
 // `paired_device_count: 0`. Mirrors the omitted-when-missing
 // convention used by `identity_snapshots_freshness`.
 func TestStatusJSONOmitsPairedDeviceCountWhenZero(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -153,6 +156,7 @@ func TestStatusJSONOmitsPairedDeviceCountWhenZero(t *testing.T) {
 // (mirroring the existing `data_types` omitempty contract and the
 // plain writer, which only emits the line when there are Data Types).
 func TestStatusJSONOmitsKnownDataTypesWhenEmpty(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -177,15 +181,16 @@ func TestStatusJSONOmitsKnownDataTypesWhenEmpty(t *testing.T) {
 // the exact same line afterwards. Captures every meaningful
 // `--plain` line on a populated archive so any drift fails the test.
 func TestStatusPlainOutputPreservedAfterParityChange(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect: %d", code)
 	}
 	insertTier2DataPoint(t, archivePath, "steps", "steps-1")
@@ -207,7 +212,7 @@ func TestStatusPlainOutputPreservedAfterParityChange(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"status", "--config", configPath, "--db", archivePath, "--plain"}, stdout, stderr)
+	code := runWithRuntime([]string{"status", "--config", configPath, "--db", archivePath, "--plain"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("status exit = %d, stderr=%s", code, stderr.String())
 	}
@@ -233,15 +238,16 @@ func TestStatusPlainOutputPreservedAfterParityChange(t *testing.T) {
 // key has a matching plain key. Lets future slices add fields with
 // confidence that the two modes stay in lockstep.
 func TestStatusPlainAndJSONKeyParity(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect: %d", code)
 	}
 	insertTier2DataPoint(t, archivePath, "steps", "steps-1")
@@ -262,12 +268,12 @@ func TestStatusPlainAndJSONKeyParity(t *testing.T) {
 
 	plainStdout := new(bytes.Buffer)
 	plainStderr := new(bytes.Buffer)
-	if code := run([]string{"status", "--config", configPath, "--db", archivePath, "--plain"}, plainStdout, plainStderr); code != 0 {
+	if code := runWithRuntime([]string{"status", "--config", configPath, "--db", archivePath, "--plain"}, plainStdout, plainStderr, testRuntime); code != 0 {
 		t.Fatalf("status --plain exit = %d, stderr=%s", code, plainStderr.String())
 	}
 	jsonStdout := new(bytes.Buffer)
 	jsonStderr := new(bytes.Buffer)
-	if code := run([]string{"status", "--config", configPath, "--db", archivePath, "--json"}, jsonStdout, jsonStderr); code != 0 {
+	if code := runWithRuntime([]string{"status", "--config", configPath, "--db", archivePath, "--json"}, jsonStdout, jsonStderr, testRuntime); code != 0 {
 		t.Fatalf("status --json exit = %d, stderr=%s", code, jsonStderr.String())
 	}
 

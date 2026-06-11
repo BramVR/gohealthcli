@@ -10,6 +10,7 @@ import (
 )
 
 func TestQueryReadsArchivedStepsDataPointsReadOnly(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -58,6 +59,7 @@ func TestQueryReadsArchivedStepsDataPointsReadOnly(t *testing.T) {
 }
 
 func TestQueryPlainOutputIsStable(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -93,6 +95,7 @@ func TestQueryPlainOutputIsStable(t *testing.T) {
 }
 
 func TestQueryPlainOutputEscapesControlCharacters(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -127,6 +130,7 @@ func TestQueryPlainOutputEscapesControlCharacters(t *testing.T) {
 // terminal escape-sequence injection (CWE-150) must not reach the terminal raw.
 // char(27) and char(7) stand in for the decoded provider-derived control bytes.
 func TestQueryPlainOutputEscapesEscAndBelControlBytes(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -161,6 +165,7 @@ func TestQueryPlainOutputEscapesEscAndBelControlBytes(t *testing.T) {
 // encoding/json \u escapes intact (not the plain-mode \xHH form), and no
 // raw control byte may reach stdout.
 func TestQueryJSONOutputUnchangedForControlBytes(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -205,6 +210,7 @@ func TestQueryJSONOutputUnchangedForControlBytes(t *testing.T) {
 // TestQueryDefaultOutputMatchesPlainModeByteForByte for the negative and
 // equivalence assertions.
 func TestQueryDefaultOutputEmitsPlainShape(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -246,6 +252,7 @@ func TestQueryDefaultOutputEmitsPlainShape(t *testing.T) {
 // future regression that reintroduces the format is caught even if the column
 // names happen to be space-free.
 func TestQueryDefaultOutputDoesNotEmitLegacyRowFormat(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -288,6 +295,7 @@ func TestQueryDefaultOutputDoesNotEmitLegacyRowFormat(t *testing.T) {
 // divergence (an accidental stderr warning, a header line added to one mode
 // only) before it ships.
 func TestQueryDefaultOutputMatchesPlainModeByteForByte(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -319,6 +327,7 @@ func TestQueryDefaultOutputMatchesPlainModeByteForByte(t *testing.T) {
 }
 
 func TestQueryMigratesLegacyV3ArchiveBeforeValidation(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	if err := os.Remove(archivePath); err != nil {
@@ -351,6 +360,7 @@ func TestQueryMigratesLegacyV3ArchiveBeforeValidation(t *testing.T) {
 }
 
 func TestQueryRejectsWriteAttemptsBeforeMigratingLegacyArchive(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	if err := os.Remove(archivePath); err != nil {
@@ -390,6 +400,7 @@ func TestQueryRejectsWriteAttemptsBeforeMigratingLegacyArchive(t *testing.T) {
 // the loop continues without re-checking the (out-of-scope) name token,
 // so a multi-CTE SELECT with no MATERIALIZED options must be accepted.
 func TestQueryAcceptsMultipleSelectCTEs(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -410,6 +421,7 @@ func TestQueryAcceptsMultipleSelectCTEs(t *testing.T) {
 }
 
 func TestQueryAcceptsSelectCTE(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -447,6 +459,7 @@ func TestQueryAcceptsSelectCTE(t *testing.T) {
 }
 
 func TestQueryAcceptsCTEIdentifierDigits(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -476,6 +489,7 @@ func TestQueryAcceptsCTEIdentifierDigits(t *testing.T) {
 }
 
 func TestQueryAcceptsTrailingCommentsAfterTerminator(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -505,6 +519,7 @@ func TestQueryAcceptsTrailingCommentsAfterTerminator(t *testing.T) {
 }
 
 func TestQueryRejectsWriteAttemptsWithoutChangingArchive(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)

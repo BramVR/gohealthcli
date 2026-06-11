@@ -48,6 +48,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestDoctorJSONReportsMissingSetup(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.toml")
 	archivePath := filepath.Join(tempDir, "gohealthcli.sqlite")
@@ -82,6 +83,7 @@ func TestDoctorJSONReportsMissingSetup(t *testing.T) {
 }
 
 func TestDoctorJSONReportsMissingSetupAfterCommand(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 
 	code, stdout, stderr := runCommand(t,
@@ -117,6 +119,7 @@ func TestDoctorJSONReportsMissingSetupAfterCommand(t *testing.T) {
 }
 
 func TestDoctorRejectsUnknownFlagAfterCommand(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t, "doctor", "--bogus")
 
 	if code == 0 || code == 2 {
@@ -131,6 +134,7 @@ func TestDoctorRejectsUnknownFlagAfterCommand(t *testing.T) {
 }
 
 func TestDoctorAcceptsNoInputBeforeCommand(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 
 	code, stdout, stderr := runCommand(t,
@@ -153,6 +157,7 @@ func TestDoctorAcceptsNoInputBeforeCommand(t *testing.T) {
 }
 
 func TestDoctorAcceptsNoInputAfterCommand(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 
 	code, stdout, stderr := runCommand(t,
@@ -175,6 +180,7 @@ func TestDoctorAcceptsNoInputAfterCommand(t *testing.T) {
 }
 
 func TestDoctorPlainReportsMissingSetup(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 
 	code, stdout, stderr := runCommand(t,
@@ -210,6 +216,7 @@ func TestDoctorPlainReportsMissingSetup(t *testing.T) {
 }
 
 func TestDoctorHumanReportsMissingSetup(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 
 	code, stdout, stderr := runCommand(t,
@@ -238,6 +245,7 @@ func TestDoctorHumanReportsMissingSetup(t *testing.T) {
 }
 
 func TestVersionDoesNotCheckSetup(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 
 	code, stdout, stderr := runCommand(t,
@@ -261,6 +269,7 @@ func TestVersionDoesNotCheckSetup(t *testing.T) {
 }
 
 func TestVersionJSON(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 
 	code, stdout, stderr := runCommand(t,
@@ -288,6 +297,7 @@ func TestVersionJSON(t *testing.T) {
 }
 
 func TestVersionPlainAndJSONMutuallyExclusive(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 
 	code, stdout, stderr := runCommand(t,
@@ -313,6 +323,7 @@ func TestVersionPlainAndJSONMutuallyExclusive(t *testing.T) {
 // keeps writing to stderr per stdlib flag-package convention — see
 // TestHelpExitsSuccessfully below.
 func TestNoArgsPrintsHelpToStdout(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t)
 
 	if code != 0 {
@@ -334,6 +345,7 @@ func TestNoArgsPrintsHelpToStdout(t *testing.T) {
 // far from every registered command, ensuring no "Did you mean" line
 // interleaves and the hint line is the sole new addition under test.
 func TestUnknownCommandPrintsHintAndExitsNonZero(t *testing.T) {
+	t.Parallel()
 	code, _, stderr := runCommand(t, "bogus-cmd")
 
 	if code != 1 {
@@ -358,6 +370,7 @@ func TestUnknownCommandPrintsHintAndExitsNonZero(t *testing.T) {
 // the suggestion phrasing trips this test rather than silently shipping a
 // regression in UX.
 func TestUnknownCommandSuggestsCloseMatch(t *testing.T) {
+	t.Parallel()
 	code, _, stderr := runCommand(t, "stauts")
 
 	if code != 1 {
@@ -373,6 +386,7 @@ func TestUnknownCommandSuggestsCloseMatch(t *testing.T) {
 }
 
 func TestHelpExitsSuccessfully(t *testing.T) {
+	t.Parallel()
 	for _, args := range [][]string{
 		{"--help"},
 		{"doctor", "--help"},
@@ -392,6 +406,7 @@ func TestHelpExitsSuccessfully(t *testing.T) {
 }
 
 func TestTopLevelHelpListsVisibleSubcommandsFromRegistry(t *testing.T) {
+	t.Parallel()
 	code, _, stderr := runCommand(t, "--help")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr.String())
@@ -423,6 +438,7 @@ func TestTopLevelHelpListsVisibleSubcommandsFromRegistry(t *testing.T) {
 }
 
 func TestTopLevelHelpOmitsHiddenSubcommands(t *testing.T) {
+	t.Parallel()
 	code, _, stderr := runCommand(t, "--help")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr.String())
@@ -440,6 +456,7 @@ func TestTopLevelHelpOmitsHiddenSubcommands(t *testing.T) {
 }
 
 func TestTopLevelHelpStillShowsGlobalFlags(t *testing.T) {
+	t.Parallel()
 	code, _, stderr := runCommand(t, "--help")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr.String())
@@ -457,6 +474,7 @@ func TestTopLevelHelpStillShowsGlobalFlags(t *testing.T) {
 // `gohealthcli --help`: same exit code, identical stderr bytes. The verb form
 // reads more naturally than the flag form and is what users reach for first.
 func TestHelpVerbMatchesTopLevelHelp(t *testing.T) {
+	t.Parallel()
 	codeFlag, _, stderrFlag := runCommand(t, "--help")
 	codeVerb, stdoutVerb, stderrVerb := runCommand(t, "help")
 
@@ -478,6 +496,7 @@ func TestHelpVerbMatchesTopLevelHelp(t *testing.T) {
 // the status subcommand's Long description followed by its accepted flags,
 // exits 0, and does not write to stdout.
 func TestHelpVerbWithKnownSubcommand(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t, "help", "status")
 
 	if code != 0 {
@@ -518,6 +537,7 @@ func TestHelpVerbWithKnownSubcommand(t *testing.T) {
 // with `unknown command: bogus` on stderr. The did-you-mean suggestion list
 // is deferred to slice 3 of PRD #143 and explicitly NOT asserted here.
 func TestHelpVerbWithUnknownSubcommand(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t, "help", "bogus")
 
 	if code != 1 {
@@ -537,6 +557,7 @@ func TestHelpVerbWithUnknownSubcommand(t *testing.T) {
 // only means "filtered from the top-level --help listing"; an explicit help
 // lookup must still resolve it.
 func TestHelpVerbWithHiddenSubcommand(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t, "help", "schema")
 
 	if code != 0 {
@@ -568,6 +589,7 @@ func TestHelpVerbWithHiddenSubcommand(t *testing.T) {
 // This mirrors how every other subcommand rejects unknown positionals and
 // surfaces typos like `help status extra` instead of masking them.
 func TestHelpVerbRejectsExtraArguments(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		args []string
@@ -592,6 +614,7 @@ func TestHelpVerbRejectsExtraArguments(t *testing.T) {
 }
 
 func TestDoctorDefaultPathsAreUsable(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	xdgConfig := filepath.Join(home, "xdg-config")
 	xdgData := filepath.Join(home, "xdg-data")
@@ -626,6 +649,7 @@ func TestDoctorDefaultPathsAreUsable(t *testing.T) {
 }
 
 func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -797,6 +821,7 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 }
 
 func TestDoctorReportsInitializedSetup(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -846,6 +871,7 @@ func TestDoctorReportsInitializedSetup(t *testing.T) {
 }
 
 func TestDoctorPlainReportsOfflineHealthCheck(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -881,6 +907,7 @@ func TestDoctorPlainReportsOfflineHealthCheck(t *testing.T) {
 }
 
 func TestDoctorJSONReportsInvalidSetup(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -928,6 +955,7 @@ func TestDoctorJSONReportsInvalidSetup(t *testing.T) {
 }
 
 func TestDoctorReportsMalformedOAuthClientReference(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -974,6 +1002,7 @@ func TestDoctorReportsMalformedOAuthClientReference(t *testing.T) {
 }
 
 func TestDoctorReportsMissingOAuthClientFile(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1016,6 +1045,7 @@ func TestDoctorReportsMissingOAuthClientFile(t *testing.T) {
 }
 
 func TestDoctorAcceptsRelativeOAuthClientFileAfterInitFromDifferentDirectory(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1071,6 +1101,7 @@ func TestDoctorAcceptsRelativeOAuthClientFileAfterInitFromDifferentDirectory(t *
 }
 
 func TestDoctorDefaultsLegacyConfigWithoutCredentialStore(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1114,6 +1145,7 @@ func TestDoctorDefaultsLegacyConfigWithoutCredentialStore(t *testing.T) {
 }
 
 func TestDoctorAcceptsInlineConfigComments(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1160,6 +1192,7 @@ func TestDoctorAcceptsInlineConfigComments(t *testing.T) {
 }
 
 func TestDoctorAcceptsInlineDefaultDataTypesArray(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1207,6 +1240,7 @@ func TestDoctorAcceptsInlineDefaultDataTypesArray(t *testing.T) {
 }
 
 func TestDoctorAcceptsMultivalueDefaultDataTypeRows(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1246,6 +1280,7 @@ func TestDoctorAcceptsMultivalueDefaultDataTypeRows(t *testing.T) {
 }
 
 func TestDoctorAcceptsOpeningLineMultilineDefaultDataTypesArray(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1285,6 +1320,7 @@ func TestDoctorAcceptsOpeningLineMultilineDefaultDataTypesArray(t *testing.T) {
 }
 
 func TestDoctorAcceptsConfiguredDefaultDataTypeSubset(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1324,6 +1360,7 @@ func TestDoctorAcceptsConfiguredDefaultDataTypeSubset(t *testing.T) {
 }
 
 func TestDoctorReportsUnsupportedDefaultDataType(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1374,6 +1411,7 @@ func TestDoctorReportsUnsupportedDefaultDataType(t *testing.T) {
 }
 
 func TestDoctorReportsMissingDefaultDataTypes(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1424,6 +1462,7 @@ func TestDoctorReportsMissingDefaultDataTypes(t *testing.T) {
 }
 
 func TestDoctorReportsMalformedCredentialStoreConfig(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1470,6 +1509,7 @@ func TestDoctorReportsMalformedCredentialStoreConfig(t *testing.T) {
 }
 
 func TestDoctorValidatesConnectionTokenMetadata(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1599,6 +1639,7 @@ func TestDoctorValidatesConnectionTokenMetadata(t *testing.T) {
 }
 
 func TestDoctorDoesNotLeakTokenMetadataSecretMaterial(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1656,20 +1697,21 @@ func TestDoctorDoesNotLeakTokenMetadataSecretMaterial(t *testing.T) {
 }
 
 func TestDoctorOnlineRefreshesExpiredTokenAndChecksProvider(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
 		accessToken:        "old-access-secret",
 		refreshToken:       "refresh-secret-value",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	setConnectionTokenExpiry(t, archivePath, "2026-05-31T21:00:00Z")
-	installDoctorOnlineFakes(t, fakeDoctorOnlineConfig{
+	testRuntime = newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
 		now:                     time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
 		refreshedAccessToken:    "refreshed-access-secret",
 		wantRefreshToken:        "refresh-secret-value",
@@ -1680,7 +1722,7 @@ func TestDoctorOnlineRefreshesExpiredTokenAndChecksProvider(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("doctor --online exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -1712,20 +1754,21 @@ func TestDoctorOnlineRefreshesExpiredTokenAndChecksProvider(t *testing.T) {
 }
 
 func TestDoctorOnlineReportsRefreshFailureAsConnectionHealth(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
 		accessToken:        "old-access-secret",
 		refreshToken:       "refresh-secret-value",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	setConnectionTokenExpiry(t, archivePath, "2026-05-31T21:00:00Z")
-	installDoctorOnlineFakes(t, fakeDoctorOnlineConfig{
+	testRuntime = newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
 		now:                  time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
 		wantRefreshToken:     "refresh-secret-value",
 		refreshErr:           errors.New("OAuth token refresh failed with HTTP 400"),
@@ -1734,7 +1777,7 @@ func TestDoctorOnlineReportsRefreshFailureAsConnectionHealth(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("doctor --online exit code = %d, want 1", code)
 	}
@@ -1754,19 +1797,20 @@ func TestDoctorOnlineReportsRefreshFailureAsConnectionHealth(t *testing.T) {
 }
 
 func TestDoctorOnlineValidatesRefreshWhenAccessTokenIsCurrent(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
 		accessToken:        "current-access-secret",
 		refreshToken:       "refresh-secret-value",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	installDoctorOnlineFakes(t, fakeDoctorOnlineConfig{
+	testRuntime = newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
 		now:                  time.Date(2026, 5, 31, 20, 30, 0, 0, time.UTC),
 		wantRefreshToken:     "refresh-secret-value",
 		refreshErr:           errors.New("OAuth token refresh failed with HTTP 400"),
@@ -1775,7 +1819,7 @@ func TestDoctorOnlineValidatesRefreshWhenAccessTokenIsCurrent(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("doctor --online exit code = %d, want 1", code)
 	}
@@ -1795,19 +1839,20 @@ func TestDoctorOnlineValidatesRefreshWhenAccessTokenIsCurrent(t *testing.T) {
 }
 
 func TestDoctorOnlineReportsProviderFailureAsConnectionHealth(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	installDoctorOnlineFakes(t, fakeDoctorOnlineConfig{
+	testRuntime = newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
 		now:                     time.Date(2026, 5, 31, 20, 30, 0, 0, time.UTC),
 		refreshedAccessToken:    "refreshed-access-secret",
 		wantRefreshToken:        "connect-refresh-secret",
@@ -1817,7 +1862,7 @@ func TestDoctorOnlineReportsProviderFailureAsConnectionHealth(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("doctor --online exit code = %d, want 1", code)
 	}
@@ -1841,29 +1886,30 @@ func TestDoctorOnlineReportsProviderFailureAsConnectionHealth(t *testing.T) {
 }
 
 func TestDoctorOnlineReportsMissingTokenAsConnectionHealth(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	store := fileCredentialStore{path: tokenStorePath}
 	if err := store.Store("googlehealth:111111256096816351", map[string]any{"refresh_token": "connect-refresh-secret"}); err != nil {
 		t.Fatalf("replace token material: %v", err)
 	}
-	installDoctorOnlineFakes(t, fakeDoctorOnlineConfig{
+	testRuntime = newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
 		failRefreshIfCalled:  true,
 		failProviderIfCalled: true,
 	})
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("doctor --online exit code = %d, want 1", code)
 	}
@@ -1880,23 +1926,24 @@ func TestDoctorOnlineReportsMissingTokenAsConnectionHealth(t *testing.T) {
 }
 
 func TestDoctorOnlineReportsMissingRefreshTokenBeforeProvider(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	store := fileCredentialStore{path: tokenStorePath}
 	if err := store.Store("googlehealth:111111256096816351", map[string]any{"access_token": "connect-access-secret"}); err != nil {
 		t.Fatalf("replace token material: %v", err)
 	}
-	installDoctorOnlineFakes(t, fakeDoctorOnlineConfig{
+	testRuntime = newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
 		now:                  time.Date(2026, 5, 31, 20, 30, 0, 0, time.UTC),
 		failRefreshIfCalled:  true,
 		failProviderIfCalled: true,
@@ -1904,7 +1951,7 @@ func TestDoctorOnlineReportsMissingRefreshTokenBeforeProvider(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("doctor --online exit code = %d, want 1", code)
 	}
@@ -1921,20 +1968,21 @@ func TestDoctorOnlineReportsMissingRefreshTokenBeforeProvider(t *testing.T) {
 }
 
 func TestDoctorOnlineDoesNotPersistRefreshBeforeIdentityMatch(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
 		accessToken:        "old-access-secret",
 		refreshToken:       "refresh-secret-value",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	setConnectionTokenExpiry(t, archivePath, "2026-05-31T21:00:00Z")
-	installDoctorOnlineFakes(t, fakeDoctorOnlineConfig{
+	testRuntime = newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
 		now:                     time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
 		refreshedAccessToken:    "refreshed-access-secret",
 		wantRefreshToken:        "refresh-secret-value",
@@ -1945,7 +1993,7 @@ func TestDoctorOnlineDoesNotPersistRefreshBeforeIdentityMatch(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("doctor --online exit code = %d, want 1", code)
 	}
@@ -1973,16 +2021,17 @@ func TestDoctorOnlineDoesNotPersistRefreshBeforeIdentityMatch(t *testing.T) {
 }
 
 func TestPersistDoctorOnlineRefreshedTokenRollsBackOnMetadataFailure(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
 		accessToken:        "old-access-secret",
 		refreshToken:       "refresh-secret-value",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	store := fileCredentialStore{path: tokenStorePath}
@@ -2034,20 +2083,21 @@ func TestPersistDoctorOnlineRefreshedTokenRollsBackOnMetadataFailure(t *testing.
 }
 
 func TestDoctorDefaultDoesNotRefreshOrCallProvider(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	setConnectionTokenExpiry(t, archivePath, "2026-05-31T19:00:00Z")
-	installDoctorOnlineFakes(t, fakeDoctorOnlineConfig{
+	testRuntime = newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
 		now:                  time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
 		failRefreshIfCalled:  true,
 		failProviderIfCalled: true,
@@ -2055,7 +2105,7 @@ func TestDoctorDefaultDoesNotRefreshOrCallProvider(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"doctor", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"doctor", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("doctor exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -2069,11 +2119,12 @@ func TestDoctorDefaultDoesNotRefreshOrCallProvider(t *testing.T) {
 }
 
 func TestConnectStoresFileFallbackTokenAndAnchorsIdentity(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
 	connectNow := time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC)
 	refreshExpiresAt := connectNow.Add(24 * time.Hour)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		now:                connectNow,
 		accessToken:        "access-secret-value",
 		refreshToken:       "refresh-secret-value",
@@ -2084,7 +2135,7 @@ func TestConnectStoresFileFallbackTokenAndAnchorsIdentity(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("connect exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -2151,28 +2202,29 @@ func TestConnectStoresFileFallbackTokenAndAnchorsIdentity(t *testing.T) {
 }
 
 func TestConnectReauthorizesSameIdentityWithoutSecondConnection(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
 		accessToken:        "first-access-secret",
 		refreshToken:       "first-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	code := runConnectCommand(t, configPath, archivePath)
+	code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime)
 	if code != 0 {
 		t.Fatalf("first connect exit code = %d, want 0", code)
 	}
 
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime = newConnectFakeRuntime(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 23, 0, 0, 0, time.UTC),
 		accessToken:        "second-access-secret",
 		refreshToken:       "second-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	code = runConnectCommand(t, configPath, archivePath)
+	code = runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime)
 	if code != 0 {
 		t.Fatalf("second connect exit code = %d, want 0", code)
 	}
@@ -2200,6 +2252,7 @@ func TestConnectReauthorizesSameIdentityWithoutSecondConnection(t *testing.T) {
 }
 
 func TestConnectArchiveInspectionFailureDoesNotReportCredentialStore(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	db, err := openArchive(archivePath)
@@ -2237,20 +2290,21 @@ func TestConnectArchiveInspectionFailureDoesNotReportCredentialStore(t *testing.
 }
 
 func TestConnectRejectsDifferentGoogleIdentity(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
 		accessToken:        "first-access-secret",
 		refreshToken:       "first-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("first connect exit code = %d, want 0", code)
 	}
 
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime = newConnectFakeRuntime(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 23, 0, 0, 0, time.UTC),
 		accessToken:        "other-access-secret",
 		refreshToken:       "other-refresh-secret",
@@ -2259,7 +2313,7 @@ func TestConnectRejectsDifferentGoogleIdentity(t *testing.T) {
 	})
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("connect exit code = %d, want 1", code)
 	}
@@ -2283,6 +2337,7 @@ func TestConnectRejectsDifferentGoogleIdentity(t *testing.T) {
 }
 
 func TestConnectDoesNotResolveSecretProviderAtRuntime(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -2296,10 +2351,10 @@ func TestConnectDoesNotResolveSecretProviderAtRuntime(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
 	}
-	installConnectFakes(t, fakeConnectConfig{failIfCalled: true})
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{failIfCalled: true})
 	stdout := new(bytes.Buffer)
 	connectStderr := new(bytes.Buffer)
-	code = run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, connectStderr)
+	code = runWithRuntime([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, connectStderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("connect exit code = %d, want 1", code)
 	}
@@ -2315,18 +2370,19 @@ func TestConnectDoesNotResolveSecretProviderAtRuntime(t *testing.T) {
 }
 
 func TestIdentityRefreshesArchivedGoogleIdentity(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	installIdentityFetchFake(t, "connect-access-secret", googleIdentity{
+	bindIdentityFetchFake(t, &testRuntime, "connect-access-secret", googleIdentity{
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "Z9Y8X7",
 		rawJSON:            `{"healthUserId":"111111256096816351","legacyUserId":"Z9Y8X7","refreshed":true}`,
@@ -2334,7 +2390,7 @@ func TestIdentityRefreshesArchivedGoogleIdentity(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"identity", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"identity", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("identity exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -2373,18 +2429,19 @@ func TestIdentityRefreshesArchivedGoogleIdentity(t *testing.T) {
 }
 
 func TestIdentityPlainIncludesStableIdentityFields(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	installIdentityFetchFake(t, "connect-access-secret", googleIdentity{
+	bindIdentityFetchFake(t, &testRuntime, "connect-access-secret", googleIdentity{
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 		rawJSON:            `{"healthUserId":"111111256096816351","legacyUserId":"A1B2C3"}`,
@@ -2392,7 +2449,7 @@ func TestIdentityPlainIncludesStableIdentityFields(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"identity", "--config", configPath, "--db", archivePath, "--plain"}, stdout, stderr)
+	code := runWithRuntime([]string{"identity", "--config", configPath, "--db", archivePath, "--plain"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("identity exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -2407,6 +2464,7 @@ func TestIdentityPlainIncludesStableIdentityFields(t *testing.T) {
 }
 
 func TestIdentityHumanOutputDistinguishesFailureStatuses(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		status string
 		want   string
@@ -2429,13 +2487,14 @@ func TestIdentityHumanOutputDistinguishesFailureStatuses(t *testing.T) {
 }
 
 func TestIdentityRequiresArchivedConnection(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{failIfCalled: true})
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{failIfCalled: true})
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"identity", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"identity", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("identity exit code = %d, want 1", code)
 	}
@@ -2466,6 +2525,7 @@ func TestIdentityRequiresArchivedConnection(t *testing.T) {
 // --online` and `connect` recovery) and still never calls the Provider
 // identity endpoint with a dead token.
 func TestIdentityReportsAutoRefreshFailureBeforeProviderFetch(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	connectAt := time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC)
@@ -2520,6 +2580,7 @@ func TestIdentityReportsAutoRefreshFailureBeforeProviderFetch(t *testing.T) {
 // NOT issue any Provider identity request — proving the pre-check
 // happens before the upstream call, exactly like profile.
 func TestIdentityCommandFailsFastWhenScopeMissing(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -2587,6 +2648,7 @@ func TestIdentityCommandFailsFastWhenScopeMissing(t *testing.T) {
 // already returns), and exits 0 with status "identity_refreshed" plus
 // the refreshed Google Identity archived on the Connection row.
 func TestIdentityCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	connectAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -2685,18 +2747,19 @@ func TestIdentityCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 }
 
 func TestIdentityRejectsDifferentGoogleIdentity(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	installIdentityFetchFake(t, "connect-access-secret", googleIdentity{
+	bindIdentityFetchFake(t, &testRuntime, "connect-access-secret", googleIdentity{
 		healthUserID:       "222222222222222222",
 		legacyFitbitUserID: "Z9Y8X7",
 		rawJSON:            `{"healthUserId":"222222222222222222","legacyUserId":"Z9Y8X7"}`,
@@ -2704,7 +2767,7 @@ func TestIdentityRejectsDifferentGoogleIdentity(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"identity", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"identity", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("identity exit code = %d, want 1", code)
 	}
@@ -2741,29 +2804,30 @@ func TestIdentityRejectsDifferentGoogleIdentity(t *testing.T) {
 }
 
 func TestProfileArchivesSnapshotAndPrintsSummary(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		now:                time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC),
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	installProfileFetchFake(t, "connect-access-secret", googleProfile{
+	bindProfileFetchFake(t, &testRuntime, "connect-access-secret", googleProfile{
 		healthUserID: "111111256096816351",
 		rawJSON:      `{"name":"users/111111256096816351/profile","profile":{"unit":"metric"}}`,
 	}, nil)
-	currentTime = func() time.Time {
+	testRuntime.now = func() time.Time {
 		return time.Date(2026, 6, 1, 10, 30, 0, 0, time.UTC)
 	}
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("profile exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -2809,29 +2873,30 @@ func TestProfileArchivesSnapshotAndPrintsSummary(t *testing.T) {
 }
 
 func TestProfilePlainIncludesStableSnapshotFields(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		now:                time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC),
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	installProfileFetchFake(t, "connect-access-secret", googleProfile{
+	bindProfileFetchFake(t, &testRuntime, "connect-access-secret", googleProfile{
 		healthUserID: "111111256096816351",
 		rawJSON:      `{"name":"users/111111256096816351/profile"}`,
 	}, nil)
-	currentTime = func() time.Time {
+	testRuntime.now = func() time.Time {
 		return time.Date(2026, 6, 1, 10, 30, 0, 0, time.UTC)
 	}
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"profile", "--config", configPath, "--db", archivePath, "--plain"}, stdout, stderr)
+	code := runWithRuntime([]string{"profile", "--config", configPath, "--db", archivePath, "--plain"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("profile exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -2846,22 +2911,23 @@ func TestProfilePlainIncludesStableSnapshotFields(t *testing.T) {
 }
 
 func TestProfileProviderFailureDoesNotArchiveSnapshot(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	installProfileFetchFake(t, "connect-access-secret", googleProfile{}, errors.New("Google Health profile request failed with HTTP 503"))
+	bindProfileFetchFake(t, &testRuntime, "connect-access-secret", googleProfile{}, errors.New("Google Health profile request failed with HTTP 503"))
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("profile exit code = %d, want 1", code)
 	}
@@ -2890,28 +2956,27 @@ func TestProfileProviderFailureDoesNotArchiveSnapshot(t *testing.T) {
 }
 
 func TestProfileFailsBeforeProviderWhenProfileScopeMissing(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	setConnectionTokenScopes(t, archivePath, []string{googleHealthActivityReadonlyScope})
-	originalFetchProfile := fetchProfile
-	fetchProfile = func(accessToken string) (googleProfile, error) {
+	testRuntime.fetchProfile = func(accessToken string) (googleProfile, error) {
 		t.Fatalf("profile fetch should not be called when profile scope is missing")
 		return googleProfile{}, nil
 	}
-	t.Cleanup(func() { fetchProfile = originalFetchProfile })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("profile exit code = %d, want 1", code)
 	}
@@ -2931,21 +2996,22 @@ func TestProfileFailsBeforeProviderWhenProfileScopeMissing(t *testing.T) {
 }
 
 func TestProfileRejectsAliasProfileWhenIdentityVerificationDiffers(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	installProfileFetchFake(t, "connect-access-secret", googleProfile{
+	bindProfileFetchFake(t, &testRuntime, "connect-access-secret", googleProfile{
 		rawJSON: `{"name":"users/me/profile","profile":{"unit":"metric"}}`,
 	}, nil)
-	installIdentityFetchFake(t, "connect-access-secret", googleIdentity{
+	bindIdentityFetchFake(t, &testRuntime, "connect-access-secret", googleIdentity{
 		healthUserID:       "222222222222222222",
 		legacyFitbitUserID: "Z9Y8X7",
 		rawJSON:            `{"healthUserId":"222222222222222222","legacyUserId":"Z9Y8X7"}`,
@@ -2953,7 +3019,7 @@ func TestProfileRejectsAliasProfileWhenIdentityVerificationDiffers(t *testing.T)
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("profile exit code = %d, want 1", code)
 	}
@@ -2973,25 +3039,26 @@ func TestProfileRejectsAliasProfileWhenIdentityVerificationDiffers(t *testing.T)
 }
 
 func TestProfileRejectsDifferentGoogleIdentityWithoutArchiving(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	installProfileFetchFake(t, "connect-access-secret", googleProfile{
+	bindProfileFetchFake(t, &testRuntime, "connect-access-secret", googleProfile{
 		healthUserID: "222222222222222222",
 		rawJSON:      `{"name":"users/222222222222222222/profile"}`,
 	}, nil)
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("profile exit code = %d, want 1", code)
 	}
@@ -3012,45 +3079,37 @@ func TestProfileRejectsDifferentGoogleIdentityWithoutArchiving(t *testing.T) {
 }
 
 func TestStatusReportsHealthArchiveCountsAndSyncRunsReadOnly(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
 
-	originalFetchIdentity := fetchIdentity
-	originalFetchProfile := fetchProfile
-	originalFetchRawProvider := fetchRawProvider
-	originalRefreshOAuthToken := refreshOAuthToken
-	fetchIdentity = func(accessToken string) (googleIdentity, error) {
+	testRuntime := runtimeAdapters{}
+	testRuntime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
 		t.Fatal("status should not call Provider identity")
 		return googleIdentity{}, nil
 	}
-	fetchProfile = func(accessToken string) (googleProfile, error) {
+	testRuntime.fetchProfile = func(accessToken string) (googleProfile, error) {
 		t.Fatal("status should not call Provider profile")
 		return googleProfile{}, nil
 	}
-	fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		t.Fatal("status should not call Provider raw endpoints")
 		return nil, nil
 	}
-	refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
+	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
 		t.Fatal("status should not refresh tokens")
 		return oauthTokenResponse{}, nil
 	}
-	t.Cleanup(func() {
-		fetchIdentity = originalFetchIdentity
-		fetchProfile = originalFetchProfile
-		fetchRawProvider = originalFetchRawProvider
-		refreshOAuthToken = originalRefreshOAuthToken
-	})
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"status",
 		"--config", configPath,
 		"--db", archivePath,
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("status exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -3115,6 +3174,7 @@ func TestStatusReportsHealthArchiveCountsAndSyncRunsReadOnly(t *testing.T) {
 // injection (CWE-150) can never reach the terminal raw. ESC (0x1b) and BEL
 // (0x07) stand in for the decoded provider-derived control bytes.
 func TestWriteStatusSyncRunPlainEscapesControlBytes(t *testing.T) {
+	t.Parallel()
 	run := &statusSyncRun{
 		ID:                 3,
 		Status:             "sync_failed",
@@ -3143,6 +3203,7 @@ func TestWriteStatusSyncRunPlainEscapesControlBytes(t *testing.T) {
 }
 
 func TestStatusPlainReportsEmptyHealthArchive(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -3181,6 +3242,7 @@ func TestStatusPlainReportsEmptyHealthArchive(t *testing.T) {
 }
 
 func TestStatusMigratesLegacyV3ArchiveBeforeValidation(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	if err := os.Remove(archivePath); err != nil {
@@ -3207,6 +3269,7 @@ func TestStatusMigratesLegacyV3ArchiveBeforeValidation(t *testing.T) {
 }
 
 func TestStatusRejectsConfigArchiveMismatch(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
 	otherArchivePath := filepath.Join(tempDir, "other-data", "other.sqlite")
@@ -3317,6 +3380,7 @@ func TestStatusRejectsExplicitDefaultArchiveMismatch(t *testing.T) {
 // is added — the test catches a regression that strips ECG (or any
 // future opt-in Data Type) from the per-Data-Type rollup.
 func TestStatusReportsNewestElectrocardiogramEventTimestamp(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -3376,6 +3440,7 @@ func TestStatusReportsNewestElectrocardiogramEventTimestamp(t *testing.T) {
 }
 
 func TestStatusReportsMigrationFailureForUnsupportedSchema(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	setArchiveUserVersion(t, archivePath, currentSchemaVersion+1)
@@ -3408,6 +3473,7 @@ func TestStatusReportsMigrationFailureForUnsupportedSchema(t *testing.T) {
 }
 
 func TestStatusReportsSchemaVersionForArchiveInspectionFailure(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	db, err := openArchive(archivePath)
@@ -3448,6 +3514,7 @@ func TestStatusReportsSchemaVersionForArchiveInspectionFailure(t *testing.T) {
 }
 
 func TestCountArchiveRowsRejectsUnknownTable(t *testing.T) {
+	t.Parallel()
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("open memory archive: %v", err)
@@ -3464,6 +3531,7 @@ func TestCountArchiveRowsRejectsUnknownTable(t *testing.T) {
 }
 
 func TestSyncRejectsInvalidSourceFamilyOptionsBeforeSetup(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name        string
 		args        []string
@@ -3506,20 +3574,19 @@ func TestSyncRejectsInvalidSourceFamilyOptionsBeforeSetup(t *testing.T) {
 }
 
 func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	originalCurrentTime := currentTime
-	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 	firstPage := `{
 		"dataPoints": [{
 			"name": "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a",
@@ -3551,20 +3618,20 @@ func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 			}
 		}]
 	}`
-	requests := installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+	requests := bindStepSyncFetchFake(t, &testRuntime, "connect-access-secret", map[string]string{
 		"":       firstPage,
 		"page-2": secondPage,
 	})
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--from", "2026-01-01",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -3601,19 +3668,19 @@ func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 	assertArchiveTableCount(t, archivePath, "data_point_revisions", 0)
 	assertSyncRun(t, archivePath, 1, "sync_completed", 2, 2, 0, "")
 
-	requests = installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+	requests = bindStepSyncFetchFake(t, &testRuntime, "connect-access-secret", map[string]string{
 		"":       firstPage,
 		"page-2": secondPage,
 	})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--from", "2026-01-01",
 		"--plain",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("second sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -3646,19 +3713,19 @@ func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 			"name": "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a"
 		}]
 	}`
-	installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+	bindStepSyncFetchFake(t, &testRuntime, "connect-access-secret", map[string]string{
 		"":       semanticallySameFirstPage,
 		"page-2": secondPage,
 	})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--from", "2026-01-01",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("semantic sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -3675,19 +3742,19 @@ func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 	correctedFirstPage := strings.Replace(firstPage, `"count": "512"`, `"count": "999"`, 1)
 	correctedFirstPage = strings.Replace(correctedFirstPage, `"startTime": "2026-01-01T08:00:00+01:00"`, `"startTime": "2026-01-01T08:01:00+01:00"`, 1)
 	correctedFirstPage = strings.Replace(correctedFirstPage, `"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}, "time": {"hours": 8}}`, `"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}, "time": {"hours": 8, "minutes": 1}}`, 1)
-	installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+	bindStepSyncFetchFake(t, &testRuntime, "connect-access-secret", map[string]string{
 		"":       correctedFirstPage,
 		"page-2": secondPage,
 	})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--from", "2026-01-01",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("corrected sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -3705,26 +3772,25 @@ func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 }
 
 func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	originalCurrentTime := currentTime
-	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	heartRatePage := string(readTestFixture(t, "googlehealth_heart_rate_list.json"))
-	requests := installDataPointSyncFetchFake(t, "connect-access-secret", "heart-rate", map[string]string{"": heartRatePage})
+	requests := bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "heart-rate", map[string]string{"": heartRatePage})
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -3732,7 +3798,7 @@ func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("heart-rate sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -3751,10 +3817,10 @@ func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 	assertArchivedSampleDataPoint(t, archivePath, "users/me/dataTypes/heart-rate/dataPoints/hr-2026-01-01-a", "heart-rate", "2026-01-01T07:30:00Z", "2026-01-01T08:30:00", "2026-01-01", `{"utc_offset":"3600s"}`, `"beatsPerMinute":"72"`)
 	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "heart-rate", "list", 1, 1, 0, "")
 
-	installDataPointSyncFetchFake(t, "connect-access-secret", "heart-rate", map[string]string{"": heartRatePage})
+	bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "heart-rate", map[string]string{"": heartRatePage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -3762,7 +3828,7 @@ func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("idempotent heart-rate sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -3776,10 +3842,10 @@ func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 	assertSyncRunForDataType(t, archivePath, 2, "sync_completed", "heart-rate", "list", 1, 0, 0, "")
 
 	correctedHeartRatePage := strings.Replace(heartRatePage, `"beatsPerMinute": "72"`, `"beatsPerMinute": "75"`, 1)
-	installDataPointSyncFetchFake(t, "connect-access-secret", "heart-rate", map[string]string{"": correctedHeartRatePage})
+	bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "heart-rate", map[string]string{"": correctedHeartRatePage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -3787,7 +3853,7 @@ func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("corrected heart-rate sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -3802,10 +3868,10 @@ func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 	assertSyncRunForDataType(t, archivePath, 3, "sync_completed", "heart-rate", "list", 1, 0, 1, "")
 
 	oxygenPage := string(readTestFixture(t, "googlehealth_oxygen_saturation_list.json"))
-	installDataPointSyncFetchFake(t, "connect-access-secret", "oxygen-saturation", map[string]string{"": oxygenPage})
+	bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "oxygen-saturation", map[string]string{"": oxygenPage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -3813,7 +3879,7 @@ func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("oxygen sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -3827,10 +3893,10 @@ func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 	assertSyncRunForDataType(t, archivePath, 4, "sync_completed", "oxygen-saturation", "list", 1, 1, 0, "")
 
 	heartRateVariabilityPage := string(readTestFixture(t, "googlehealth_heart_rate_variability_list.json"))
-	installDataPointSyncFetchFake(t, "connect-access-secret", "heart-rate-variability", map[string]string{"": heartRateVariabilityPage})
+	bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "heart-rate-variability", map[string]string{"": heartRateVariabilityPage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -3838,7 +3904,7 @@ func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("heart-rate variability sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -3854,23 +3920,24 @@ func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 }
 
 func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 
 	weightPage := string(readTestFixture(t, "googlehealth_weight_list.json"))
-	requests := installDataPointSyncFetchFake(t, "connect-access-secret", "weight", map[string]string{"": weightPage})
+	requests := bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "weight", map[string]string{"": weightPage})
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -3878,7 +3945,7 @@ func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("weight sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -3895,10 +3962,10 @@ func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 	assertArchivedSampleDataPoint(t, archivePath, "users/me/dataTypes/weight/dataPoints/weight-2026-01-01", "weight", "2026-01-01T05:45:00Z", "2026-01-01T06:45:00", "2026-01-01", `{"utc_offset":"3600s"}`, `"weightGrams":71234.5`)
 	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "weight", "list", 1, 1, 0, "")
 
-	installDataPointSyncFetchFake(t, "connect-access-secret", "weight", map[string]string{"": weightPage})
+	bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "weight", map[string]string{"": weightPage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -3906,7 +3973,7 @@ func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("idempotent weight sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -3920,10 +3987,10 @@ func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 	assertSyncRunForDataType(t, archivePath, 2, "sync_completed", "weight", "list", 1, 0, 0, "")
 
 	correctedWeightPage := strings.Replace(weightPage, `"weightGrams": 71234.5`, `"weightGrams": 71235.25`, 1)
-	installDataPointSyncFetchFake(t, "connect-access-secret", "weight", map[string]string{"": correctedWeightPage})
+	bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "weight", map[string]string{"": correctedWeightPage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -3931,7 +3998,7 @@ func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("corrected weight sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -3956,10 +4023,10 @@ func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 			"weightGrams": 71234.5
 		}
 	}]}`
-	reconcileRequests := installDataPointReconcileFetchFake(t, "connect-access-secret", "weight", map[string]string{"": reconciledWeightPage})
+	reconcileRequests := bindDataPointReconcileFetchFake(t, &testRuntime, "connect-access-secret", "weight", map[string]string{"": reconciledWeightPage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -3968,7 +4035,7 @@ func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("wearable weight sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -3990,23 +4057,24 @@ func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 }
 
 func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 
 	distancePage := string(readTestFixture(t, "googlehealth_distance_list.json"))
-	requests := installDataPointSyncFetchFake(t, "connect-access-secret", "distance", map[string]string{"": distancePage})
+	requests := bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "distance", map[string]string{"": distancePage})
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -4014,7 +4082,7 @@ func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("distance sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4031,10 +4099,10 @@ func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing
 	assertArchivedIntervalDataPoint(t, archivePath, "users/me/dataTypes/distance/dataPoints/distance-2026-01-01", "distance", "2026-01-01T07:00:00Z", "2026-01-01T07:30:00Z", "2026-01-01T08:00:00", "2026-01-01T08:30:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, "", `"millimeters":"2450"`)
 	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "distance", "list", 1, 1, 0, "")
 
-	installDataPointSyncFetchFake(t, "connect-access-secret", "distance", map[string]string{"": distancePage})
+	bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "distance", map[string]string{"": distancePage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -4042,7 +4110,7 @@ func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("idempotent distance sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4056,10 +4124,10 @@ func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing
 	assertSyncRunForDataType(t, archivePath, 2, "sync_completed", "distance", "list", 1, 0, 0, "")
 
 	correctedDistancePage := strings.Replace(distancePage, `"millimeters": "2450"`, `"millimeters": "2500"`, 1)
-	installDataPointSyncFetchFake(t, "connect-access-secret", "distance", map[string]string{"": correctedDistancePage})
+	bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "distance", map[string]string{"": correctedDistancePage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -4067,7 +4135,7 @@ func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("corrected distance sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4095,10 +4163,10 @@ func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing
 			"millimeters": "2450"
 		}
 	}]}`
-	reconcileRequests := installDataPointReconcileFetchFake(t, "connect-access-secret", "distance", map[string]string{"": reconciledDistancePage})
+	reconcileRequests := bindDataPointReconcileFetchFake(t, &testRuntime, "connect-access-secret", "distance", map[string]string{"": reconciledDistancePage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -4107,7 +4175,7 @@ func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("wearable distance sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4129,33 +4197,32 @@ func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing
 }
 
 func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	originalCurrentTime := currentTime
-	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	restingHeartRatePage := string(readTestFixture(t, "googlehealth_daily_resting_heart_rate_list.json"))
-	requests := installDataPointSyncFetchFake(t, "connect-access-secret", "daily-resting-heart-rate", map[string]string{"": restingHeartRatePage})
+	requests := bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "daily-resting-heart-rate", map[string]string{"": restingHeartRatePage})
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--types", "daily-resting-heart-rate",
 		"--from", "2026-01-01",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("daily resting heart-rate sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4180,10 +4247,10 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 	assertArchiveTableCount(t, archivePath, "rollups", 0)
 	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "daily-resting-heart-rate", "list", 1, 1, 0, "")
 
-	installDataPointSyncFetchFake(t, "connect-access-secret", "daily-resting-heart-rate", map[string]string{"": restingHeartRatePage})
+	bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "daily-resting-heart-rate", map[string]string{"": restingHeartRatePage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -4191,7 +4258,7 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("idempotent daily sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4206,10 +4273,10 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 	assertSyncRunForDataType(t, archivePath, 2, "sync_completed", "daily-resting-heart-rate", "list", 1, 0, 0, "")
 
 	correctedRestingHeartRatePage := strings.Replace(restingHeartRatePage, `"beatsPerMinute": "61"`, `"beatsPerMinute": "63"`, 1)
-	installDataPointSyncFetchFake(t, "connect-access-secret", "daily-resting-heart-rate", map[string]string{"": correctedRestingHeartRatePage})
+	bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "daily-resting-heart-rate", map[string]string{"": correctedRestingHeartRatePage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -4217,7 +4284,7 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("corrected daily sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4232,10 +4299,10 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 	assertSyncRunForDataType(t, archivePath, 3, "sync_completed", "daily-resting-heart-rate", "list", 1, 0, 1, "")
 
 	dailyOxygenPage := string(readTestFixture(t, "googlehealth_daily_oxygen_saturation_list.json"))
-	installDataPointSyncFetchFake(t, "connect-access-secret", "daily-oxygen-saturation", map[string]string{"": dailyOxygenPage})
+	bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "daily-oxygen-saturation", map[string]string{"": dailyOxygenPage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -4243,7 +4310,7 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("daily oxygen sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4258,10 +4325,10 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 	assertSyncRunForDataType(t, archivePath, 4, "sync_completed", "daily-oxygen-saturation", "list", 1, 1, 0, "")
 
 	dailyHeartRateVariabilityPage := string(readTestFixture(t, "googlehealth_daily_heart_rate_variability_list.json"))
-	installDataPointSyncFetchFake(t, "connect-access-secret", "daily-heart-rate-variability", map[string]string{"": dailyHeartRateVariabilityPage})
+	bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "daily-heart-rate-variability", map[string]string{"": dailyHeartRateVariabilityPage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -4269,7 +4336,7 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("daily heart-rate variability sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4284,10 +4351,10 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 	assertSyncRunForDataType(t, archivePath, 5, "sync_completed", "daily-heart-rate-variability", "list", 1, 1, 0, "")
 
 	dailyRespiratoryRatePage := string(readTestFixture(t, "googlehealth_daily_respiratory_rate_list.json"))
-	installDataPointSyncFetchFake(t, "connect-access-secret", "daily-respiratory-rate", map[string]string{"": dailyRespiratoryRatePage})
+	bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "daily-respiratory-rate", map[string]string{"": dailyRespiratoryRatePage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -4295,7 +4362,7 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("daily respiratory-rate sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4312,33 +4379,32 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 }
 
 func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	originalCurrentTime := currentTime
-	currentTime = func() time.Time { return time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC) }
 
 	sleepPage := string(readTestFixture(t, "googlehealth_sleep_list.json"))
-	requests := installDataPointSyncFetchFake(t, "connect-access-secret", "sleep", map[string]string{"": sleepPage})
+	requests := bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "sleep", map[string]string{"": sleepPage})
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--types", "sleep",
 		"--from", "2026-01-01",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("sleep sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4363,10 +4429,10 @@ func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
 	assertArchiveTableCount(t, archivePath, "rollups", 0)
 	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "sleep", "list", 1, 1, 0, "")
 
-	installDataPointSyncFetchFake(t, "connect-access-secret", "sleep", map[string]string{"": sleepPage})
+	bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "sleep", map[string]string{"": sleepPage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -4374,7 +4440,7 @@ func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
 		"--from", "2026-01-01",
 		"--to", "2026-01-03",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("idempotent sleep sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4388,10 +4454,10 @@ func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
 	assertSyncRunForDataType(t, archivePath, 2, "sync_completed", "sleep", "list", 1, 0, 0, "")
 
 	correctedSleepPage := strings.Replace(sleepPage, `"type": "LIGHT"`, `"type": "REM"`, 1)
-	installDataPointSyncFetchFake(t, "connect-access-secret", "sleep", map[string]string{"": correctedSleepPage})
+	bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "sleep", map[string]string{"": correctedSleepPage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -4399,7 +4465,7 @@ func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
 		"--from", "2026-01-01",
 		"--to", "2026-01-03",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("corrected sleep sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4416,33 +4482,32 @@ func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
 }
 
 func TestSyncArchivesExerciseSessionDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	originalCurrentTime := currentTime
-	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	exercisePage := string(readTestFixture(t, "googlehealth_exercise_list.json"))
-	requests := installDataPointSyncFetchFake(t, "connect-access-secret", "exercise", map[string]string{"": exercisePage})
+	requests := bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "exercise", map[string]string{"": exercisePage})
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--types", "exercise",
 		"--from", "2026-01-01",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("exercise sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4463,10 +4528,10 @@ func TestSyncArchivesExerciseSessionDataPointsIdempotentlyAndTracksRevisions(t *
 	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/exercise/dataPoints/exercise-2026-01-01", "exercise", "2026-01-01T16:15:00Z", "2026-01-01T16:45:00Z", "2026-01-01T17:15:00", "2026-01-01T17:45:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"exerciseType":"RUNNING"`)
 	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "exercise", "list", 1, 1, 0, "")
 
-	installDataPointSyncFetchFake(t, "connect-access-secret", "exercise", map[string]string{"": exercisePage})
+	bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "exercise", map[string]string{"": exercisePage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -4474,7 +4539,7 @@ func TestSyncArchivesExerciseSessionDataPointsIdempotentlyAndTracksRevisions(t *
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("idempotent exercise sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4488,10 +4553,10 @@ func TestSyncArchivesExerciseSessionDataPointsIdempotentlyAndTracksRevisions(t *
 	assertSyncRunForDataType(t, archivePath, 2, "sync_completed", "exercise", "list", 1, 0, 0, "")
 
 	correctedExercisePage := strings.Replace(exercisePage, `"activeDuration": "1800s"`, `"activeDuration": "2100s"`, 1)
-	installDataPointSyncFetchFake(t, "connect-access-secret", "exercise", map[string]string{"": correctedExercisePage})
+	bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "exercise", map[string]string{"": correctedExercisePage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -4499,7 +4564,7 @@ func TestSyncArchivesExerciseSessionDataPointsIdempotentlyAndTracksRevisions(t *
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("corrected exercise sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4523,34 +4588,33 @@ func TestSyncArchivesExerciseSessionDataPointsIdempotentlyAndTracksRevisions(t *
 // the sleep/exercise session shape because the live probe is deferred
 // until the user grants the scope against the live OAuth client.
 func TestSyncArchivesElectrocardiogramSessionDataPoints(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	addStoredConnectionScope(t, archivePath, googleHealthEcgReadonlyScope)
-	originalCurrentTime := currentTime
-	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	ecgPage := string(readTestFixture(t, "googlehealth_electrocardiogram_list.json"))
-	requests := installDataPointSyncFetchFake(t, "connect-access-secret", "electrocardiogram", map[string]string{"": ecgPage})
+	requests := bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "electrocardiogram", map[string]string{"": ecgPage})
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--types", "electrocardiogram",
 		"--from", "2026-01-01",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("electrocardiogram sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4580,34 +4644,33 @@ func TestSyncArchivesElectrocardiogramSessionDataPoints(t *testing.T) {
 // Same harness as the ECG test, with the IRN-specific scope and
 // fixture payload.
 func TestSyncArchivesIrregularRhythmNotificationSessionDataPoints(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	addStoredConnectionScope(t, archivePath, googleHealthIrnReadonlyScope)
-	originalCurrentTime := currentTime
-	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	irnPage := string(readTestFixture(t, "googlehealth_irregular_rhythm_notification_list.json"))
-	requests := installDataPointSyncFetchFake(t, "connect-access-secret", "irregular-rhythm-notification", map[string]string{"": irnPage})
+	requests := bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "irregular-rhythm-notification", map[string]string{"": irnPage})
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--types", "irregular-rhythm-notification",
 		"--from", "2026-01-01",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("irregular-rhythm-notification sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4632,36 +4695,35 @@ func TestSyncArchivesIrregularRhythmNotificationSessionDataPoints(t *testing.T) 
 }
 
 func TestSyncArchivesWearableStepsViaReconcile(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	originalCurrentTime := currentTime
-	currentTime = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	defaultPage := `{"dataPoints": [{
 		"name": "users/me/dataTypes/steps/dataPoints/shared-step",
 		"dataSource": {"platform": "FITBIT", "device": {"manufacturer": "Google", "model": "Pixel Watch"}},
 		"steps": {"interval": {"startTime": "2026-01-01T08:00:00Z", "endTime": "2026-01-01T08:15:00Z"}, "count": "512"}
 	}]}`
-	listRequests := installStepSyncFetchFake(t, "connect-access-secret", map[string]string{"": defaultPage})
+	listRequests := bindStepSyncFetchFake(t, &testRuntime, "connect-access-secret", map[string]string{"": defaultPage})
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--from", "2026-01-01",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("default sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4678,17 +4740,17 @@ func TestSyncArchivesWearableStepsViaReconcile(t *testing.T) {
 		"dataPointName": "users/me/dataTypes/steps/dataPoints/shared-step",
 		"steps": {"interval": {"startTime": "2026-01-01T08:00:00Z", "endTime": "2026-01-01T08:15:00Z"}, "count": "512"}
 	}]}`
-	reconcileRequests := installStepReconcileFetchFake(t, "connect-access-secret", map[string]string{"": reconciledPage})
+	reconcileRequests := bindStepReconcileFetchFake(t, &testRuntime, "connect-access-secret", map[string]string{"": reconciledPage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--source-family", "wearable",
 		"--from", "2026-01-01",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("wearable sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4716,17 +4778,17 @@ func TestSyncArchivesWearableStepsViaReconcile(t *testing.T) {
 	assertDataPointSourceFamilyCounts(t, archivePath, map[string]int{"": 1, "wearable": 1})
 	assertSyncRunWithEndpointFamilyAndSourceFamily(t, archivePath, 2, "sync_completed", "reconcile", "wearable", 1, 1, 0, "")
 
-	installStepReconcileFetchFake(t, "connect-access-secret", map[string]string{"": reconciledPage})
+	bindStepReconcileFetchFake(t, &testRuntime, "connect-access-secret", map[string]string{"": reconciledPage})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--source-family", "wearable",
 		"--from", "2026-01-01",
 		"--plain",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("idempotent wearable sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4743,34 +4805,33 @@ func TestSyncArchivesWearableStepsViaReconcile(t *testing.T) {
 }
 
 func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	originalCurrentTime := currentTime
-	currentTime = func() time.Time { return time.Date(2026, 1, 4, 0, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 4, 0, 0, 0, 0, time.UTC) }
 
-	listRequests := installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+	listRequests := bindStepSyncFetchFake(t, &testRuntime, "connect-access-secret", map[string]string{
 		"": `{"dataPoints":[]}`,
 	})
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("default sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4798,12 +4859,12 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 			"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}
 		}]
 	}`
-	rollupRequests := installStepDailyRollupFetchFake(t, "connect-access-secret", map[string]string{
+	rollupRequests := bindStepDailyRollupFetchFake(t, &testRuntime, "connect-access-secret", map[string]string{
 		"2026-01-01/2026-01-02/": firstRollupPage,
 	})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -4812,7 +4873,7 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("rollup sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4834,12 +4895,12 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 	assertArchivedStepsDailyRollup(t, archivePath, "1234")
 	assertSyncRunWithEndpointFamily(t, archivePath, 2, "sync_completed", "dailyRollUp", 1, 1, 0, "")
 
-	installStepDailyRollupFetchFake(t, "connect-access-secret", map[string]string{
+	bindStepDailyRollupFetchFake(t, &testRuntime, "connect-access-secret", map[string]string{
 		"2026-01-01/2026-01-02/": firstRollupPage,
 	})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -4847,7 +4908,7 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("idempotent rollup sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4861,12 +4922,12 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 	assertSyncRunWithEndpointFamily(t, archivePath, 3, "sync_completed", "dailyRollUp", 1, 0, 0, "")
 
 	correctedRollupPage := strings.Replace(firstRollupPage, `"countSum": "1234"`, `"countSum": "4321"`, 1)
-	installStepDailyRollupFetchFake(t, "connect-access-secret", map[string]string{
+	bindStepDailyRollupFetchFake(t, &testRuntime, "connect-access-secret", map[string]string{
 		"2026-01-01/2026-01-02/": correctedRollupPage,
 	})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -4874,7 +4935,7 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("corrected rollup sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4891,7 +4952,7 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -4899,7 +4960,7 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 		"--from", "2026-01-01T12:00:00",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("timed rollup sync exit code = %d, want 1\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4921,7 +4982,7 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 	// only the 4 rows from the earlier successful invocations.
 	assertArchiveTableCount(t, archivePath, "sync_runs", 4)
 
-	longRangeRequests := installStepDailyRollupFetchFake(t, "connect-access-secret", map[string]string{
+	longRangeRequests := bindStepDailyRollupFetchFake(t, &testRuntime, "connect-access-secret", map[string]string{
 		"2026-01-01/2026-04-01/": `{"rollupDataPoints": [{
 			"steps": {"countSum": "9000"},
 			"civilStartTime": {"date": {"year": 2026, "month": 4, "day": 1}},
@@ -4935,7 +4996,7 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 	})
 	stdout = new(bytes.Buffer)
 	stderr = new(bytes.Buffer)
-	code = run([]string{
+	code = runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -4943,7 +5004,7 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 		"--from", "2026-01-01",
 		"--to", "2026-04-15",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("long rollup sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -4963,6 +5024,7 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 }
 
 func TestParseStepsDailyRollupRequiresCivilEndTime(t *testing.T) {
+	t.Parallel()
 	_, err := parseGoogleHealthRollup(archivedConnection{
 		providerName: "googlehealth",
 		id:           "googlehealth:111111256096816351",
@@ -4976,29 +5038,28 @@ func TestParseStepsDailyRollupRequiresCivilEndTime(t *testing.T) {
 }
 
 func TestSyncProviderFailureRecordsFailedRun(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	originalFetchRawProvider := fetchRawProvider
-	fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != "connect-access-secret" {
 			t.Fatalf("sync access token = %q, want stored token", accessToken)
 		}
 		return nil, errors.New("Google Health raw request failed with HTTP 503")
 	}
-	t.Cleanup(func() { fetchRawProvider = originalFetchRawProvider })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
@@ -5006,7 +5067,7 @@ func TestSyncProviderFailureRecordsFailedRun(t *testing.T) {
 		"--from", "2026-01-01",
 		"--to", "2026-01-02",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("sync exit code = %d, want 1", code)
 	}
@@ -5029,38 +5090,37 @@ func TestSyncProviderFailureRecordsFailedRun(t *testing.T) {
 }
 
 func TestSyncRefusesDifferentProviderIdentityBeforeArchiving(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	installIdentityFetchFake(t, "connect-access-secret", googleIdentity{
+	bindIdentityFetchFake(t, &testRuntime, "connect-access-secret", googleIdentity{
 		healthUserID:       "222222222222222222",
 		legacyFitbitUserID: "DIFFERENT",
 		rawJSON:            `{"healthUserId":"222222222222222222","legacyUserId":"DIFFERENT"}`,
 	})
-	originalFetchRawProvider := fetchRawProvider
-	fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		t.Fatal("sync provider fetch should not run after identity mismatch")
 		return nil, nil
 	}
-	t.Cleanup(func() { fetchRawProvider = originalFetchRawProvider })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--from", "2026-01-01",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("sync exit code = %d, want 1", code)
 	}
@@ -5082,18 +5142,19 @@ func TestSyncRefusesDifferentProviderIdentityBeforeArchiving(t *testing.T) {
 }
 
 func TestSyncReportsFailedWhenCompletionRecordFails(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+	bindStepSyncFetchFake(t, &testRuntime, "connect-access-secret", map[string]string{
 		"": `{
 			"dataPoints": [{
 				"name": "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a",
@@ -5111,10 +5172,9 @@ func TestSyncReportsFailedWhenCompletionRecordFails(t *testing.T) {
 	// Wrap the writer so FinalizeSyncRun (the atomic sync_run+cursor write)
 	// fails when called for a sync_completed outcome. This exercises the
 	// CLI's "atomic finalize failed → recover-as-sync_failed" path without
-	// reaching into the legacy package-level indirection that the executor
-	// no longer routes through for completed runs.
-	t.Cleanup(func() { healthArchiveWriterOpenerForTest = openHealthArchiveWriter })
-	healthArchiveWriterOpenerForTest = func(path string) (healthArchiveWriter, error) {
+	// reaching past the adapters seam the executor routes every archive
+	// open through.
+	testRuntime.openHealthArchiveWriter = func(path string) (healthArchiveWriter, error) {
 		inner, err := openHealthArchiveWriter(path)
 		if err != nil {
 			return nil, err
@@ -5124,13 +5184,13 @@ func TestSyncReportsFailedWhenCompletionRecordFails(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--from", "2026-01-01",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("sync exit code = %d, want 1", code)
 	}
@@ -5152,34 +5212,33 @@ func TestSyncReportsFailedWhenCompletionRecordFails(t *testing.T) {
 }
 
 func TestSyncFailsBeforeProviderWhenScopeMissing(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	setConnectionTokenScopes(t, archivePath, []string{googleHealthProfileReadonlyScope})
-	originalFetchRawProvider := fetchRawProvider
-	fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		t.Fatal("sync provider fetch should not run with missing scope")
 		return nil, nil
 	}
-	t.Cleanup(func() { fetchRawProvider = originalFetchRawProvider })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--from", "2026-01-01",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("sync exit code = %d, want 1", code)
 	}
@@ -5195,35 +5254,34 @@ func TestSyncFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 }
 
 func TestSyncSampleDataTypeFailsBeforeProviderWhenHealthMetricsScopeMissing(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	setConnectionTokenScopes(t, archivePath, []string{googleHealthProfileReadonlyScope, googleHealthActivityReadonlyScope})
-	originalFetchRawProvider := fetchRawProvider
-	fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		t.Fatal("sync provider fetch should not run with missing health metrics scope")
 		return nil, nil
 	}
-	t.Cleanup(func() { fetchRawProvider = originalFetchRawProvider })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--types", "heart-rate",
 		"--from", "2026-01-01",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("sync exit code = %d, want 1", code)
 	}
@@ -5239,19 +5297,20 @@ func TestSyncSampleDataTypeFailsBeforeProviderWhenHealthMetricsScopeMissing(t *t
 }
 
 func TestRawEndpointIdentityPrintsProviderJSONWithoutArchiving(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	beforeIdentityJSON := archivedConnectionIdentityJSON(t, archivePath)
-	installRawFetchFake(t, "connect-access-secret", func(request rawProviderRequest) []byte {
+	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(request rawProviderRequest) []byte {
 		if request.url != googleHealthIdentityURL {
 			t.Fatalf("raw URL = %q, want identity URL", request.url)
 		}
@@ -5260,7 +5319,7 @@ func TestRawEndpointIdentityPrintsProviderJSONWithoutArchiving(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"raw", "endpoint", "getIdentity", "--config", configPath, "--db", archivePath}, stdout, stderr)
+	code := runWithRuntime([]string{"raw", "endpoint", "getIdentity", "--config", configPath, "--db", archivePath}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("raw exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -5282,19 +5341,20 @@ func TestRawEndpointIdentityPrintsProviderJSONWithoutArchiving(t *testing.T) {
 }
 
 func TestRawDataTypeStepsPrintsFixtureJSON(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	fixture := readTestFixture(t, "googlehealth_steps_list.json")
-	installRawFetchFake(t, "connect-access-secret", func(request rawProviderRequest) []byte {
+	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(request rawProviderRequest) []byte {
 		if request.endpointName != "dataTypes.steps.list" || request.dataType != "steps" {
 			t.Fatalf("raw request = (%q, %q), want steps list", request.endpointName, request.dataType)
 		}
@@ -5318,7 +5378,7 @@ func TestRawDataTypeStepsPrintsFixtureJSON(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"raw",
 		"data-type", "steps",
 		"--from", "2026-01-01",
@@ -5327,7 +5387,7 @@ func TestRawDataTypeStepsPrintsFixtureJSON(t *testing.T) {
 		"--page-token", "abc123",
 		"--config", configPath,
 		"--db", archivePath,
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("raw exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -5343,6 +5403,7 @@ func TestRawDataTypeStepsPrintsFixtureJSON(t *testing.T) {
 }
 
 func TestDailyNamedDataTypeListRequestIsNotRollup(t *testing.T) {
+	t.Parallel()
 	request, err := buildGoogleHealthDataTypeListRawRequest("daily-resting-heart-rate", "2026-01-01", "2026-01-02", 0, "")
 	if err != nil {
 		t.Fatalf("build daily-named list request: %v", err)
@@ -5373,29 +5434,28 @@ func TestDailyNamedDataTypeListRequestIsNotRollup(t *testing.T) {
 }
 
 func TestRawProviderErrorDoesNotLeakToken(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	originalFetchRawProvider := fetchRawProvider
-	fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != "connect-access-secret" {
 			t.Fatalf("raw access token = %q, want stored token", accessToken)
 		}
 		return nil, errors.New("Google Health raw request failed with HTTP 403")
 	}
-	t.Cleanup(func() { fetchRawProvider = originalFetchRawProvider })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"raw", "endpoint", "getIdentity", "--config", configPath, "--db", archivePath}, stdout, stderr)
+	code := runWithRuntime([]string{"raw", "endpoint", "getIdentity", "--config", configPath, "--db", archivePath}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("raw exit code = %d, want 1", code)
 	}
@@ -5412,15 +5472,16 @@ func TestRawProviderErrorDoesNotLeakToken(t *testing.T) {
 }
 
 func TestRawDataTypeFailsBeforeProviderWhenScopeMissing(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	db, err := openArchive(archivePath)
@@ -5447,16 +5508,14 @@ func TestRawDataTypeFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update token scopes: %v", err)
 	}
-	originalFetchRawProvider := fetchRawProvider
-	fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		t.Fatal("raw provider fetch should not run with missing scope")
 		return nil, nil
 	}
-	t.Cleanup(func() { fetchRawProvider = originalFetchRawProvider })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"raw", "data-type", "heart-rate", "--from", "2026-01-01", "--config", configPath, "--db", archivePath}, stdout, stderr)
+	code := runWithRuntime([]string{"raw", "data-type", "heart-rate", "--from", "2026-01-01", "--config", configPath, "--db", archivePath}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("raw exit code = %d, want 1", code)
 	}
@@ -5470,6 +5529,7 @@ func TestRawDataTypeFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 }
 
 func TestBuildGoogleHealthRawRequestUsesProviderNamingConventions(t *testing.T) {
+	t.Parallel()
 	request, err := buildGoogleHealthRawRequest([]string{"endpoint", "dataTypes.heart-rate.list"}, "2026-01-01", "", 0, "")
 	if err != nil {
 		t.Fatalf("build raw request: %v", err)
@@ -5488,6 +5548,7 @@ func TestBuildGoogleHealthRawRequestUsesProviderNamingConventions(t *testing.T) 
 }
 
 func TestBuildGoogleHealthRawRequestRejectsNonListableDataTypes(t *testing.T) {
+	t.Parallel()
 	_, err := buildGoogleHealthRawRequest([]string{"data-type", "total-calories"}, "2026-01-01", "", 0, "")
 	if err == nil {
 		t.Fatal("build raw request error = nil, want unsupported Data Type")
@@ -5506,6 +5567,7 @@ func TestBuildGoogleHealthRawRequestRejectsNonListableDataTypes(t *testing.T) {
 // catalog entry changes and this test follows automatically — no inline
 // scope literals to update in main.go.
 func TestBuildGoogleHealthRawRequestEndpointCatalog(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		wantURL string
@@ -5549,6 +5611,7 @@ func TestBuildGoogleHealthRawRequestEndpointCatalog(t *testing.T) {
 // outpaces a catalog update) still surfaces as a clear error rather
 // than a nil request.
 func TestBuildGoogleHealthRawRequestUnknownEndpoint(t *testing.T) {
+	t.Parallel()
 	_, err := buildGoogleHealthRawRequest([]string{"endpoint", "nonexistent"}, "", "", 0, "")
 	if err == nil {
 		t.Fatal("build raw request error = nil, want unsupported raw endpoint")
@@ -5566,6 +5629,7 @@ func TestBuildGoogleHealthRawRequestUnknownEndpoint(t *testing.T) {
 // request's requiredScopes — proving the branch did a catalog lookup,
 // not a hard-coded literal.
 func TestBuildGoogleHealthRawRequestEndpointsReadFromCatalog(t *testing.T) {
+	t.Parallel()
 	for _, endpoint := range []string{"getIdentity", "getProfile", "getSettings", "pairedDevices", "getIrnProfile"} {
 		t.Run(endpoint, func(t *testing.T) {
 			original, ok := googleHealthIdentityEndpointScopes[endpoint]
@@ -5588,6 +5652,7 @@ func TestBuildGoogleHealthRawRequestEndpointsReadFromCatalog(t *testing.T) {
 }
 
 func TestGoogleHealthRawFilterFieldsCoverFirstReleaseDataTypes(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		dataType string
 		from     string
@@ -5662,6 +5727,7 @@ func TestGoogleHealthRawFilterFieldsCoverFirstReleaseDataTypes(t *testing.T) {
 }
 
 func TestGoogleHealthRawFilterPreservesFractionalRFC3339Bounds(t *testing.T) {
+	t.Parallel()
 	filter, err := googleHealthDataTypeListFilter("heart-rate", "2026-01-01T00:00:00.500Z", "2026-01-01T01:02:03.123456789+02:00")
 	if err != nil {
 		t.Fatalf("filter: %v", err)
@@ -5673,29 +5739,31 @@ func TestGoogleHealthRawFilterPreservesFractionalRFC3339Bounds(t *testing.T) {
 }
 
 func TestConnectAcceptsGlobalNoInput(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	wantNoInput := true
-	installConnectFakes(t, fakeConnectConfig{wantNoInput: &wantNoInput})
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{wantNoInput: &wantNoInput})
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"--no-input", "connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"--no-input", "connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("connect exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
 }
 
 func TestConnectMigratesLegacyV1ArchiveBeforeStoringIdentity(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	if err := os.Remove(archivePath); err != nil {
 		t.Fatalf("remove current archive: %v", err)
 	}
 	createLegacyV1Archive(t, archivePath)
-	installConnectFakes(t, fakeConnectConfig{})
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{})
 
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 
@@ -5721,6 +5789,7 @@ func TestConnectMigratesLegacyV1ArchiveBeforeStoringIdentity(t *testing.T) {
 }
 
 func TestDoctorMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	if err := os.Remove(archivePath); err != nil {
@@ -5745,6 +5814,7 @@ func TestDoctorMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
 }
 
 func TestInitMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	if err := os.Remove(archivePath); err != nil {
@@ -5775,6 +5845,7 @@ func TestInitMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
 }
 
 func TestConnectRejectsUnsupportedOSNativeStoreBeforeOAuth(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -5795,14 +5866,12 @@ func TestConnectRejectsUnsupportedOSNativeStoreBeforeOAuth(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	originalOS := currentOS
-	currentOS = "plan9"
-	t.Cleanup(func() { currentOS = originalOS })
-	installConnectFakes(t, fakeConnectConfig{failIfCalled: true})
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{failIfCalled: true})
+	testRuntime.currentOS = "plan9"
 
 	stdout := new(bytes.Buffer)
 	connectStderr := new(bytes.Buffer)
-	code = run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, connectStderr)
+	code = runWithRuntime([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, connectStderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("connect exit code = %d, want 1", code)
 	}
@@ -5818,6 +5887,7 @@ func TestConnectRejectsUnsupportedOSNativeStoreBeforeOAuth(t *testing.T) {
 }
 
 func TestConnectRejectsFileCredentialStoreCollisionsBeforeOAuth(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name string
 		path func(tempDir, configPath, archivePath string) string
@@ -5863,11 +5933,11 @@ func TestConnectRejectsFileCredentialStoreCollisionsBeforeOAuth(t *testing.T) {
 			if collisionPath == configPath {
 				originalContent = []byte(config)
 			}
-			installConnectFakes(t, fakeConnectConfig{failIfCalled: true})
+			testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{failIfCalled: true})
 
 			stdout := new(bytes.Buffer)
 			stderr := new(bytes.Buffer)
-			code := run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+			code := runWithRuntime([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 			if code != 1 {
 				t.Fatalf("connect exit code = %d, want 1", code)
 			}
@@ -5892,6 +5962,7 @@ func TestConnectRejectsFileCredentialStoreCollisionsBeforeOAuth(t *testing.T) {
 }
 
 func TestConnectRejectsMissingLinuxCredentialHelperBeforeOAuth(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -5912,24 +5983,18 @@ func TestConnectRejectsMissingLinuxCredentialHelperBeforeOAuth(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	originalOS := currentOS
-	originalFindExecutable := findExecutable
-	currentOS = "linux"
-	findExecutable = func(name string) (string, error) {
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{failIfCalled: true})
+	testRuntime.currentOS = "linux"
+	testRuntime.findExecutable = func(name string) (string, error) {
 		if name != "secret-tool" {
 			t.Fatalf("find executable = %q, want secret-tool", name)
 		}
 		return "", exec.ErrNotFound
 	}
-	t.Cleanup(func() {
-		currentOS = originalOS
-		findExecutable = originalFindExecutable
-	})
-	installConnectFakes(t, fakeConnectConfig{failIfCalled: true})
 
 	stdout := new(bytes.Buffer)
 	connectStderr := new(bytes.Buffer)
-	code = run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, connectStderr)
+	code = runWithRuntime([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, connectStderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("connect exit code = %d, want 1", code)
 	}
@@ -5945,6 +6010,7 @@ func TestConnectRejectsMissingLinuxCredentialHelperBeforeOAuth(t *testing.T) {
 }
 
 func TestConnectRejectsWebOAuthClient(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	clientPath := filepath.Join(tempDir, "client_secret.json")
@@ -5952,11 +6018,11 @@ func TestConnectRejectsWebOAuthClient(t *testing.T) {
 	if err := os.WriteFile(clientPath, content, 0o600); err != nil {
 		t.Fatalf("write web OAuth client file: %v", err)
 	}
-	installConnectFakes(t, fakeConnectConfig{failIfCalled: true})
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{failIfCalled: true})
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("connect exit code = %d, want 1", code)
 	}
@@ -5972,6 +6038,7 @@ func TestConnectRejectsWebOAuthClient(t *testing.T) {
 }
 
 func TestParseOAuthClientConfigContentPinsHTTPSAndGoogleHosts(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		content string
@@ -6023,6 +6090,7 @@ func TestParseOAuthClientConfigContentPinsHTTPSAndGoogleHosts(t *testing.T) {
 }
 
 func TestOAuthScopesUseRecognizedGoogleHealthScopes(t *testing.T) {
+	t.Parallel()
 	scopes := oauthScopesForDataTypes(defaultDataTypes)
 	wantScopes := []string{
 		googleHealthActivityReadonlyScope,
@@ -6043,6 +6111,7 @@ func TestOAuthScopesUseRecognizedGoogleHealthScopes(t *testing.T) {
 }
 
 func TestListenForOAuthRedirectPreservesEmptyLoopbackPath(t *testing.T) {
+	t.Parallel()
 	listener, redirectURI, err := listenForOAuthRedirect([]string{"http://localhost"})
 	if err != nil {
 		t.Fatalf("listen for OAuth redirect: %v", err)
@@ -6059,6 +6128,7 @@ func TestListenForOAuthRedirectPreservesEmptyLoopbackPath(t *testing.T) {
 }
 
 func TestParseOAuthTokenResponseRequiresRefreshToken(t *testing.T) {
+	t.Parallel()
 	_, err := parseOAuthTokenResponse([]byte(`{
 		"access_token": "access-secret-value",
 		"expires_in": 3600,
@@ -6071,6 +6141,7 @@ func TestParseOAuthTokenResponseRequiresRefreshToken(t *testing.T) {
 }
 
 func TestFetchGoogleIdentityUsesGetIdentityEndpoint(t *testing.T) {
+	t.Parallel()
 	var gotURL string
 	doer := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		gotURL = request.URL.String()
@@ -6097,6 +6168,7 @@ func TestFetchGoogleIdentityUsesGetIdentityEndpoint(t *testing.T) {
 }
 
 func TestFetchGoogleProfileUsesProfileEndpoint(t *testing.T) {
+	t.Parallel()
 	var gotURL string
 	doer := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		gotURL = request.URL.String()
@@ -6126,6 +6198,7 @@ func TestFetchGoogleProfileUsesProfileEndpoint(t *testing.T) {
 }
 
 func TestFetchGoogleHealthRawUsesBearerAndHidesErrorBody(t *testing.T) {
+	t.Parallel()
 	doer := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.URL.String() != googleHealthIdentityURL {
 			t.Fatalf("raw URL = %q, want identity URL", request.URL.String())
@@ -6153,6 +6226,7 @@ func TestFetchGoogleHealthRawUsesBearerAndHidesErrorBody(t *testing.T) {
 }
 
 func TestReadLimitedBodyReportsOversize(t *testing.T) {
+	t.Parallel()
 	body, tooLarge, err := readLimitedBody(strings.NewReader("abcdef"), 5)
 	if err != nil {
 		t.Fatalf("read limited body: %v", err)
@@ -6166,25 +6240,21 @@ func TestReadLimitedBodyReportsOversize(t *testing.T) {
 }
 
 func TestOSNativeCredentialStoreDoesNotSendTokenAsArgument(t *testing.T) {
-	originalOS := currentOS
-	originalSecurityCommand := runSecurityAddGenericPassword
-	currentOS = "darwin"
-	t.Cleanup(func() {
-		currentOS = originalOS
-		runSecurityAddGenericPassword = originalSecurityCommand
-	})
+	t.Parallel()
+	testRuntime := productionRuntimeAdapters()
+	testRuntime.currentOS = "darwin"
 
 	var gotService string
 	var gotKey string
 	var gotContent []byte
-	runSecurityAddGenericPassword = func(service, key string, content []byte) error {
+	testRuntime.runSecurityAddGenericPassword = func(service, key string, content []byte) error {
 		gotService = service
 		gotKey = key
 		gotContent = append([]byte(nil), content...)
 		return nil
 	}
 
-	store, err := newCredentialStoreWithRuntime(credentialStoreConfig{kind: "os_native", service: "gohealthcli"}, productionRuntimeAdapters())
+	store, err := newCredentialStoreWithRuntime(credentialStoreConfig{kind: "os_native", service: "gohealthcli"}, testRuntime)
 	if err != nil {
 		t.Fatalf("new credential store: %v", err)
 	}
@@ -6243,25 +6313,21 @@ func TestSecurityCredentialStoreFeedsPromptWithoutTokenArgument(t *testing.T) {
 }
 
 func TestLinuxOSNativeCredentialStoreUsesSecretToolContent(t *testing.T) {
-	originalOS := currentOS
-	originalSecretToolStore := runSecretToolStore
-	currentOS = "linux"
-	t.Cleanup(func() {
-		currentOS = originalOS
-		runSecretToolStore = originalSecretToolStore
-	})
+	t.Parallel()
+	testRuntime := productionRuntimeAdapters()
+	testRuntime.currentOS = "linux"
 
 	var gotService string
 	var gotKey string
 	var gotContent []byte
-	runSecretToolStore = func(service, key string, content []byte) error {
+	testRuntime.runSecretToolStore = func(service, key string, content []byte) error {
 		gotService = service
 		gotKey = key
 		gotContent = append([]byte(nil), content...)
 		return nil
 	}
 
-	store, err := newCredentialStoreWithRuntime(credentialStoreConfig{kind: "os_native", service: "gohealthcli"}, productionRuntimeAdapters())
+	store, err := newCredentialStoreWithRuntime(credentialStoreConfig{kind: "os_native", service: "gohealthcli"}, testRuntime)
 	if err != nil {
 		t.Fatalf("new credential store: %v", err)
 	}
@@ -6277,25 +6343,21 @@ func TestLinuxOSNativeCredentialStoreUsesSecretToolContent(t *testing.T) {
 }
 
 func TestWindowsOSNativeCredentialStoreUsesCredentialManagerContent(t *testing.T) {
-	originalOS := currentOS
-	originalWindowsCredentialWrite := runWindowsCredentialWrite
-	currentOS = "windows"
-	t.Cleanup(func() {
-		currentOS = originalOS
-		runWindowsCredentialWrite = originalWindowsCredentialWrite
-	})
+	t.Parallel()
+	testRuntime := productionRuntimeAdapters()
+	testRuntime.currentOS = "windows"
 
 	var gotService string
 	var gotKey string
 	var gotContent []byte
-	runWindowsCredentialWrite = func(service, key string, content []byte) error {
+	testRuntime.runWindowsCredentialWrite = func(service, key string, content []byte) error {
 		gotService = service
 		gotKey = key
 		gotContent = append([]byte(nil), content...)
 		return nil
 	}
 
-	store, err := newCredentialStoreWithRuntime(credentialStoreConfig{kind: "os_native", service: "gohealthcli"}, productionRuntimeAdapters())
+	store, err := newCredentialStoreWithRuntime(credentialStoreConfig{kind: "os_native", service: "gohealthcli"}, testRuntime)
 	if err != nil {
 		t.Fatalf("new credential store: %v", err)
 	}
@@ -6311,6 +6373,7 @@ func TestWindowsOSNativeCredentialStoreUsesCredentialManagerContent(t *testing.T
 }
 
 func TestInitStoresSecretProviderReference(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -6358,6 +6421,7 @@ func TestInitStoresSecretProviderReference(t *testing.T) {
 }
 
 func TestInitRequiresExactOAuthClientSource(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.toml")
 	archivePath := filepath.Join(tempDir, "gohealthcli.sqlite")
@@ -6394,6 +6458,7 @@ func TestInitRequiresExactOAuthClientSource(t *testing.T) {
 }
 
 func TestInitOAuthClientItemWithoutSecretProviderNamesProvidedFlag(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.toml")
 	archivePath := filepath.Join(tempDir, "gohealthcli.sqlite")
@@ -6423,6 +6488,7 @@ func TestInitOAuthClientItemWithoutSecretProviderNamesProvidedFlag(t *testing.T)
 }
 
 func TestInitSecretProviderWithoutOAuthClientItemNamesProvidedFlag(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.toml")
 	archivePath := filepath.Join(tempDir, "gohealthcli.sqlite")
@@ -6452,6 +6518,7 @@ func TestInitSecretProviderWithoutOAuthClientItemNamesProvidedFlag(t *testing.T)
 }
 
 func TestInitRejectsInvalidOAuthClientFileBeforeCreatingSetup(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -6469,6 +6536,7 @@ func TestInitRejectsInvalidOAuthClientFileBeforeCreatingSetup(t *testing.T) {
 		outputMode{},
 		stdout,
 		stderr,
+		runtimeAdapters{},
 	)
 
 	if code == 0 {
@@ -6490,6 +6558,7 @@ func TestInitRejectsInvalidOAuthClientFileBeforeCreatingSetup(t *testing.T) {
 }
 
 func TestInitNamesMissingInstalledObjectForEmptyOAuthClientJSON(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -6511,6 +6580,7 @@ func TestInitNamesMissingInstalledObjectForEmptyOAuthClientJSON(t *testing.T) {
 		outputMode{},
 		stdout,
 		stderr,
+		runtimeAdapters{},
 	)
 
 	if code == 0 {
@@ -6537,6 +6607,7 @@ func TestInitNamesMissingInstalledObjectForEmptyOAuthClientJSON(t *testing.T) {
 }
 
 func TestInitRejectsWebOAuthClientFile(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -6559,6 +6630,7 @@ func TestInitRejectsWebOAuthClientFile(t *testing.T) {
 		outputMode{},
 		stdout,
 		stderr,
+		runtimeAdapters{},
 	)
 
 	if code == 0 {
@@ -6580,6 +6652,7 @@ func TestInitRejectsWebOAuthClientFile(t *testing.T) {
 }
 
 func TestInitKeepsNonObjectMessageForNullOAuthClientJSON(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -6603,6 +6676,7 @@ func TestInitKeepsNonObjectMessageForNullOAuthClientJSON(t *testing.T) {
 		outputMode{},
 		stdout,
 		stderr,
+		runtimeAdapters{},
 	)
 
 	if code == 0 {
@@ -6615,6 +6689,7 @@ func TestInitKeepsNonObjectMessageForNullOAuthClientJSON(t *testing.T) {
 }
 
 func TestInitIsIdempotentForExistingSetup(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -6647,6 +6722,7 @@ func TestInitIsIdempotentForExistingSetup(t *testing.T) {
 }
 
 func TestInitIdempotencyDoesNotRequireHealthyTokenMetadata(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -6704,6 +6780,7 @@ func TestInitIdempotencyDoesNotRequireHealthyTokenMetadata(t *testing.T) {
 }
 
 func TestInitRejectsExistingInvalidArchive(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -6744,6 +6821,7 @@ func TestInitRejectsExistingInvalidArchive(t *testing.T) {
 }
 
 func TestInitRejectsExistingInvalidConfig(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -6782,6 +6860,7 @@ func TestInitRejectsExistingInvalidConfig(t *testing.T) {
 }
 
 func TestInitRemovesCreatedConfigWhenArchiveCreationFails(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archiveParentPath := filepath.Join(tempDir, "not-a-directory")
@@ -6812,6 +6891,7 @@ func TestInitRemovesCreatedConfigWhenArchiveCreationFails(t *testing.T) {
 }
 
 func TestInitRejectsExistingUnsafeDirectory(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configDir := filepath.Join(tempDir, "config")
 	if err := os.Mkdir(configDir, 0o755); err != nil {
@@ -6842,6 +6922,7 @@ func TestInitRejectsExistingUnsafeDirectory(t *testing.T) {
 }
 
 func TestInitJSONReportsWriteFailure(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	oauthClientPath := filepath.Join(tempDir, "client_secret.json")
 	if err := os.WriteFile(oauthClientPath, []byte(`{"installed":{"client_id":"test-client","client_secret":"test-secret"}}`), 0o600); err != nil {
@@ -6861,6 +6942,7 @@ func TestInitJSONReportsWriteFailure(t *testing.T) {
 		outputMode{},
 		failingWriter{},
 		stderr,
+		runtimeAdapters{},
 	)
 
 	if code == 0 {
@@ -6872,6 +6954,7 @@ func TestInitJSONReportsWriteFailure(t *testing.T) {
 }
 
 func TestValidateConfigDoesNotCreateMissingParent(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	parentPath := filepath.Join(tempDir, "missing")
 
@@ -6885,6 +6968,7 @@ func TestValidateConfigDoesNotCreateMissingParent(t *testing.T) {
 }
 
 func TestArchiveDSNUsesAbsoluteFileURI(t *testing.T) {
+	t.Parallel()
 	dsn, err := archiveDSN("relative.sqlite", false)
 	if err != nil {
 		t.Fatalf("archiveDSN: %v", err)
@@ -6971,23 +7055,6 @@ type fakeDoctorOnlineConfig struct {
 	failProviderIfCalled    bool
 }
 
-func installConnectFakes(t *testing.T, config fakeConnectConfig) {
-	t.Helper()
-
-	originalOAuthFlow := runOAuthFlow
-	originalFetchIdentity := fetchIdentity
-	originalCurrentTime := currentTime
-	runtime := newConnectFakeRuntime(t, config)
-	runOAuthFlow = runtime.runOAuthFlow
-	fetchIdentity = runtime.fetchIdentity
-	currentTime = runtime.now
-	t.Cleanup(func() {
-		runOAuthFlow = originalOAuthFlow
-		fetchIdentity = originalFetchIdentity
-		currentTime = originalCurrentTime
-	})
-}
-
 func newConnectFakeRuntime(t *testing.T, config fakeConnectConfig) runtimeAdapters {
 	t.Helper()
 
@@ -7050,12 +7117,10 @@ func newConnectFakeRuntime(t *testing.T, config fakeConnectConfig) runtimeAdapte
 	return runtime
 }
 
-func installDoctorOnlineFakes(t *testing.T, config fakeDoctorOnlineConfig) {
+func newDoctorOnlineFakeRuntime(t *testing.T, config fakeDoctorOnlineConfig) runtimeAdapters {
 	t.Helper()
 
-	originalRefreshOAuthToken := refreshOAuthToken
-	originalFetchIdentity := fetchIdentity
-	originalCurrentTime := currentTime
+	runtime := productionRuntimeAdapters()
 	if config.now.IsZero() {
 		config.now = time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC)
 	}
@@ -7071,7 +7136,7 @@ func installDoctorOnlineFakes(t *testing.T, config fakeDoctorOnlineConfig) {
 	if config.healthUserID == "" {
 		config.healthUserID = "111111256096816351"
 	}
-	refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
+	runtime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
 		if config.failRefreshIfCalled {
 			t.Fatal("token refresh should not be called")
 		}
@@ -7099,7 +7164,7 @@ func installDoctorOnlineFakes(t *testing.T, config fakeDoctorOnlineConfig) {
 			},
 		}, nil
 	}
-	fetchIdentity = func(accessToken string) (googleIdentity, error) {
+	runtime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
 		if config.failProviderIfCalled {
 			t.Fatal("provider reachability check should not be called")
 		}
@@ -7115,34 +7180,25 @@ func installDoctorOnlineFakes(t *testing.T, config fakeDoctorOnlineConfig) {
 			rawJSON:            fmt.Sprintf(`{"healthUserId":%q,"legacyUserId":%q}`, config.healthUserID, config.legacyFitbitUserID),
 		}, nil
 	}
-	currentTime = func() time.Time { return config.now }
-	t.Cleanup(func() {
-		refreshOAuthToken = originalRefreshOAuthToken
-		fetchIdentity = originalFetchIdentity
-		currentTime = originalCurrentTime
-	})
+	runtime.now = func() time.Time { return config.now }
+	return runtime
 }
 
-func installIdentityFetchFake(t *testing.T, wantAccessToken string, identity googleIdentity) {
+func bindIdentityFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, identity googleIdentity) {
 	t.Helper()
 
-	originalFetchIdentity := fetchIdentity
-	fetchIdentity = func(accessToken string) (googleIdentity, error) {
+	runtime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("identity access token = %q, want stored token", accessToken)
 		}
 		return identity, nil
 	}
-	t.Cleanup(func() {
-		fetchIdentity = originalFetchIdentity
-	})
 }
 
-func installProfileFetchFake(t *testing.T, wantAccessToken string, profile googleProfile, providerErr error) {
+func bindProfileFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, profile googleProfile, providerErr error) {
 	t.Helper()
 
-	originalFetchProfile := fetchProfile
-	fetchProfile = func(accessToken string) (googleProfile, error) {
+	runtime.fetchProfile = func(accessToken string) (googleProfile, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("profile access token = %q, want stored token", accessToken)
 		}
@@ -7151,35 +7207,24 @@ func installProfileFetchFake(t *testing.T, wantAccessToken string, profile googl
 		}
 		return profile, nil
 	}
-	t.Cleanup(func() {
-		fetchProfile = originalFetchProfile
-	})
 }
 
-func installRawFetchFake(t *testing.T, wantAccessToken string, response func(rawProviderRequest) []byte) {
+func bindRawFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, response func(rawProviderRequest) []byte) {
 	t.Helper()
 
-	originalFetchRawProvider := fetchRawProvider
-	fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("raw access token = %q, want stored token", accessToken)
 		}
 		return response(request), nil
 	}
-	t.Cleanup(func() {
-		fetchRawProvider = originalFetchRawProvider
-	})
 }
 
-func installStepSyncFetchFake(t *testing.T, wantAccessToken string, pages map[string]string) *[]rawProviderRequest {
+func bindStepSyncFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, pages map[string]string) *[]rawProviderRequest {
 	t.Helper()
 
-	originalFetchRawProvider := fetchRawProvider
-	runtime, requests := withStepSyncFetchFake(t, productionRuntimeAdapters(), wantAccessToken, pages)
-	fetchRawProvider = runtime.fetchRawProvider
-	t.Cleanup(func() {
-		fetchRawProvider = originalFetchRawProvider
-	})
+	bound, requests := withStepSyncFetchFake(t, *runtime, wantAccessToken, pages)
+	*runtime = bound
 	return requests
 }
 
@@ -7205,15 +7250,11 @@ func withStepSyncFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToke
 	return runtime, &requests
 }
 
-func installStepReconcileFetchFake(t *testing.T, wantAccessToken string, pages map[string]string) *[]rawProviderRequest {
+func bindStepReconcileFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, pages map[string]string) *[]rawProviderRequest {
 	t.Helper()
 
-	originalFetchRawProvider := fetchRawProvider
-	runtime, requests := withStepReconcileFetchFake(t, productionRuntimeAdapters(), wantAccessToken, pages)
-	fetchRawProvider = runtime.fetchRawProvider
-	t.Cleanup(func() {
-		fetchRawProvider = originalFetchRawProvider
-	})
+	bound, requests := withStepReconcileFetchFake(t, *runtime, wantAccessToken, pages)
+	*runtime = bound
 	return requests
 }
 
@@ -7249,12 +7290,11 @@ func withStepReconcileFetchFake(t *testing.T, runtime runtimeAdapters, wantAcces
 	return runtime, &requests
 }
 
-func installDataPointReconcileFetchFake(t *testing.T, wantAccessToken, dataType string, pages map[string]string) *[]rawProviderRequest {
+func bindDataPointReconcileFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken, dataType string, pages map[string]string) *[]rawProviderRequest {
 	t.Helper()
 
-	originalFetchRawProvider := fetchRawProvider
 	var requests []rawProviderRequest
-	fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("reconcile sync access token = %q, want stored token", accessToken)
 		}
@@ -7280,21 +7320,14 @@ func installDataPointReconcileFetchFake(t *testing.T, wantAccessToken, dataType 
 		}
 		return []byte(body), nil
 	}
-	t.Cleanup(func() {
-		fetchRawProvider = originalFetchRawProvider
-	})
 	return &requests
 }
 
-func installStepDailyRollupFetchFake(t *testing.T, wantAccessToken string, pages map[string]string) *[]rawProviderRequest {
+func bindStepDailyRollupFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, pages map[string]string) *[]rawProviderRequest {
 	t.Helper()
 
-	originalFetchRawProvider := fetchRawProvider
-	runtime, requests := withStepDailyRollupFetchFake(t, productionRuntimeAdapters(), wantAccessToken, pages)
-	fetchRawProvider = runtime.fetchRawProvider
-	t.Cleanup(func() {
-		fetchRawProvider = originalFetchRawProvider
-	})
+	bound, requests := withStepDailyRollupFetchFake(t, *runtime, wantAccessToken, pages)
+	*runtime = bound
 	return requests
 }
 
@@ -7420,12 +7453,11 @@ func withHeartRateHourlyRollupFetchFake(t *testing.T, runtime runtimeAdapters, w
 	return runtime, &requests
 }
 
-func installDataPointSyncFetchFake(t *testing.T, wantAccessToken, dataType string, pages map[string]string) *[]rawProviderRequest {
+func bindDataPointSyncFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken, dataType string, pages map[string]string) *[]rawProviderRequest {
 	t.Helper()
 
-	originalFetchRawProvider := fetchRawProvider
 	var requests []rawProviderRequest
-	fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("sync access token = %q, want stored token", accessToken)
 		}
@@ -7456,9 +7488,6 @@ func installDataPointSyncFetchFake(t *testing.T, wantAccessToken, dataType strin
 		}
 		return []byte(body), nil
 	}
-	t.Cleanup(func() {
-		fetchRawProvider = originalFetchRawProvider
-	})
 	return &requests
 }
 
@@ -7830,12 +7859,15 @@ func setArchiveUserVersion(t *testing.T, archivePath string, version int) {
 	}
 }
 
-func runConnectCommand(t *testing.T, configPath, archivePath string) int {
+// runConnectCommandWithRuntime runs a faked `connect` end-to-end:
+// fakes enter through the runtimeAdapters value (built by
+// newConnectFakeRuntime) instead of patched package state (#283).
+func runConnectCommandWithRuntime(t *testing.T, configPath, archivePath string, runtime runtimeAdapters) int {
 	t.Helper()
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, runtime)
 	if stdout.String() != "" {
 		var got map[string]any
 		if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {

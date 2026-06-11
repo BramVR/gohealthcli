@@ -11,6 +11,7 @@ import (
 )
 
 func TestCurrentConnectionAccessTokenValidatesMetadataBeforeCredentialStore(t *testing.T) {
+	t.Parallel()
 	access := newCurrentConnectionAccessWithRuntime(
 		credentialStoreConfig{kind: "bogus"},
 		archivedConnection{
@@ -29,6 +30,7 @@ func TestCurrentConnectionAccessTokenValidatesMetadataBeforeCredentialStore(t *t
 }
 
 func TestCurrentConnectionAccessTokenRequiresScopesBeforeCredentialStore(t *testing.T) {
+	t.Parallel()
 	access := newCurrentConnectionAccessWithRuntime(
 		credentialStoreConfig{kind: "bogus"},
 		archivedConnection{
@@ -54,6 +56,7 @@ func TestCurrentConnectionAccessTokenRequiresScopesBeforeCredentialStore(t *test
 // the message is deterministic regardless of which missing scope
 // surfaces first.
 func TestRequireConnectionScopesAddScopesHint(t *testing.T) {
+	t.Parallel()
 	metadata := tokenMetadataJSON(t, time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope})
 	tests := []struct {
 		name           string
@@ -103,6 +106,7 @@ func TestRequireConnectionScopesAddScopesHint(t *testing.T) {
 // set per-command "<command>_scope_missing" status without false
 // positives.
 func TestCurrentConnectionAccessTokenScopeMissingSentinel(t *testing.T) {
+	t.Parallel()
 	expiresFuture := time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)
 	expiresPast := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -227,6 +231,7 @@ func TestCurrentConnectionAccessTokenScopeMissingSentinel(t *testing.T) {
 // and falls back to `gohealthcli connect` for non-keyword scopes —
 // preserving requireConnectionScopes's existing message verbatim.
 func TestCurrentConnectionAccessTokenScopeMissingNamesAddScopesRecovery(t *testing.T) {
+	t.Parallel()
 	expiresFuture := time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	tests := []struct {
@@ -273,6 +278,7 @@ func TestCurrentConnectionAccessTokenScopeMissingNamesAddScopesRecovery(t *testi
 }
 
 func TestCurrentConnectionAccessFetchVerifiedIdentityNormalizesUnauthorized(t *testing.T) {
+	t.Parallel()
 	runtime := productionRuntimeAdapters()
 	runtime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
 		// Typed 401: the translation layer detects auth rejections via
@@ -296,6 +302,7 @@ func TestCurrentConnectionAccessFetchVerifiedIdentityNormalizesUnauthorized(t *t
 }
 
 func TestCurrentConnectionAccessFetchVerifiedIdentityRejectsMismatch(t *testing.T) {
+	t.Parallel()
 	runtime := productionRuntimeAdapters()
 	runtime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
 		return googleIdentity{healthUserID: "other"}, nil
@@ -317,6 +324,7 @@ func TestCurrentConnectionAccessFetchVerifiedIdentityRejectsMismatch(t *testing.
 }
 
 func TestCurrentConnectionAccessTokenMissingCategory(t *testing.T) {
+	t.Parallel()
 	if !isCurrentConnectionTokenMissing(errCurrentConnectionMissingAccessToken) {
 		t.Fatal("missing access token error is not categorized as token_missing")
 	}
@@ -340,6 +348,7 @@ func TestCurrentConnectionAccessTokenMissingCategory(t *testing.T) {
 // sentinel (so callers branch via errors.Is, not message text), with
 // the historical user-facing message preserved verbatim.
 func TestFileCredentialStoreLoadReturnsTypedNotFoundSentinel(t *testing.T) {
+	t.Parallel()
 	storePath := filepath.Join(t.TempDir(), "tokens.json")
 	store := fileCredentialStore{path: storePath}
 
@@ -361,6 +370,7 @@ func TestFileCredentialStoreLoadReturnsTypedNotFoundSentinel(t *testing.T) {
 }
 
 func TestMidRunTokenRefresherNilWithoutAutoRefresh(t *testing.T) {
+	t.Parallel()
 	access := newCurrentConnectionAccessWithRuntime(credentialStoreConfig{}, archivedConnection{}, nil, runtimeAdapters{})
 	if access.MidRunTokenRefresher() != nil {
 		t.Fatal("MidRunTokenRefresher = non-nil, want nil without WithAutoRefresh")
@@ -368,6 +378,7 @@ func TestMidRunTokenRefresherNilWithoutAutoRefresh(t *testing.T) {
 }
 
 func TestCurrentConnectionAccessTokenAutoRefreshesExpiredToken(t *testing.T) {
+	t.Parallel()
 	fixture := setupAutoRefreshFixture(t, map[string]any{
 		"access_token":  "stale-access",
 		"refresh_token": "stored-refresh",
@@ -449,6 +460,7 @@ func setupAutoRefreshFixture(t *testing.T, seedTokenMaterial map[string]any) aut
 }
 
 func TestCurrentConnectionAccessTokenAutoRefreshRejectsGroupReadableOAuthClientFile(t *testing.T) {
+	t.Parallel()
 	if !usesPOSIXPermissions() {
 		t.Skip("POSIX permission test")
 	}
@@ -489,6 +501,7 @@ func TestCurrentConnectionAccessTokenAutoRefreshRejectsGroupReadableOAuthClientF
 }
 
 func TestCurrentConnectionAccessTokenAutoRefreshPersistsToCredentialStoreAndArchive(t *testing.T) {
+	t.Parallel()
 	fixture := setupAutoRefreshFixture(t, map[string]any{
 		"access_token":  "stale-access",
 		"refresh_token": "stored-refresh",
@@ -556,6 +569,7 @@ func TestCurrentConnectionAccessTokenAutoRefreshPersistsToCredentialStoreAndArch
 }
 
 func TestCurrentConnectionAccessTokenAutoRefreshFailureNamesCauseAndPointsAtDoctorOrConnect(t *testing.T) {
+	t.Parallel()
 	fixture := setupAutoRefreshFixture(t, map[string]any{
 		"access_token":  "stale-access",
 		"refresh_token": "revoked-refresh",

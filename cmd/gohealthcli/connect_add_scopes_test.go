@@ -12,6 +12,7 @@ import (
 // Google Health API scope URL. Unknown keywords surface as an error
 // so a typo doesn't silently shrink the OAuth scope set.
 func TestExpandConnectAddScopesMapsKeywordsToScopeStrings(t *testing.T) {
+	t.Parallel()
 	scopes, err := expandConnectAddScopes([]string{"irn"})
 	if err != nil {
 		t.Fatalf("expand irn: %v", err)
@@ -86,6 +87,7 @@ func TestExpandConnectAddScopesMapsKeywordsToScopeStrings(t *testing.T) {
 // shipping (the `nutrition` keyword shipped invisible to --help for
 // two days because nothing pinned the two together).
 func TestConnectHelpAddScopesUsageListsEveryAcceptedKeyword(t *testing.T) {
+	t.Parallel()
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
 	code := runConnectWithRuntime([]string{"--help"}, "config.json", "archive.db", false, outputMode{}, stdout, stderr, runtimeAdapters{})
@@ -115,6 +117,7 @@ func TestConnectHelpAddScopesUsageListsEveryAcceptedKeyword(t *testing.T) {
 // keyword in connectAddScopeKeywords propagates to --help, the schema,
 // and the regenerated reference page without any hand-edited list.
 func TestConnectSchemaAddScopesUsageMatchesAcceptedKeywords(t *testing.T) {
+	t.Parallel()
 	for _, command := range commands {
 		if command.Name != "connect" {
 			continue
@@ -143,6 +146,7 @@ func TestConnectSchemaAddScopesUsageMatchesAcceptedKeywords(t *testing.T) {
 // https://developers.google.com/health/api/reference/rest/v4/users.pairedDevices/list);
 // profile.readonly returns HTTP 403 for those two endpoints.
 func TestGoogleHealthIdentityEndpointScopesCatalog(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		endpoint   string
 		wantScopes []string
@@ -176,6 +180,7 @@ func TestGoogleHealthIdentityEndpointScopesCatalog(t *testing.T) {
 // authorisation URL whose scope parameter includes the IRN scope on
 // top of the default scope set.
 func TestConnectAddScopesIsCommunicatedToOAuthFlow(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	runtime := newConnectFakeRuntime(t, fakeConnectConfig{

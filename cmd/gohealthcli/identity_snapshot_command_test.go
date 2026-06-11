@@ -33,15 +33,16 @@ var identitySnapshotCommandCases = []struct {
 // no connection_id leak in the JSON envelope. Prior to issue #282 only
 // identity had this pin; the engine extraction must keep all five.
 func TestIdentitySnapshotCommandsReportUnavailableWithoutConnection(t *testing.T) {
+	t.Parallel()
 	for _, tc := range identitySnapshotCommandCases {
 		t.Run(tc.command, func(t *testing.T) {
 			tempDir := t.TempDir()
 			configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-			installConnectFakes(t, fakeConnectConfig{failIfCalled: true})
+			testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{failIfCalled: true})
 
 			stdout := new(bytes.Buffer)
 			stderr := new(bytes.Buffer)
-			code := run([]string{tc.command, "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+			code := runWithRuntime([]string{tc.command, "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 			if code != 1 {
 				t.Fatalf("%s exit code = %d, want 1\nstdout: %s", tc.command, code, stdout.String())
 			}
@@ -69,6 +70,7 @@ func TestIdentitySnapshotCommandsReportUnavailableWithoutConnection(t *testing.T
 // other four gain it here so the engine extraction cannot reword one
 // sibling silently.
 func TestIdentitySnapshotCommandsRejectUnexpectedArgument(t *testing.T) {
+	t.Parallel()
 	for _, tc := range identitySnapshotCommandCases {
 		t.Run(tc.command, func(t *testing.T) {
 			code, stdout, stderr := runCommand(t, "--json", tc.command, "unexpected-positional")
@@ -100,6 +102,7 @@ func TestIdentitySnapshotCommandsRejectUnexpectedArgument(t *testing.T) {
 // per-command `<cmd>_failed` status with the "config check failed: "
 // wrapping preserved, exit 1.
 func TestIdentitySnapshotCommandsReportFailedStatusOnConfigError(t *testing.T) {
+	t.Parallel()
 	for _, tc := range identitySnapshotCommandCases {
 		t.Run(tc.command, func(t *testing.T) {
 			tempDir := t.TempDir()

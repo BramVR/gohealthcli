@@ -32,6 +32,7 @@ var migratedCommonFlagSubcommands = []string{
 // mutual-exclusion error and exits 1 when --plain and --json are passed
 // together.
 func TestMigratedSubcommandsRejectPlainAndJSON(t *testing.T) {
+	t.Parallel()
 	for _, name := range migratedCommonFlagSubcommands {
 		t.Run(name, func(t *testing.T) {
 			code, stdout, stderr := runCommand(t, name, "--plain", "--json")
@@ -55,6 +56,7 @@ func TestMigratedSubcommandsRejectPlainAndJSON(t *testing.T) {
 // filename) is the substring we look for because some subcommands
 // stat the parent and stop there.
 func TestMigratedSubcommandsFlowConfigAndDBThrough(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	uniqueMarker := "common-flag-set-flowthrough-marker"
 	parent := filepath.Join(tempDir, uniqueMarker)
@@ -117,6 +119,7 @@ func TestMigratedSubcommandsFlowConfigAndDBThrough(t *testing.T) {
 // "--<flag> is not supported by raw" wording instead of the legacy
 // hand-written walker's "raw: unknown flag" prefix.
 func TestRawRejectsUnsupportedCommonFlags(t *testing.T) {
+	t.Parallel()
 	for _, flagName := range []string{"plain", "json", "no-input"} {
 		t.Run(flagName, func(t *testing.T) {
 			code, stdout, stderr := runCommand(t, "raw", "--"+flagName, "endpoint", "getIdentity")
@@ -136,6 +139,7 @@ func TestRawRejectsUnsupportedCommonFlags(t *testing.T) {
 // `flag` package and writes the standard "flag provided but not defined"
 // diagnostic, NOT the legacy "raw: unknown flag" wrapper.
 func TestRawRejectsUnknownFlagViaStdlib(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t, "raw", "--bogus")
 	if code == 0 {
 		t.Fatalf("exit code = 0, want non-zero; stdout=%q stderr=%q", stdout.String(), stderr.String())
@@ -165,6 +169,7 @@ func TestRawRejectsUnknownFlagViaStdlib(t *testing.T) {
 // gohealthcli FlagSet) and divergent subcommands (export, describe-schema,
 // schema) are out of scope by design and not consulted.
 func TestMigratedSubcommandEntryPointsCallRegisterCommon(t *testing.T) {
+	t.Parallel()
 	// entry maps each subcommand to the source file and the function-
 	// signature substring that anchors its flag-parser entry point. We
 	// slice the function body between this anchor and the next top-

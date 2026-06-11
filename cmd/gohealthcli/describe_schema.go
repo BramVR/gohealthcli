@@ -31,7 +31,7 @@ var describeSchemaCommonFlagUsageOverrides = map[string]string{
 	"no-input": "accepted for uniformity; describe-schema does no prompting",
 }
 
-func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer, _ runtimeAdapters) int {
+func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("describe-schema", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -68,7 +68,7 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 	// applied locally below.
 	describeSQL := flags.Bool("sql", false, "dump live DDL from sqlite_master (excludes internal sqlite_* objects)")
 
-	if err := ParseCommon(flags, common, args); err != nil {
+	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	// describe-schema's success output is always the JSON catalog unless

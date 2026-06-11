@@ -16,13 +16,6 @@ type googleSettings struct {
 	rawJSON string
 }
 
-// fetchSettings is the seam tests stub. Production binds the real
-// fetchGoogleSettings over the production Provider GET module (shared
-// timeout client as the HTTP doer, #281).
-var fetchSettings = func(accessToken string) (googleSettings, error) {
-	return fetchGoogleSettings(productionProviderGET(), accessToken)
-}
-
 type settingsResult struct {
 	Status             string `json:"status"`
 	ConnectionID       string `json:"connection_id,omitempty"`
@@ -36,8 +29,8 @@ type settingsResult struct {
 // settingsSnapshotCommand is settings' Identity Snapshot engine spec
 // (issue #282): the command is the spec — settings has no decoration
 // beyond the shared fetch → handoff → render pipeline. The fetchPayload
-// closure reads the fetchSettings seam at invocation time so tests
-// keep stubbing the same package var.
+// closure rides the runtime adapters' fetchSettings seam, so tests
+// inject fakes through the adapters value (#283).
 //
 // settings does no prompting and never blocks on browser input, so
 // --no-input would imply a behaviour the command does not have. The
@@ -68,8 +61,8 @@ var settingsSnapshotCommand = identitySnapshotCommandSpec[settingsResult, google
 	setMessage:   func(result *settingsResult, message string) { result.Message = message },
 	writeResult:  writeSettingsResult,
 	snapshotKind: snapshotKindSettings,
-	fetchPayload: func(_ runtimeAdapters, accessToken string) (googleSettings, error) {
-		return fetchSettings(accessToken)
+	fetchPayload: func(runtime runtimeAdapters, accessToken string) (googleSettings, error) {
+		return runtime.fetchSettings(accessToken)
 	},
 	payloadRawJSON: func(payload googleSettings) string { return payload.rawJSON },
 	finishArchived: func(result *settingsResult, snapshotID int64, fetchedAt string) {

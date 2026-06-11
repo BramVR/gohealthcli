@@ -52,6 +52,7 @@ func fakeSyncPreflightContext(now time.Time, connection archivedConnection) sync
 }
 
 func TestSyncPreflightGateRulesTable(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
 	conn := archivedConnection{id: "googlehealth:111", providerName: "Google Health"}
 	ctx := fakeSyncPreflightContext(now, conn)
@@ -192,6 +193,7 @@ func TestSyncPreflightGateRulesTable(t *testing.T) {
 }
 
 func TestSyncPreflightGateAllExpandsToCatalogList(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
 	conn := archivedConnection{id: "googlehealth:111", providerName: "Google Health"}
 	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
@@ -215,6 +217,7 @@ func TestSyncPreflightGateAllExpandsToCatalogList(t *testing.T) {
 }
 
 func TestSyncPreflightGateDefaultsToWhenEmpty(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
 	conn := archivedConnection{id: "googlehealth:111"}
 	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
@@ -231,6 +234,7 @@ func TestSyncPreflightGateDefaultsToWhenEmpty(t *testing.T) {
 }
 
 func TestSyncPreflightGateDefaultsToWhenDailyRollup(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
 	conn := archivedConnection{id: "googlehealth:111"}
 	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
@@ -249,6 +253,7 @@ func TestSyncPreflightGateDefaultsToWhenDailyRollup(t *testing.T) {
 // --to through syncRollupSpec.NormalizeRange. The planner downstream
 // consumes the normalized plan.from / plan.to without re-parsing.
 func TestSyncPreflightGateNormalizesRangePerRollupKind(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	conn := archivedConnection{id: "googlehealth:111"}
 	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
@@ -335,6 +340,7 @@ func TestSyncPreflightGateNormalizesRangePerRollupKind(t *testing.T) {
 // makes downstream JSON envelopes, logging, and exit-code routing unable
 // to tell "bad --rollup value" from "bad --from boundary" apart.
 func TestSyncPreflightGateRangeParseDistinctFromRollupParse(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	conn := archivedConnection{id: "googlehealth:111"}
 	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
@@ -366,6 +372,7 @@ func TestSyncPreflightGateRangeParseDistinctFromRollupParse(t *testing.T) {
 // the rollup kind in its rejection. Parse failures are now gate failures,
 // not downstream HTTP failures.
 func TestSyncPreflightGateRejectsBadShapeWithLocalMessage(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	conn := archivedConnection{id: "googlehealth:111"}
 	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
@@ -402,6 +409,7 @@ func TestSyncPreflightGateRejectsBadShapeWithLocalMessage(t *testing.T) {
 }
 
 func TestSyncPreflightGateSkipsRangeOrderCheckOnCursorResume(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
 	conn := archivedConnection{id: "googlehealth:111"}
 	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
@@ -418,6 +426,7 @@ func TestSyncPreflightGateSkipsRangeOrderCheckOnCursorResume(t *testing.T) {
 }
 
 func TestSyncPreflightGateProducesCursorKeyPerDataType(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
 	conn := archivedConnection{id: "googlehealth:abc"}
 	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}

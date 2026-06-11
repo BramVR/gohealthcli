@@ -319,7 +319,7 @@ func productionSyncPreflightContext(options syncCommandOptions, runtime runtimeA
 			if _, err := inspectIdentityConfig(options.configPath, options.archivePath); err != nil {
 				return archivedConnection{}, fmt.Errorf("config check failed: %w", err)
 			}
-			archive, err := healthArchiveWriterOpenerForTest(options.archivePath)
+			archive, err := runtime.openHealthArchiveWriter(options.archivePath)
 			if err != nil {
 				return archivedConnection{}, err
 			}

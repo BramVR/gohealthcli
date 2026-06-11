@@ -11,6 +11,7 @@ import (
 // the stepsCount-shaped payload, producing the same archivedRollup the
 // legacy steps-only parser produced.
 func TestGenericRollupParserDispatchSteps(t *testing.T) {
+	t.Parallel()
 	conn := archivedConnection{
 		providerName: "googlehealth",
 		id:           "googlehealth:111111256096816351",
@@ -40,6 +41,7 @@ func TestGenericRollupParserDispatchSteps(t *testing.T) {
 // generic parser handles the heart-rate rollUp payload shape (bpmAvg /
 // bpmMin / bpmMax) that lives behind RollupValueType="heartRate".
 func TestGenericRollupParserDispatchHeartRate(t *testing.T) {
+	t.Parallel()
 	conn := archivedConnection{
 		providerName: "googlehealth",
 		id:           "googlehealth:111111256096816351",
@@ -72,6 +74,7 @@ func TestGenericRollupParserDispatchHeartRate(t *testing.T) {
 // dispatch the #106 AC names ("parser dispatch for at least three
 // rollup value types"). Floors carries RollupValueType="floorsCount".
 func TestGenericRollupParserDispatchFloors(t *testing.T) {
+	t.Parallel()
 	conn := archivedConnection{
 		providerName: "googlehealth",
 		id:           "googlehealth:111111256096816351",
@@ -97,6 +100,7 @@ func TestGenericRollupParserDispatchFloors(t *testing.T) {
 // TestGenericRollupParserRejectsUnknownDataType returns a typed error
 // when the catalog has no rollup endpoint for the Data Type.
 func TestGenericRollupParserRejectsUnknownDataType(t *testing.T) {
+	t.Parallel()
 	conn := archivedConnection{providerName: "googlehealth", id: "x"}
 	_, err := parseGoogleHealthRollup(conn, "sleep", "dailyRollUp", json.RawMessage(`{}`))
 	if err == nil {
@@ -114,6 +118,7 @@ func TestGenericRollupParserRejectsUnknownDataType(t *testing.T) {
 // steps-daily shape to the exact archivedRollup row the legacy parser
 // produced.
 func TestStepsDailyRollupParserStillProducesByteIdenticalRow(t *testing.T) {
+	t.Parallel()
 	conn := archivedConnection{
 		providerName: "googlehealth",
 		id:           "googlehealth:111111256096816351",

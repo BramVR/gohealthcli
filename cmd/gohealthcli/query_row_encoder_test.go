@@ -31,6 +31,7 @@ func captureQuery(t *testing.T, configPath string, queryArgs ...string) (stdout,
 // json.RawMessage so downstream JSON consumers see an object, not an
 // escaped string.
 func TestJSONModeEncoderJSONTypedColumnPassesThrough(t *testing.T) {
+	t.Parallel()
 	encoder := newJSONModeEncoder()
 	value := encoder.encode("raw_json", "TEXT", []byte(`{"steps":{"count":"512"}}`))
 	raw, ok := value.(json.RawMessage)
@@ -59,6 +60,7 @@ func TestJSONModeEncoderJSONTypedColumnPassesThrough(t *testing.T) {
 // value in a JSON-typed column stays nil — the encoder must not
 // invent a string or empty object.
 func TestJSONModeEncoderJSONTypedColumnNULLStaysNull(t *testing.T) {
+	t.Parallel()
 	encoder := newJSONModeEncoder()
 	value := encoder.encode("raw_json", "TEXT", nil)
 	if value != nil {
@@ -71,6 +73,7 @@ func TestJSONModeEncoderJSONTypedColumnNULLStaysNull(t *testing.T) {
 // payload is not valid JSON, so users still see the literal bytes
 // instead of an error.
 func TestJSONModeEncoderJSONTypedColumnInvalidJSONFallsBackToString(t *testing.T) {
+	t.Parallel()
 	encoder := newJSONModeEncoder()
 	value := encoder.encode("raw_json", "TEXT", []byte("not json {"))
 	got, ok := value.(string)
@@ -87,6 +90,7 @@ func TestJSONModeEncoderJSONTypedColumnInvalidJSONFallsBackToString(t *testing.T
 // matching today's behaviour. We don't want empty bytes to surface as
 // invalid JSON errors.
 func TestJSONModeEncoderJSONTypedColumnEmptyBytesFallsBackToString(t *testing.T) {
+	t.Parallel()
 	encoder := newJSONModeEncoder()
 	value := encoder.encode("raw_json", "TEXT", []byte{})
 	got, ok := value.(string)
@@ -103,6 +107,7 @@ func TestJSONModeEncoderJSONTypedColumnEmptyBytesFallsBackToString(t *testing.T)
 // literal string — even when the payload happens to contain whitespace
 // or "JSON-shaped" characters.
 func TestJSONModeEncoderNonJSONColumnWithSpacesStaysString(t *testing.T) {
+	t.Parallel()
 	encoder := newJSONModeEncoder()
 	value := encoder.encode("greeting", "TEXT", []byte("hello world"))
 	got, ok := value.(string)
@@ -119,6 +124,7 @@ func TestJSONModeEncoderNonJSONColumnWithSpacesStaysString(t *testing.T) {
 // allowlist (e.g. a custom view that aliases a JSON column as
 // `payload_json`).
 func TestJSONModeEncoderJSONSuffixedColumnPassesThrough(t *testing.T) {
+	t.Parallel()
 	encoder := newJSONModeEncoder()
 	value := encoder.encode("payload_json", "TEXT", []byte(`{"ok":true}`))
 	if _, ok := value.(json.RawMessage); !ok {
@@ -129,6 +135,7 @@ func TestJSONModeEncoderJSONSuffixedColumnPassesThrough(t *testing.T) {
 // TestJSONModeEncoderAllowlistedColumnNames asserts every documented
 // JSON-typed column name on the allowlist participates in passthrough.
 func TestJSONModeEncoderAllowlistedColumnNames(t *testing.T) {
+	t.Parallel()
 	encoder := newJSONModeEncoder()
 	for _, name := range []string{
 		"raw_json",
@@ -148,6 +155,7 @@ func TestJSONModeEncoderAllowlistedColumnNames(t *testing.T) {
 // values flow through untouched — only []byte (TEXT/BLOB scan result)
 // gets the JSON-passthrough treatment.
 func TestJSONModeEncoderNonByteScalarsUnchanged(t *testing.T) {
+	t.Parallel()
 	encoder := newJSONModeEncoder()
 	if got := encoder.encode("count", "INTEGER", int64(42)); got != int64(42) {
 		t.Fatalf("encode(int64) = %T(%v), want int64(42)", got, got)
@@ -165,6 +173,7 @@ func TestJSONModeEncoderNonByteScalarsUnchanged(t *testing.T) {
 // characters get escaped by queryPlainValue downstream, but the
 // encoder's job is the raw []byte → string conversion.
 func TestPlainModeEncoderPreservesEscapeStringBehaviour(t *testing.T) {
+	t.Parallel()
 	encoder := newPlainModeEncoder()
 	// JSON-typed column: still a plain string (no passthrough).
 	value := encoder.encode("raw_json", "TEXT", []byte(`{"steps":{"count":"512"}}`))
@@ -191,6 +200,7 @@ func TestPlainModeEncoderPreservesEscapeStringBehaviour(t *testing.T) {
 // rows[0][0] is a JSON object — the exact acceptance criterion the
 // issue calls out.
 func TestJSONModeEncoderEndToEndQueryRawJSONReturnsNestedObject(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -223,6 +233,7 @@ func TestJSONModeEncoderEndToEndQueryRawJSONReturnsNestedObject(t *testing.T) {
 // TestJSONModeEncoderEndToEndQueryDataSourceJSONReturnsNestedObject
 // covers the second allowlisted column the issue calls out by name.
 func TestJSONModeEncoderEndToEndQueryDataSourceJSONReturnsNestedObject(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -255,6 +266,7 @@ func TestJSONModeEncoderEndToEndQueryDataSourceJSONReturnsNestedObject(t *testin
 // even in JSON mode, so users who want the literal stored bytes can
 // disable the passthrough.
 func TestJSONModeRawTextFlagPreservesStringEncoding(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -286,6 +298,7 @@ func TestJSONModeRawTextFlagPreservesStringEncoding(t *testing.T) {
 // (literal text), not a JSON object — the PRD's "non-JSON columns
 // unaffected" invariant.
 func TestJSONModeNonJSONColumnReturnsString(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -317,6 +330,7 @@ func TestJSONModeNonJSONColumnReturnsString(t *testing.T) {
 // the payload base64-decodes back to the original bytes. The marker
 // shape is the contract `docs/commands/query.md` documents.
 func TestJSONModeEncoderBLOBColumnBase64RoundTrip(t *testing.T) {
+	t.Parallel()
 	encoder := newJSONModeEncoder()
 	payload := []byte{0x00, 0xFF, 0x10, 0xAB, 0xCD, 0xEF, 0x01, 0x7F}
 	value := encoder.encode("b", "BLOB", payload)
@@ -342,6 +356,7 @@ func TestJSONModeEncoderBLOBColumnBase64RoundTrip(t *testing.T) {
 // with a single string field, which is the contract every downstream
 // consumer reads.
 func TestJSONModeEncoderBLOBColumnRoundTripsThroughJSON(t *testing.T) {
+	t.Parallel()
 	encoder := newJSONModeEncoder()
 	payload := []byte{0xDE, 0xAD, 0xBE, 0xEF}
 	value := encoder.encode("b", "BLOB", payload)
@@ -370,6 +385,7 @@ func TestJSONModeEncoderBLOBColumnRoundTripsThroughJSON(t *testing.T) {
 // column stays nil — the marker wrapper is reserved for actual byte
 // payloads, never invented from thin air.
 func TestJSONModeEncoderBLOBColumnNULLStaysNull(t *testing.T) {
+	t.Parallel()
 	encoder := newJSONModeEncoder()
 	if got := encoder.encode("b", "BLOB", nil); got != nil {
 		t.Fatalf("encode(NULL BLOB) = %T(%v), want nil", got, got)
@@ -381,6 +397,7 @@ func TestJSONModeEncoderBLOBColumnNULLStaysNull(t *testing.T) {
 // wrapper with an empty base64 payload so consumers can distinguish
 // "stored zero bytes" from NULL.
 func TestJSONModeEncoderBLOBColumnEmptyBytesEncodesEmptyMarker(t *testing.T) {
+	t.Parallel()
 	encoder := newJSONModeEncoder()
 	value := encoder.encode("b", "BLOB", []byte{})
 	wrapper, ok := value.(map[string]string)
@@ -402,6 +419,7 @@ func TestJSONModeEncoderBLOBColumnEmptyBytesEncodesEmptyMarker(t *testing.T) {
 // because someone stored raw bytes in it) is base64-encoded, never
 // double-parsed as JSON.
 func TestJSONModeEncoderBLOBOverridesJSONAllowlist(t *testing.T) {
+	t.Parallel()
 	encoder := newJSONModeEncoder()
 	payload := []byte{0x01, 0x02, 0x03}
 	value := encoder.encode("raw_json", "BLOB", payload)
@@ -420,6 +438,7 @@ func TestJSONModeEncoderBLOBOverridesJSONAllowlist(t *testing.T) {
 // passed through fmt.Sprint). The payload after the prefix
 // base64-decodes back to the original bytes.
 func TestPlainModeEncoderBLOBColumnPrefixedBase64(t *testing.T) {
+	t.Parallel()
 	encoder := newPlainModeEncoder()
 	payload := []byte{0x00, 0xFF, 0x10, 0xAB, 0xCD, 0xEF, 0x01, 0x7F}
 	value := encoder.encode("b", "BLOB", payload)
@@ -445,6 +464,7 @@ func TestPlainModeEncoderBLOBColumnPrefixedBase64(t *testing.T) {
 // TestPlainModeEncoderBLOBColumnNULLStaysNull asserts a NULL BLOB
 // column stays nil — the prefix is reserved for byte payloads.
 func TestPlainModeEncoderBLOBColumnNULLStaysNull(t *testing.T) {
+	t.Parallel()
 	encoder := newPlainModeEncoder()
 	if got := encoder.encode("b", "BLOB", nil); got != nil {
 		t.Fatalf("encode(NULL BLOB) = %T(%v), want nil", got, got)
@@ -456,6 +476,7 @@ func TestPlainModeEncoderBLOBColumnNULLStaysNull(t *testing.T) {
 // project `randomblob(8)`, and assert the resulting cell carries an
 // 8-byte base64 payload under the documented marker key.
 func TestJSONModeEncoderEndToEndQueryRandomBlobBase64RoundTrip(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -490,6 +511,7 @@ func TestJSONModeEncoderEndToEndQueryRandomBlobBase64RoundTrip(t *testing.T) {
 // `<blob:base64>` prefix and an 8-byte base64 payload — no replacement
 // characters, no embedded newlines.
 func TestPlainModeEncoderEndToEndQueryRandomBlobPrefixedBase64(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
 

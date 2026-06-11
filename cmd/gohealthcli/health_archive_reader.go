@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 type healthArchiveReader interface {
@@ -196,7 +197,7 @@ func exportSelectFields(spec exportDatasetSpec) string {
 	return strings.Join(fields, ", ")
 }
 
-func statusSetup(archivePath string) (statusResult, error) {
+func statusSetup(archivePath string, now time.Time) (statusResult, error) {
 	result := statusResult{
 		Status:      "status_failed",
 		ArchivePath: archivePath,
@@ -210,7 +211,7 @@ func statusSetup(archivePath string) (statusResult, error) {
 	// failing the command. Open errors are not lost — the reader open
 	// below goes through the same lifecycle and surfaces the identical
 	// healthArchiveOpenError for the caller to decode.
-	_, _ = fenceAbandonedSyncRunsAtPath(archivePath, currentTime().UTC())
+	_, _ = fenceAbandonedSyncRunsAtPath(archivePath, now)
 	reader, err := openHealthArchiveReader(archivePath)
 	if err != nil {
 		var openErr healthArchiveReaderOpenError

@@ -7,6 +7,7 @@ import (
 )
 
 func TestHealthArchiveConnectionAPIManagesConnectionIdentityMetadataAndProfileSnapshots(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 

@@ -89,9 +89,10 @@ type identitySnapshotCommandSpec[R, P any] struct {
 	snapshotKind string
 
 	// fetchPayload fetches the provider payload with a usable access
-	// token. Closures call the per-command seam (fetchPairedDevices,
-	// fetchSettings, fetchIRNProfile package vars; runtime.fetchProfile)
-	// at invocation time, so tests keep stubbing the same seams.
+	// token. Closures call the per-command runtime-adapters seam
+	// (runtime.fetchPairedDevices / fetchSettings / fetchIRNProfile /
+	// fetchProfile) at invocation time, so tests inject fakes through
+	// the adapters value (#283).
 	fetchPayload func(runtime runtimeAdapters, accessToken string) (P, error)
 
 	// payloadRawJSON projects the payload's verbatim provider JSON —
@@ -150,7 +151,7 @@ func runIdentitySnapshotCommand[R, P any](spec identitySnapshotCommandSpec[R, P]
 		PlainOutput: mode.plain,
 	})
 
-	if err := ParseCommon(flags, common, args); err != nil {
+	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}

@@ -6,6 +6,7 @@ import (
 )
 
 func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		dataType              string
 		wantScopes            []string
@@ -309,6 +310,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 }
 
 func TestGoogleHealthDataTypeCatalogDescribesSourceFamilyFilters(t *testing.T) {
+	t.Parallel()
 	filter, err := googleHealthSourceFamilyFilterName("steps", "wearable")
 	if err != nil {
 		t.Fatalf("source family filter: %v", err)
@@ -319,6 +321,7 @@ func TestGoogleHealthDataTypeCatalogDescribesSourceFamilyFilters(t *testing.T) {
 }
 
 func TestGoogleHealthDataTypeCatalogDefaultDataTypes(t *testing.T) {
+	t.Parallel()
 	want := []string{
 		"steps",
 		"heart-rate",
@@ -343,6 +346,7 @@ func TestGoogleHealthDataTypeCatalogDefaultDataTypes(t *testing.T) {
 }
 
 func TestGoogleHealthScopesForDataTypeReturnsCopy(t *testing.T) {
+	t.Parallel()
 	scopes := googleHealthScopesForDataType("steps")
 	if len(scopes) != 1 {
 		t.Fatalf("scopes = %v, want one scope", scopes)
@@ -355,12 +359,14 @@ func TestGoogleHealthScopesForDataTypeReturnsCopy(t *testing.T) {
 }
 
 func TestGoogleHealthDataTypeCatalogRejectsUnknownDataType(t *testing.T) {
+	t.Parallel()
 	if _, ok := googleHealthDataTypes.Lookup("bogus"); ok {
 		t.Fatal("catalog contains bogus Data Type")
 	}
 }
 
 func TestGoogleHealthDataTypeCatalogRejectsInvalidEntries(t *testing.T) {
+	t.Parallel()
 	assertPanic := func(t *testing.T, fn func()) {
 		t.Helper()
 		defer func() {

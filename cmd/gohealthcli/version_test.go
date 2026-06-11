@@ -10,7 +10,10 @@ import (
 // deterministic test values and restores them when the test ends. The
 // PRD #143 slice 5 contract is that build-time ldflags inject these at
 // link time; tests pin them so the output shape is verifiable without
-// depending on the actual build flags.
+// depending on the actual build flags. version/commit/built are the one
+// sanctioned set of mutable package vars (the linker must be able to
+// stamp them), so the two tests that swap them stay deliberately serial
+// — running them under t.Parallel would race the assignments.
 func withVersionVars(t *testing.T, v, c, b string) {
 	t.Helper()
 
@@ -26,6 +29,8 @@ func withVersionVars(t *testing.T, v, c, b string) {
 }
 
 func TestRenderVersionPlain(t *testing.T) {
+	// NOT t.Parallel(): withVersionVars mutates the linker-stamped
+	// package vars shared with TestRenderVersionJSON.
 	withVersionVars(t, "v1.2.3", "abcdef1", "2025-01-02T03:04:05Z")
 
 	var buf bytes.Buffer
@@ -38,6 +43,8 @@ func TestRenderVersionPlain(t *testing.T) {
 }
 
 func TestRenderVersionJSON(t *testing.T) {
+	// NOT t.Parallel(): withVersionVars mutates the linker-stamped
+	// package vars shared with TestRenderVersionPlain.
 	withVersionVars(t, "v2.0.0", "deadbee", "2026-06-08T00:00:00Z")
 
 	var buf bytes.Buffer

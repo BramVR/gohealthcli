@@ -13,6 +13,7 @@ import (
 // default shape MUST match byte-for-byte or the existing per-command
 // failure-path tests would break wholesale.
 func TestReportFailureDefaultModeMatchesLegacyShape(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	code := ReportFailure(FailureReport{
 		Command: "sync",
@@ -36,6 +37,7 @@ func TestReportFailureDefaultModeMatchesLegacyShape(t *testing.T) {
 // `<cmd>:` prefix on stderr. The single-line envelope matches the
 // existing success JSON shape's "one line per result" contract.
 func TestReportFailureJSONModeWritesOneLineEnvelope(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	code := ReportFailure(FailureReport{
 		Command: "sync",
@@ -61,6 +63,7 @@ func TestReportFailureJSONModeWritesOneLineEnvelope(t *testing.T) {
 // <msg>\n` to stdout. The two-stream output keeps stderr useful for
 // terminal users while stdout carries the machine-readable block.
 func TestReportFailurePlainModeWritesBothStreams(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	code := ReportFailure(FailureReport{
 		Command: "sync",
@@ -87,6 +90,7 @@ func TestReportFailurePlainModeWritesBothStreams(t *testing.T) {
 // the only status whose semantic is "your environment is not ready" as
 // distinct from "the operation failed".
 func TestReportFailureSetupMissingReturnsTwo(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	code := ReportFailure(FailureReport{
 		Command: "doctor",
@@ -104,6 +108,7 @@ func TestReportFailureSetupMissingReturnsTwo(t *testing.T) {
 // parse), the prefix is the binary name `gohealthcli` rather than a
 // bare `: <msg>` line.
 func TestReportFailureEmptyCommandUsesBinaryName(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	code := ReportFailure(FailureReport{
 		Command: "",
@@ -125,6 +130,7 @@ func TestReportFailureEmptyCommandUsesBinaryName(t *testing.T) {
 // and exit code. The matrix is the deletion test — if ReportFailure
 // ever forgets a status or mode, the wholesale set fails.
 func TestReportFailureTableEnumeratesEveryStatusEveryMode(t *testing.T) {
+	t.Parallel()
 	statuses := []struct {
 		status   FailureStatus
 		wantCode int
@@ -196,6 +202,7 @@ func TestReportFailureTableEnumeratesEveryStatusEveryMode(t *testing.T) {
 // `<cmd>: <msg>` line on stderr so a write-output failure always
 // surfaces somewhere.
 func TestReportFailureJSONFailsOverToStderrWhenStdoutBroken(t *testing.T) {
+	t.Parallel()
 	var stderr bytes.Buffer
 	stdout := failingFailureWriter{}
 	code := ReportFailure(FailureReport{
@@ -234,6 +241,7 @@ func (e errorString) Error() string { return string(e) }
 // rather than a corrupt line. This is the bug a hand-rolled
 // fmt.Fprintf would introduce.
 func TestReportFailureJSONEscapesMessageContents(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	code := ReportFailure(FailureReport{
 		Command: "raw",

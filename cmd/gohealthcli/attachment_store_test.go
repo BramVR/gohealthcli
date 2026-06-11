@@ -15,6 +15,7 @@ import (
 // <archive>.attachments/<kind>/<sha256[0:2]>/<sha256>.<ext>, inserts a
 // data_point_attachments row, and returns the sha256.
 func TestAttachmentStoreStoreWritesSidecarAndRow(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -66,6 +67,7 @@ func TestAttachmentStoreStoreWritesSidecarAndRow(t *testing.T) {
 // storing the same bytes twice returns the same sha256, reuses the
 // same sidecar path, and does NOT insert a duplicate row.
 func TestAttachmentStoreStoreIsContentAddressedAndIdempotent(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -111,6 +113,7 @@ func TestAttachmentStoreStoreIsContentAddressedAndIdempotent(t *testing.T) {
 // permission contract on the sidecar file (mode 0600) and the kind
 // subdir (mode 0700).
 func TestAttachmentStoreSidecarFilesAreOwnerOnly(t *testing.T) {
+	t.Parallel()
 	if !usesPOSIXPermissions() {
 		t.Skip("POSIX permission test")
 	}
@@ -153,6 +156,7 @@ func TestAttachmentStoreSidecarFilesAreOwnerOnly(t *testing.T) {
 // row) AND orphan rows (row, no resolvable file). v1 doesn't prune;
 // the seam exists so `doctor` (#108) can report archive integrity.
 func TestAttachmentStoreWalkReportsOrphansBothSides(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -232,6 +236,7 @@ func TestAttachmentStoreWalkReportsOrphansBothSides(t *testing.T) {
 // the SQLite file, with owner-only perms on POSIX. Sync paths can
 // then assume the dir exists without lazy-creating it.
 func TestInitCreatesAttachmentRootDirOwnerOnly(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	rootDir := attachmentRootDirForArchive(archivePath)
@@ -254,6 +259,7 @@ func TestInitCreatesAttachmentRootDirOwnerOnly(t *testing.T) {
 // orphan) rather than statting outside rootDir — i.e. the reported
 // AbsolutePath must never resolve outside the attachment root.
 func TestAttachmentStoreWalkRejectsTraversalPathRelative(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -327,6 +333,7 @@ func TestAttachmentStoreWalkRejectsTraversalPathRelative(t *testing.T) {
 }
 
 func TestResolveContainedPathCleansRootBeforeBoundaryCheck(t *testing.T) {
+	t.Parallel()
 	// rootDir derives from the archive path and may carry internal dot
 	// segments (e.g. `--db a/../archive.sqlite`). filepath.Join collapses
 	// them, so the containment check must compare against the cleaned root

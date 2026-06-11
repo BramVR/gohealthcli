@@ -16,6 +16,7 @@ import (
 // The Attachment Store call happens after the upsert so the data_point
 // row exists when the FK is enforced.
 func TestGoogleHealthIngestionStoresTcxAttachmentForExercise(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
 	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
 		"": `{
@@ -93,6 +94,7 @@ func TestGoogleHealthIngestionStoresTcxAttachmentForExercise(t *testing.T) {
 // the sidecar. The principle: the archive stays useful even when the
 // upstream shape changes.
 func TestGoogleHealthIngestionStoresRawTcxWhenResponseIsNotJsonEnvelope(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
 	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
 		"": `{
@@ -138,6 +140,7 @@ func TestGoogleHealthIngestionStoresRawTcxWhenResponseIsNotJsonEnvelope(t *testi
 // archived verbatim so a re-sync after a shape fix produces a new
 // SHA and the operator can detect the regression via `doctor`.
 func TestGoogleHealthIngestionStoresVerbatimWhenJsonShapeUnexpected(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
 	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
 		"": `{
@@ -182,6 +185,7 @@ func TestGoogleHealthIngestionStoresVerbatimWhenJsonShapeUnexpected(t *testing.T
 // guard against the unwrapped bytes so we don't archive a zero-byte
 // sidecar that exists only because the envelope itself was non-empty.
 func TestGoogleHealthIngestionSkipsTcxWhenEnvelopeTcxDataEmpty(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
 	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
 		"": `{
@@ -220,6 +224,7 @@ func TestGoogleHealthIngestionSkipsTcxWhenEnvelopeTcxDataEmpty(t *testing.T) {
 // available for that exercise — e.g., manually-entered, no GPS), sync
 // must remain successful and no Attachment row is inserted.
 func TestGoogleHealthIngestionSkipsTcxWhenUpstream404(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
 	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
 		"": `{
@@ -265,6 +270,7 @@ func TestGoogleHealthIngestionSkipsTcxWhenUpstream404(t *testing.T) {
 // archived; tanking the whole sync because the optional sidecar is
 // forbidden is wrong. Skip the sidecar, keep sync green.
 func TestGoogleHealthIngestionSkipsTcxWhenUpstream403(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
 	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
 		"": `{
@@ -320,6 +326,7 @@ func TestGoogleHealthIngestionSkipsTcxWhenUpstream403(t *testing.T) {
 // degenerate case where Google returns HTTP 200 with an empty body —
 // nothing meaningful to archive, sync stays green, no row inserted.
 func TestGoogleHealthIngestionSkipsTcxWhenUpstreamEmpty(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
 	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
 		"": `{
@@ -358,6 +365,7 @@ func TestGoogleHealthIngestionSkipsTcxWhenUpstreamEmpty(t *testing.T) {
 // the cursor stays put and the user knows to retry. (A 401 still has
 // to be reported clearly per syncProviderRequestError.)
 func TestGoogleHealthIngestionSurfacesTcxNon404Errors(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
 	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
 		"": `{
@@ -403,6 +411,7 @@ func TestGoogleHealthIngestionSurfacesTcxNon404Errors(t *testing.T) {
 // one HTTP round-trip per exercise Data Point. Users opt in via
 // `gohealthcli connect --add-scopes tcx`.
 func TestGoogleHealthIngestionSkipsTcxWhenLocationScopeNotGranted(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
 	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
 		"": `{
@@ -451,6 +460,7 @@ func TestGoogleHealthIngestionSkipsTcxWhenLocationScopeNotGranted(t *testing.T) 
 // the routing: TCX export is only attempted for exercise sync, never
 // for steps / sleep / heart-rate etc.
 func TestGoogleHealthIngestionDoesNotCallTcxForNonExerciseDataTypes(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
 	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
 		"": `{

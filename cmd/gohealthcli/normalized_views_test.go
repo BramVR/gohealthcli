@@ -11,6 +11,7 @@ import (
 // describe-schema) read from this surface instead of the raw
 // definitions slice in normalized_views.go.
 func TestNormalizedViewsRegistryViewReturnsSpec(t *testing.T) {
+	t.Parallel()
 	registry := normalizedViewsRegistry()
 	spec, ok := registry.View("daily-steps")
 	if !ok {
@@ -33,6 +34,7 @@ func TestNormalizedViewsRegistryViewReturnsSpec(t *testing.T) {
 // Registry and the migration runner — they must stay in lock-step or
 // fresh archives diverge from migrated archives.
 func TestNormalizedViewsRegistryMigrationStatementsMatchVersion(t *testing.T) {
+	t.Parallel()
 	registry := normalizedViewsRegistry()
 	v4 := registry.MigrationStatements(4)
 	if len(v4) == 0 {
@@ -53,6 +55,7 @@ func TestNormalizedViewsRegistryMigrationStatementsMatchVersion(t *testing.T) {
 // Catalog() enumerates every registered view by name so future
 // describe-schema --json doesn't miss entries.
 func TestNormalizedViewsRegistryCatalogCoversAllRegisteredViews(t *testing.T) {
+	t.Parallel()
 	registry := normalizedViewsRegistry()
 	names := registry.Catalog()
 	if len(names) == 0 {
@@ -132,6 +135,7 @@ var normalizedViewCatalogOrder = []string{
 // describe-schema --json directly, so any accidental reorder during
 // the #276 spec-storage move would change user-visible output.
 func TestNormalizedViewsRegistryCatalogOrderIsStable(t *testing.T) {
+	t.Parallel()
 	names := normalizedViewsRegistry().Catalog()
 	if len(names) != len(normalizedViewCatalogOrder) {
 		t.Fatalf("Catalog() lists %d Normalized Views, want %d", len(names), len(normalizedViewCatalogOrder))
@@ -172,6 +176,7 @@ var normalizedViewMigrationOrder = map[int][]string{
 // pin this guarantees the #276 spec move cannot silently drop, duplicate,
 // or reshuffle a Normalized View definition.
 func TestNormalizedViewsRegistryMigrationStatementsPinViewsPerVersion(t *testing.T) {
+	t.Parallel()
 	registry := normalizedViewsRegistry()
 	pinnedTotal := 0
 	for version, wantViews := range normalizedViewMigrationOrder {

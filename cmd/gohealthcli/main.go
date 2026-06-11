@@ -406,36 +406,24 @@ type archivedRollup struct {
 	rawJSON              string
 }
 
-var runOAuthFlow = runBrowserOAuthFlow
-var refreshOAuthToken = refreshGoogleOAuthToken
-
-// fetchIdentity and fetchProfile bind the real fetchers over the
-// production Provider GET module (shared timeout client as the HTTP
-// doer, #281). They remain package-level seams the connect/doctor test
-// fixtures swap until the runtime adapters absorb them.
-var fetchIdentity = func(accessToken string) (googleIdentity, error) {
+// productionFetchIdentity and productionFetchProfile bind the real
+// fetchers over the production Provider GET module (shared timeout
+// client as the HTTP doer, #281). Plain functions, not package vars:
+// tests fake these dependencies through runtimeAdapters fields (#283).
+func productionFetchIdentity(accessToken string) (googleIdentity, error) {
 	return fetchGoogleIdentity(productionProviderGET(), accessToken)
 }
-var fetchProfile = func(accessToken string) (googleProfile, error) {
+
+func productionFetchProfile(accessToken string) (googleProfile, error) {
 	return fetchGoogleProfile(productionProviderGET(), accessToken)
 }
 
-// fetchRawProvider binds the real raw Provider fetch over the shared
-// timeout client. Like fetchIdentity/fetchProfile above, it remains a
-// package-level seam until the runtime adapters absorb it. ctx scopes
-// the HTTP request so a canceled Sync Run aborts the in-flight call (#284).
-var fetchRawProvider = func(ctx context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+// productionFetchRawProvider binds the real raw Provider fetch over the
+// shared timeout client. ctx scopes the HTTP request so a canceled Sync
+// Run aborts the in-flight call (#284).
+func productionFetchRawProvider(ctx context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 	return fetchGoogleHealthRaw(ctx, providerHTTPClient, request, accessToken)
 }
-var currentTime = func() time.Time { return time.Now().UTC() }
-var currentOS = runtime.GOOS
-var runSecurityAddGenericPassword = runSecurityAddGenericPasswordCommand
-var runSecurityFindGenericPassword = runSecurityFindGenericPasswordCommand
-var runSecretToolStore = runSecretToolStoreCommand
-var runSecretToolLookup = runSecretToolLookupCommand
-var runWindowsCredentialWrite = runWindowsCredentialWriteCommand
-var runWindowsCredentialRead = runWindowsCredentialReadCommand
-var findExecutable = exec.LookPath
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -609,17 +597,22 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 		// between the two and is handled by the runUnknownCommand helper.
 		return runUnknownCommand(flags.Arg(0), outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	}
+	return dispatchCommand(cmd, flags.Args()[1:], common, stdout, stderr, runtime)
+}
+
+// dispatchCommand invokes a registry entry's Run adapter, guarding the
+// nil case: TestEveryCommandHasRunAdapter pins the invariant that every
+// entry's Run is wired, but if a future change slips a registry entry
+// through without an adapter we exit cleanly with a targeted stderr
+// message instead of panicking on the nil call. The error wording names
+// the offending command so an operator can flag the bug without
+// inspecting a stack trace.
+func dispatchCommand(cmd commandDef, args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	if cmd.Run == nil {
-		// Defensive guard: TestEveryCommandHasRunAdapter pins the invariant
-		// that every entry's Run is wired, but if a future change slips a
-		// registry entry through without an adapter we exit cleanly with a
-		// targeted stderr message instead of panicking on the nil call.
-		// The error wording names the offending command so an operator can
-		// flag the bug without inspecting a stack trace.
 		fmt.Fprintf(stderr, "internal error: command %q has no Run adapter\n", cmd.Name)
 		return 1
 	}
-	return cmd.Run(flags.Args()[1:], common, stdout, stderr, runtime)
+	return cmd.Run(args, common, stdout, stderr, runtime)
 }
 
 // runUnknownCommand renders the unknown-command failure: the canonical
@@ -677,7 +670,7 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 	})
 	doctorOnline := flags.Bool("online", false, "refresh tokens and check provider reachability")
 
-	if err := ParseCommon(flags, common, args); err != nil {
+	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
@@ -787,7 +780,7 @@ func runDoctorOnlineWithRuntime(configPath, archivePath string, mode outputMode,
 	return 0
 }
 
-func runStatus(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer) int {
+func runStatus(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("status", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -806,7 +799,7 @@ func runStatus(args []string, configPath, archivePath string, configPathExplicit
 		ConfigPathExplicit:  configPathExplicit,
 	})
 
-	if err := ParseCommon(flags, common, args); err != nil {
+	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
@@ -827,7 +820,7 @@ func runStatus(args []string, configPath, archivePath string, configPathExplicit
 		}
 		return 1
 	}
-	result, err := statusSetup(resolvedArchivePath)
+	result, err := statusSetup(resolvedArchivePath, runtime.withDefaults().now().UTC())
 	if err != nil {
 		if result.Status == "" {
 			result.Status = "status_failed"
@@ -844,7 +837,7 @@ func runStatus(args []string, configPath, archivePath string, configPathExplicit
 	return 0
 }
 
-func runInit(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
+func runInit(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("init", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -858,7 +851,7 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 	secretProvider := flags.String("secret-provider", "", "Secret Provider name for OAuth client setup")
 	oauthClientItem := flags.String("oauth-client-item", "", "Secret Provider item name for OAuth client setup")
 
-	if err := ParseCommon(flags, common, args); err != nil {
+	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
@@ -976,7 +969,7 @@ func runConnectWithRuntime(args []string, configPath, archivePath string, global
 	// accepts again (#148: `nutrition` was accepted but invisible).
 	connectAddScopes := flags.String("add-scopes", "", connectAddScopesUsage())
 
-	if err := ParseCommon(flags, common, args); err != nil {
+	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
@@ -1148,7 +1141,7 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 	syncStatus := flags.Bool("status", false, "list recent Sync Runs from the local archive instead of syncing")
 	syncWindow := flags.String("window", "", "with --status: how far back to list finished Sync Runs (Go duration, default 15m, max 24h)")
 
-	if err := ParseCommon(flags, common, args); err != nil {
+	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
@@ -1310,7 +1303,7 @@ func runRawWithRuntime(args []string, configPath, archivePath string, mode outpu
 	// positionals trail; the FlagSet then parses everything, and
 	// fs.Args() returns just the trailing positionals.
 	reordered, target := partitionRawFlagArgs(flags, args)
-	if err := ParseCommon(flags, common, reordered); err != nil {
+	if err := ParseCommon(flags, common, reordered, runtime.observeSubcommandFlagSet); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			// --help / -h flowed through; raw's success output is the
 			// provider's raw bytes on stdout, so the bespoke usage
@@ -2460,7 +2453,7 @@ func runBrowserOAuthFlowWithRuntime(client oauthClientConfig, scopes []string, n
 		runtime.openBrowser = openBrowser
 	}
 	if runtime.now == nil {
-		runtime.now = currentTime
+		runtime.now = productionNow
 	}
 	if noInput {
 		return oauthTokenResponse{}, errors.New("connect requires browser OAuth; rerun without --no-input")
@@ -2622,7 +2615,7 @@ func postOAuthForm(runtime runtimeAdapters, tokenURI string, values url.Values) 
 
 func exchangeOAuthCodeWithRuntime(client oauthClientConfig, redirectURI, code, verifier string, runtime runtimeAdapters) (oauthTokenResponse, error) {
 	if runtime.now == nil {
-		runtime.now = currentTime
+		runtime.now = productionNow
 	}
 	values := url.Values{}
 	values.Set("client_id", client.clientID)
@@ -2647,12 +2640,12 @@ func exchangeOAuthCodeWithRuntime(client oauthClientConfig, redirectURI, code, v
 }
 
 func refreshGoogleOAuthToken(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-	return refreshGoogleOAuthTokenWithRuntime(client, refreshToken, fallbackScopes, runtimeAdapters{now: currentTime})
+	return refreshGoogleOAuthTokenWithRuntime(client, refreshToken, fallbackScopes, runtimeAdapters{now: productionNow})
 }
 
 func refreshGoogleOAuthTokenWithRuntime(client oauthClientConfig, refreshToken string, fallbackScopes []string, runtime runtimeAdapters) (oauthTokenResponse, error) {
 	if runtime.now == nil {
-		runtime.now = currentTime
+		runtime.now = productionNow
 	}
 	values := url.Values{}
 	values.Set("client_id", client.clientID)

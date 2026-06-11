@@ -13,6 +13,7 @@ import (
 // which could otherwise block on it. Covers both the validate path and the
 // auto-refresh path, which share readOwnerOnlyOAuthClientFile.
 func TestReadOwnerOnlyOAuthClientFileRejectsFIFO(t *testing.T) {
+	t.Parallel()
 	fifoPath := filepath.Join(t.TempDir(), "client.json")
 	if err := syscall.Mkfifo(fifoPath, 0o600); err != nil {
 		t.Skipf("mkfifo unsupported: %v", err)

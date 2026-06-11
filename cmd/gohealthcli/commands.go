@@ -66,9 +66,8 @@ const commandSchemaVersion = 1
 // (#75) rather than a linear scan. Values are indices into `commands`
 // — not copied commandDef values — because the `schema` entry's Run
 // adapter is wired by init() after the slice literal is initialised;
-// storing indices keeps the index coherent with that late binding (and
-// with tests that temporarily swap an entry's Run) regardless of init
-// order. Built once at startup by the init() below.
+// storing indices keeps the index coherent with that late binding
+// regardless of init order. Built once at startup by the init() below.
 var commandIndex = make(map[string]int, len(commands))
 
 // init builds commandIndex from the registry. A duplicate Name panics:
@@ -252,10 +251,10 @@ var commands = []commandDef{
 			flagSpec{Name: "oauth-client-item", Type: "string", Default: "", Usage: "Secret Provider item name for OAuth client setup"},
 		),
 		CommonFlags: commonFlagNames(),
-		// init runs entirely against the local filesystem (config + archive),
-		// so the runtime adapter bundle is ignored.
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runInit(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr)
+		// init runs entirely against the local filesystem (config + archive);
+		// the runtime adapter bundle only carries the flag-drift observer.
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+			return runInit(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
 		},
 	},
 	{
@@ -378,8 +377,8 @@ var commands = []commandDef{
 		// flag (so its own --db can win over the config-recorded path); the
 		// adapter sources it from CommonFlagValues, which the dispatch path
 		// populates from the FlagSet Visit pass.
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runStatus(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr)
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+			return runStatus(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr, runtime)
 		},
 	},
 	{
@@ -398,10 +397,10 @@ var commands = []commandDef{
 		CommonFlags: commonFlagNames(),
 		// query, like status, reads ArchivePathExplicit so a --db passed
 		// on the global side (before the subcommand) still wins. query
-		// hits the archive read-only, so the runtime adapter bundle is
-		// not needed.
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runQuery(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr)
+		// hits the archive read-only, so the runtime adapter bundle only
+		// carries the flag-drift observer.
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+			return runQuery(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr, runtime)
 		},
 	},
 	{
@@ -418,11 +417,11 @@ var commands = []commandDef{
 		CommonFlags: commonFlagNames(),
 		// export reads ArchivePathExplicit identically to status / query; it
 		// has its own --format / --output flag surface, plus the Common
-		// Flag Set synonym mappings handled inside runExport. The runtime
-		// adapter bundle is unused (export is read-only against the local
-		// archive).
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runExport(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, stdout, stderr)
+		// Flag Set synonym mappings handled inside runExport. export is
+		// read-only against the local archive; the runtime adapter bundle
+		// only carries the flag-drift observer.
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+			return runExport(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, stdout, stderr, runtime)
 		},
 	},
 	{
@@ -498,10 +497,10 @@ var commands = []commandDef{
 			{Name: "readme", Type: "string", Default: "", Usage: "path to README.md to rewrite in place"},
 		},
 		// docs-export-datasets reads / writes one file and has no
-		// archive or provider dependency; the runtime adapter bundle
-		// and the CommonFlagValues block are ignored.
-		Run: func(args []string, _ CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runDocsExportDatasets(args, stdout, stderr)
+		// archive or provider dependency; the CommonFlagValues block is
+		// ignored and the adapters only carry the flag-drift observer.
+		Run: func(args []string, _ CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+			return runDocsExportDatasets(args, stdout, stderr, runtime.observeSubcommandFlagSet)
 		},
 	},
 }
@@ -516,8 +515,8 @@ func init() {
 		if commands[i].Name != "schema" {
 			continue
 		}
-		commands[i].Run = func(args []string, _ CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runSchemaWithRegistry(args, commands, stdout, stderr)
+		commands[i].Run = func(args []string, _ CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+			return runSchemaWithRegistry(args, commands, stdout, stderr, runtime.observeSubcommandFlagSet)
 		}
 		return
 	}

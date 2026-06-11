@@ -8,9 +8,10 @@ import (
 )
 
 func TestRunSchemaEmitsValidDocument(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if code := runSchemaWithRegistry(nil, commands, stdout, stderr); code != 0 {
+	if code := runSchemaWithRegistry(nil, commands, stdout, stderr, nil); code != 0 {
 		t.Fatalf("runSchemaWithRegistry exit code = %d, want 0; stderr=%q", code, stderr.String())
 	}
 	var doc schemaDocument
@@ -29,9 +30,10 @@ func TestRunSchemaEmitsValidDocument(t *testing.T) {
 }
 
 func TestRunSchemaIncludesEveryUserFacingSubcommand(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if code := runSchemaWithRegistry(nil, commands, stdout, stderr); code != 0 {
+	if code := runSchemaWithRegistry(nil, commands, stdout, stderr, nil); code != 0 {
 		t.Fatalf("runSchemaWithRegistry exit code = %d; stderr=%q", code, stderr.String())
 	}
 	var doc schemaDocument
@@ -58,9 +60,10 @@ func TestRunSchemaIncludesEveryUserFacingSubcommand(t *testing.T) {
 }
 
 func TestRunSchemaIncludesDoctor(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if code := runSchemaWithRegistry(nil, commands, stdout, stderr); code != 0 {
+	if code := runSchemaWithRegistry(nil, commands, stdout, stderr, nil); code != 0 {
 		t.Fatalf("runSchemaWithRegistry exit code = %d, want 0; stderr=%q", code, stderr.String())
 	}
 	var doc schemaDocument
@@ -97,9 +100,10 @@ func TestRunSchemaIncludesDoctor(t *testing.T) {
 }
 
 func TestRunSchemaIncludesHiddenSchemaCommand(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if code := runSchemaWithRegistry(nil, commands, stdout, stderr); code != 0 {
+	if code := runSchemaWithRegistry(nil, commands, stdout, stderr, nil); code != 0 {
 		t.Fatalf("runSchemaWithRegistry exit code = %d, want 0; stderr=%q", code, stderr.String())
 	}
 	var doc schemaDocument
@@ -119,9 +123,10 @@ func TestRunSchemaIncludesHiddenSchemaCommand(t *testing.T) {
 }
 
 func TestRunSchemaRejectsPositionalArgs(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if code := runSchemaWithRegistry([]string{"surprise"}, commands, stdout, stderr); code == 0 {
+	if code := runSchemaWithRegistry([]string{"surprise"}, commands, stdout, stderr, nil); code == 0 {
 		t.Fatalf("runSchemaWithRegistry with unexpected positional should fail; stdout=%q", stdout.String())
 	}
 	if !strings.Contains(stderr.String(), "unexpected schema argument") {
@@ -130,9 +135,10 @@ func TestRunSchemaRejectsPositionalArgs(t *testing.T) {
 }
 
 func TestRunSchemaRejectsNonJSONMode(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if code := runSchemaWithRegistry([]string{"--json=false"}, commands, stdout, stderr); code == 0 {
+	if code := runSchemaWithRegistry([]string{"--json=false"}, commands, stdout, stderr, nil); code == 0 {
 		t.Fatalf("runSchemaWithRegistry with --json=false should fail; stdout=%q", stdout.String())
 	}
 	if !strings.Contains(stderr.String(), "supports --json output only") {

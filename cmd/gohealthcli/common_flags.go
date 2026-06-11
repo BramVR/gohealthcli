@@ -45,24 +45,25 @@ var commonFlagsSpec = []flagSpec{
 // wording for a targeted message that names the subcommand.
 var knownGlobalCommonFlags = commonFlagNames()
 
-// observeSubcommandFlagSet, when non-nil, receives every subcommand's
-// FlagSet after all flags (common + subcommand-specific) are registered,
+// flagSetObserver, when non-nil, receives every subcommand's FlagSet
+// after all flags (common + subcommand-specific) are registered,
 // immediately before parsing. It is the seam the issue #76 schema-drift
 // test uses to walk the real runtime FlagSets via flag.VisitAll and
 // compare them against the registry's commandDef.Flags — the canonical
 // surface `schema --json` and the generated command-reference pages
-// advertise. Production code never assigns it; the hook fires from
-// ParseCommon (every Common-Flag-Set subcommand funnels through it) and
-// from the two bare-Parse build-time verbs (schema, docs-export-datasets)
-// so no registry entry escapes the drift check.
-var observeSubcommandFlagSet func(fs *flag.FlagSet)
+// advertise. Production leaves the runtimeAdapters field nil; the hook
+// fires from ParseCommon (every Common-Flag-Set subcommand funnels
+// through it) and from the two bare-Parse build-time verbs (schema,
+// docs-export-datasets) so no registry entry escapes the drift check
+// (#283: injected through the adapters, not package state).
+type flagSetObserver func(fs *flag.FlagSet)
 
 // notifySubcommandFlagSetObserver fires the drift-test seam above. Call
 // sites invoke it after the last flag registration and before Parse, so
 // the observer always sees the complete flag surface the binary accepts.
-func notifySubcommandFlagSetObserver(fs *flag.FlagSet) {
-	if observeSubcommandFlagSet != nil {
-		observeSubcommandFlagSet(fs)
+func notifySubcommandFlagSetObserver(observe flagSetObserver, fs *flag.FlagSet) {
+	if observe != nil {
+		observe(fs)
 	}
 }
 
@@ -211,8 +212,8 @@ type boolFlag interface {
 // fs.Parse writes its full diagnostic (error + usage) to fs.Output()
 // as before, and ParseCommon returns ErrFlagParseFailed (or flag.ErrHelp
 // for help requests). Callers should NOT re-print those errors.
-func ParseCommon(fs *flag.FlagSet, values *CommonFlagValues, args []string) error {
-	notifySubcommandFlagSetObserver(fs)
+func ParseCommon(fs *flag.FlagSet, values *CommonFlagValues, args []string, observe flagSetObserver) error {
+	notifySubcommandFlagSetObserver(observe, fs)
 	if err := preScanUnknownButKnownGlobal(fs, args); err != nil {
 		return err
 	}

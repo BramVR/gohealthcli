@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 type healthArchiveOpenMode int
@@ -16,6 +17,20 @@ const (
 
 type healthArchiveLifecycle struct {
 	path string
+	// now stamps schema_migrations.applied_at. Zero value means the
+	// real clock: callers that do not care about migration timestamps
+	// construct the lifecycle with the path only, tests inject a fixed
+	// clock through this field (#283).
+	now func() time.Time
+}
+
+// clock returns the lifecycle's stamp clock, defaulting to the real
+// clock when no fixed clock was injected.
+func (lifecycle healthArchiveLifecycle) clock() func() time.Time {
+	if lifecycle.now != nil {
+		return lifecycle.now
+	}
+	return productionNow
 }
 
 type healthArchiveHandle struct {
@@ -59,7 +74,7 @@ func (lifecycle healthArchiveLifecycle) Create() (err error) {
 		return err
 	}
 	defer db.Close()
-	if err := applyMigrations(db); err != nil {
+	if err := applyMigrations(db, lifecycle.clock()); err != nil {
 		return err
 	}
 	if !usesPOSIXPermissions() {
@@ -93,7 +108,7 @@ func (lifecycle healthArchiveLifecycle) Migrate() error {
 		return err
 	}
 	defer db.Close()
-	if err := applyPendingMigrations(db); err != nil {
+	if err := applyPendingMigrations(db, lifecycle.clock()); err != nil {
 		return err
 	}
 	// Backfill the attachment root for archives that predate #107 /

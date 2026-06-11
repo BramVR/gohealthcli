@@ -8,6 +8,7 @@ import "testing"
 // step. Adding schema vN+1 must stay one table row plus the
 // currentSchemaVersion bump.
 func TestSchemaMigrationTableIsOrderedAndComplete(t *testing.T) {
+	t.Parallel()
 	table := schemaMigrationTable()
 	if len(table) != currentSchemaVersion {
 		t.Fatalf("migration table rows = %d, want %d (one row per schema version)", len(table), currentSchemaVersion)

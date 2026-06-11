@@ -34,6 +34,7 @@ func installMultiTypeSyncFake(t *testing.T, runtime runtimeAdapters, wantAccessT
 }
 
 func TestSyncOrchestratorFansOutOnePerDataType(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -81,6 +82,7 @@ func TestSyncOrchestratorFansOutOnePerDataType(t *testing.T) {
 }
 
 func TestSyncOrchestratorIsolatesPerTypeFailures(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -123,6 +125,7 @@ func TestSyncOrchestratorIsolatesPerTypeFailures(t *testing.T) {
 }
 
 func TestSyncOrchestratorRespectsCancellationBetweenDataTypes(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -207,6 +210,7 @@ func TestSyncOrchestratorRespectsCancellationBetweenDataTypes(t *testing.T) {
 // composes) so the invariant is pinned at the lifecycle boundary even
 // when the orchestrator's loop-top check is not in play.
 func TestSyncRunLifecycleClosesSIGINTPreFirstDataTypeRace(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -270,13 +274,13 @@ func TestSyncRunLifecycleClosesSIGINTPreFirstDataTypeRace(t *testing.T) {
 // row; with slice 5 in place, the lifecycle catches the now-canceled
 // context and returns sync_canceled with zero audit rows.
 //
-// The seam used here — healthArchiveWriterOpenerForTest — is already a
-// pre-existing test hook (see sync_run.go:10), called from
-// productionSyncPreflightContext.currentConnection during
-// gate.Validate. Wrapping it lets us deterministically slot a close()
-// into the validate-then-lifecycle handoff without introducing a new
-// production hook.
+// The seam used here — the runtime adapters' openHealthArchiveWriter —
+// is called from productionSyncPreflightContext.currentConnection
+// during gate.Validate. Wrapping it lets us deterministically slot a
+// close() into the validate-then-lifecycle handoff without introducing
+// a new production hook.
 func TestSyncOrchestratorCancelBetweenLoopGuardAndLifecycleWritesNoAuditRow(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -304,9 +308,8 @@ func TestSyncOrchestratorCancelBetweenLoopGuardAndLifecycleWritesNoAuditRow(t *t
 	// executor.Execute) and strictly BEFORE syncRunLifecycle.Run's
 	// pre-StartSyncRun cancel check fires (which is the first thing
 	// lifecycle.Run does). This is the exact race window slice 5 closes.
-	t.Cleanup(func() { healthArchiveWriterOpenerForTest = openHealthArchiveWriter })
 	opens := 0
-	healthArchiveWriterOpenerForTest = func(path string) (healthArchiveWriter, error) {
+	testRuntime.openHealthArchiveWriter = func(path string) (healthArchiveWriter, error) {
 		opens++
 		if opens == 1 {
 			cancel()
@@ -343,6 +346,7 @@ func TestSyncOrchestratorCancelBetweenLoopGuardAndLifecycleWritesNoAuditRow(t *t
 }
 
 func TestSyncOrchestratorCancelsActiveDataTypeMidPagination(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -423,6 +427,7 @@ func TestSyncOrchestratorCancelsActiveDataTypeMidPagination(t *testing.T) {
 // envelope and the persisted sync_runs row, and leave the Sync Cursor
 // un-advanced (ADR-0008).
 func TestSyncRunExecutorCancelMidFetchFinalizesCanceledAndKeepsCursor(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -512,6 +517,7 @@ func TestSyncRunExecutorCancelMidFetchFinalizesCanceledAndKeepsCursor(t *testing
 }
 
 func TestSyncOrchestratorRejectsAllAndTypesTogether(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{accessToken: "x"})
@@ -531,6 +537,10 @@ func TestSyncOrchestratorRejectsAllAndTypesTogether(t *testing.T) {
 }
 
 func TestInstallSyncCancelContextCancelsOnSIGINT(t *testing.T) {
+	// NOT t.Parallel(): this test SIGINTs the whole test process
+	// (syscall.Kill(Getpid())). Any concurrently-running test that has
+	// a signal.NotifyContext installed — every `sync` / `raw` dispatch
+	// — would observe the signal and flake as sync_canceled.
 	if runtime.GOOS == "windows" {
 		t.Skip("syscall.Kill(SIGINT) is POSIX-only; the cancel-context install path itself is exercised by TestInstallSyncCancelContextCancelsOnStop on every platform")
 	}
@@ -550,6 +560,7 @@ func TestInstallSyncCancelContextCancelsOnSIGINT(t *testing.T) {
 }
 
 func TestInstallSyncCancelContextCancelsOnStop(t *testing.T) {
+	t.Parallel()
 	ctx, stop := installSyncCancelContext()
 	stop()
 
@@ -570,6 +581,7 @@ func TestInstallSyncCancelContextCancelsOnStop(t *testing.T) {
 // expandDataTypes rejected every per-type call as
 // preflightRuleAllVsTypesConflict, completely breaking --all.
 func TestPerTypeSyncOptionsClearsAllTypes(t *testing.T) {
+	t.Parallel()
 	options := syncCommandOptions{
 		allTypes:  true,
 		dataTypes: []string{"steps", "heart-rate"},
@@ -604,6 +616,7 @@ func TestPerTypeSyncOptionsClearsAllTypes(t *testing.T) {
 // that as sync_canceled, not sync_failed, so an interrupted backfill
 // does not surface as a failure in tooling that pivots on status.
 func TestFanOutStatusEmptyResultsReportsCanceled(t *testing.T) {
+	t.Parallel()
 	if got := fanOutStatus(nil); got != "sync_canceled" {
 		t.Errorf("fanOutStatus(nil) = %q, want sync_canceled", got)
 	}
@@ -617,6 +630,7 @@ func TestFanOutStatusEmptyResultsReportsCanceled(t *testing.T) {
 // count Data Types that *actually* completed before the cancel, not
 // len(results) (which includes the canceled in-flight run itself).
 func TestFanOutMessageCanceledCountsOnlyCompleted(t *testing.T) {
+	t.Parallel()
 	results := []syncResult{
 		{Status: "sync_completed", DataTypes: []string{"steps"}},
 		{Status: "sync_completed", DataTypes: []string{"heart-rate"}},
@@ -633,6 +647,7 @@ func TestFanOutMessageCanceledCountsOnlyCompleted(t *testing.T) {
 // at len(results) since "N attempted, at least one failed" is the actual
 // attempted count, not a per-status filter.
 func TestFanOutMessageFailedReportsAttempted(t *testing.T) {
+	t.Parallel()
 	results := []syncResult{
 		{Status: "sync_completed", DataTypes: []string{"steps"}},
 		{Status: "sync_failed", DataTypes: []string{"heart-rate"}},
@@ -645,6 +660,7 @@ func TestFanOutMessageFailedReportsAttempted(t *testing.T) {
 }
 
 func TestSyncOrchestratorAllExpandsToSyncableDefaultDataTypes(t *testing.T) {
+	t.Parallel()
 	orchestrator := newSyncOrchestrator(runtimeAdapters{})
 	got, err := orchestrator.expandDataTypes(syncCommandOptions{allTypes: true})
 	if err != nil {

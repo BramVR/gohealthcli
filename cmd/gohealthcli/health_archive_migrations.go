@@ -110,8 +110,9 @@ func schemaMigrationTable() []schemaMigration {
 }
 
 // applyMigrations creates the full current schema on a fresh, empty
-// Health Archive by applying every table row from version 1.
-func applyMigrations(db *sql.DB) error {
+// Health Archive by applying every table row from version 1. The
+// caller's clock stamps schema_migrations.applied_at.
+func applyMigrations(db *sql.DB, now func() time.Time) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -119,7 +120,7 @@ func applyMigrations(db *sql.DB) error {
 	// Rollback after a successful Commit returns sql.ErrTxDone; the error is
 	// deliberately ignored because this defer is only the abort path.
 	defer func() { _ = tx.Rollback() }()
-	if err := applySchemaMigrationSteps(tx, 0, currentSchemaVersion, currentTime().UTC().Format(time.RFC3339)); err != nil {
+	if err := applySchemaMigrationSteps(tx, 0, currentSchemaVersion, now().UTC().Format(time.RFC3339)); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, currentSchemaVersion)); err != nil {
@@ -131,7 +132,7 @@ func applyMigrations(db *sql.DB) error {
 // applyPendingMigrations upgrades an existing Health Archive from its
 // recorded schema version to the current one, applying only the table
 // rows the archive has not reached yet.
-func applyPendingMigrations(db *sql.DB) error {
+func applyPendingMigrations(db *sql.DB, now func() time.Time) error {
 	var userVersion int
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
 		return err
@@ -147,7 +148,7 @@ func applyPendingMigrations(db *sql.DB) error {
 		// Rollback after a successful Commit returns sql.ErrTxDone; the error is
 		// deliberately ignored because this defer is only the abort path.
 		defer func() { _ = tx.Rollback() }()
-		if err := applySchemaMigrationSteps(tx, userVersion, currentSchemaVersion, currentTime().UTC().Format(time.RFC3339)); err != nil {
+		if err := applySchemaMigrationSteps(tx, userVersion, currentSchemaVersion, now().UTC().Format(time.RFC3339)); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, currentSchemaVersion)); err != nil {

@@ -17,6 +17,7 @@ import (
 // stdout — the same writable-archive + WithAutoRefresh pattern sync and
 // irn-profile already use.
 func TestRawEndpointGetProfileAutoRefreshesExpiredAccessToken(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	connectAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

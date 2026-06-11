@@ -28,6 +28,7 @@ import (
 // of a missing `body-fat` bullet, and a type mistakenly listed in the
 // caveat cannot pose as supported.
 func TestREADMEListsEverySyncableDataType(t *testing.T) {
+	t.Parallel()
 	bullets := readmeSyncTypesBulletBlock(t)
 	for _, dataType := range googleHealthDataTypes.order {
 		if !syncDataPointDataTypeSupported(dataType) {
@@ -49,6 +50,7 @@ func TestREADMEListsEverySyncableDataType(t *testing.T) {
 // "known to the catalog" phrase) so a stray mention elsewhere in the
 // section cannot satisfy the guard.
 func TestREADMECaveatListsCatalogTypesSyncRejects(t *testing.T) {
+	t.Parallel()
 	caveat := readmeSyncTypesCaveatParagraph(t)
 	for _, dataType := range googleHealthDataTypes.order {
 		if syncDataPointDataTypeSupported(dataType) {

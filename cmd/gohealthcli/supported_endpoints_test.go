@@ -10,6 +10,7 @@ import (
 // booleans. Steps is the canonical multi-endpoint entry: list +
 // reconcile + dailyRollUp.
 func TestSupportedEndpointsMapMatchesPlannerForSteps(t *testing.T) {
+	t.Parallel()
 	entry, ok := googleHealthDataTypes.Lookup("steps")
 	if !ok {
 		t.Fatal("steps not in catalog")
@@ -36,6 +37,7 @@ func TestSupportedEndpointsMapMatchesPlannerForSteps(t *testing.T) {
 // removed and helpers read from the map, this test guarantees the
 // behaviour stays the same for the original 12 Data Types.
 func TestSupportedEndpointsCatalogConsistencyForEveryDataType(t *testing.T) {
+	t.Parallel()
 	for _, dataType := range googleHealthDataTypes.order {
 		dataType := dataType
 		entry, _ := googleHealthDataTypes.Lookup(dataType)
@@ -66,6 +68,7 @@ func TestSupportedEndpointsCatalogConsistencyForEveryDataType(t *testing.T) {
 // is the new interval-shaped Tier 1 Data Type and exercises the map's
 // list + reconcile + dailyRollUp endpoints.
 func TestSupportedEndpointsAddsFloorsTier1(t *testing.T) {
+	t.Parallel()
 	entry, ok := googleHealthDataTypes.Lookup("floors")
 	if !ok {
 		t.Fatal("floors not in catalog")

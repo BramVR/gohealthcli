@@ -8,23 +8,23 @@ import (
 
 // captureSubcommandFlagSet drives the named registry entry's real Run
 // adapter with `--help` and returns the fully registered FlagSet the
-// subcommand built, captured via the observeSubcommandFlagSet seam.
+// subcommand built, captured via the runtime adapters'
+// observeSubcommandFlagSet seam (#283: injected, not package state).
 // `--help` short-circuits at parse time, so the invocation never touches
 // the filesystem, the archive, or the provider — but the FlagSet we
 // observe is exactly the one production dispatch would parse.
 func captureSubcommandFlagSet(t *testing.T, cmd commandDef) *flag.FlagSet {
 	t.Helper()
 	var captured *flag.FlagSet
-	observeSubcommandFlagSet = func(fs *flag.FlagSet) {
+	testRuntime := runtimeAdapters{observeSubcommandFlagSet: func(fs *flag.FlagSet) {
 		if fs.Name() == cmd.Name && captured == nil {
 			captured = fs
 		}
-	}
-	t.Cleanup(func() { observeSubcommandFlagSet = nil })
+	}}
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	if code := cmd.Run([]string{"--help"}, CommonFlagValues{}, stdout, stderr, runtimeAdapters{}); code != 0 {
+	if code := cmd.Run([]string{"--help"}, CommonFlagValues{}, stdout, stderr, testRuntime); code != 0 {
 		t.Fatalf("`%s --help` exit code = %d, want 0\nstderr: %s", cmd.Name, code, stderr.String())
 	}
 	if captured == nil {
@@ -56,6 +56,7 @@ func runtimeFlagType(f *flag.Flag) string {
 // --help output and the published schema together; hand-editing either
 // side alone is no longer possible.
 func TestRegisterCommonBindsCommonFlagsSpec(t *testing.T) {
+	t.Parallel()
 	if len(commonFlagsSpec) != 5 {
 		t.Fatalf("commonFlagsSpec declares %d flags, want the 5 shared flags", len(commonFlagsSpec))
 	}
@@ -94,6 +95,7 @@ func TestRegisterCommonBindsCommonFlagsSpec(t *testing.T) {
 // must reach the bound FlagSet, while non-overridden flags keep the
 // canonical commonFlagsSpec wording.
 func TestRegisterCommonAppliesUsageOverrides(t *testing.T) {
+	t.Parallel()
 	fs := flag.NewFlagSet("override-probe", flag.ContinueOnError)
 	spec := AllCommonFlagsSpec()
 	spec.UsageOverrides = map[string]string{"json": "synonym for --format jsonl"}
@@ -122,6 +124,7 @@ func TestRegisterCommonAppliesUsageOverrides(t *testing.T) {
 // either direction fails here instead of shipping a binary whose --help
 // disagrees with the Project Site.
 func TestEveryCommandFlagSetMatchesRegistryFlags(t *testing.T) {
+	t.Parallel()
 	for _, cmd := range commands {
 		t.Run(cmd.Name, func(t *testing.T) {
 			fs := captureSubcommandFlagSet(t, cmd)
