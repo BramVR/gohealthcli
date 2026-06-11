@@ -216,13 +216,13 @@ func TestProfileCommandWritesViaIdentitySnapshotArchive(t *testing.T) {
 func TestSettingsCommandArchivesSnapshotWithKindSettings(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
 	// PRD #142 slice 2 / #176: getSettings now requires
@@ -230,17 +230,15 @@ func TestSettingsCommandArchivesSnapshotWithKindSettings(t *testing.T) {
 	// `connect --add-scopes settings`.
 	addStoredConnectionScope(t, archivePath, googleHealthSettingsReadonlyScope)
 
-	originalFetchSettings := fetchSettings
-	fetchSettings = func(string) (googleSettings, error) {
+	testRuntime.fetchSettings = func(string) (googleSettings, error) {
 		return googleSettings{
 			rawJSON: `{"name":"users/111111256096816351/settings","measurementSystem":"METRIC","timezone":"Europe/Brussels"}`,
 		}, nil
 	}
-	t.Cleanup(func() { fetchSettings = originalFetchSettings })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"settings", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"settings", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("settings exit code = %d, stderr=%s, stdout=%s", code, stderr.String(), stdout.String())
 	}

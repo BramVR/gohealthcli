@@ -14,13 +14,6 @@ type googleIRNProfile struct {
 	rawJSON string
 }
 
-// fetchIRNProfile is the seam tests stub. Production binds the real
-// fetchGoogleIRNProfile over the production Provider GET module
-// (shared timeout client as the HTTP doer, #281).
-var fetchIRNProfile = func(accessToken string) (googleIRNProfile, error) {
-	return fetchGoogleIRNProfile(productionProviderGET(), accessToken)
-}
-
 type irnProfileResult struct {
 	Status             string `json:"status"`
 	ConnectionID       string `json:"connection_id,omitempty"`
@@ -34,8 +27,8 @@ type irnProfileResult struct {
 // irnProfileSnapshotCommand is irn-profile's Identity Snapshot engine
 // spec (issue #282): the command is the spec — irn-profile has no
 // decoration beyond the shared fetch → handoff → render pipeline. The
-// fetchPayload closure reads the fetchIRNProfile seam at invocation
-// time so tests keep stubbing the same package var.
+// fetchPayload closure rides the runtime adapters' fetchIRNProfile
+// seam, so tests inject fakes through the adapters value (#283).
 //
 // irn-profile does no prompting and never blocks on browser input, so
 // --no-input would imply a behaviour the command does not have. The
@@ -66,8 +59,8 @@ var irnProfileSnapshotCommand = identitySnapshotCommandSpec[irnProfileResult, go
 	setMessage:   func(result *irnProfileResult, message string) { result.Message = message },
 	writeResult:  writeIRNProfileResult,
 	snapshotKind: snapshotKindIRNProfile,
-	fetchPayload: func(_ runtimeAdapters, accessToken string) (googleIRNProfile, error) {
-		return fetchIRNProfile(accessToken)
+	fetchPayload: func(runtime runtimeAdapters, accessToken string) (googleIRNProfile, error) {
+		return runtime.fetchIRNProfile(accessToken)
 	},
 	payloadRawJSON: func(payload googleIRNProfile) string { return payload.rawJSON },
 	finishArchived: func(result *irnProfileResult, snapshotID int64, fetchedAt string) {

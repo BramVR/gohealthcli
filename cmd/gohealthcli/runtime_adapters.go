@@ -16,6 +16,9 @@ type runtimeAdapters struct {
 	openBrowser                    func(string) error
 	fetchIdentity                  func(string) (googleIdentity, error)
 	fetchProfile                   func(string) (googleProfile, error)
+	fetchPairedDevices             func(string) (googlePairedDevices, error)
+	fetchSettings                  func(string) (googleSettings, error)
+	fetchIRNProfile                func(string) (googleIRNProfile, error)
 	fetchRawProvider               func(rawProviderRequest, string) ([]byte, error)
 	now                            func() time.Time
 	currentOS                      string
@@ -28,6 +31,24 @@ type runtimeAdapters struct {
 	runWindowsCredentialRead       func(string, string) ([]byte, error)
 }
 
+// productionFetchPairedDevices, productionFetchSettings, and
+// productionFetchIRNProfile bind the real Identity Snapshot fetchers
+// over the production Provider GET module (shared timeout client as
+// the HTTP doer, #281). They are plain functions, not package vars:
+// tests fake these dependencies by setting the corresponding
+// runtimeAdapters fields, never by mutating package state (#283).
+func productionFetchPairedDevices(accessToken string) (googlePairedDevices, error) {
+	return fetchGooglePairedDevices(productionProviderGET(), accessToken)
+}
+
+func productionFetchSettings(accessToken string) (googleSettings, error) {
+	return fetchGoogleSettings(productionProviderGET(), accessToken)
+}
+
+func productionFetchIRNProfile(accessToken string) (googleIRNProfile, error) {
+	return fetchGoogleIRNProfile(productionProviderGET(), accessToken)
+}
+
 func productionRuntimeAdapters() runtimeAdapters {
 	return runtimeAdapters{
 		httpDoer:                       providerHTTPClient,
@@ -36,6 +57,9 @@ func productionRuntimeAdapters() runtimeAdapters {
 		openBrowser:                    openBrowser,
 		fetchIdentity:                  fetchIdentity,
 		fetchProfile:                   fetchProfile,
+		fetchPairedDevices:             productionFetchPairedDevices,
+		fetchSettings:                  productionFetchSettings,
+		fetchIRNProfile:                productionFetchIRNProfile,
 		fetchRawProvider:               fetchRawProvider,
 		now:                            currentTime,
 		currentOS:                      currentOS,
@@ -96,6 +120,21 @@ func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
 	if adapters.fetchProfile == nil {
 		adapters.fetchProfile = func(accessToken string) (googleProfile, error) {
 			return fetchGoogleProfile(adapters.providerGET(), accessToken)
+		}
+	}
+	if adapters.fetchPairedDevices == nil {
+		adapters.fetchPairedDevices = func(accessToken string) (googlePairedDevices, error) {
+			return fetchGooglePairedDevices(adapters.providerGET(), accessToken)
+		}
+	}
+	if adapters.fetchSettings == nil {
+		adapters.fetchSettings = func(accessToken string) (googleSettings, error) {
+			return fetchGoogleSettings(adapters.providerGET(), accessToken)
+		}
+	}
+	if adapters.fetchIRNProfile == nil {
+		adapters.fetchIRNProfile = func(accessToken string) (googleIRNProfile, error) {
+			return fetchGoogleIRNProfile(adapters.providerGET(), accessToken)
 		}
 	}
 	if adapters.fetchRawProvider == nil {

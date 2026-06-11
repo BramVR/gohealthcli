@@ -21,13 +21,13 @@ import (
 func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
 	// PRD #142 slice 2 / #176: pairedDevices now requires
@@ -35,8 +35,7 @@ func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
 	// `connect --add-scopes settings`.
 	addStoredConnectionScope(t, archivePath, googleHealthSettingsReadonlyScope)
 
-	originalFetchPairedDevices := fetchPairedDevices
-	fetchPairedDevices = func(string) (googlePairedDevices, error) {
+	testRuntime.fetchPairedDevices = func(string) (googlePairedDevices, error) {
 		return googlePairedDevices{
 			rawJSON: `{"pairedDevices":[
 				{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"TRACKER","batteryStatus":"Medium","batteryLevel":50,"deviceVersion":"Google Pixel Watch 4"},
@@ -44,10 +43,9 @@ func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
 			]}`,
 		}, nil
 	}
-	t.Cleanup(func() { fetchPairedDevices = originalFetchPairedDevices })
 
 	jsonOut := new(bytes.Buffer)
-	if code := run([]string{"devices", "--config", configPath, "--db", archivePath, "--json"}, jsonOut, new(bytes.Buffer)); code != 0 {
+	if code := runWithRuntime([]string{"devices", "--config", configPath, "--db", archivePath, "--json"}, jsonOut, new(bytes.Buffer), testRuntime); code != 0 {
 		t.Fatalf("devices --json exit code = %d, stdout=%s", code, jsonOut.String())
 	}
 	var jsonResult struct {
@@ -83,12 +81,12 @@ func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
 	}
 
 	plainOut := new(bytes.Buffer)
-	fetchPairedDevices = func(string) (googlePairedDevices, error) {
+	testRuntime.fetchPairedDevices = func(string) (googlePairedDevices, error) {
 		return googlePairedDevices{
 			rawJSON: `{"pairedDevices":[{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"TRACKER","batteryStatus":"Medium","batteryLevel":50,"deviceVersion":"Google Pixel Watch 4"}]}`,
 		}, nil
 	}
-	if code := run([]string{"devices", "--config", configPath, "--db", archivePath, "--plain"}, plainOut, new(bytes.Buffer)); code != 0 {
+	if code := runWithRuntime([]string{"devices", "--config", configPath, "--db", archivePath, "--plain"}, plainOut, new(bytes.Buffer), testRuntime); code != 0 {
 		t.Fatalf("devices --plain exit code = %d, stdout=%s", code, plainOut.String())
 	}
 	want := []string{
@@ -112,13 +110,13 @@ func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
 func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
 
@@ -190,13 +188,13 @@ func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
 
@@ -238,13 +236,13 @@ func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
 func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
 	// PRD #142 slice 2 / #176: pairedDevices now requires
@@ -252,17 +250,15 @@ func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
 	// `connect --add-scopes settings`.
 	addStoredConnectionScope(t, archivePath, googleHealthSettingsReadonlyScope)
 
-	originalFetchPairedDevices := fetchPairedDevices
-	fetchPairedDevices = func(string) (googlePairedDevices, error) {
+	testRuntime.fetchPairedDevices = func(string) (googlePairedDevices, error) {
 		return googlePairedDevices{
 			rawJSON: `{"pairedDevices":[{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"TRACKER","batteryStatus":"Medium","batteryLevel":50,"deviceVersion":"Google Pixel Watch 4"}]}`,
 		}, nil
 	}
-	t.Cleanup(func() { fetchPairedDevices = originalFetchPairedDevices })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"devices", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"devices", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("devices exit code = %d, stderr=%s, stdout=%s", code, stderr.String(), stdout.String())
 	}
@@ -303,13 +299,13 @@ func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
 func TestDevicesCommandFailsFastWhenScopeMissing(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
 
@@ -337,16 +333,14 @@ func TestDevicesCommandFailsFastWhenScopeMissing(t *testing.T) {
 	// the bare HTTP 403 PRD #142 documents only happens because the
 	// pre-check is absent, so guarding the seam is what proves the
 	// migration shut that path down.
-	originalFetchPairedDevices := fetchPairedDevices
-	fetchPairedDevices = func(string) (googlePairedDevices, error) {
+	testRuntime.fetchPairedDevices = func(string) (googlePairedDevices, error) {
 		t.Fatal("fetchPairedDevices called despite missing scope")
 		return googlePairedDevices{}, nil
 	}
-	t.Cleanup(func() { fetchPairedDevices = originalFetchPairedDevices })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"devices", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"devices", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code == 0 {
 		t.Fatalf("devices exit code = %d, want non-zero; stdout=%s", code, stdout.String())
 	}
@@ -430,15 +424,13 @@ func TestDevicesCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 		}, nil
 	}
 
-	originalFetchPairedDevices := fetchPairedDevices
 	var calledWithToken string
-	fetchPairedDevices = func(accessToken string) (googlePairedDevices, error) {
+	testRuntime.fetchPairedDevices = func(accessToken string) (googlePairedDevices, error) {
 		calledWithToken = accessToken
 		return googlePairedDevices{
 			rawJSON: `{"pairedDevices":[{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"TRACKER","batteryStatus":"Medium","batteryLevel":50,"deviceVersion":"Google Pixel Watch 4"}]}`,
 		}, nil
 	}
-	t.Cleanup(func() { fetchPairedDevices = originalFetchPairedDevices })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)

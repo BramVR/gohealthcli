@@ -7847,6 +7847,27 @@ func runConnectCommand(t *testing.T, configPath, archivePath string) int {
 	return code
 }
 
+// runConnectCommandWithRuntime is the injected-adapters sibling of
+// runConnectCommand: fakes enter through the runtimeAdapters value
+// (built by newConnectFakeRuntime) instead of patched package state.
+func runConnectCommandWithRuntime(t *testing.T, configPath, archivePath string, runtime runtimeAdapters) int {
+	t.Helper()
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, runtime)
+	if stdout.String() != "" {
+		var got map[string]any
+		if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+			t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+		}
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	return code
+}
+
 func ensureTestOAuthClientFiles(t *testing.T, dir string, args []string) {
 	t.Helper()
 

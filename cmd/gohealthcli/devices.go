@@ -15,13 +15,6 @@ type googlePairedDevices struct {
 	rawJSON string
 }
 
-// fetchPairedDevices is the seam tests stub. Production binds the real
-// fetchGooglePairedDevices over the production Provider GET module
-// (shared timeout client as the HTTP doer, #281).
-var fetchPairedDevices = func(accessToken string) (googlePairedDevices, error) {
-	return fetchGooglePairedDevices(productionProviderGET(), accessToken)
-}
-
 type devicesResult struct {
 	Status             string                `json:"status"`
 	ConnectionID       string                `json:"connection_id,omitempty"`
@@ -54,8 +47,8 @@ type devicesResultDevice struct {
 // summary parsing: decorate projects the raw users.pairedDevices.list
 // payload into the result's Devices/DeviceCount before the snapshot
 // handoff, so a handoff failure still reports what was fetched. The
-// fetchPayload closure reads the fetchPairedDevices seam at invocation
-// time so tests keep stubbing the same package var.
+// fetchPayload closure rides the runtime adapters' fetchPairedDevices
+// seam, so tests inject fakes through the adapters value (#283).
 //
 // devices does no prompting and never blocks on browser input, so
 // --no-input would imply a behaviour the command does not have. The
@@ -86,8 +79,8 @@ var devicesSnapshotCommand = identitySnapshotCommandSpec[devicesResult, googlePa
 	setMessage:   func(result *devicesResult, message string) { result.Message = message },
 	writeResult:  writeDevicesResult,
 	snapshotKind: snapshotKindPairedDevices,
-	fetchPayload: func(_ runtimeAdapters, accessToken string) (googlePairedDevices, error) {
-		return fetchPairedDevices(accessToken)
+	fetchPayload: func(runtime runtimeAdapters, accessToken string) (googlePairedDevices, error) {
+		return runtime.fetchPairedDevices(accessToken)
 	},
 	payloadRawJSON: func(payload googlePairedDevices) string { return payload.rawJSON },
 	decorate: func(result *devicesResult, payload googlePairedDevices) {

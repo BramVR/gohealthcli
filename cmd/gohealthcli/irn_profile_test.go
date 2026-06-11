@@ -102,13 +102,13 @@ func TestCurrentIRNProfileViewProjectsLatestSnapshot(t *testing.T) {
 func TestIRNProfileCommandArchivesSnapshotWhenScopeGranted(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
 
@@ -116,17 +116,15 @@ func TestIRNProfileCommandArchivesSnapshotWhenScopeGranted(t *testing.T) {
 	// reads from token_metadata_json's `scopes` field.
 	addStoredConnectionScope(t, archivePath, connectAddScopeKeywords["irn"])
 
-	originalFetchIRNProfile := fetchIRNProfile
-	fetchIRNProfile = func(string) (googleIRNProfile, error) {
+	testRuntime.fetchIRNProfile = func(string) (googleIRNProfile, error) {
 		return googleIRNProfile{
 			rawJSON: `{"onboardingState":"COMPLETED","enrollmentState":"ENROLLED","lastUpdateTime":"2026-06-01T00:00:00Z"}`,
 		}, nil
 	}
-	t.Cleanup(func() { fetchIRNProfile = originalFetchIRNProfile })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"irn-profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"irn-profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("irn-profile exit code = %d, stderr=%s, stdout=%s", code, stderr.String(), stdout.String())
 	}
@@ -203,15 +201,13 @@ func TestIRNProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 		}, nil
 	}
 
-	originalFetchIRNProfile := fetchIRNProfile
 	var calledWithToken string
-	fetchIRNProfile = func(accessToken string) (googleIRNProfile, error) {
+	testRuntime.fetchIRNProfile = func(accessToken string) (googleIRNProfile, error) {
 		calledWithToken = accessToken
 		return googleIRNProfile{
 			rawJSON: `{"onboardingState":"COMPLETED","enrollmentState":"ENROLLED","lastUpdateTime":"2026-06-01T00:00:00Z"}`,
 		}, nil
 	}
-	t.Cleanup(func() { fetchIRNProfile = originalFetchIRNProfile })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
@@ -249,27 +245,25 @@ func TestIRNProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 func TestIRNProfileCommandFailsFastWhenScopeMissing(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
 
 	// fetchIRNProfile MUST NOT be called when the scope is missing.
-	originalFetchIRNProfile := fetchIRNProfile
-	fetchIRNProfile = func(string) (googleIRNProfile, error) {
+	testRuntime.fetchIRNProfile = func(string) (googleIRNProfile, error) {
 		t.Fatal("fetchIRNProfile called despite missing scope")
 		return googleIRNProfile{}, nil
 	}
-	t.Cleanup(func() { fetchIRNProfile = originalFetchIRNProfile })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"irn-profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"irn-profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code == 0 {
 		t.Fatalf("irn-profile exit code = %d, want non-zero; stdout=%s", code, stdout.String())
 	}
