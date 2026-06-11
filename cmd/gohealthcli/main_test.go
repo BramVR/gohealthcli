@@ -2456,30 +2456,42 @@ func TestIdentityRequiresArchivedConnection(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
-func TestIdentityReportsExpiredConnectionTokenBeforeProviderFetch(t *testing.T) {
+// TestIdentityReportsAutoRefreshFailureBeforeProviderFetch carries the
+// expired-token pin forward across the issue #273 parity change. Before
+// #273, identity failed an expired token outright ("Connection token has
+// expired"); now it attempts the sibling WithAutoRefresh path first, so
+// the guarded behavior becomes: when that refresh fails, identity exits
+// non-zero with the auto-refresh failure wording (naming `doctor
+// --online` and `connect` recovery) and still never calls the Provider
+// identity endpoint with a dead token.
+func TestIdentityReportsAutoRefreshFailureBeforeProviderFetch(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
-		now:                time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
+	connectAt := time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC)
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+		now:                connectAt,
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
+	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
+		t.Fatalf("connect setup: %v", err)
 	}
-	fetchIdentity = func(accessToken string) (googleIdentity, error) {
-		t.Fatalf("identity fetch should not be called for expired token")
-		return googleIdentity{}, nil
-	}
-	currentTime = func() time.Time {
+	testRuntime.now = func() time.Time {
 		return time.Date(2026, 5, 31, 23, 1, 0, 0, time.UTC)
+	}
+	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
+		return oauthTokenResponse{}, errors.New("OAuth token refresh failed with HTTP 400: invalid_grant")
+	}
+	testRuntime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
+		t.Fatalf("identity fetch should not be called when the token refresh failed")
+		return googleIdentity{}, nil
 	}
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"identity", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"identity", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 1 {
 		t.Fatalf("identity exit code = %d, want 1", code)
 	}
@@ -2491,10 +2503,184 @@ func TestIdentityReportsExpiredConnectionTokenBeforeProviderFetch(t *testing.T) 
 		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
 	}
 	message, ok := got["message"].(string)
-	if !ok || !strings.Contains(message, "expired") || !strings.Contains(message, "gohealthcli connect") {
-		t.Fatalf("message = %T(%v), want expired-token reconnect guidance", got["message"], got["message"])
+	if !ok || !strings.Contains(message, "auto-refresh of Connection access token failed") || !strings.Contains(message, "gohealthcli connect") {
+		t.Fatalf("message = %T(%v), want auto-refresh failure with reconnect guidance", got["message"], got["message"])
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+// TestIdentityCommandFailsFastWhenScopeMissing pins the second half of
+// the issue #273 parity decision: identity's scope request comes from
+// the same googleHealthIdentityEndpointScopes catalog its siblings use
+// (key "getIdentity") instead of the historical nil. When the stored
+// Connection's granted scopes do not cover it, the command exits
+// non-zero, sets result.Status to "identity_scope_missing", names the
+// recovery `gohealthcli connect` command in result.Message, and does
+// NOT issue any Provider identity request — proving the pre-check
+// happens before the upstream call, exactly like profile.
+func TestIdentityCommandFailsFastWhenScopeMissing(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
+		t.Fatalf("connect setup: %v", err)
+	}
+
+	// Strip every scope the catalog ties to getIdentity from the
+	// stored Connection so AccessToken's scope pre-check fails. Using
+	// the same catalog key the production code reads keeps this test
+	// honest across future catalog revisions.
+	required := googleHealthIdentityEndpointScopes["getIdentity"]
+	requiredSet := make(map[string]struct{}, len(required))
+	for _, scope := range required {
+		requiredSet[scope] = struct{}{}
+	}
+	storedScopes := connectionGrantedScopes(t, archivePath)
+	filtered := storedScopes[:0]
+	for _, scope := range storedScopes {
+		if _, drop := requiredSet[scope]; drop {
+			continue
+		}
+		filtered = append(filtered, scope)
+	}
+	setConnectionTokenScopes(t, archivePath, filtered)
+
+	testRuntime.fetchIdentity = func(string) (googleIdentity, error) {
+		t.Fatal("fetchIdentity called despite missing scope")
+		return googleIdentity{}, nil
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{"identity", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
+	if code == 0 {
+		t.Fatalf("identity exit code = %d, want non-zero; stdout=%s", code, stdout.String())
+	}
+	var result identityResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal stdout: %v\nstdout=%s", err, stdout.String())
+	}
+	if result.Status != "identity_scope_missing" {
+		t.Fatalf("result.Status = %q, want identity_scope_missing", result.Status)
+	}
+	// The recovery hint either names `--add-scopes <keyword>` (when the
+	// missing scope maps to a connectAddScopeKeywords entry) or names
+	// `gohealthcli connect` again (generic fallback). Either way, the
+	// message must mention `connect`.
+	if !strings.Contains(result.Message, "gohealthcli connect") {
+		t.Fatalf("result.Message = %q, want it to name `gohealthcli connect` recovery", result.Message)
+	}
+}
+
+// TestIdentityCommandAutoRefreshesExpiredAccessToken pins the issue
+// #273 parity decision: with an expired access token but valid refresh
+// token and oauthClient.kind == "file", identity refreshes
+// transparently — exactly like its devices/settings/irn-profile/profile
+// siblings — persists the new token via UpdateConnectionTokenMetadata
+// on the archive (the same handle openHealthArchiveConnectionAPI
+// already returns), and exits 0 with status "identity_refreshed" plus
+// the refreshed Google Identity archived on the Connection row.
+func TestIdentityCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	connectAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+		now:                connectAt,
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
+		t.Fatalf("connect setup: %v", err)
+	}
+	// Ensure the stored Connection carries every scope the catalog
+	// requires for getIdentity, so this test still exercises auto-refresh
+	// after a catalog revision moves getIdentity off the default-granted
+	// scope set.
+	for _, scope := range googleHealthIdentityEndpointScopes["getIdentity"] {
+		addStoredConnectionScope(t, archivePath, scope)
+	}
+	// Force the stored access-token expires_at into the past so
+	// AccessToken must take the auto-refresh path.
+	setConnectionTokenExpiry(t, archivePath, "2026-01-01T00:00:00Z")
+
+	identityNow := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC)
+	refreshedExpiresAt := identityNow.Add(time.Hour)
+	testRuntime.now = func() time.Time { return identityNow }
+	// Count refresh attempts so the implicit "refresh once, persist
+	// once" contract is guarded against a regression where retries
+	// would silently double-rotate the stored token.
+	refreshCalls := 0
+	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
+		refreshCalls++
+		if refreshToken != "connect-refresh-secret" {
+			t.Fatalf("refresh token = %q, want connect-refresh-secret", refreshToken)
+		}
+		return oauthTokenResponse{
+			accessToken:  "rotated-access-secret",
+			refreshToken: "connect-refresh-secret",
+			tokenType:    "Bearer",
+			scopes:       fallbackScopes,
+			expiresAt:    refreshedExpiresAt,
+			rawTokenMaterialObject: map[string]any{
+				"access_token":  "rotated-access-secret",
+				"refresh_token": "connect-refresh-secret",
+				"token_type":    "Bearer",
+				"expires_in":    float64(3600),
+			},
+		}, nil
+	}
+	// identity reaches the Provider through runtime.fetchIdentity (via
+	// FetchVerifiedIdentity), so the rotated-token assertion lives on
+	// the runtime adapters seam.
+	var calledWithToken string
+	testRuntime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
+		calledWithToken = accessToken
+		return googleIdentity{
+			healthUserID:       "111111256096816351",
+			legacyFitbitUserID: "Z9Y8X7",
+			rawJSON:            `{"healthUserId":"111111256096816351","legacyUserId":"Z9Y8X7","refreshed":true}`,
+		}, nil
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{"identity", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
+	if code != 0 {
+		t.Fatalf("identity exit code = %d, stderr=%s, stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if calledWithToken != "rotated-access-secret" {
+		t.Fatalf("fetchIdentity access token = %q, want rotated-access-secret", calledWithToken)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "identity_refreshed")
+	assertJSONString(t, got, "legacy_fitbit_user_id", "Z9Y8X7")
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+
+	// Refreshed expires_at must have been persisted to the archive's
+	// token_metadata_json via UpdateConnectionTokenMetadata.
+	gotMetadata := archivedConnectionTokenMetadata(t, archivePath)
+	if !strings.Contains(gotMetadata, refreshedExpiresAt.Format(time.RFC3339)) {
+		t.Fatalf("archived token_metadata_json = %s, want refreshed expires_at %s", gotMetadata, refreshedExpiresAt.Format(time.RFC3339))
+	}
+	if refreshCalls != 1 {
+		t.Fatalf("refreshOAuthToken call count = %d, want 1 (no retry loop should double-rotate the stored token)", refreshCalls)
+	}
+	// The refreshed Google Identity must still land on the Connection
+	// row — auto-refresh must not short-circuit the command's actual job.
+	if !strings.Contains(archivedConnectionIdentityJSON(t, archivePath), `"refreshed":true`) {
+		t.Fatalf("google_identity_json = %s, want refreshed raw identity", archivedConnectionIdentityJSON(t, archivePath))
+	}
 }
 
 func TestIdentityRejectsDifferentGoogleIdentity(t *testing.T) {
