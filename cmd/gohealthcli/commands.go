@@ -294,7 +294,7 @@ var commands = []commandDef{
 		Flags:       withCommon(),
 		CommonFlags: commonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runIdentityWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runIdentitySnapshotCommand(identityCommand, args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
 		},
 	},
 	{
@@ -304,7 +304,7 @@ var commands = []commandDef{
 		Flags:       withCommon(),
 		CommonFlags: commonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runProfileWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runIdentitySnapshotCommand(profileSnapshotCommand, args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
 		},
 	},
 	{
@@ -318,7 +318,7 @@ var commands = []commandDef{
 		Flags:       withCommonSubset(identitySnapshotCommonFlagNames()),
 		CommonFlags: identitySnapshotCommonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runSettingsWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runIdentitySnapshotCommand(settingsSnapshotCommand, args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
 		},
 	},
 	{
@@ -332,7 +332,7 @@ var commands = []commandDef{
 		Flags:       withCommonSubset(identitySnapshotCommonFlagNames()),
 		CommonFlags: identitySnapshotCommonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runDevicesWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runIdentitySnapshotCommand(devicesSnapshotCommand, args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
 		},
 	},
 	{
@@ -346,7 +346,7 @@ var commands = []commandDef{
 		Flags:       withCommonSubset(identitySnapshotCommonFlagNames()),
 		CommonFlags: identitySnapshotCommonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runIRNProfileWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runIdentitySnapshotCommand(irnProfileSnapshotCommand, args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
 		},
 	},
 	{

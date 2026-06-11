@@ -258,7 +258,7 @@ var archiveCountQueryByTable = map[string]string{
 	// is identity_snapshots, but the JSON status field keeps its existing
 	// name for downstream tooling that pre-dates the rename. We count
 	// only kind='profile' rows so it matches what the field used to mean.
-	"profile_snapshots":  `SELECT count(*) FROM identity_snapshots WHERE snapshot_kind = 'profile'`,
+	"profile_snapshots":  `SELECT count(*) FROM identity_snapshots WHERE snapshot_kind = '` + snapshotKindProfile + `'`,
 	"identity_snapshots": `SELECT count(*) FROM identity_snapshots`,
 	"sync_runs":          `SELECT count(*) FROM sync_runs`,
 }
@@ -403,7 +403,7 @@ func readStatusSnapshotFreshness(db *sql.DB) (*statusSnapshotFreshness, error) {
 			return nil, err
 		}
 		freshness.LatestFetchedAt[kind] = fetchedAt
-		if kind == "paired-devices" {
+		if kind == snapshotKindPairedDevices {
 			count, err := countPairedDevicesIn(rawJSON)
 			if err != nil {
 				return nil, fmt.Errorf("status paired-devices snapshot: %w", err)
