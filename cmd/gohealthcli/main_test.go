@@ -3121,7 +3121,9 @@ func TestWriteStatusSyncRunPlainEscapesControlBytes(t *testing.T) {
 		ErrorSummary:       "Provider \x1btimeout\x07 after 30s",
 	}
 	stdout := new(bytes.Buffer)
-	if err := writeStatusSyncRunPlain(stdout, "latest_failed_sync_run", run); err != nil {
+	writer := newStickyWriter(stdout)
+	writeStatusSyncRunPlain(writer, "latest_failed_sync_run", run)
+	if err := writer.Err(); err != nil {
 		t.Fatalf("writeStatusSyncRunPlain: %v", err)
 	}
 	out := stdout.String()

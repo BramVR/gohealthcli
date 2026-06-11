@@ -56,3 +56,18 @@ func (sticky *stickyWriter) Write(payload []byte) (int, error) {
 func (sticky *stickyWriter) Err() error {
 	return sticky.err
 }
+
+// reportWriteFailure is the single home of the `write output:` failure
+// contract: when a result writer's latched (or returned) error reaches
+// the caller's one end-of-writer check, the failure routes through the
+// Failure Reporter as StatusArchiveUnwritable with the command's name
+// as the prefix. Absorbs the FailureReport block previously duplicated
+// at every result-writer call site (#274).
+func reportWriteFailure(command string, writeErr error, mode outputMode, stdout, stderr io.Writer) int {
+	return ReportFailure(FailureReport{
+		Command: command,
+		Status:  StatusArchiveUnwritable,
+		Message: fmt.Sprintf("write output: %v", writeErr),
+		Mode:    mode,
+	}, stdout, stderr)
+}
