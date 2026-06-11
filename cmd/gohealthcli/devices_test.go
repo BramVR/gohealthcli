@@ -13,7 +13,11 @@ import (
 // behaviour that --json and --plain modes emit per-device fields, not
 // just an aggregate device_count. The PR's AC requires this so a user
 // can read 'gohealthcli devices' output without also running a SQL
-// query against paired_devices.
+// query against paired_devices. The fixtures use the real
+// users.pairedDevices.list shape verified against a live archive on
+// 2026-06-11 (#298): the list lives under `pairedDevices` and each
+// device carries name / deviceType / batteryStatus / batteryLevel /
+// deviceVersion.
 func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -34,9 +38,9 @@ func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
 	originalFetchPairedDevices := fetchPairedDevices
 	fetchPairedDevices = func(string) (googlePairedDevices, error) {
 		return googlePairedDevices{
-			rawJSON: `{"devices":[
-				{"deviceType":"WATCH","model":"Pixel Watch 2","manufacturer":"Google","batteryPercentage":76,"lastSyncTime":"2026-06-08T13:00:00Z","features":["HR","GPS"]},
-				{"deviceType":"PHONE","model":"Pixel 8","manufacturer":"Google","batteryPercentage":42,"lastSyncTime":"2026-06-08T12:30:00Z","features":["STEPS"]}
+			rawJSON: `{"pairedDevices":[
+				{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"TRACKER","batteryStatus":"Medium","batteryLevel":50,"deviceVersion":"Google Pixel Watch 4"},
+				{"name":"users/111111256096816351/pairedDevices/1122334455","deviceType":"SCALE","batteryStatus":"High","deviceVersion":"Withings Body+"}
 			]}`,
 		}, nil
 	}
@@ -49,12 +53,11 @@ func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
 	var jsonResult struct {
 		DeviceCount int `json:"device_count"`
 		Devices     []struct {
-			DeviceType        string   `json:"device_type"`
-			Model             string   `json:"model"`
-			Manufacturer      string   `json:"manufacturer"`
-			BatteryPercentage *int     `json:"battery_percentage"`
-			LastSyncTime      string   `json:"last_sync_time"`
-			Features          []string `json:"features"`
+			Name          string `json:"name"`
+			DeviceType    string `json:"device_type"`
+			DeviceVersion string `json:"device_version"`
+			BatteryStatus string `json:"battery_status"`
+			BatteryLevel  *int   `json:"battery_level"`
 		} `json:"devices"`
 	}
 	if err := json.Unmarshal(jsonOut.Bytes(), &jsonResult); err != nil {
@@ -66,29 +69,35 @@ func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
 	if len(jsonResult.Devices) != 2 {
 		t.Fatalf("Devices len = %d, want 2 (per-device fields must surface in --json)", len(jsonResult.Devices))
 	}
-	if jsonResult.Devices[0].Model != "Pixel Watch 2" {
-		t.Fatalf("Devices[0].Model = %q, want Pixel Watch 2", jsonResult.Devices[0].Model)
+	if jsonResult.Devices[0].DeviceVersion != "Google Pixel Watch 4" {
+		t.Fatalf("Devices[0].DeviceVersion = %q, want Google Pixel Watch 4", jsonResult.Devices[0].DeviceVersion)
 	}
-	if jsonResult.Devices[0].BatteryPercentage == nil || *jsonResult.Devices[0].BatteryPercentage != 76 {
-		t.Fatalf("Devices[0].BatteryPercentage missing or wrong; want 76")
+	if jsonResult.Devices[0].Name != "users/111111256096816351/pairedDevices/2978855095" {
+		t.Fatalf("Devices[0].Name = %q, want the upstream resource name", jsonResult.Devices[0].Name)
+	}
+	if jsonResult.Devices[0].BatteryLevel == nil || *jsonResult.Devices[0].BatteryLevel != 50 {
+		t.Fatalf("Devices[0].BatteryLevel missing or wrong; want 50")
+	}
+	if jsonResult.Devices[1].BatteryLevel != nil {
+		t.Fatalf("Devices[1].BatteryLevel = %d, want omitted when upstream has none", *jsonResult.Devices[1].BatteryLevel)
 	}
 
 	plainOut := new(bytes.Buffer)
 	fetchPairedDevices = func(string) (googlePairedDevices, error) {
 		return googlePairedDevices{
-			rawJSON: `{"devices":[{"deviceType":"WATCH","model":"Pixel Watch 2","manufacturer":"Google","batteryPercentage":76,"lastSyncTime":"2026-06-08T13:00:00Z","features":["HR","GPS"]}]}`,
+			rawJSON: `{"pairedDevices":[{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"TRACKER","batteryStatus":"Medium","batteryLevel":50,"deviceVersion":"Google Pixel Watch 4"}]}`,
 		}, nil
 	}
 	if code := run([]string{"devices", "--config", configPath, "--db", archivePath, "--plain"}, plainOut, new(bytes.Buffer)); code != 0 {
 		t.Fatalf("devices --plain exit code = %d, stdout=%s", code, plainOut.String())
 	}
 	want := []string{
-		"devices.0.device_type: WATCH",
-		"devices.0.model: Pixel Watch 2",
-		"devices.0.manufacturer: Google",
-		"devices.0.battery_percentage: 76",
-		"devices.0.last_sync_time: 2026-06-08T13:00:00Z",
-		"devices.0.features: HR,GPS",
+		"device_count: 1",
+		"devices.0.name: users/111111256096816351/pairedDevices/2978855095",
+		"devices.0.device_type: TRACKER",
+		"devices.0.device_version: Google Pixel Watch 4",
+		"devices.0.battery_status: Medium",
+		"devices.0.battery_level: 50",
 	}
 	for _, line := range want {
 		if !strings.Contains(plainOut.String(), line) {
@@ -122,9 +131,9 @@ func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 		archive.Close()
 		t.Fatalf("read current Connection: %v", err)
 	}
-	payload := `{"devices":[
-		{"deviceType":"WATCH","model":"Pixel Watch 2","manufacturer":"Google","batteryPercentage":76,"lastSyncTime":"2026-06-08T13:00:00Z","features":["HR","GPS"]},
-		{"deviceType":"PHONE","model":"Pixel 8","manufacturer":"Google","batteryPercentage":42,"lastSyncTime":"2026-06-08T12:30:00Z","features":["STEPS"]}
+	payload := `{"pairedDevices":[
+		{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"TRACKER","batteryStatus":"Medium","batteryLevel":50,"deviceVersion":"Google Pixel Watch 4"},
+		{"name":"users/111111256096816351/pairedDevices/1122334455","deviceType":"SCALE","batteryStatus":"High","deviceVersion":"Withings Body+"}
 	]}`
 	if _, err := archive.Insert(connection, "paired-devices", payload, "2026-06-08T13:00:00Z"); err != nil {
 		archive.Close()
@@ -137,19 +146,19 @@ func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 		t.Fatalf("open archive: %v", err)
 	}
 	defer db.Close()
-	rows, err := db.Query(`SELECT device_type, model, manufacturer, battery_percentage, last_sync_time FROM paired_devices ORDER BY model`)
+	rows, err := db.Query(`SELECT name, device_type, device_version, battery_status, battery_level FROM paired_devices ORDER BY device_version`)
 	if err != nil {
 		t.Fatalf("query paired_devices: %v", err)
 	}
 	defer rows.Close()
 	type devRow struct {
-		typ, model, manufacturer, lastSync string
-		battery                            sql.NullInt64
+		name, typ, version, batteryStatus string
+		batteryLevel                      sql.NullInt64
 	}
 	var got []devRow
 	for rows.Next() {
 		var row devRow
-		if err := rows.Scan(&row.typ, &row.model, &row.manufacturer, &row.battery, &row.lastSync); err != nil {
+		if err := rows.Scan(&row.name, &row.typ, &row.version, &row.batteryStatus, &row.batteryLevel); err != nil {
 			t.Fatalf("scan: %v", err)
 		}
 		got = append(got, row)
@@ -157,17 +166,27 @@ func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("rows = %d, want 2", len(got))
 	}
-	if got[0].model != "Pixel 8" || got[1].model != "Pixel Watch 2" {
-		t.Fatalf("models = (%q, %q), want (Pixel 8, Pixel Watch 2)", got[0].model, got[1].model)
+	if got[0].version != "Google Pixel Watch 4" || got[1].version != "Withings Body+" {
+		t.Fatalf("device_versions = (%q, %q), want (Google Pixel Watch 4, Withings Body+)", got[0].version, got[1].version)
 	}
-	if got[1].battery.Int64 != 76 {
-		t.Fatalf("Pixel Watch 2 battery = %d, want 76", got[1].battery.Int64)
+	if got[0].name != "users/111111256096816351/pairedDevices/2978855095" {
+		t.Fatalf("name = %q, want the upstream resource name", got[0].name)
+	}
+	if !got[0].batteryLevel.Valid || got[0].batteryLevel.Int64 != 50 {
+		t.Fatalf("Pixel Watch 4 battery_level = %v, want 50", got[0].batteryLevel)
+	}
+	if got[1].batteryLevel.Valid {
+		t.Fatalf("Withings Body+ battery_level = %d, want NULL when upstream has none", got[1].batteryLevel.Int64)
+	}
+	if got[1].batteryStatus != "High" {
+		t.Fatalf("Withings Body+ battery_status = %q, want High", got[1].batteryStatus)
 	}
 }
 
 // TestPairedDevicesViewHandlesEmptyDeviceList pins the edge case where
 // the latest paired-devices snapshot has no devices: the view returns
-// zero rows, not an error.
+// zero rows, not an error. Covers both an explicit empty list and a
+// bare {} payload (the key is omitted upstream when nothing is paired).
 func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -190,9 +209,11 @@ func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
 		archive.Close()
 		t.Fatalf("read current Connection: %v", err)
 	}
-	if _, err := archive.Insert(connection, "paired-devices", `{"devices":[]}`, "2026-06-08T13:00:00Z"); err != nil {
-		archive.Close()
-		t.Fatalf("Insert: %v", err)
+	for _, payload := range []string{`{"pairedDevices":[]}`, `{}`} {
+		if _, err := archive.Insert(connection, "paired-devices", payload, "2026-06-08T13:00:00Z"); err != nil {
+			archive.Close()
+			t.Fatalf("Insert %s: %v", payload, err)
+		}
 	}
 	archive.Close()
 
@@ -234,7 +255,7 @@ func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
 	originalFetchPairedDevices := fetchPairedDevices
 	fetchPairedDevices = func(string) (googlePairedDevices, error) {
 		return googlePairedDevices{
-			rawJSON: `{"devices":[{"deviceType":"WATCH","model":"Pixel Watch 2","manufacturer":"Google","batteryPercentage":76,"lastSyncTime":"2026-06-08T13:00:00Z","features":["HR","GPS"]}]}`,
+			rawJSON: `{"pairedDevices":[{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"TRACKER","batteryStatus":"Medium","batteryLevel":50,"deviceVersion":"Google Pixel Watch 4"}]}`,
 		}, nil
 	}
 	t.Cleanup(func() { fetchPairedDevices = originalFetchPairedDevices })
@@ -414,7 +435,7 @@ func TestDevicesCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	fetchPairedDevices = func(accessToken string) (googlePairedDevices, error) {
 		calledWithToken = accessToken
 		return googlePairedDevices{
-			rawJSON: `{"devices":[{"deviceType":"WATCH","model":"Pixel Watch 2","manufacturer":"Google","batteryPercentage":76,"lastSyncTime":"2026-06-08T13:00:00Z","features":["HR","GPS"]}]}`,
+			rawJSON: `{"pairedDevices":[{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"TRACKER","batteryStatus":"Medium","batteryLevel":50,"deviceVersion":"Google Pixel Watch 4"}]}`,
 		}, nil
 	}
 	t.Cleanup(func() { fetchPairedDevices = originalFetchPairedDevices })

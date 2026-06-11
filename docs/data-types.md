@@ -393,7 +393,7 @@ These ride alongside the Data Point catalog and capture per-Connection metadata.
 
 - **Profile** — `gohealthcli profile`. Provider account profile (membership date, age, stride lengths). Stored as `kind='profile'`; queryable via the `searchable-text` view.
 - **Settings** — `gohealthcli settings`. Measurement system, timezone, stride length type. Exposed via the `current-settings` view.
-- **Paired devices** — `gohealthcli devices`. One row per paired wearable with model, manufacturer, battery, last-sync, and feature set. Exposed via the `paired-devices` view.
+- **Paired devices** — `gohealthcli devices`. One row per paired wearable with resource name, device type, device version, and battery status/level. Exposed via the `paired-devices` view.
 - **IRN profile** — `gohealthcli irn-profile` (Tier 2 `irn.readonly` opt-in). Tracks onboarding and enrollment state for irregular-rhythm notifications. Exposed via the `current-irn-profile` view.
 
 ## Rollups

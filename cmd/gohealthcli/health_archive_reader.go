@@ -424,15 +424,18 @@ func readStatusSnapshotFreshness(db *sql.DB) (*statusSnapshotFreshness, error) {
 // returns the number of devices it lists. Invalid JSON surfaces as an
 // error so callers (status) can fail loudly instead of silently
 // reporting 0 — paired-devices rows in identity_snapshots are
-// supposed to be valid JSON the snapshot writer just persisted.
+// supposed to be valid JSON the snapshot writer just persisted. The
+// list lives under the pairedDevices key in the real
+// users.pairedDevices.list payload (#298), not the devices key the
+// original #98 paired-devices slice assumed.
 func countPairedDevicesIn(rawJSON string) (int, error) {
 	var envelope struct {
-		Devices []json.RawMessage `json:"devices"`
+		PairedDevices []json.RawMessage `json:"pairedDevices"`
 	}
 	if err := json.Unmarshal([]byte(rawJSON), &envelope); err != nil {
 		return 0, fmt.Errorf("paired-devices raw_json is not valid JSON: %w", err)
 	}
-	return len(envelope.Devices), nil
+	return len(envelope.PairedDevices), nil
 }
 
 // readStatusTier2 reports Tier 2 (ECG + IRN) coverage: row counts in

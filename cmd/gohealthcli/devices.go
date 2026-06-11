@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -39,14 +38,17 @@ type devicesResult struct {
 
 // devicesResultDevice mirrors the columns the paired_devices Normalized
 // View exposes; downstream tooling can read either surface and get the
-// same fields without crossing layers.
+// same fields without crossing layers. Field names follow the real
+// users.pairedDevices.list payload verified against a live archive on
+// 2026-06-11 (#298) — the API wraps the list in `pairedDevices` and
+// emits name/deviceType/batteryStatus/batteryLevel/deviceVersion, not
+// the model/manufacturer/batteryPercentage shape #98 assumed.
 type devicesResultDevice struct {
-	DeviceType        string   `json:"device_type"`
-	Model             string   `json:"model"`
-	Manufacturer      string   `json:"manufacturer"`
-	BatteryPercentage *int     `json:"battery_percentage,omitempty"`
-	LastSyncTime      string   `json:"last_sync_time,omitempty"`
-	Features          []string `json:"features,omitempty"`
+	Name          string `json:"name"`
+	DeviceType    string `json:"device_type"`
+	DeviceVersion string `json:"device_version"`
+	BatteryStatus string `json:"battery_status,omitempty"`
+	BatteryLevel  *int   `json:"battery_level,omitempty"`
 }
 
 func runDevicesWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
@@ -219,30 +221,28 @@ func fetchGooglePairedDevices(accessToken string) (googlePairedDevices, error) {
 // for the result's user-facing rendering.
 func parsePairedDeviceSummaries(rawJSON string) []devicesResultDevice {
 	var envelope struct {
-		Devices []struct {
-			DeviceType        string   `json:"deviceType"`
-			Model             string   `json:"model"`
-			Manufacturer      string   `json:"manufacturer"`
-			BatteryPercentage *int     `json:"batteryPercentage,omitempty"`
-			LastSyncTime      string   `json:"lastSyncTime,omitempty"`
-			Features          []string `json:"features,omitempty"`
-		} `json:"devices"`
+		PairedDevices []struct {
+			Name          string `json:"name"`
+			DeviceType    string `json:"deviceType"`
+			DeviceVersion string `json:"deviceVersion"`
+			BatteryStatus string `json:"batteryStatus,omitempty"`
+			BatteryLevel  *int   `json:"batteryLevel,omitempty"`
+		} `json:"pairedDevices"`
 	}
 	if err := json.Unmarshal([]byte(rawJSON), &envelope); err != nil {
 		return nil
 	}
-	if len(envelope.Devices) == 0 {
+	if len(envelope.PairedDevices) == 0 {
 		return nil
 	}
-	result := make([]devicesResultDevice, 0, len(envelope.Devices))
-	for _, device := range envelope.Devices {
+	result := make([]devicesResultDevice, 0, len(envelope.PairedDevices))
+	for _, device := range envelope.PairedDevices {
 		result = append(result, devicesResultDevice{
-			DeviceType:        device.DeviceType,
-			Model:             device.Model,
-			Manufacturer:      device.Manufacturer,
-			BatteryPercentage: device.BatteryPercentage,
-			LastSyncTime:      device.LastSyncTime,
-			Features:          device.Features,
+			Name:          device.Name,
+			DeviceType:    device.DeviceType,
+			DeviceVersion: device.DeviceVersion,
+			BatteryStatus: device.BatteryStatus,
+			BatteryLevel:  device.BatteryLevel,
 		})
 	}
 	return result
@@ -268,27 +268,22 @@ func writeDevicesResult(result devicesResult, mode outputMode, stdout io.Writer)
 		}
 		for index, device := range result.Devices {
 			prefix := fmt.Sprintf("devices.%d.", index)
+			if _, err := fmt.Fprintf(stdout, "%sname: %s\n", prefix, device.Name); err != nil {
+				return err
+			}
 			if _, err := fmt.Fprintf(stdout, "%sdevice_type: %s\n", prefix, device.DeviceType); err != nil {
 				return err
 			}
-			if _, err := fmt.Fprintf(stdout, "%smodel: %s\n", prefix, device.Model); err != nil {
+			if _, err := fmt.Fprintf(stdout, "%sdevice_version: %s\n", prefix, device.DeviceVersion); err != nil {
 				return err
 			}
-			if _, err := fmt.Fprintf(stdout, "%smanufacturer: %s\n", prefix, device.Manufacturer); err != nil {
-				return err
-			}
-			if device.BatteryPercentage != nil {
-				if _, err := fmt.Fprintf(stdout, "%sbattery_percentage: %d\n", prefix, *device.BatteryPercentage); err != nil {
+			if device.BatteryStatus != "" {
+				if _, err := fmt.Fprintf(stdout, "%sbattery_status: %s\n", prefix, device.BatteryStatus); err != nil {
 					return err
 				}
 			}
-			if device.LastSyncTime != "" {
-				if _, err := fmt.Fprintf(stdout, "%slast_sync_time: %s\n", prefix, device.LastSyncTime); err != nil {
-					return err
-				}
-			}
-			if len(device.Features) > 0 {
-				if _, err := fmt.Fprintf(stdout, "%sfeatures: %s\n", prefix, strings.Join(device.Features, ",")); err != nil {
+			if device.BatteryLevel != nil {
+				if _, err := fmt.Fprintf(stdout, "%sbattery_level: %d\n", prefix, *device.BatteryLevel); err != nil {
 					return err
 				}
 			}
@@ -309,14 +304,15 @@ func writeDevicesResult(result devicesResult, mode outputMode, stdout io.Writer)
 	}
 	for _, device := range result.Devices {
 		battery := "?"
-		if device.BatteryPercentage != nil {
-			battery = fmt.Sprintf("%d%%", *device.BatteryPercentage)
+		switch {
+		case device.BatteryStatus != "" && device.BatteryLevel != nil:
+			battery = fmt.Sprintf("%s (%d%%)", device.BatteryStatus, *device.BatteryLevel)
+		case device.BatteryLevel != nil:
+			battery = fmt.Sprintf("%d%%", *device.BatteryLevel)
+		case device.BatteryStatus != "":
+			battery = device.BatteryStatus
 		}
-		lastSync := device.LastSyncTime
-		if lastSync == "" {
-			lastSync = "?"
-		}
-		if _, err := fmt.Fprintf(stdout, "- %s %s (%s) — battery %s, last sync %s\n", device.Manufacturer, device.Model, device.DeviceType, battery, lastSync); err != nil {
+		if _, err := fmt.Fprintf(stdout, "- %s (%s) — battery %s\n", device.DeviceVersion, device.DeviceType, battery); err != nil {
 			return err
 		}
 	}
