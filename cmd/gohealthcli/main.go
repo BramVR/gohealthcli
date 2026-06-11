@@ -3187,9 +3187,6 @@ func parseGoogleHealthDataPointList(body []byte) (googleHealthDataPointList, err
 }
 
 func parseGoogleHealthDataPoint(connection archivedConnection, dataType string, rawPoint json.RawMessage, sourceFamilyFilter string) (archivedDataPoint, error) {
-	if dataType == "steps" {
-		return parseGoogleHealthStepsDataPoint(connection, rawPoint, sourceFamilyFilter)
-	}
 	if jsonField, recordKind, ok := googleHealthIntervalShapedDataPointShape(dataType); ok {
 		return parseGoogleHealthIntervalShapedDataPoint(connection, dataType, rawPoint, sourceFamilyFilter, jsonField, recordKind)
 	}
@@ -3269,45 +3266,6 @@ func parseGoogleHealthIntervalMetadata(dataType string, interval googleHealthInt
 		endCivilTime:         endCivilTime,
 		providerCivilDate:    providerCivilDate,
 		timezoneMetadataJSON: timezoneMetadata,
-	}, nil
-}
-
-func parseGoogleHealthStepsDataPoint(connection archivedConnection, rawPoint json.RawMessage, sourceFamilyFilter string) (archivedDataPoint, error) {
-	canonicalRaw, err := compactJSONString(rawPoint)
-	if err != nil {
-		return archivedDataPoint{}, errors.New("Google Health steps Data Point is not valid JSON")
-	}
-	envelope, err := parseGoogleHealthDataPointEnvelope("steps", rawPoint)
-	if err != nil {
-		return archivedDataPoint{}, err
-	}
-	var raw struct {
-		Steps struct {
-			Interval googleHealthIntervalFields `json:"interval"`
-		} `json:"steps"`
-	}
-	if err := json.Unmarshal(rawPoint, &raw); err != nil {
-		return archivedDataPoint{}, errors.New("Google Health steps Data Point is not valid JSON")
-	}
-	interval, err := parseGoogleHealthIntervalMetadata("steps", raw.Steps.Interval)
-	if err != nil {
-		return archivedDataPoint{}, err
-	}
-	return archivedDataPoint{
-		providerName:         connection.providerName,
-		connectionID:         connection.id,
-		dataType:             "steps",
-		upstreamResourceName: envelope.upstreamResourceName(),
-		recordKind:           "interval",
-		startTimeUTC:         interval.startTimeUTC,
-		endTimeUTC:           interval.endTimeUTC,
-		startCivilTime:       interval.startCivilTime,
-		endCivilTime:         interval.endCivilTime,
-		providerCivilDate:    interval.providerCivilDate,
-		timezoneMetadataJSON: interval.timezoneMetadataJSON,
-		dataSourceJSON:       envelope.dataSourceJSON,
-		sourceFamilyFilter:   sourceFamilyFilter,
-		rawJSON:              canonicalRaw,
 	}, nil
 }
 

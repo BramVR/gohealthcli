@@ -90,7 +90,8 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	{
 		DataType:          "steps",
 		RequiredScopes:    []string{googleHealthActivityReadonlyScope},
-		Parser:            "steps",
+		Parser:            "interval",
+		JSONField:         "steps",
 		RecordKind:        "interval",
 		DefaultConfigType: true,
 		SupportedEndpoints: listReconcileAllRollupEndpoints(
