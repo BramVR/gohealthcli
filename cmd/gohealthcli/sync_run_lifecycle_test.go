@@ -113,6 +113,36 @@ func TestSyncRunLifecycleStatusEnumOnEveryReachableReturn(t *testing.T) {
 	})
 }
 
+// TestSyncRunFailureSealsFailedEnvelope pins the single helper every
+// Sync Run lifecycle failure return goes through (#277): Status is
+// sealed to sync_failed via syncResultFromOutcome, Message mirrors the
+// cause text, the base envelope fields (DataTypes/From/To) survive
+// untouched, and the cause itself comes back as the error so the
+// orchestrator's surface-a-Go-error signal keeps its identity.
+func TestSyncRunFailureSealsFailedEnvelope(t *testing.T) {
+	cause := errors.New("config check failed: boom")
+	result, err := syncRunFailure(syncResult{
+		DataTypes: []string{"steps"},
+		From:      "2026-01-01",
+		To:        "2026-01-02T00:00:00Z",
+	}, cause)
+	if !errors.Is(err, cause) {
+		t.Fatalf("returned error = %v, want the original cause", err)
+	}
+	if result.Status != "sync_failed" {
+		t.Errorf("Status = %q, want sync_failed", result.Status)
+	}
+	if result.Message != cause.Error() {
+		t.Errorf("Message = %q, want %q", result.Message, cause.Error())
+	}
+	if len(result.DataTypes) != 1 || result.DataTypes[0] != "steps" {
+		t.Errorf("DataTypes = %v, want [steps]", result.DataTypes)
+	}
+	if result.From != "2026-01-01" || result.To != "2026-01-02T00:00:00Z" {
+		t.Errorf("From/To = (%q, %q), want base values preserved", result.From, result.To)
+	}
+}
+
 // TestErrFinalizeSyncRunBusyExhaustedCarriesAttemptCount pins the typed
 // error the SQLite adapter surfaces when the retry budget is exhausted.
 // The lifecycle module converts this into a sync_failed terminal state;

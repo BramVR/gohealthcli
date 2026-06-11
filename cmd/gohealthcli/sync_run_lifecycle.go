@@ -61,9 +61,8 @@ func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
 		}), errSyncCanceled
 	}
 	if len(plan.dataTypes) != 1 {
-		return syncResultFromOutcome(syncRunOutcomeFailed, syncResult{
-			DataTypes: plan.dataTypes,
-		}), errors.New("sync currently supports one Data Type per run")
+		return syncRunFailure(syncResult{DataTypes: plan.dataTypes},
+			errors.New("sync currently supports one Data Type per run"))
 	}
 	dataType := plan.dataTypes[0]
 	options.to = plan.to
@@ -73,12 +72,11 @@ func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
 	connection := plan.connection
 	archive, err := healthArchiveWriterOpenerForTest(options.archivePath)
 	if err != nil {
-		return syncResultFromOutcome(syncRunOutcomeFailed, syncResult{
+		return syncRunFailure(syncResult{
 			DataTypes: plan.dataTypes,
 			From:      options.from,
 			To:        options.to,
-			Message:   err.Error(),
-		}), err
+		}, err)
 	}
 	defer archive.Close()
 	// Fence abandoned sync_running rows on the handle we already hold
@@ -92,33 +90,27 @@ func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
 	_, _ = archive.FenceAbandonedSyncRuns(runtime.now().UTC())
 	config, err := inspectIdentityConfig(options.configPath, options.archivePath)
 	if err != nil {
-		wrapped := fmt.Errorf("config check failed: %w", err)
-		return syncResultFromOutcome(syncRunOutcomeFailed, syncResult{
+		return syncRunFailure(syncResult{
 			DataTypes: plan.dataTypes,
 			From:      options.from,
 			To:        options.to,
-			Message:   wrapped.Error(),
-		}), wrapped
+		}, fmt.Errorf("config check failed: %w", err))
 	}
 	cursorKey := plan.cursorKeys[0]
 	resumedFromCursor := false
 	if options.from == "" {
 		cursorTime, found, err := archive.ResolveSyncCursor(cursorKey)
 		if err != nil {
-			wrapped := fmt.Errorf("resolve Sync Cursor: %w", err)
-			return syncResultFromOutcome(syncRunOutcomeFailed, syncResult{
+			return syncRunFailure(syncResult{
 				DataTypes: options.dataTypes,
 				To:        options.to,
-				Message:   wrapped.Error(),
-			}), wrapped
+			}, fmt.Errorf("resolve Sync Cursor: %w", err))
 		}
 		if !found {
-			missing := errors.New("sync has no Sync Cursor for this Data Type yet; set --from for the initial backfill")
-			return syncResultFromOutcome(syncRunOutcomeFailed, syncResult{
+			return syncRunFailure(syncResult{
 				DataTypes: options.dataTypes,
 				To:        options.to,
-				Message:   missing.Error(),
-			}), missing
+			}, errors.New("sync has no Sync Cursor for this Data Type yet; set --from for the initial backfill"))
 		}
 		options.from = cursorTime
 		resumedFromCursor = true
@@ -126,12 +118,11 @@ func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
 	ingestion := newGoogleHealthIngestionWithRuntime(runtime)
 	_, grantedScopes, err := connectionTokenExpiryAndScopes(connection.tokenMetadataJSON)
 	if err != nil {
-		return syncResultFromOutcome(syncRunOutcomeFailed, syncResult{
+		return syncRunFailure(syncResult{
 			DataTypes: options.dataTypes,
 			From:      options.from,
 			To:        options.to,
-			Message:   err.Error(),
-		}), err
+		}, err)
 	}
 	ingestionRequest := googleHealthIngestionRequest{
 		connection:    connection,
@@ -145,12 +136,11 @@ func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
 	}
 	ingestionPlan, err := ingestion.Plan(ingestionRequest)
 	if err != nil {
-		return syncResultFromOutcome(syncRunOutcomeFailed, syncResult{
+		return syncRunFailure(syncResult{
 			DataTypes: options.dataTypes,
 			From:      options.from,
 			To:        options.to,
-			Message:   err.Error(),
-		}), err
+		}, err)
 	}
 	result := syncResult{
 		ConnectionID:      connection.id,
@@ -168,7 +158,7 @@ func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
 		// StartSyncRun failed before any audit row was written: no
 		// SyncRunID to populate. The status enum stays well-defined
 		// (sync_failed) so the JSON envelope still satisfies AC #2.
-		return syncResultFromOutcome(syncRunOutcomeFailed, withMessage(result, err)), err
+		return syncRunFailure(result, err)
 	}
 	result.SyncRunID = syncRunID
 	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{options.configPath, options.archivePath}, runtime)
@@ -306,12 +296,17 @@ func (lifecycle syncRunLifecycle) finalize(archive healthArchiveWriter, result s
 	return result, finalErr
 }
 
-// withMessage copies result and sets Message to err.Error(); it lets
-// the early-return paths use syncResultFromOutcome without losing the
-// cause text.
-func withMessage(result syncResult, err error) syncResult {
-	result.Message = err.Error()
-	return result
+// syncRunFailure is the single failure-return seam for the lifecycle's
+// pre-finalize phases (#277): Status is sealed to sync_failed via
+// syncResultFromOutcome, Message mirrors the cause text, and the cause
+// itself is returned as the error so the orchestrator's
+// "did the per-Data-Type call surface a Go error" signal keeps its
+// identity. base carries whichever envelope fields the failing phase
+// already knows (DataTypes, From, To — or the fully-populated result
+// once StartSyncRun has been attempted).
+func syncRunFailure(base syncResult, cause error) (syncResult, error) {
+	base.Message = cause.Error()
+	return syncResultFromOutcome(syncRunOutcomeFailed, base), cause
 }
 
 // finalizeSyncRunRetryBudget bounds how many attempts the SQLite
