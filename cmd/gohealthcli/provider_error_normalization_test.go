@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/url"
 	"testing"
 )
@@ -20,10 +21,10 @@ func installDevicesProviderFailure(t *testing.T, fetchErr error) {
 	t.Cleanup(func() { fetchPairedDevices = original })
 }
 
-// connectedDevicesFixture initializes config + Health Archive, runs a
-// faked connect, and grants the settings scope pairedDevices requires,
-// so devices reaches its Provider fetch.
-func connectedDevicesFixture(t *testing.T) (string, string) {
+// connectedProviderFixture initializes config + Health Archive, runs a
+// faked connect, and grants any extra scopes the command under test
+// requires, so it reaches its Provider fetch.
+func connectedProviderFixture(t *testing.T, extraScopes ...string) (string, string) {
 	t.Helper()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -35,8 +36,17 @@ func connectedDevicesFixture(t *testing.T) (string, string) {
 	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
-	addStoredConnectionScope(t, archivePath, googleHealthSettingsReadonlyScope)
+	for _, scope := range extraScopes {
+		addStoredConnectionScope(t, archivePath, scope)
+	}
 	return configPath, archivePath
+}
+
+// connectedDevicesFixture is connectedProviderFixture with the
+// settings scope pairedDevices (and getSettings) requires.
+func connectedDevicesFixture(t *testing.T) (string, string) {
+	t.Helper()
+	return connectedProviderFixture(t, googleHealthSettingsReadonlyScope)
 }
 
 // TestDevicesEmitsProviderUnreachableOnNetworkFailure pins the issue
@@ -156,6 +166,178 @@ func TestSyncIngestionNormalizesTypedUnauthorizedPreservingChain(t *testing.T) {
 	}
 	if err.Error() != errCurrentConnectionProviderUnauthorized.Error() {
 		t.Fatalf("err.Error() = %q, want the historical message %q verbatim", err.Error(), errCurrentConnectionProviderUnauthorized.Error())
+	}
+}
+
+// failingProviderTransport makes every request through the shared
+// Provider HTTP client fail at the transport layer; net/http surfaces
+// that as a *url.Error, the same shape a dial-refused, DNS, or
+// deadline failure produces against the live Provider.
+type failingProviderTransport struct {
+	err error
+}
+
+func (transport failingProviderTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, transport.err
+}
+
+// TestSettingsEmitsProviderUnreachable drives the settings command
+// against a Provider that is down — transport-level network failure
+// and HTTP 503 — through the production fetcher, and expects the
+// provider_unreachable JSON failure status both times (issue #272).
+func TestSettingsEmitsProviderUnreachable(t *testing.T) {
+	cases := []struct {
+		name      string
+		transport http.RoundTripper
+	}{
+		{name: "network failure", transport: failingProviderTransport{err: errors.New("connect: connection refused")}},
+		{name: "provider HTTP 503", transport: &stubProviderTransport{status: 503, body: `{"error":"unavailable"}`}},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath, archivePath := connectedDevicesFixture(t)
+			swapSharedProviderHTTPClient(t, tt.transport)
+
+			stdout := new(bytes.Buffer)
+			code := run([]string{"settings", "--config", configPath, "--db", archivePath, "--json"}, stdout, new(bytes.Buffer))
+			if code != 1 {
+				t.Fatalf("settings exit code = %d, want 1\nstdout: %s", code, stdout.String())
+			}
+			var got map[string]any
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+				t.Fatalf("decode settings --json: %v\n%s", err, stdout.String())
+			}
+			assertJSONString(t, got, "status", "provider_unreachable")
+		})
+	}
+}
+
+// TestIRNProfileEmitsProviderUnreachable mirrors the settings case for
+// the irn-profile Identity Snapshot command (issue #272).
+func TestIRNProfileEmitsProviderUnreachable(t *testing.T) {
+	cases := []struct {
+		name      string
+		transport http.RoundTripper
+	}{
+		{name: "network failure", transport: failingProviderTransport{err: errors.New("connect: connection refused")}},
+		{name: "provider HTTP 503", transport: &stubProviderTransport{status: 503, body: `{"error":"unavailable"}`}},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath, archivePath := connectedProviderFixture(t, googleHealthIrnReadonlyScope)
+			swapSharedProviderHTTPClient(t, tt.transport)
+
+			stdout := new(bytes.Buffer)
+			code := run([]string{"irn-profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, new(bytes.Buffer))
+			if code != 1 {
+				t.Fatalf("irn-profile exit code = %d, want 1\nstdout: %s", code, stdout.String())
+			}
+			var got map[string]any
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+				t.Fatalf("decode irn-profile --json: %v\n%s", err, stdout.String())
+			}
+			assertJSONString(t, got, "status", "provider_unreachable")
+		})
+	}
+}
+
+// TestProfileEmitsProviderUnreachable mirrors the settings case for
+// the profile Identity Snapshot command (issue #272). The profile
+// fetcher rides the runtime adapters seam whose production default
+// uses the shared Provider HTTP client, so the transport stub
+// exercises the production fetcher end to end.
+func TestProfileEmitsProviderUnreachable(t *testing.T) {
+	cases := []struct {
+		name      string
+		transport http.RoundTripper
+	}{
+		{name: "network failure", transport: failingProviderTransport{err: errors.New("connect: connection refused")}},
+		{name: "provider HTTP 503", transport: &stubProviderTransport{status: 503, body: `{"error":"unavailable"}`}},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath, archivePath := connectedProviderFixture(t)
+			swapSharedProviderHTTPClient(t, tt.transport)
+
+			stdout := new(bytes.Buffer)
+			code := run([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, new(bytes.Buffer))
+			if code != 1 {
+				t.Fatalf("profile exit code = %d, want 1\nstdout: %s", code, stdout.String())
+			}
+			var got map[string]any
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+				t.Fatalf("decode profile --json: %v\n%s", err, stdout.String())
+			}
+			assertJSONString(t, got, "status", "provider_unreachable")
+		})
+	}
+}
+
+// TestIdentityEmitsProviderUnreachable mirrors the settings case for
+// the identity command, whose Provider round trip is the verified
+// identity fetch (issue #272). The connect fixture replaces the
+// package-level fetchIdentity seam with a connect fake, so the test
+// pins it back to the production fetcher before stubbing transport.
+func TestIdentityEmitsProviderUnreachable(t *testing.T) {
+	cases := []struct {
+		name      string
+		transport http.RoundTripper
+	}{
+		{name: "network failure", transport: failingProviderTransport{err: errors.New("connect: connection refused")}},
+		{name: "provider HTTP 503", transport: &stubProviderTransport{status: 503, body: `{"error":"unavailable"}`}},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath, archivePath := connectedProviderFixture(t)
+			originalFetchIdentity := fetchIdentity
+			fetchIdentity = fetchGoogleIdentity
+			t.Cleanup(func() { fetchIdentity = originalFetchIdentity })
+			swapSharedProviderHTTPClient(t, tt.transport)
+
+			stdout := new(bytes.Buffer)
+			code := run([]string{"identity", "--config", configPath, "--db", archivePath, "--json"}, stdout, new(bytes.Buffer))
+			if code != 1 {
+				t.Fatalf("identity exit code = %d, want 1\nstdout: %s", code, stdout.String())
+			}
+			var got map[string]any
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+				t.Fatalf("decode identity --json: %v\n%s", err, stdout.String())
+			}
+			assertJSONString(t, got, "status", "provider_unreachable")
+		})
+	}
+}
+
+// TestRawEmitsProviderUnreachableFailureStatus pins the unified
+// Failure Reporter side of issue #272: the raw command (the one
+// Provider-touching command that fails through the FailureReport
+// envelope) classifies non-auth Provider HTTP/network failures under
+// the documented StatusProviderUnreachable instead of the catch-all
+// operation_failed.
+func TestRawEmitsProviderUnreachableFailureStatus(t *testing.T) {
+	cases := []struct {
+		name      string
+		transport http.RoundTripper
+	}{
+		{name: "network failure", transport: failingProviderTransport{err: errors.New("connect: connection refused")}},
+		{name: "provider HTTP 503", transport: &stubProviderTransport{status: 503, body: `{"error":"unavailable"}`}},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath, archivePath := connectedProviderFixture(t)
+			swapSharedProviderHTTPClient(t, tt.transport)
+
+			stdout := new(bytes.Buffer)
+			code := run([]string{"--json", "raw", "endpoint", "getIdentity", "--config", configPath, "--db", archivePath}, stdout, new(bytes.Buffer))
+			if code != 1 {
+				t.Fatalf("raw exit code = %d, want 1\nstdout: %s", code, stdout.String())
+			}
+			var got map[string]any
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+				t.Fatalf("decode raw failure envelope: %v\n%s", err, stdout.String())
+			}
+			assertJSONString(t, got, "status", "provider_unreachable")
+		})
 	}
 }
 

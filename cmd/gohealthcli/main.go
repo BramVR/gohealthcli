@@ -1397,7 +1397,15 @@ func runRawWithRuntime(args []string, configPath, archivePath string, mode outpu
 	}
 	body, err := rawSetupWithRuntime(options.configPath, options.archivePath, request, runtime)
 	if err != nil {
-		return ReportFailure(FailureReport{Command: "raw", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
+		// Provider outage (non-auth HTTP failure or network error) maps
+		// to the documented provider_unreachable failure status so JSON
+		// consumers can tell it apart from local misconfiguration
+		// (issue #272); everything else stays operation_failed.
+		status := StatusOperationFailed
+		if isProviderUnreachableError(err) {
+			status = StatusProviderUnreachable
+		}
+		return ReportFailure(FailureReport{Command: "raw", Status: status, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	if _, err := stdout.Write(body); err != nil {
 		return ReportFailure(FailureReport{
@@ -1567,6 +1575,11 @@ func identitySetupWithRuntime(configPath, archivePath string, runtime runtimeAda
 	if err != nil {
 		if isCurrentConnectionIdentityMismatch(err) {
 			result.Status = "identity_mismatch"
+		} else if isProviderUnreachableError(err) {
+			// Provider outage (non-auth HTTP failure or network error)
+			// gets its own documented JSON failure status so automation
+			// can tell it apart from local misconfiguration (issue #272).
+			result.Status = "provider_unreachable"
 		}
 		return result, err
 	}
@@ -1638,6 +1651,12 @@ func profileSetupWithRuntime(configPath, archivePath string, runtime runtimeAdap
 	}
 	profile, err := runtime.fetchProfile(accessToken)
 	if err != nil {
+		// Provider outage (non-auth HTTP failure or network error) gets
+		// its own documented JSON failure status so automation can tell
+		// it apart from local misconfiguration (issue #272).
+		if isProviderUnreachableError(err) {
+			result.Status = "provider_unreachable"
+		}
 		return result, normalizeProviderError(err)
 	}
 	profileHealthUserID := profile.healthUserID
@@ -1646,6 +1665,8 @@ func profileSetupWithRuntime(configPath, archivePath string, runtime runtimeAdap
 		if err != nil {
 			if isCurrentConnectionIdentityMismatch(err) {
 				result.Status = "profile_mismatch"
+			} else if isProviderUnreachableError(err) {
+				result.Status = "provider_unreachable"
 			}
 			return result, err
 		}
@@ -2932,7 +2953,10 @@ func fetchGoogleIdentity(accessToken string) (googleIdentity, error) {
 		return googleIdentity{}, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return googleIdentity{}, fmt.Errorf("Google Health identity request failed with HTTP %d", response.StatusCode)
+		// Typed so the translation layer can branch on the status code
+		// via errors.As instead of message text (issue #272). The
+		// endpoint label keeps the historical message verbatim.
+		return googleIdentity{}, &googleHealthHTTPError{StatusCode: response.StatusCode, endpoint: "identity"}
 	}
 	return parseGoogleIdentity(body)
 }
@@ -2954,7 +2978,10 @@ func fetchGoogleProfile(accessToken string) (googleProfile, error) {
 		return googleProfile{}, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return googleProfile{}, fmt.Errorf("Google Health profile request failed with HTTP %d", response.StatusCode)
+		// Typed so the translation layer can branch on the status code
+		// via errors.As instead of message text (issue #272). The
+		// endpoint label keeps the historical message verbatim.
+		return googleProfile{}, &googleHealthHTTPError{StatusCode: response.StatusCode, endpoint: "profile"}
 	}
 	return parseGoogleProfile(body)
 }
