@@ -4167,7 +4167,7 @@ func applyMigrations(db *sql.DB) error {
 			return err
 		}
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := currentTime().Format(time.RFC3339)
 	if _, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (1, 'initial_archive_schema', ?)`, now); err != nil {
 		return err
 	}
@@ -4260,7 +4260,7 @@ func applyPendingMigrations(db *sql.DB) error {
 			return err
 		}
 		defer tx.Rollback()
-		now := time.Now().UTC().Format(time.RFC3339)
+		now := currentTime().Format(time.RFC3339)
 		if userVersion == 1 {
 			if err := applyGoogleIdentityArchiveMigration(tx, now); err != nil {
 				return err

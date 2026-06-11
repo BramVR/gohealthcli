@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHealthArchiveLifecycleOpensReadOnlyAndWriteHandlesThroughOnePath(t *testing.T) {
@@ -62,6 +63,77 @@ func TestFreshHealthArchiveSchemaMatchesFullyMigratedLegacyArchive(t *testing.T)
 	migratedSchema := readArchiveSchemaFingerprint(t, migratedPath)
 	if freshSchema != migratedSchema {
 		t.Fatalf("fresh archive schema differs from fully migrated legacy archive schema:\nfresh:\n%s\nmigrated:\n%s", freshSchema, migratedSchema)
+	}
+}
+
+// TestCreateStampsSchemaMigrationsWithInjectedClock drives the injected
+// clock into fresh Health Archive creation: every schema_migrations row
+// must carry the runtime clock's time, not a stray time.Now() reading.
+func TestCreateStampsSchemaMigrationsWithInjectedClock(t *testing.T) {
+	originalCurrentTime := currentTime
+	currentTime = func() time.Time { return time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { currentTime = originalCurrentTime })
+
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	if err := (healthArchiveLifecycle{path: archivePath}).Create(); err != nil {
+		t.Fatalf("create fresh Health Archive: %v", err)
+	}
+
+	assertSchemaMigrationStamps(t, archivePath, 1, "2026-06-11T12:00:00Z")
+}
+
+// TestMigrateStampsPendingSchemaMigrationsWithInjectedClock drives the
+// injected clock into the upgrade path: migrating a legacy v1 Health
+// Archive must stamp every newly applied schema_migrations row (2..N)
+// with the runtime clock's time.
+func TestMigrateStampsPendingSchemaMigrationsWithInjectedClock(t *testing.T) {
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	createLegacyV1Archive(t, archivePath)
+
+	originalCurrentTime := currentTime
+	currentTime = func() time.Time { return time.Date(2026, 6, 11, 13, 30, 0, 0, time.UTC) }
+	t.Cleanup(func() { currentTime = originalCurrentTime })
+
+	if err := (healthArchiveLifecycle{path: archivePath}).Migrate(); err != nil {
+		t.Fatalf("migrate legacy v1 Health Archive: %v", err)
+	}
+
+	assertSchemaMigrationStamps(t, archivePath, 2, "2026-06-11T13:30:00Z")
+}
+
+// assertSchemaMigrationStamps verifies every schema_migrations row from
+// fromVersion onward carries exactly the expected applied_at stamp.
+func assertSchemaMigrationStamps(t *testing.T, archivePath string, fromVersion int, wantAppliedAt string) {
+	t.Helper()
+	db, err := openArchiveReadOnly(archivePath)
+	if err != nil {
+		t.Fatalf("open archive read-only: %v", err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT version, applied_at FROM schema_migrations WHERE version >= ? ORDER BY version`, fromVersion)
+	if err != nil {
+		t.Fatalf("query schema migration stamps: %v", err)
+	}
+	defer rows.Close()
+	stamped := 0
+	for rows.Next() {
+		var version int
+		var appliedAt string
+		if err := rows.Scan(&version, &appliedAt); err != nil {
+			t.Fatalf("scan schema migration stamp: %v", err)
+		}
+		if appliedAt != wantAppliedAt {
+			t.Fatalf("migration %d applied_at = %q, want injected clock stamp %q", version, appliedAt, wantAppliedAt)
+		}
+		stamped++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("schema migration stamp rows: %v", err)
+	}
+	if want := currentSchemaVersion - fromVersion + 1; stamped != want {
+		t.Fatalf("stamped migrations = %d, want %d (versions %d..%d)", stamped, want, fromVersion, currentSchemaVersion)
 	}
 }
 
