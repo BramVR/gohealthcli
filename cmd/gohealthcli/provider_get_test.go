@@ -405,3 +405,17 @@ func TestIdentityFetcherRetriesTransientFailures(t *testing.T) {
 		return identity.rawJSON, err
 	})
 }
+
+func TestProfileFetcherKeepsLabeledErrorMessages(t *testing.T) {
+	assertFetcherKeepsLabeledErrorMessages(t, "profile", func(accessToken string) error {
+		_, err := fetchGoogleProfile(accessToken)
+		return err
+	})
+}
+
+func TestProfileFetcherRetriesTransientFailures(t *testing.T) {
+	assertFetcherRetriesTransient503(t, `{"name":"profiles/111111256096816351"}`, func(accessToken string) (string, error) {
+		profile, err := fetchGoogleProfile(accessToken)
+		return profile.rawJSON, err
+	})
+}

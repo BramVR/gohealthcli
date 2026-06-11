@@ -272,6 +272,9 @@ func TestProfileEmitsProviderUnreachable(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			configPath, archivePath := connectedProviderFixture(t)
 			swapSharedProviderHTTPClient(t, tt.transport)
+			// The 503 case exhausts the shared Provider GET retry budget
+			// (#280); the stubbed seams keep the backoff sleeps virtual.
+			swapSharedProviderGETRetrySeams(t, &[]time.Duration{})
 
 			stdout := new(bytes.Buffer)
 			code := run([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, new(bytes.Buffer))
