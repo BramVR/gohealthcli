@@ -59,14 +59,6 @@ func listReconcileEndpoints(filterField string) map[endpointFamily]endpointSuppo
 	}
 }
 
-func listReconcileDailyRollupEndpoints(filterField, rollupValueType string) map[endpointFamily]endpointSupport {
-	return map[endpointFamily]endpointSupport{
-		endpointFamilyList:        {FilterField: filterField},
-		endpointFamilyReconcile:   {FilterField: filterField},
-		endpointFamilyDailyRollUp: {RollupValueType: rollupValueType},
-	}
-}
-
 // listReconcileAllRollupEndpoints adds the windowed rollUp family
 // alongside list/reconcile/dailyRollUp. Used by Data Types whose
 // upstream supports both daily aggregates and arbitrary-window
@@ -603,18 +595,6 @@ func dailyRollupDataTypeSupported(dataType string) bool {
 	}
 	_, hasDaily := entry.SupportedEndpoints[endpointFamilyDailyRollUp]
 	return hasDaily
-}
-
-// windowRollupDataTypeSupported reports whether the Data Type's
-// catalog entry carries the windowed rollUp endpoint family. Used by
-// the sync planner to gate `--rollup hourly|weekly|window=<dur>`.
-func windowRollupDataTypeSupported(dataType string) bool {
-	entry, ok := googleHealthDataTypes.Lookup(dataType)
-	if !ok {
-		return false
-	}
-	_, hasRollUp := entry.SupportedEndpoints[endpointFamilyRollUp]
-	return hasRollUp
 }
 
 func syncDataPointUsesDateRange(dataType string) bool {

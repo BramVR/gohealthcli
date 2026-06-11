@@ -654,10 +654,6 @@ func flagWasProvided(flags *flag.FlagSet, name string) bool {
 	return provided
 }
 
-func runDoctor(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
-	return runDoctorWithRuntime(args, configPath, archivePath, mode, stdout, stderr, productionRuntimeAdapters())
-}
-
 func runDoctorWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -775,10 +771,6 @@ func runDoctorInvalid(configPath, archivePath, message string, mode outputMode, 
 		}, stdout, stderr)
 	}
 	return 1
-}
-
-func runDoctorOnline(configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
-	return runDoctorOnlineWithRuntime(configPath, archivePath, mode, stdout, stderr, productionRuntimeAdapters())
 }
 
 func runDoctorOnlineWithRuntime(configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
@@ -1075,10 +1067,6 @@ func runConnectWithRuntime(args []string, configPath, archivePath string, global
 	return 0
 }
 
-func runIdentity(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
-	return runIdentityWithRuntime(args, configPath, archivePath, mode, stdout, stderr, productionRuntimeAdapters())
-}
-
 func runIdentityWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("identity", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -1130,10 +1118,6 @@ func runIdentityWithRuntime(args []string, configPath, archivePath string, mode 
 	return 0
 }
 
-func runProfile(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
-	return runProfileWithRuntime(args, configPath, archivePath, mode, stdout, stderr, productionRuntimeAdapters())
-}
-
 func runProfileWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("profile", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -1183,10 +1167,6 @@ func runProfileWithRuntime(args []string, configPath, archivePath string, mode o
 		}, stdout, stderr)
 	}
 	return 0
-}
-
-func runSync(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
-	return runSyncWithRuntime(args, configPath, archivePath, mode, stdout, stderr, productionRuntimeAdapters())
 }
 
 func runSyncWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
@@ -1337,10 +1317,6 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 func installSyncCancelChannel() (<-chan struct{}, func()) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	return ctx.Done(), stop
-}
-
-func runRaw(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
-	return runRawWithRuntime(args, configPath, archivePath, mode, stdout, stderr, productionRuntimeAdapters())
 }
 
 func runRawWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
@@ -1498,10 +1474,6 @@ func partitionRawFlagArgs(fs *flag.FlagSet, args []string) ([]string, []string) 
 	return out, positionals
 }
 
-func connectSetup(configPath, archivePath string, noInput bool) (connectResult, error) {
-	return connectSetupWithRuntime(configPath, archivePath, noInput, productionRuntimeAdapters())
-}
-
 func connectSetupWithRuntime(configPath, archivePath string, noInput bool, runtime runtimeAdapters) (connectResult, error) {
 	return connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, noInput, nil, runtime)
 }
@@ -1570,10 +1542,6 @@ func connectSetupWithRuntimeAndExtraScopes(configPath, archivePath string, noInp
 	}, nil
 }
 
-func identitySetup(configPath, archivePath string) (identityResult, error) {
-	return identitySetupWithRuntime(configPath, archivePath, productionRuntimeAdapters())
-}
-
 func identitySetupWithRuntime(configPath, archivePath string, runtime runtimeAdapters) (identityResult, error) {
 	runtime = runtime.withDefaults()
 	config, err := inspectIdentityConfig(configPath, archivePath)
@@ -1620,10 +1588,6 @@ func identitySetupWithRuntime(configPath, archivePath string, runtime runtimeAda
 	}
 	result.Message = "Google Identity refreshed"
 	return result, nil
-}
-
-func profileSetup(configPath, archivePath string) (profileResult, error) {
-	return profileSetupWithRuntime(configPath, archivePath, productionRuntimeAdapters())
 }
 
 func profileSetupWithRuntime(configPath, archivePath string, runtime runtimeAdapters) (profileResult, error) {
@@ -1755,10 +1719,6 @@ func readConfigArchivePath(configPath string) (string, bool, error) {
 	return config.archivePath, true, nil
 }
 
-func doctorOnlineSetup(configPath, archivePath string) (doctorResult, error) {
-	return doctorOnlineSetupWithRuntime(configPath, archivePath, productionRuntimeAdapters())
-}
-
 func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtimeAdapters) (doctorResult, error) {
 	runtime = runtime.withDefaults()
 	config, err := inspectFullConfig(configPath, archivePath)
@@ -1864,10 +1824,6 @@ func persistDoctorOnlineRefreshedTokenWithRuntime(archive connectionTokenWriter,
 		return err
 	}
 	return nil
-}
-
-func rawSetup(configPath, archivePath string, request rawProviderRequest) ([]byte, error) {
-	return rawSetupWithRuntime(configPath, archivePath, request, productionRuntimeAdapters())
 }
 
 func rawSetupWithRuntime(configPath, archivePath string, request rawProviderRequest, runtime runtimeAdapters) ([]byte, error) {
@@ -2494,10 +2450,6 @@ func validateCredentialStoreConfig(store credentialStoreConfig) error {
 	return nil
 }
 
-func validateCredentialStoreRuntime(store credentialStoreConfig, protectedPaths []string) error {
-	return validateCredentialStoreRuntimeWithRuntime(store, protectedPaths, productionRuntimeAdapters())
-}
-
 func validateCredentialStoreRuntimeWithRuntime(store credentialStoreConfig, protectedPaths []string, runtime runtimeAdapters) error {
 	runtime = runtime.withDefaults()
 	switch store.kind {
@@ -2826,10 +2778,6 @@ func waitForOAuthCode(listener net.Listener, wantState string) (string, error) {
 	outcome := <-result
 	_ = server.Close()
 	return outcome.code, outcome.err
-}
-
-func exchangeOAuthCode(client oauthClientConfig, redirectURI, code, verifier string) (oauthTokenResponse, error) {
-	return exchangeOAuthCodeWithRuntime(client, redirectURI, code, verifier, runtimeAdapters{now: currentTime})
 }
 
 func exchangeOAuthCodeWithRuntime(client oauthClientConfig, redirectURI, code, verifier string, runtime runtimeAdapters) (oauthTokenResponse, error) {
@@ -4031,15 +3979,6 @@ func nullString(value string) any {
 		return nil
 	}
 	return value
-}
-
-func validateArchive(archivePath string) error {
-	_, err := inspectArchive(archivePath, false)
-	return err
-}
-
-func inspectArchive(archivePath string, validateTokens bool) (archiveCheck, error) {
-	return (healthArchiveLifecycle{path: archivePath}).Inspect(validateTokens)
 }
 
 func validateTokenMetadata(metadata string) error {

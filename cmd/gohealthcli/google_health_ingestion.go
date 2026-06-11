@@ -141,10 +141,6 @@ type googleHealthRollupList struct {
 	nextPageToken string
 }
 
-func newGoogleHealthIngestion() googleHealthIngestion {
-	return newGoogleHealthIngestionWithRuntime(productionRuntimeAdapters())
-}
-
 func newGoogleHealthIngestionWithRuntime(runtime runtimeAdapters) googleHealthIngestion {
 	runtime = runtime.withDefaults()
 	return googleHealthIngestion{
