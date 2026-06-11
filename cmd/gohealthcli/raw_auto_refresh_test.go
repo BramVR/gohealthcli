@@ -26,7 +26,7 @@ func TestRawEndpointGetProfileAutoRefreshesExpiredAccessToken(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
 		t.Fatalf("connect setup: %v", err)
 	}
 	// Force the stored access-token expires_at into the past so

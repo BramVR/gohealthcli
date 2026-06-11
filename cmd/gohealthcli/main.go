@@ -1470,10 +1470,6 @@ func partitionRawFlagArgs(fs *flag.FlagSet, args []string) ([]string, []string) 
 	return out, positionals
 }
 
-func connectSetupWithRuntime(configPath, archivePath string, noInput bool, runtime runtimeAdapters) (connectResult, error) {
-	return connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, noInput, nil, runtime)
-}
-
 func connectSetupWithRuntimeAndExtraScopes(configPath, archivePath string, noInput bool, extraScopes []string, runtime runtimeAdapters) (connectResult, error) {
 	runtime = runtime.withDefaults()
 	config, err := inspectFullConfig(configPath, archivePath)

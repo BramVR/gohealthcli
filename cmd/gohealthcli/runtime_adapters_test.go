@@ -45,7 +45,7 @@ func TestConnectSetupUsesRuntimeAdapter(t *testing.T) {
 		}, nil
 	}
 
-	result, err := connectSetupWithRuntime(configPath, archivePath, false, runtime)
+	result, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, runtime)
 	if err != nil {
 		t.Fatalf("connect setup: %v", err)
 	}

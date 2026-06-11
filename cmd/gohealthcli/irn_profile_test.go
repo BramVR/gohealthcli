@@ -165,7 +165,7 @@ func TestIRNProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
 		t.Fatalf("connect setup: %v", err)
 	}
 	// Mark the IRN scope as granted on the stored Connection so the

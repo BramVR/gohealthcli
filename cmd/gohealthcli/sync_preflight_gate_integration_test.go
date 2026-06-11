@@ -32,7 +32,7 @@ func TestRunSyncPreflightFailuresDoNotWriteAuditRow(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
 		t.Fatalf("connect setup: %v", err)
 	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
