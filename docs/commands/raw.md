@@ -9,6 +9,8 @@ First positional argument is `endpoint <name>` (for example `endpoint getIdentit
 
 `raw` is provider-shaped on purpose — the JSON you see is what the provider returns, not the normalised shape the archive stores.
 
+Failures route through the unified Failure Reporter: a Provider outage (network failure or non-auth upstream HTTP error) reports status `provider_unreachable`, while other operation errors — including an upstream HTTP 401 auth rejection, which carries the `Google Health rejected stored Connection token` message — report `operation_failed`.
+
 ## Usage
 
 ```

@@ -19,7 +19,13 @@ import (
 //     prior `setupMissingExitCode` semantics.
 //   - StatusArchiveUnwritable    — writing stdout/stdout-result/export-file
 //     failed at the io.Writer layer.
-//   - StatusProviderUnreachable  — provider HTTP error (403, 503, network).
+//   - StatusProviderUnreachable  — non-auth Provider HTTP failure (403,
+//     5xx, ...) or a network failure reaching the
+//     Provider, classified by the typed-error
+//     translation layer (issue #272). Upstream 401
+//     auth rejections are NOT unreachable — they
+//     surface as StatusOperationFailed carrying the
+//     "run `gohealthcli connect` again" message.
 //   - StatusOperationFailed      — any other operation error (DB, schema,
 //     config check, OAuth, etc.).
 //
