@@ -11,6 +11,7 @@ import (
 // Fixture JSON mirrors the live Google Health API response shape
 // observed via `sync --types daily-vo2-max` against the user's archive.
 func TestDailyVo2MaxViewProjectsScalars(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -58,6 +59,7 @@ func TestDailyVo2MaxViewProjectsScalars(t *testing.T) {
 // heartRateZones[] array, exposing the enum + min/max BPM scalars.
 // Fixture JSON mirrors the live API response shape.
 func TestDailyHeartRateZonesViewExplodesEachZone(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -126,6 +128,7 @@ func TestDailyHeartRateZonesViewExplodesEachZone(t *testing.T) {
 // archived daily Data Point with the nightly temperature, the
 // baseline, and the relative stddev, all in Celsius.
 func TestDailySleepTemperatureDerivationsViewProjectsScalars(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -162,6 +165,7 @@ func TestDailySleepTemperatureDerivationsViewProjectsScalars(t *testing.T) {
 // plus the per-stage scalars (deep/light/REM). All projected as TEXT
 // to preserve floating-point precision.
 func TestRespiratoryRateSleepSummaryViewProjectsPerStageScalars(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -204,6 +208,7 @@ func TestRespiratoryRateSleepSummaryViewProjectsPerStageScalars(t *testing.T) {
 // path lives at $.hydrationLog.volume.liters (Google Health REST API
 // HydrationLog proto: HydrationLog.volume.liters).
 func TestHydrationLogSessionsViewProjectsVolume(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)

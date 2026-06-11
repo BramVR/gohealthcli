@@ -13,6 +13,7 @@ import (
 // land in CommonFlagValues and that ArchivePathExplicit is set whenever
 // the user actually typed --db.
 func TestParseCommonFlowsValuesThrough(t *testing.T) {
+	t.Parallel()
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	defaults := CommonFlagValues{
@@ -43,6 +44,7 @@ func TestParseCommonFlowsValuesThrough(t *testing.T) {
 // flags at all, the values seeded into RegisterCommon survive Parse and
 // ArchivePathExplicit stays false.
 func TestParseCommonHonoursDefaults(t *testing.T) {
+	t.Parallel()
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	defaults := CommonFlagValues{
@@ -72,6 +74,7 @@ func TestParseCommonHonoursDefaults(t *testing.T) {
 // supported by <cmd>") instead of stdlib's generic "flag provided but not
 // defined" text.
 func TestParseCommonRejectsUnknownButKnownGlobal(t *testing.T) {
+	t.Parallel()
 	fs := flag.NewFlagSet("describe-schema", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	spec := CommonFlagSpec{Accepted: []string{"config", "db", "json"}}
@@ -94,6 +97,7 @@ func TestParseCommonRejectsUnknownButKnownGlobal(t *testing.T) {
 // the caller carries ErrFlagParseFailed so the caller knows fs.Parse
 // already wrote the diagnostic.
 func TestParseCommonPreservesParseUsageOnError(t *testing.T) {
+	t.Parallel()
 	fs := flag.NewFlagSet("identity", flag.ContinueOnError)
 	stderr := &bytes.Buffer{}
 	fs.SetOutput(stderr)
@@ -118,6 +122,7 @@ func TestParseCommonPreservesParseUsageOnError(t *testing.T) {
 // the standard `flag` package usage dump that callers rely on. The
 // returned error must be flag.ErrHelp so the caller exits 0.
 func TestParseCommonPreservesHelpUsage(t *testing.T) {
+	t.Parallel()
 	fs := flag.NewFlagSet("identity", flag.ContinueOnError)
 	stderr := &bytes.Buffer{}
 	fs.SetOutput(stderr)
@@ -138,6 +143,7 @@ func TestParseCommonPreservesHelpUsage(t *testing.T) {
 // Example: `--config -weird-path --plain` — `-weird-path` is the
 // config value, not a flag.
 func TestParseCommonHandlesDashValueForPriorFlag(t *testing.T) {
+	t.Parallel()
 	fs := flag.NewFlagSet("identity", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	values := RegisterCommon(fs, AllCommonFlagsSpec(), CommonFlagValues{})
@@ -157,6 +163,7 @@ func TestParseCommonHandlesDashValueForPriorFlag(t *testing.T) {
 // that no subcommand should ever have to re-implement: --plain and --json
 // cannot both be set.
 func TestParseCommonRejectsPlainAndJSON(t *testing.T) {
+	t.Parallel()
 	fs := flag.NewFlagSet("identity", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	spec := CommonFlagSpec{Accepted: []string{"config", "db", "json", "plain", "no-input"}}

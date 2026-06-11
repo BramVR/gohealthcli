@@ -13,6 +13,7 @@ import (
 // core_body_temperature_samples, height_samples, current_height.
 
 func TestBodyFatSamplesViewProjectsPercentage(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -57,6 +58,7 @@ func TestBodyFatSamplesViewProjectsPercentage(t *testing.T) {
 }
 
 func TestBloodGlucoseSamplesViewProjectsLevel(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -98,6 +100,7 @@ func TestBloodGlucoseSamplesViewProjectsLevel(t *testing.T) {
 }
 
 func TestCoreBodyTemperatureSamplesViewProjectsCelsius(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -139,6 +142,7 @@ func TestCoreBodyTemperatureSamplesViewProjectsCelsius(t *testing.T) {
 }
 
 func TestHeightSamplesViewProjectsMeters(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -183,6 +187,7 @@ func TestHeightSamplesViewProjectsMeters(t *testing.T) {
 // the issue asked for: an LLM should be able to answer "what's my
 // height?" without ordering manually.
 func TestCurrentHeightViewReturnsLatestSample(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)

@@ -276,6 +276,7 @@ Message: open archive: no such file
 `
 
 func TestStatusWriterEmitsByteIdenticalOutputAcrossModes(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name   string
 		result statusResult
@@ -416,6 +417,7 @@ Message: local gohealthcli setup not found
 `
 
 func TestDoctorWriterEmitsByteIdenticalOutputAcrossModes(t *testing.T) {
+	t.Parallel()
 	unhealthy := doctorResult{Status: "connection_unhealthy", ConfigPath: "/c", ArchivePath: "/a", Message: "refresh failed"}
 	invalid := doctorResult{Status: "setup_invalid", ConfigPath: "/c", ArchivePath: "/a", Message: "config check failed"}
 	for _, testCase := range []struct {
@@ -451,6 +453,7 @@ func TestDoctorWriterEmitsByteIdenticalOutputAcrossModes(t *testing.T) {
 // stderr line with exit code 1 — not the setup_missing exit code 2,
 // because the failure is the broken stdout, not the missing setup.
 func TestDoctorReportsFirstWriteErrorOnce(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	stderr := new(bytes.Buffer)
 
@@ -593,6 +596,7 @@ Message: provider unreachable
 `
 
 func TestSyncWriterEmitsByteIdenticalOutputAcrossModes(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name   string
 		result syncResult
@@ -726,6 +730,7 @@ Sync Run summary: 2 Data Types attempted, at least one failed
 `
 
 func TestSyncFanOutWriterEmitsByteIdenticalOutputAcrossModes(t *testing.T) {
+	t.Parallel()
 	options := syncCommandOptions{from: "2026-06-09", to: "2026-06-10T00:00:00Z"}
 	for _, testCase := range []struct {
 		name string
@@ -887,6 +892,7 @@ Message: 3 Sync Runs in the last 15m0s
 `
 
 func TestSyncStatusWriterEmitsByteIdenticalOutputAcrossModes(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 10, 9, 5, 0, 0, time.UTC)
 	minimal := syncStatusResult{
 		Status:      "sync_status_failed",
@@ -922,6 +928,7 @@ func TestSyncStatusWriterEmitsByteIdenticalOutputAcrossModes(t *testing.T) {
 // TestSyncWritersSurfaceTheFirstWriteError pins that every sync-family
 // writer still returns the first write error to its caller (#274).
 func TestSyncWritersSurfaceTheFirstWriteError(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 10, 9, 5, 0, 0, time.UTC)
 	options := syncCommandOptions{from: "2026-06-09", to: "2026-06-10T00:00:00Z"}
 	for _, mode := range []outputMode{{json: true}, {plain: true}, {}} {
@@ -940,6 +947,7 @@ func TestSyncWritersSurfaceTheFirstWriteError(t *testing.T) {
 // TestSyncStatusReportsFirstWriteErrorOnce pins the sync --status side
 // of the write-output failure contract (#274) at the command level.
 func TestSyncStatusReportsFirstWriteErrorOnce(t *testing.T) {
+	t.Parallel()
 	stderr := new(bytes.Buffer)
 
 	code := runSyncWithRuntime(
@@ -968,6 +976,7 @@ func TestSyncStatusReportsFirstWriteErrorOnce(t *testing.T) {
 // rejects the very first write, status exits 1 and the operator sees
 // exactly one `status: write output: ...` line on stderr.
 func TestStatusReportsFirstWriteErrorOnce(t *testing.T) {
+	t.Parallel()
 	stderr := new(bytes.Buffer)
 
 	code := runStatus(

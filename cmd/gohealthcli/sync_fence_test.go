@@ -15,6 +15,7 @@ import (
 // A second invocation is a no-op: the WHERE clause only matches
 // sync_running rows, so finished_at keeps the first fence's timestamp.
 func TestSyncStatusFencesAbandonedRunningRowsIdempotently(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	// Started 40 minutes ago, last heartbeat 10 minutes ago: stale by
@@ -88,6 +89,7 @@ func TestSyncStatusFencesAbandonedRunningRowsIdempotently(t *testing.T) {
 // reads after the new run never shows two "running" rows where one
 // is a corpse from a killed process.
 func TestSyncCommandFencesAbandonedRunningRowsOnEntry(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -149,6 +151,7 @@ func TestSyncCommandFencesAbandonedRunningRowsOnEntry(t *testing.T) {
 // LIVE long backfill, not an orphan. A wall-clock fence (the
 // original #236 proposal) would have flipped it mid-flight.
 func TestFenceLeavesLongRunningRowWithFreshHeartbeatAlone(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertSyncStatusFixtureRuns(t, archivePath, []syncStatusFixtureRun{
@@ -187,6 +190,7 @@ func TestFenceLeavesLongRunningRowWithFreshHeartbeatAlone(t *testing.T) {
 // the true terminal status and the cursor advances as if the fence
 // never happened.
 func TestFinalizeAfterFenceConvergesToTrueTerminalStatus(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -287,6 +291,7 @@ func TestFinalizeAfterFenceConvergesToTrueTerminalStatus(t *testing.T) {
 // fence is a plain sync_runs UPDATE and structurally cannot touch
 // sync_cursors, and this test keeps it that way.
 func TestFenceNeverAdvancesTheSyncCursor(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -345,6 +350,7 @@ func TestFenceNeverAdvancesTheSyncCursor(t *testing.T) {
 // stanza reflects the abandonment instead of silently skipping a
 // phantom in-flight run.
 func TestStatusCommandFencesAbandonedRunningRows(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertSyncStatusFixtureRuns(t, archivePath, []syncStatusFixtureRun{

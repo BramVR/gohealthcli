@@ -9,6 +9,7 @@ import (
 // sleep_stages produces one row per stage in the sleep session's
 // stages[] array, with the contracted columns.
 func TestSleepStagesViewExplodesEachStage(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -74,6 +75,7 @@ func TestSleepStagesViewExplodesEachStage(t *testing.T) {
 // for exercise sessions: one row per split with split_type and
 // distance_meters projected from json_each over the splits array.
 func TestExerciseSplitsViewExplodesEachSplit(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -129,6 +131,7 @@ func TestExerciseSplitsViewExplodesEachSplit(t *testing.T) {
 // where a sleep session has no stages array (or it's empty): the view
 // must not error and must return zero rows for that session.
 func TestSleepStagesViewHandlesSessionWithoutStages(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)

@@ -15,6 +15,7 @@ import (
 // --sql mode: every table and view from sqlite_master appears in the
 // DDL dump, internal SQLite tables (sqlite_*) are excluded.
 func TestDescribeSchemaSQLDumpsTablesAndViews(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -52,6 +53,7 @@ func TestDescribeSchemaSQLDumpsTablesAndViews(t *testing.T) {
 // surfaces in the JSON catalog with at least its name + columns. The
 // curated narrative file lives separately and merges in.
 func TestDescribeSchemaJSONIncludesEveryRegisteredView(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -93,6 +95,7 @@ func TestDescribeSchemaJSONIncludesEveryRegisteredView(t *testing.T) {
 // the --json output. Downstream tools rely on the narrative for
 // guidance ("for unit-aware queries JOIN current_settings", etc).
 func TestDescribeSchemaJSONIncludesCuratedNarrative(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -128,6 +131,7 @@ func TestDescribeSchemaJSONIncludesCuratedNarrative(t *testing.T) {
 // best-effort fallback. Stdout users redirecting to a file still get the
 // catalog uncluttered by the note.
 func TestDescribeSchemaPlainEmitsJSONCatalogWithStderrNote(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -162,6 +166,7 @@ func TestDescribeSchemaPlainEmitsJSONCatalogWithStderrNote(t *testing.T) {
 // with the documented error, even though --plain is otherwise a no-op
 // (the user's intent is contradictory and we surface that explicitly).
 func TestDescribeSchemaPlainAndJSONMutuallyExclusive(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -184,6 +189,7 @@ func TestDescribeSchemaPlainAndJSONMutuallyExclusive(t *testing.T) {
 // This test guards the documented interaction: `--sql` wins over the
 // implicit `--json=true` default that RegisterCommon seeds.
 func TestDescribeSchemaSQLStillOverridesJSONDefault(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -218,6 +224,7 @@ func TestDescribeSchemaSQLStillOverridesJSONDefault(t *testing.T) {
 // different, only that one archive's catalog is observably distinct
 // from the other under the same binary invocation).
 func TestDescribeSchemaJSONHonorsExplicitDBAgainstTwoDistinctArchives(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	archiveA := filepath.Join(tempDir, "a", "a.sqlite")
 	archiveB := filepath.Join(tempDir, "b", "b.sqlite")
@@ -271,6 +278,7 @@ func TestDescribeSchemaJSONHonorsExplicitDBAgainstTwoDistinctArchives(t *testing
 // PRD's contract that downstream tools (a Claude skill, MCP server)
 // can trust the JSON catalog as the source of truth.
 func TestDescribeSchemaJSONDriftDetectionFailsWhenViewMissingFromCatalog(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -299,6 +307,7 @@ func TestDescribeSchemaJSONDriftDetectionFailsWhenViewMissingFromCatalog(t *test
 // next to a working pragma call); we stamp "unknown" instead. Real
 // declared SQL types pass through unchanged.
 func TestNormalizeViewColumnTypeFallback(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in   string
 		want string
@@ -324,6 +333,7 @@ func TestNormalizeViewColumnTypeFallback(t *testing.T) {
 // `views[*].columns_detailed`. The fallback is the literal "unknown".
 // Real declared types (TEXT, INTEGER, REAL, NUMERIC) pass through.
 func TestDescribeSchemaJSONViewColumnsNeverBLOB(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -380,6 +390,7 @@ func TestDescribeSchemaJSONViewColumnsNeverBLOB(t *testing.T) {
 // has at least one TEXT column (`connections.id`) we can pin; any future
 // BLOB column on a real table must still report BLOB.
 func TestDescribeSchemaJSONTableColumnsUnchanged(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 

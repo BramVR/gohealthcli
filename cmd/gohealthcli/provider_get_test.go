@@ -68,6 +68,7 @@ func providerGETWithRetrySeams(transport http.RoundTripper, record *[]time.Durat
 }
 
 func TestProviderGETReturnsValidatedJSONWithBearerAuth(t *testing.T) {
+	t.Parallel()
 	transport := &stubProviderTransport{status: 200, body: `{"devices":[]}`}
 
 	body, err := fetchProviderJSON(providerGETWithDoer(transport), googleHealthPairedDevicesURL, "pairedDevices", "test-access-token")
@@ -92,6 +93,7 @@ func TestProviderGETReturnsValidatedJSONWithBearerAuth(t *testing.T) {
 }
 
 func TestProviderGETReturnsTypedStatusErrorCarryingLabel(t *testing.T) {
+	t.Parallel()
 	get := providerGETWithDoer(&stubProviderTransport{status: 404, body: `{"error":"not found"}`})
 
 	_, err := fetchProviderJSON(get, googleHealthSettingsURL, "settings", "test-access-token")
@@ -109,6 +111,7 @@ func TestProviderGETReturnsTypedStatusErrorCarryingLabel(t *testing.T) {
 }
 
 func TestProviderGETRejectsInvalidJSONCarryingLabel(t *testing.T) {
+	t.Parallel()
 	get := providerGETWithDoer(&stubProviderTransport{status: 200, body: `{"truncated":`})
 
 	_, err := fetchProviderJSON(get, googleHealthIRNProfileURL, "irnProfile", "test-access-token")
@@ -125,6 +128,7 @@ func TestProviderGETRejectsInvalidJSONCarryingLabel(t *testing.T) {
 // to the limit, so the truncated payload fails the JSON validity check
 // instead of buffering an unbounded Provider response in memory.
 func TestProviderGETBoundsResponseBodySize(t *testing.T) {
+	t.Parallel()
 	if providerGETResponseLimit != 1<<20 {
 		t.Fatalf("providerGETResponseLimit = %d, want the historical 1 MiB cap", providerGETResponseLimit)
 	}
@@ -145,6 +149,7 @@ func TestProviderGETBoundsResponseBodySize(t *testing.T) {
 // rides the same bounded-backoff middleware the Sync Run ingestion
 // path uses, with the Provider's Retry-After hint as the sleep floor.
 func TestProviderGETRetriesTransient429HonoringRetryAfter(t *testing.T) {
+	t.Parallel()
 	transport := &sequencedProviderTransport{responses: []stubProviderResponse{
 		{status: 429, body: `{"error":"rate limited"}`, retryAfter: "7"},
 		{status: 429, body: `{"error":"rate limited"}`, retryAfter: "7"},
@@ -171,6 +176,7 @@ func TestProviderGETRetriesTransient429HonoringRetryAfter(t *testing.T) {
 }
 
 func TestProviderGETRetriesTransient5xxWithBoundedBackoff(t *testing.T) {
+	t.Parallel()
 	transport := &sequencedProviderTransport{responses: []stubProviderResponse{
 		{status: 503, body: `{"error":"unavailable"}`},
 		{status: 502, body: `{"error":"bad gateway"}`},
@@ -203,6 +209,7 @@ func TestProviderGETRetriesTransient5xxWithBoundedBackoff(t *testing.T) {
 // translation layer still classifies the failure as
 // provider_unreachable — so failure statuses are unchanged by #280.
 func TestProviderGETExhaustsRetryBudgetKeepingLabelAndTypedChain(t *testing.T) {
+	t.Parallel()
 	transport := &sequencedProviderTransport{responses: []stubProviderResponse{
 		{status: 503, body: `{"error":"unavailable"}`},
 	}}
@@ -238,6 +245,7 @@ func TestProviderGETExhaustsRetryBudgetKeepingLabelAndTypedChain(t *testing.T) {
 // per-fetch message verbatim — no attempt-count wrapping — and still
 // matches the unauthorized translation layer.
 func TestProviderGETDoesNotRetryUnauthorized(t *testing.T) {
+	t.Parallel()
 	transport := &sequencedProviderTransport{responses: []stubProviderResponse{
 		{status: 401, body: `{"error":"unauthorized"}`},
 	}}
@@ -268,6 +276,7 @@ func TestProviderGETDoesNotRetryUnauthorized(t *testing.T) {
 // attempt as the *url.Error the provider_unreachable classification
 // expects.
 func TestProviderGETDoesNotRetryNetworkFailure(t *testing.T) {
+	t.Parallel()
 	attempts := 0
 	var sleeps []time.Duration
 	get := providerGETWithRetrySeams(countingFailingTransport{attempts: &attempts, err: errors.New("connect: connection refused")}, &sleeps)
@@ -347,6 +356,7 @@ func assertFetcherRetriesTransient503(t *testing.T, happyBody string, fetch func
 }
 
 func TestPairedDevicesFetcherKeepsLabeledErrorMessages(t *testing.T) {
+	t.Parallel()
 	assertFetcherKeepsLabeledErrorMessages(t, "pairedDevices", func(get providerGET, accessToken string) error {
 		_, err := fetchGooglePairedDevices(get, accessToken)
 		return err
@@ -354,6 +364,7 @@ func TestPairedDevicesFetcherKeepsLabeledErrorMessages(t *testing.T) {
 }
 
 func TestPairedDevicesFetcherRetriesTransientFailures(t *testing.T) {
+	t.Parallel()
 	assertFetcherRetriesTransient503(t, `{"devices":[]}`, func(get providerGET, accessToken string) (string, error) {
 		devices, err := fetchGooglePairedDevices(get, accessToken)
 		return devices.rawJSON, err
@@ -361,6 +372,7 @@ func TestPairedDevicesFetcherRetriesTransientFailures(t *testing.T) {
 }
 
 func TestSettingsFetcherKeepsLabeledErrorMessages(t *testing.T) {
+	t.Parallel()
 	assertFetcherKeepsLabeledErrorMessages(t, "settings", func(get providerGET, accessToken string) error {
 		_, err := fetchGoogleSettings(get, accessToken)
 		return err
@@ -368,6 +380,7 @@ func TestSettingsFetcherKeepsLabeledErrorMessages(t *testing.T) {
 }
 
 func TestSettingsFetcherRetriesTransientFailures(t *testing.T) {
+	t.Parallel()
 	assertFetcherRetriesTransient503(t, `{"distanceUnit":"METRIC"}`, func(get providerGET, accessToken string) (string, error) {
 		settings, err := fetchGoogleSettings(get, accessToken)
 		return settings.rawJSON, err
@@ -375,6 +388,7 @@ func TestSettingsFetcherRetriesTransientFailures(t *testing.T) {
 }
 
 func TestIRNProfileFetcherKeepsLabeledErrorMessages(t *testing.T) {
+	t.Parallel()
 	assertFetcherKeepsLabeledErrorMessages(t, "irnProfile", func(get providerGET, accessToken string) error {
 		_, err := fetchGoogleIRNProfile(get, accessToken)
 		return err
@@ -382,6 +396,7 @@ func TestIRNProfileFetcherKeepsLabeledErrorMessages(t *testing.T) {
 }
 
 func TestIRNProfileFetcherRetriesTransientFailures(t *testing.T) {
+	t.Parallel()
 	assertFetcherRetriesTransient503(t, `{"irns":[]}`, func(get providerGET, accessToken string) (string, error) {
 		profile, err := fetchGoogleIRNProfile(get, accessToken)
 		return profile.rawJSON, err
@@ -389,6 +404,7 @@ func TestIRNProfileFetcherRetriesTransientFailures(t *testing.T) {
 }
 
 func TestIdentityFetcherKeepsLabeledErrorMessages(t *testing.T) {
+	t.Parallel()
 	assertFetcherKeepsLabeledErrorMessages(t, "identity", func(get providerGET, accessToken string) error {
 		_, err := fetchGoogleIdentity(get, accessToken)
 		return err
@@ -396,6 +412,7 @@ func TestIdentityFetcherKeepsLabeledErrorMessages(t *testing.T) {
 }
 
 func TestIdentityFetcherRetriesTransientFailures(t *testing.T) {
+	t.Parallel()
 	assertFetcherRetriesTransient503(t, `{"healthUserId":"111111256096816351"}`, func(get providerGET, accessToken string) (string, error) {
 		identity, err := fetchGoogleIdentity(get, accessToken)
 		return identity.rawJSON, err
@@ -403,6 +420,7 @@ func TestIdentityFetcherRetriesTransientFailures(t *testing.T) {
 }
 
 func TestProfileFetcherKeepsLabeledErrorMessages(t *testing.T) {
+	t.Parallel()
 	assertFetcherKeepsLabeledErrorMessages(t, "profile", func(get providerGET, accessToken string) error {
 		_, err := fetchGoogleProfile(get, accessToken)
 		return err
@@ -410,6 +428,7 @@ func TestProfileFetcherKeepsLabeledErrorMessages(t *testing.T) {
 }
 
 func TestProfileFetcherRetriesTransientFailures(t *testing.T) {
+	t.Parallel()
 	assertFetcherRetriesTransient503(t, `{"name":"profiles/111111256096816351"}`, func(get providerGET, accessToken string) (string, error) {
 		profile, err := fetchGoogleProfile(get, accessToken)
 		return profile.rawJSON, err
@@ -422,6 +441,7 @@ func TestProfileFetcherRetriesTransientFailures(t *testing.T) {
 // the shared timeout client as its doer, so production Identity
 // Snapshot fetches keep the #271 deadline.
 func TestProductionProviderGETBindsSharedTimeoutClient(t *testing.T) {
+	t.Parallel()
 	get := productionProviderGET()
 	client, ok := get.doer.(*http.Client)
 	if !ok || client != providerHTTPClient {

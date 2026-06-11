@@ -7,6 +7,7 @@ import (
 )
 
 func TestStatusSurfacesCursorOnlyDataTypeWithZeroCounts(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -66,6 +67,7 @@ func TestStatusSurfacesCursorOnlyDataTypeWithZeroCounts(t *testing.T) {
 }
 
 func TestSyncCursorResolveReturnsZeroWhenNoCursorExists(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -101,6 +103,7 @@ func TestSyncCursorResolveReturnsZeroWhenNoCursorExists(t *testing.T) {
 }
 
 func TestSyncCursorCommitOnlyAdvancesOnSyncCompleted(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -181,6 +184,7 @@ func TestSyncCursorCommitOnlyAdvancesOnSyncCompleted(t *testing.T) {
 }
 
 func TestSyncRunExecutorResumesFromSyncCursorWhenFromOmitted(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -234,6 +238,7 @@ func TestSyncRunExecutorResumesFromSyncCursorWhenFromOmitted(t *testing.T) {
 }
 
 func TestSyncRunExecutorErrorsClearlyWhenCursorMissingAndNoFrom(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -261,6 +266,7 @@ func TestSyncRunExecutorErrorsClearlyWhenCursorMissingAndNoFrom(t *testing.T) {
 }
 
 func TestSyncRunExecutorDoesNotCreateCursorWhenFirstRunFails(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -313,6 +319,7 @@ func TestSyncRunExecutorDoesNotCreateCursorWhenFirstRunFails(t *testing.T) {
 // (date-range vs RFC3339) — it stores the literal --to so callers passing
 // inclusive dates and callers passing RFC3339 instants both round-trip.
 func TestSyncRunExecutorRoundTripsCursorThroughExactToString(t *testing.T) {
+	t.Parallel()
 	for _, format := range []struct {
 		name   string
 		first  string
@@ -377,6 +384,7 @@ func TestSyncRunExecutorRoundTripsCursorThroughExactToString(t *testing.T) {
 // inverting the method now fails this test before any storage-layer test
 // has a chance to mask the regression.
 func TestSyncRunOutcomeAdvancesCursorOnlyOnSyncCompleted(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		outcome syncRunOutcome
 		want    bool
@@ -440,6 +448,7 @@ func failOnCompletedOutcome(err error) func(syncRunOutcome) error {
 // the inconsistency the legacy two-step write could persist on a crash
 // between FinishSyncRun and CommitSyncCursor.
 func TestArchiveFinalizeSyncRunAtomicallyCommitsRunAndCursor(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -506,6 +515,7 @@ func TestArchiveFinalizeSyncRunAtomicallyCommitsRunAndCursor(t *testing.T) {
 // finalize call, so the cursor UPSERT throws. The whole transaction
 // aborts; the run row remains in its StartSyncRun state.
 func TestArchiveFinalizeSyncRunRollsBackRunStatusWhenCursorUpsertFails(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -576,6 +586,7 @@ func TestArchiveFinalizeSyncRunRollsBackRunStatusWhenCursorUpsertFails(t *testin
 // outcome guard inside commitSyncCursorExec would silently violate
 // ADR-0008 without breaking any existing test.
 func TestArchiveFinalizeSyncRunSkipsCursorAdvanceForNonCompletedOutcomes(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		outcome syncRunOutcome
@@ -640,6 +651,7 @@ func TestArchiveFinalizeSyncRunSkipsCursorAdvanceForNonCompletedOutcomes(t *test
 }
 
 func TestSyncRunSurfacesFailureWhenFinalizeFails(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -711,6 +723,7 @@ func TestSyncRunSurfacesFailureWhenFinalizeFails(t *testing.T) {
 }
 
 func TestSyncRunExecutorPreservesCursorOnFailedRun(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{

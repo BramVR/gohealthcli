@@ -11,6 +11,7 @@ import (
 )
 
 func TestGoogleHealthIngestionArchivesDataPointListFromProviderPages(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new", "updated"}}
 	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
 		"": `{
@@ -68,6 +69,7 @@ func TestGoogleHealthIngestionArchivesDataPointListFromProviderPages(t *testing.
 }
 
 func TestGoogleHealthIngestionChoosesReconcileFromSourceFamily(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
 	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
 		"": `{
@@ -110,6 +112,7 @@ func TestGoogleHealthIngestionChoosesReconcileFromSourceFamily(t *testing.T) {
 }
 
 func TestGoogleHealthIngestionArchivesDailyRollups(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{rollupStatuses: []string{"new"}}
 	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
 		"2026-01-01/2026-01-02/": `{
@@ -147,6 +150,7 @@ func TestGoogleHealthIngestionArchivesDailyRollups(t *testing.T) {
 }
 
 func TestGoogleHealthIngestionRejectsRepeatedPageToken(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}
 	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
 		"":     `{"dataPoints":[],"nextPageToken":"same-token"}`,

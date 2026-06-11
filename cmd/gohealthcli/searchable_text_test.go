@@ -12,6 +12,7 @@ import (
 // that an LLM (or a user) can run one LIKE query against one column
 // instead of juggling four underlying paths.
 func TestSearchableTextViewReturnsRowsFromAllFourSources(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -106,6 +107,7 @@ func TestSearchableTextViewReturnsRowsFromAllFourSources(t *testing.T) {
 // query shape: a single LIKE against `text` returns hits from any
 // underlying source without the caller knowing which.
 func TestSearchableTextLIKENeedleAnswersAcrossKinds(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{

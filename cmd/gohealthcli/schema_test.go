@@ -8,6 +8,7 @@ import (
 )
 
 func TestRunSchemaEmitsValidDocument(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	if code := runSchemaWithRegistry(nil, commands, stdout, stderr, nil); code != 0 {
@@ -29,6 +30,7 @@ func TestRunSchemaEmitsValidDocument(t *testing.T) {
 }
 
 func TestRunSchemaIncludesEveryUserFacingSubcommand(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	if code := runSchemaWithRegistry(nil, commands, stdout, stderr, nil); code != 0 {
@@ -58,6 +60,7 @@ func TestRunSchemaIncludesEveryUserFacingSubcommand(t *testing.T) {
 }
 
 func TestRunSchemaIncludesDoctor(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	if code := runSchemaWithRegistry(nil, commands, stdout, stderr, nil); code != 0 {
@@ -97,6 +100,7 @@ func TestRunSchemaIncludesDoctor(t *testing.T) {
 }
 
 func TestRunSchemaIncludesHiddenSchemaCommand(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	if code := runSchemaWithRegistry(nil, commands, stdout, stderr, nil); code != 0 {
@@ -119,6 +123,7 @@ func TestRunSchemaIncludesHiddenSchemaCommand(t *testing.T) {
 }
 
 func TestRunSchemaRejectsPositionalArgs(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	if code := runSchemaWithRegistry([]string{"surprise"}, commands, stdout, stderr, nil); code == 0 {
@@ -130,6 +135,7 @@ func TestRunSchemaRejectsPositionalArgs(t *testing.T) {
 }
 
 func TestRunSchemaRejectsNonJSONMode(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	if code := runSchemaWithRegistry([]string{"--json=false"}, commands, stdout, stderr, nil); code == 0 {

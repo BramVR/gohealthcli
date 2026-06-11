@@ -15,6 +15,7 @@ import (
 // targeted "--no-input is not supported by settings" rejection and
 // exits non-zero.
 func TestSettingsRejectsNoInputFlag(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t, "settings", "--no-input")
 	if code == 0 {
 		t.Fatalf("exit code = 0, want non-zero; stdout=%q stderr=%q", stdout.String(), stderr.String())
@@ -38,6 +39,7 @@ func TestSettingsRejectsNoInputFlag(t *testing.T) {
 // automatically updates what gets stripped from the stored Connection,
 // keeping the test honest without manual edits.
 func TestSettingsCommandFailsFastWhenScopeMissing(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -117,6 +119,7 @@ func TestSettingsCommandFailsFastWhenScopeMissing(t *testing.T) {
 // already returns), and exits 0 with status "settings_archived" plus
 // a new identity_snapshots row whose snapshot_kind = 'settings'.
 func TestSettingsCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	connectAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

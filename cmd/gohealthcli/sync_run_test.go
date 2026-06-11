@@ -7,6 +7,7 @@ import (
 )
 
 func TestSyncRunExecutorArchivesDataPointList(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -64,6 +65,7 @@ func TestSyncRunExecutorArchivesDataPointList(t *testing.T) {
 }
 
 func TestSyncRunExecutorArchivesDataPointReconcileForSourceFamily(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -120,6 +122,7 @@ func TestSyncRunExecutorArchivesDataPointReconcileForSourceFamily(t *testing.T) 
 }
 
 func TestSyncRunExecutorArchivesDailyRollups(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -179,6 +182,7 @@ func TestSyncRunExecutorArchivesDailyRollups(t *testing.T) {
 // `options.from = plan.from` assignment surfaces as "no fake rollup
 // page for key ..." with the civil form on the left-hand side.
 func TestSyncRunExecutorWiresNormalizedFromIntoHourlyRollup(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -229,6 +233,7 @@ func TestSyncRunExecutorWiresNormalizedFromIntoHourlyRollup(t *testing.T) {
 }
 
 func TestSyncRunExecutorRecordsFailedListRunForRepeatedPageToken(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -265,6 +270,7 @@ func TestSyncRunExecutorRecordsFailedListRunForRepeatedPageToken(t *testing.T) {
 }
 
 func TestSyncRunExecutorRecordsPartialCountsWhenLaterPageFails(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -320,6 +326,7 @@ func TestSyncRunExecutorRecordsPartialCountsWhenLaterPageFails(t *testing.T) {
 // token's metadata — instead of failing and leaving the Sync Cursor
 // un-advanced.
 func TestSyncRunExecutorRefreshesAccessTokenMidRunAndPersists(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	connectAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -427,6 +434,7 @@ func TestSyncRunExecutorRefreshesAccessTokenMidRunAndPersists(t *testing.T) {
 }
 
 func TestSyncRunExecutorAutoRefreshesExpiredAccessTokenAndPersists(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	connectAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

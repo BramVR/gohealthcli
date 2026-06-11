@@ -46,6 +46,7 @@ func addStoredConnectionScope(t *testing.T, archivePath, scope string) {
 // returns one row per Connection projecting the latest onboarding and
 // enrollment state.
 func TestCurrentIRNProfileViewProjectsLatestSnapshot(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -100,6 +101,7 @@ func TestCurrentIRNProfileViewProjectsLatestSnapshot(t *testing.T) {
 // and archives the payload through Identity Snapshot Archive with
 // kind='irn-profile'.
 func TestIRNProfileCommandArchivesSnapshotWhenScopeGranted(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -153,6 +155,7 @@ func TestIRNProfileCommandArchivesSnapshotWhenScopeGranted(t *testing.T) {
 // transparently, persists the new token via UpdateConnectionTokenMetadata
 // on the archive, and exits 0 with status "irn_profile_archived".
 func TestIRNProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	connectAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -243,6 +246,7 @@ func TestIRNProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 // verb errors with a clear 'run connect --add-scopes irn' instruction
 // and does NOT trigger the browser flow or call the upstream API.
 func TestIRNProfileCommandFailsFastWhenScopeMissing(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -286,6 +290,7 @@ func TestIRNProfileCommandFailsFastWhenScopeMissing(t *testing.T) {
 // targeted "--no-input is not supported by irn-profile" rejection and
 // exits non-zero.
 func TestIRNProfileRejectsNoInputFlag(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t, "irn-profile", "--no-input")
 	if code == 0 {
 		t.Fatalf("exit code = 0, want non-zero; stdout=%q stderr=%q", stdout.String(), stderr.String())

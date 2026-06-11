@@ -56,6 +56,7 @@ func runtimeFlagType(f *flag.Flag) string {
 // --help output and the published schema together; hand-editing either
 // side alone is no longer possible.
 func TestRegisterCommonBindsCommonFlagsSpec(t *testing.T) {
+	t.Parallel()
 	if len(commonFlagsSpec) != 5 {
 		t.Fatalf("commonFlagsSpec declares %d flags, want the 5 shared flags", len(commonFlagsSpec))
 	}
@@ -94,6 +95,7 @@ func TestRegisterCommonBindsCommonFlagsSpec(t *testing.T) {
 // must reach the bound FlagSet, while non-overridden flags keep the
 // canonical commonFlagsSpec wording.
 func TestRegisterCommonAppliesUsageOverrides(t *testing.T) {
+	t.Parallel()
 	fs := flag.NewFlagSet("override-probe", flag.ContinueOnError)
 	spec := AllCommonFlagsSpec()
 	spec.UsageOverrides = map[string]string{"json": "synonym for --format jsonl"}
@@ -122,6 +124,7 @@ func TestRegisterCommonAppliesUsageOverrides(t *testing.T) {
 // either direction fails here instead of shipping a binary whose --help
 // disagrees with the Project Site.
 func TestEveryCommandFlagSetMatchesRegistryFlags(t *testing.T) {
+	t.Parallel()
 	for _, cmd := range commands {
 		t.Run(cmd.Name, func(t *testing.T) {
 			fs := captureSubcommandFlagSet(t, cmd)

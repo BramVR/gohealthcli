@@ -14,6 +14,7 @@ import (
 // hourly` to the windowed rollUp endpoint, posts the right body, and
 // archives one row per upstream rollupDataPoint.
 func TestGoogleHealthIngestionHourlyHeartRateRollup(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{rollupStatuses: []string{"new", "new"}}
 	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
 		"2026-01-01T00:00:00Z/2026-01-01T02:00:00Z/3600s/": `{
@@ -68,6 +69,7 @@ func TestGoogleHealthIngestionHourlyHeartRateRollup(t *testing.T) {
 // case stepsCount → windowStartUTC/windowEndUTC for the windowed
 // rollUp shape).
 func TestGoogleHealthIngestionWeeklyStepsRollup(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{rollupStatuses: []string{"new"}}
 	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
 		"2026-01-01T00:00:00Z/2026-01-15T00:00:00Z/604800s/": `{
@@ -104,6 +106,7 @@ func TestGoogleHealthIngestionWeeklyStepsRollup(t *testing.T) {
 // `window=Nh`" AC. windowSize is set straight from the spec parser
 // output and the cursor kind survives end-to-end onto the row.
 func TestGoogleHealthIngestionWindowCustomRollup(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{rollupStatuses: []string{"new"}}
 	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
 		"2026-01-01T00:00:00Z/2026-01-01T12:00:00Z/21600s/": `{
@@ -139,6 +142,7 @@ func TestGoogleHealthIngestionWindowCustomRollup(t *testing.T) {
 // seam: sleep has no rollUp family and the error must quote
 // SupportedEndpoints verbatim.
 func TestGoogleHealthIngestionRollupRejectsUnsupportedDataType(t *testing.T) {
+	t.Parallel()
 	ingestion := fakeGoogleHealthIngestion(newFakeGoogleHealthIngestionProvider(t, "access-secret", nil))
 	_, err := ingestion.Plan(googleHealthIngestionRequest{
 		dataType: "sleep",
@@ -166,6 +170,7 @@ func TestGoogleHealthIngestionRollupRejectsUnsupportedDataType(t *testing.T) {
 // matches a single page-key, so two inputs producing identical bytes
 // proves the equivalence.
 func TestGoogleHealthIngestionHourlyAcceptsCivilDatesViaGate(t *testing.T) {
+	t.Parallel()
 	spec, err := parseSyncRollupSpec("hourly")
 	if err != nil {
 		t.Fatalf("parseSyncRollupSpec hourly: %v", err)
@@ -206,6 +211,7 @@ func TestGoogleHealthIngestionHourlyAcceptsCivilDatesViaGate(t *testing.T) {
 // requests; this helper proves the dispatch by re-deriving the same
 // shape the executor sends.
 func TestGoogleHealthRollupRequestBodyCarriesWindowSize(t *testing.T) {
+	t.Parallel()
 	request, err := buildGoogleHealthRollupRawRequest("heart-rate", "2026-01-01T00:00:00Z", "2026-01-01T02:00:00Z", "3600s", 0, "")
 	if err != nil {
 		t.Fatalf("buildGoogleHealthRollupRawRequest: %v", err)

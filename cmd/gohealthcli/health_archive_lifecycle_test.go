@@ -10,6 +10,7 @@ import (
 )
 
 func TestHealthArchiveLifecycleOpensReadOnlyAndWriteHandlesThroughOnePath(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
 	createLegacyV4Archive(t, archivePath)
@@ -46,6 +47,7 @@ func TestHealthArchiveLifecycleOpensReadOnlyAndWriteHandlesThroughOnePath(t *tes
 // must land on byte-identical schemas — same sqlite_master entries, same
 // user_version, same schema_migrations history.
 func TestFreshHealthArchiveSchemaMatchesFullyMigratedLegacyArchive(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 
 	freshPath := filepath.Join(tempDir, "fresh", "gohealthcli.sqlite")
@@ -70,6 +72,7 @@ func TestFreshHealthArchiveSchemaMatchesFullyMigratedLegacyArchive(t *testing.T)
 // clock into fresh Health Archive creation: every schema_migrations row
 // must carry the runtime clock's time, not a stray time.Now() reading.
 func TestCreateStampsSchemaMigrationsWithInjectedClock(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
 	clock := func() time.Time { return time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC) }
@@ -85,6 +88,7 @@ func TestCreateStampsSchemaMigrationsWithInjectedClock(t *testing.T) {
 // Archive must stamp every newly applied schema_migrations row (2..N)
 // with the runtime clock's time.
 func TestMigrateStampsPendingSchemaMigrationsWithInjectedClock(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
 	createLegacyV1Archive(t, archivePath)
@@ -101,6 +105,7 @@ func TestMigrateStampsPendingSchemaMigrationsWithInjectedClock(t *testing.T) {
 // stamp contract: applied_at is always stored in UTC, even when the
 // injected clock reports a zoned local time.
 func TestMigrationStampsNormalizeInjectedClockToUTC(t *testing.T) {
+	t.Parallel()
 	zoned := time.FixedZone("UTC+2", 2*60*60)
 	clock := func() time.Time { return time.Date(2026, 6, 11, 12, 0, 0, 0, zoned) }
 
@@ -197,6 +202,7 @@ func readArchiveSchemaFingerprint(t *testing.T, archivePath string) string {
 }
 
 func TestHealthArchiveLifecycleReportsInspectedSchemaVersion(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
 	createLegacyV4Archive(t, archivePath)

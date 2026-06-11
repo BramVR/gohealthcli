@@ -17,6 +17,7 @@ import (
 // this test catches the same omission at build time so the regression
 // never ships in the first place.
 func TestEveryCommandHasRunAdapter(t *testing.T) {
+	t.Parallel()
 	for _, cmd := range commands {
 		if cmd.Run == nil {
 			t.Errorf("command %q has nil Run adapter; every registry entry must implement Run", cmd.Name)
@@ -32,6 +33,7 @@ func TestEveryCommandHasRunAdapter(t *testing.T) {
 // dispatch. Hidden entries (the build-time `schema`) are skipped because
 // they are intentionally not part of the end-user surface.
 func TestEveryVisibleCommandHelpExitsZero(t *testing.T) {
+	t.Parallel()
 	for _, cmd := range commands {
 		if cmd.Hidden {
 			continue
@@ -55,6 +57,7 @@ func TestEveryVisibleCommandHelpExitsZero(t *testing.T) {
 // the exact guard runWithRuntime routes every lookup through — without
 // mutating the package-level registry (#283).
 func TestRunWithRuntimeRejectsNilRunAdapter(t *testing.T) {
+	t.Parallel()
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
 	code := dispatchCommand(commandDef{Name: "schema"}, nil, CommonFlagValues{}, stdout, stderr, runtimeAdapters{})
@@ -75,6 +78,7 @@ func TestRunWithRuntimeRejectsNilRunAdapter(t *testing.T) {
 // initialised; an index that snapshotted entry VALUES before that wiring
 // would hand dispatch a nil Run for schema, and this test would catch it.
 func TestLookupCommandFindsEveryRegistryEntryIncludingHidden(t *testing.T) {
+	t.Parallel()
 	for _, cmd := range commands {
 		got, ok := lookupCommand(cmd.Name)
 		if !ok {
@@ -94,6 +98,7 @@ func TestLookupCommandFindsEveryRegistryEntryIncludingHidden(t *testing.T) {
 // an unknown name reports ok=false so runWithRuntime routes to the
 // unknown-command failure path (existing error text + exit code, #75 AC).
 func TestLookupCommandRejectsUnknownName(t *testing.T) {
+	t.Parallel()
 	if got, ok := lookupCommand("definitely-not-a-command"); ok {
 		t.Fatalf("lookupCommand(\"definitely-not-a-command\") = %q, want not found", got.Name)
 	}
@@ -106,6 +111,7 @@ func TestLookupCommandRejectsUnknownName(t *testing.T) {
 // ever runs — so this test documents and pins the invariant rather than
 // catching it first.
 func TestCommandNamesAreUnique(t *testing.T) {
+	t.Parallel()
 	seen := make(map[string]bool, len(commands))
 	for _, cmd := range commands {
 		if seen[cmd.Name] {
@@ -122,6 +128,7 @@ func TestCommandNamesAreUnique(t *testing.T) {
 // future tweak to the helper (different metric, different threshold) still
 // has to honour the AC.
 func TestSuggestReturnsCloseCommand(t *testing.T) {
+	t.Parallel()
 	got := commandRegistry(commands).Suggest("stauts")
 	want := []string{"status"}
 	if !reflect.DeepEqual(got, want) {
@@ -134,6 +141,7 @@ func TestSuggestReturnsCloseCommand(t *testing.T) {
 // empty result so the unknown-command path can suppress the "Did you mean"
 // line entirely. The AC calls this out explicitly ("xyz" → no suggestion).
 func TestSuggestReturnsNilForDistantTypo(t *testing.T) {
+	t.Parallel()
 	got := commandRegistry(commands).Suggest("xyz")
 	if len(got) != 0 {
 		t.Fatalf("Suggest(\"xyz\") = %v, want empty slice", got)
@@ -147,6 +155,7 @@ func TestSuggestReturnsNilForDistantTypo(t *testing.T) {
 // is filtered out at the registry layer rather than relying on UX polish at
 // the call site. AC: "Hidden commands (schema) are excluded from Suggest".
 func TestSuggestExcludesHiddenCommands(t *testing.T) {
+	t.Parallel()
 	got := commandRegistry(commands).Suggest("shcema")
 	for _, name := range got {
 		if name == "schema" {

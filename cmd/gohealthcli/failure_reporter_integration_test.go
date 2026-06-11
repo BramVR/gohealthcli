@@ -15,6 +15,7 @@ import (
 // failure shapes for at least three representative commands (init,
 // sync, devices)."
 func TestFailureReporterInitJSONShape(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	code, stdout, stderr := runCommand(t,
 		"init",
@@ -45,6 +46,7 @@ func TestFailureReporterInitJSONShape(t *testing.T) {
 // stderr line is `init: <m>\n`. Both streams carry the error so
 // terminal users and script consumers both get a signal.
 func TestFailureReporterInitPlainShape(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	code, stdout, stderr := runCommand(t,
 		"init",
@@ -77,6 +79,7 @@ func TestFailureReporterInitPlainShape(t *testing.T) {
 // positional argument the sync subcommand does not accept. That path
 // goes directly through ReportFailure with StatusUnexpectedArgument.
 func TestFailureReporterSyncJSONShape(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t,
 		"--json",
 		"sync",
@@ -105,6 +108,7 @@ func TestFailureReporterSyncJSONShape(t *testing.T) {
 // `status: unexpected_argument\nmessage: ...` block, stderr carries
 // the `sync: ...` line.
 func TestFailureReporterSyncPlainShape(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t,
 		"--plain",
 		"sync",
@@ -127,6 +131,7 @@ func TestFailureReporterSyncPlainShape(t *testing.T) {
 // etc.). The Failure Reporter envelope shape applies to the
 // unexpected-argument path, exercised here by passing a positional.
 func TestFailureReporterDevicesJSONShape(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t,
 		"--json",
 		"devices",
@@ -154,6 +159,7 @@ func TestFailureReporterDevicesJSONShape(t *testing.T) {
 // shape: stdout carries the status/message block, stderr carries the
 // `devices: ...` line.
 func TestFailureReporterDevicesPlainShape(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t,
 		"--plain",
 		"devices",

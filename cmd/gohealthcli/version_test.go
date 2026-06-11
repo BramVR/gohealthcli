@@ -26,6 +26,7 @@ func withVersionVars(t *testing.T, v, c, b string) {
 }
 
 func TestRenderVersionPlain(t *testing.T) {
+	t.Parallel()
 	withVersionVars(t, "v1.2.3", "abcdef1", "2025-01-02T03:04:05Z")
 
 	var buf bytes.Buffer
@@ -38,6 +39,7 @@ func TestRenderVersionPlain(t *testing.T) {
 }
 
 func TestRenderVersionJSON(t *testing.T) {
+	t.Parallel()
 	withVersionVars(t, "v2.0.0", "deadbee", "2026-06-08T00:00:00Z")
 
 	var buf bytes.Buffer

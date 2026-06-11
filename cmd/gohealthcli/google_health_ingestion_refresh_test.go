@@ -26,6 +26,7 @@ func midRunRefreshTestIngestion(t *testing.T, provider googleHealthIngestionProv
 }
 
 func TestGoogleHealthIngestionRefreshesAccessTokenMidRunOn401(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}
 	pages := map[string]string{
 		"": `{
@@ -111,6 +112,7 @@ func TestGoogleHealthIngestionRefreshesAccessTokenMidRunOn401(t *testing.T) {
 }
 
 func TestGoogleHealthIngestionFailsWhenRefreshedTokenStillUnauthorized(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}
 	fetchCalls := 0
 	provider := funcIngestionProvider(func(request rawProviderRequest, accessToken string) ([]byte, error) {
@@ -142,6 +144,7 @@ func TestGoogleHealthIngestionFailsWhenRefreshedTokenStillUnauthorized(t *testin
 }
 
 func TestGoogleHealthIngestionSurfacesMidRunRefreshFailure(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}
 	fetchCalls := 0
 	provider := funcIngestionProvider(func(request rawProviderRequest, accessToken string) ([]byte, error) {
@@ -175,6 +178,7 @@ func TestGoogleHealthIngestionSurfacesMidRunRefreshFailure(t *testing.T) {
 // errSyncCanceled instead of spending a refresh + retry the user no
 // longer wants.
 func TestGoogleHealthIngestionDoesNotRefreshAfter401WhenCanceled(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}
 	cancelCh := make(chan struct{})
 	canceled := false
@@ -210,6 +214,7 @@ func TestGoogleHealthIngestionDoesNotRefreshAfter401WhenCanceled(t *testing.T) {
 }
 
 func TestGoogleHealthIngestionWithoutRefreshHookSurfaces401(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}
 	fetchCalls := 0
 	provider := funcIngestionProvider(func(request rawProviderRequest, accessToken string) ([]byte, error) {
@@ -233,6 +238,7 @@ func TestGoogleHealthIngestionWithoutRefreshHookSurfaces401(t *testing.T) {
 }
 
 func TestGoogleHealthIngestionRefreshesAccessTokenMidRunForRollups(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}
 	var fetchTokens []string
 	provider := funcIngestionProvider(func(request rawProviderRequest, accessToken string) ([]byte, error) {

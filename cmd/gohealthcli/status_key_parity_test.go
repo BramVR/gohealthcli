@@ -14,6 +14,7 @@ import (
 // containing every Data Type name, matching the comma list emitted by
 // `--plain`. A consumer who picks `--json` must not lose this field.
 func TestStatusJSONHasTopLevelKnownDataTypes(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -69,6 +70,7 @@ func TestStatusJSONHasTopLevelKnownDataTypes(t *testing.T) {
 // `--json` carries `paired_device_count` as a top-level integer,
 // matching `--plain`. The existing nested location is preserved.
 func TestStatusJSONHasTopLevelPairedDeviceCount(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -128,6 +130,7 @@ func TestStatusJSONHasTopLevelPairedDeviceCount(t *testing.T) {
 // `paired_device_count: 0`. Mirrors the omitted-when-missing
 // convention used by `identity_snapshots_freshness`.
 func TestStatusJSONOmitsPairedDeviceCountWhenZero(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -153,6 +156,7 @@ func TestStatusJSONOmitsPairedDeviceCountWhenZero(t *testing.T) {
 // (mirroring the existing `data_types` omitempty contract and the
 // plain writer, which only emits the line when there are Data Types).
 func TestStatusJSONOmitsKnownDataTypesWhenEmpty(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -177,6 +181,7 @@ func TestStatusJSONOmitsKnownDataTypesWhenEmpty(t *testing.T) {
 // the exact same line afterwards. Captures every meaningful
 // `--plain` line on a populated archive so any drift fails the test.
 func TestStatusPlainOutputPreservedAfterParityChange(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -233,6 +238,7 @@ func TestStatusPlainOutputPreservedAfterParityChange(t *testing.T) {
 // key has a matching plain key. Lets future slices add fields with
 // confidence that the two modes stay in lockstep.
 func TestStatusPlainAndJSONKeyParity(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{

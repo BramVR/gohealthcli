@@ -47,6 +47,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestDoctorJSONReportsMissingSetup(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.toml")
 	archivePath := filepath.Join(tempDir, "gohealthcli.sqlite")
@@ -81,6 +82,7 @@ func TestDoctorJSONReportsMissingSetup(t *testing.T) {
 }
 
 func TestDoctorJSONReportsMissingSetupAfterCommand(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 
 	code, stdout, stderr := runCommand(t,
@@ -116,6 +118,7 @@ func TestDoctorJSONReportsMissingSetupAfterCommand(t *testing.T) {
 }
 
 func TestDoctorRejectsUnknownFlagAfterCommand(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t, "doctor", "--bogus")
 
 	if code == 0 || code == 2 {
@@ -130,6 +133,7 @@ func TestDoctorRejectsUnknownFlagAfterCommand(t *testing.T) {
 }
 
 func TestDoctorAcceptsNoInputBeforeCommand(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 
 	code, stdout, stderr := runCommand(t,
@@ -152,6 +156,7 @@ func TestDoctorAcceptsNoInputBeforeCommand(t *testing.T) {
 }
 
 func TestDoctorAcceptsNoInputAfterCommand(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 
 	code, stdout, stderr := runCommand(t,
@@ -174,6 +179,7 @@ func TestDoctorAcceptsNoInputAfterCommand(t *testing.T) {
 }
 
 func TestDoctorPlainReportsMissingSetup(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 
 	code, stdout, stderr := runCommand(t,
@@ -209,6 +215,7 @@ func TestDoctorPlainReportsMissingSetup(t *testing.T) {
 }
 
 func TestDoctorHumanReportsMissingSetup(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 
 	code, stdout, stderr := runCommand(t,
@@ -237,6 +244,7 @@ func TestDoctorHumanReportsMissingSetup(t *testing.T) {
 }
 
 func TestVersionDoesNotCheckSetup(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 
 	code, stdout, stderr := runCommand(t,
@@ -260,6 +268,7 @@ func TestVersionDoesNotCheckSetup(t *testing.T) {
 }
 
 func TestVersionJSON(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 
 	code, stdout, stderr := runCommand(t,
@@ -287,6 +296,7 @@ func TestVersionJSON(t *testing.T) {
 }
 
 func TestVersionPlainAndJSONMutuallyExclusive(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 
 	code, stdout, stderr := runCommand(t,
@@ -312,6 +322,7 @@ func TestVersionPlainAndJSONMutuallyExclusive(t *testing.T) {
 // keeps writing to stderr per stdlib flag-package convention — see
 // TestHelpExitsSuccessfully below.
 func TestNoArgsPrintsHelpToStdout(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t)
 
 	if code != 0 {
@@ -333,6 +344,7 @@ func TestNoArgsPrintsHelpToStdout(t *testing.T) {
 // far from every registered command, ensuring no "Did you mean" line
 // interleaves and the hint line is the sole new addition under test.
 func TestUnknownCommandPrintsHintAndExitsNonZero(t *testing.T) {
+	t.Parallel()
 	code, _, stderr := runCommand(t, "bogus-cmd")
 
 	if code != 1 {
@@ -357,6 +369,7 @@ func TestUnknownCommandPrintsHintAndExitsNonZero(t *testing.T) {
 // the suggestion phrasing trips this test rather than silently shipping a
 // regression in UX.
 func TestUnknownCommandSuggestsCloseMatch(t *testing.T) {
+	t.Parallel()
 	code, _, stderr := runCommand(t, "stauts")
 
 	if code != 1 {
@@ -372,6 +385,7 @@ func TestUnknownCommandSuggestsCloseMatch(t *testing.T) {
 }
 
 func TestHelpExitsSuccessfully(t *testing.T) {
+	t.Parallel()
 	for _, args := range [][]string{
 		{"--help"},
 		{"doctor", "--help"},
@@ -391,6 +405,7 @@ func TestHelpExitsSuccessfully(t *testing.T) {
 }
 
 func TestTopLevelHelpListsVisibleSubcommandsFromRegistry(t *testing.T) {
+	t.Parallel()
 	code, _, stderr := runCommand(t, "--help")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr.String())
@@ -422,6 +437,7 @@ func TestTopLevelHelpListsVisibleSubcommandsFromRegistry(t *testing.T) {
 }
 
 func TestTopLevelHelpOmitsHiddenSubcommands(t *testing.T) {
+	t.Parallel()
 	code, _, stderr := runCommand(t, "--help")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr.String())
@@ -439,6 +455,7 @@ func TestTopLevelHelpOmitsHiddenSubcommands(t *testing.T) {
 }
 
 func TestTopLevelHelpStillShowsGlobalFlags(t *testing.T) {
+	t.Parallel()
 	code, _, stderr := runCommand(t, "--help")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr.String())
@@ -456,6 +473,7 @@ func TestTopLevelHelpStillShowsGlobalFlags(t *testing.T) {
 // `gohealthcli --help`: same exit code, identical stderr bytes. The verb form
 // reads more naturally than the flag form and is what users reach for first.
 func TestHelpVerbMatchesTopLevelHelp(t *testing.T) {
+	t.Parallel()
 	codeFlag, _, stderrFlag := runCommand(t, "--help")
 	codeVerb, stdoutVerb, stderrVerb := runCommand(t, "help")
 
@@ -477,6 +495,7 @@ func TestHelpVerbMatchesTopLevelHelp(t *testing.T) {
 // the status subcommand's Long description followed by its accepted flags,
 // exits 0, and does not write to stdout.
 func TestHelpVerbWithKnownSubcommand(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t, "help", "status")
 
 	if code != 0 {
@@ -517,6 +536,7 @@ func TestHelpVerbWithKnownSubcommand(t *testing.T) {
 // with `unknown command: bogus` on stderr. The did-you-mean suggestion list
 // is deferred to slice 3 of PRD #143 and explicitly NOT asserted here.
 func TestHelpVerbWithUnknownSubcommand(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t, "help", "bogus")
 
 	if code != 1 {
@@ -536,6 +556,7 @@ func TestHelpVerbWithUnknownSubcommand(t *testing.T) {
 // only means "filtered from the top-level --help listing"; an explicit help
 // lookup must still resolve it.
 func TestHelpVerbWithHiddenSubcommand(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t, "help", "schema")
 
 	if code != 0 {
@@ -567,6 +588,7 @@ func TestHelpVerbWithHiddenSubcommand(t *testing.T) {
 // This mirrors how every other subcommand rejects unknown positionals and
 // surfaces typos like `help status extra` instead of masking them.
 func TestHelpVerbRejectsExtraArguments(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		args []string
@@ -591,6 +613,7 @@ func TestHelpVerbRejectsExtraArguments(t *testing.T) {
 }
 
 func TestDoctorDefaultPathsAreUsable(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	xdgConfig := filepath.Join(home, "xdg-config")
 	xdgData := filepath.Join(home, "xdg-data")
@@ -625,6 +648,7 @@ func TestDoctorDefaultPathsAreUsable(t *testing.T) {
 }
 
 func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -796,6 +820,7 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 }
 
 func TestDoctorReportsInitializedSetup(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -845,6 +870,7 @@ func TestDoctorReportsInitializedSetup(t *testing.T) {
 }
 
 func TestDoctorPlainReportsOfflineHealthCheck(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -880,6 +906,7 @@ func TestDoctorPlainReportsOfflineHealthCheck(t *testing.T) {
 }
 
 func TestDoctorJSONReportsInvalidSetup(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -927,6 +954,7 @@ func TestDoctorJSONReportsInvalidSetup(t *testing.T) {
 }
 
 func TestDoctorReportsMalformedOAuthClientReference(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -973,6 +1001,7 @@ func TestDoctorReportsMalformedOAuthClientReference(t *testing.T) {
 }
 
 func TestDoctorReportsMissingOAuthClientFile(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1015,6 +1044,7 @@ func TestDoctorReportsMissingOAuthClientFile(t *testing.T) {
 }
 
 func TestDoctorAcceptsRelativeOAuthClientFileAfterInitFromDifferentDirectory(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1070,6 +1100,7 @@ func TestDoctorAcceptsRelativeOAuthClientFileAfterInitFromDifferentDirectory(t *
 }
 
 func TestDoctorDefaultsLegacyConfigWithoutCredentialStore(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1113,6 +1144,7 @@ func TestDoctorDefaultsLegacyConfigWithoutCredentialStore(t *testing.T) {
 }
 
 func TestDoctorAcceptsInlineConfigComments(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1159,6 +1191,7 @@ func TestDoctorAcceptsInlineConfigComments(t *testing.T) {
 }
 
 func TestDoctorAcceptsInlineDefaultDataTypesArray(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1206,6 +1239,7 @@ func TestDoctorAcceptsInlineDefaultDataTypesArray(t *testing.T) {
 }
 
 func TestDoctorAcceptsMultivalueDefaultDataTypeRows(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1245,6 +1279,7 @@ func TestDoctorAcceptsMultivalueDefaultDataTypeRows(t *testing.T) {
 }
 
 func TestDoctorAcceptsOpeningLineMultilineDefaultDataTypesArray(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1284,6 +1319,7 @@ func TestDoctorAcceptsOpeningLineMultilineDefaultDataTypesArray(t *testing.T) {
 }
 
 func TestDoctorAcceptsConfiguredDefaultDataTypeSubset(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1323,6 +1359,7 @@ func TestDoctorAcceptsConfiguredDefaultDataTypeSubset(t *testing.T) {
 }
 
 func TestDoctorReportsUnsupportedDefaultDataType(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1373,6 +1410,7 @@ func TestDoctorReportsUnsupportedDefaultDataType(t *testing.T) {
 }
 
 func TestDoctorReportsMissingDefaultDataTypes(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1423,6 +1461,7 @@ func TestDoctorReportsMissingDefaultDataTypes(t *testing.T) {
 }
 
 func TestDoctorReportsMalformedCredentialStoreConfig(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1469,6 +1508,7 @@ func TestDoctorReportsMalformedCredentialStoreConfig(t *testing.T) {
 }
 
 func TestDoctorValidatesConnectionTokenMetadata(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1598,6 +1638,7 @@ func TestDoctorValidatesConnectionTokenMetadata(t *testing.T) {
 }
 
 func TestDoctorDoesNotLeakTokenMetadataSecretMaterial(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -1655,6 +1696,7 @@ func TestDoctorDoesNotLeakTokenMetadataSecretMaterial(t *testing.T) {
 }
 
 func TestDoctorOnlineRefreshesExpiredTokenAndChecksProvider(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -1711,6 +1753,7 @@ func TestDoctorOnlineRefreshesExpiredTokenAndChecksProvider(t *testing.T) {
 }
 
 func TestDoctorOnlineReportsRefreshFailureAsConnectionHealth(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -1753,6 +1796,7 @@ func TestDoctorOnlineReportsRefreshFailureAsConnectionHealth(t *testing.T) {
 }
 
 func TestDoctorOnlineValidatesRefreshWhenAccessTokenIsCurrent(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -1794,6 +1838,7 @@ func TestDoctorOnlineValidatesRefreshWhenAccessTokenIsCurrent(t *testing.T) {
 }
 
 func TestDoctorOnlineReportsProviderFailureAsConnectionHealth(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -1840,6 +1885,7 @@ func TestDoctorOnlineReportsProviderFailureAsConnectionHealth(t *testing.T) {
 }
 
 func TestDoctorOnlineReportsMissingTokenAsConnectionHealth(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -1879,6 +1925,7 @@ func TestDoctorOnlineReportsMissingTokenAsConnectionHealth(t *testing.T) {
 }
 
 func TestDoctorOnlineReportsMissingRefreshTokenBeforeProvider(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -1920,6 +1967,7 @@ func TestDoctorOnlineReportsMissingRefreshTokenBeforeProvider(t *testing.T) {
 }
 
 func TestDoctorOnlineDoesNotPersistRefreshBeforeIdentityMatch(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -1972,6 +2020,7 @@ func TestDoctorOnlineDoesNotPersistRefreshBeforeIdentityMatch(t *testing.T) {
 }
 
 func TestPersistDoctorOnlineRefreshedTokenRollsBackOnMetadataFailure(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -2033,6 +2082,7 @@ func TestPersistDoctorOnlineRefreshedTokenRollsBackOnMetadataFailure(t *testing.
 }
 
 func TestDoctorDefaultDoesNotRefreshOrCallProvider(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -2068,6 +2118,7 @@ func TestDoctorDefaultDoesNotRefreshOrCallProvider(t *testing.T) {
 }
 
 func TestConnectStoresFileFallbackTokenAndAnchorsIdentity(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
 	connectNow := time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC)
@@ -2150,6 +2201,7 @@ func TestConnectStoresFileFallbackTokenAndAnchorsIdentity(t *testing.T) {
 }
 
 func TestConnectReauthorizesSameIdentityWithoutSecondConnection(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -2199,6 +2251,7 @@ func TestConnectReauthorizesSameIdentityWithoutSecondConnection(t *testing.T) {
 }
 
 func TestConnectArchiveInspectionFailureDoesNotReportCredentialStore(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	db, err := openArchive(archivePath)
@@ -2236,6 +2289,7 @@ func TestConnectArchiveInspectionFailureDoesNotReportCredentialStore(t *testing.
 }
 
 func TestConnectRejectsDifferentGoogleIdentity(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, tokenStorePath := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -2282,6 +2336,7 @@ func TestConnectRejectsDifferentGoogleIdentity(t *testing.T) {
 }
 
 func TestConnectDoesNotResolveSecretProviderAtRuntime(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -2314,6 +2369,7 @@ func TestConnectDoesNotResolveSecretProviderAtRuntime(t *testing.T) {
 }
 
 func TestIdentityRefreshesArchivedGoogleIdentity(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -2372,6 +2428,7 @@ func TestIdentityRefreshesArchivedGoogleIdentity(t *testing.T) {
 }
 
 func TestIdentityPlainIncludesStableIdentityFields(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -2406,6 +2463,7 @@ func TestIdentityPlainIncludesStableIdentityFields(t *testing.T) {
 }
 
 func TestIdentityHumanOutputDistinguishesFailureStatuses(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		status string
 		want   string
@@ -2428,6 +2486,7 @@ func TestIdentityHumanOutputDistinguishesFailureStatuses(t *testing.T) {
 }
 
 func TestIdentityRequiresArchivedConnection(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{failIfCalled: true})
@@ -2465,6 +2524,7 @@ func TestIdentityRequiresArchivedConnection(t *testing.T) {
 // --online` and `connect` recovery) and still never calls the Provider
 // identity endpoint with a dead token.
 func TestIdentityReportsAutoRefreshFailureBeforeProviderFetch(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	connectAt := time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC)
@@ -2519,6 +2579,7 @@ func TestIdentityReportsAutoRefreshFailureBeforeProviderFetch(t *testing.T) {
 // NOT issue any Provider identity request — proving the pre-check
 // happens before the upstream call, exactly like profile.
 func TestIdentityCommandFailsFastWhenScopeMissing(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -2586,6 +2647,7 @@ func TestIdentityCommandFailsFastWhenScopeMissing(t *testing.T) {
 // already returns), and exits 0 with status "identity_refreshed" plus
 // the refreshed Google Identity archived on the Connection row.
 func TestIdentityCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	connectAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -2684,6 +2746,7 @@ func TestIdentityCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 }
 
 func TestIdentityRejectsDifferentGoogleIdentity(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -2740,6 +2803,7 @@ func TestIdentityRejectsDifferentGoogleIdentity(t *testing.T) {
 }
 
 func TestProfileArchivesSnapshotAndPrintsSummary(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -2808,6 +2872,7 @@ func TestProfileArchivesSnapshotAndPrintsSummary(t *testing.T) {
 }
 
 func TestProfilePlainIncludesStableSnapshotFields(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -2845,6 +2910,7 @@ func TestProfilePlainIncludesStableSnapshotFields(t *testing.T) {
 }
 
 func TestProfileProviderFailureDoesNotArchiveSnapshot(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -2889,6 +2955,7 @@ func TestProfileProviderFailureDoesNotArchiveSnapshot(t *testing.T) {
 }
 
 func TestProfileFailsBeforeProviderWhenProfileScopeMissing(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -2928,6 +2995,7 @@ func TestProfileFailsBeforeProviderWhenProfileScopeMissing(t *testing.T) {
 }
 
 func TestProfileRejectsAliasProfileWhenIdentityVerificationDiffers(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -2970,6 +3038,7 @@ func TestProfileRejectsAliasProfileWhenIdentityVerificationDiffers(t *testing.T)
 }
 
 func TestProfileRejectsDifferentGoogleIdentityWithoutArchiving(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -3009,6 +3078,7 @@ func TestProfileRejectsDifferentGoogleIdentityWithoutArchiving(t *testing.T) {
 }
 
 func TestStatusReportsHealthArchiveCountsAndSyncRunsReadOnly(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -3103,6 +3173,7 @@ func TestStatusReportsHealthArchiveCountsAndSyncRunsReadOnly(t *testing.T) {
 // injection (CWE-150) can never reach the terminal raw. ESC (0x1b) and BEL
 // (0x07) stand in for the decoded provider-derived control bytes.
 func TestWriteStatusSyncRunPlainEscapesControlBytes(t *testing.T) {
+	t.Parallel()
 	run := &statusSyncRun{
 		ID:                 3,
 		Status:             "sync_failed",
@@ -3131,6 +3202,7 @@ func TestWriteStatusSyncRunPlainEscapesControlBytes(t *testing.T) {
 }
 
 func TestStatusPlainReportsEmptyHealthArchive(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -3169,6 +3241,7 @@ func TestStatusPlainReportsEmptyHealthArchive(t *testing.T) {
 }
 
 func TestStatusMigratesLegacyV3ArchiveBeforeValidation(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	if err := os.Remove(archivePath); err != nil {
@@ -3195,6 +3268,7 @@ func TestStatusMigratesLegacyV3ArchiveBeforeValidation(t *testing.T) {
 }
 
 func TestStatusRejectsConfigArchiveMismatch(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
 	otherArchivePath := filepath.Join(tempDir, "other-data", "other.sqlite")
@@ -3305,6 +3379,7 @@ func TestStatusRejectsExplicitDefaultArchiveMismatch(t *testing.T) {
 // is added — the test catches a regression that strips ECG (or any
 // future opt-in Data Type) from the per-Data-Type rollup.
 func TestStatusReportsNewestElectrocardiogramEventTimestamp(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -3364,6 +3439,7 @@ func TestStatusReportsNewestElectrocardiogramEventTimestamp(t *testing.T) {
 }
 
 func TestStatusReportsMigrationFailureForUnsupportedSchema(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	setArchiveUserVersion(t, archivePath, currentSchemaVersion+1)
@@ -3396,6 +3472,7 @@ func TestStatusReportsMigrationFailureForUnsupportedSchema(t *testing.T) {
 }
 
 func TestStatusReportsSchemaVersionForArchiveInspectionFailure(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	db, err := openArchive(archivePath)
@@ -3436,6 +3513,7 @@ func TestStatusReportsSchemaVersionForArchiveInspectionFailure(t *testing.T) {
 }
 
 func TestCountArchiveRowsRejectsUnknownTable(t *testing.T) {
+	t.Parallel()
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("open memory archive: %v", err)
@@ -3452,6 +3530,7 @@ func TestCountArchiveRowsRejectsUnknownTable(t *testing.T) {
 }
 
 func TestSyncRejectsInvalidSourceFamilyOptionsBeforeSetup(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name        string
 		args        []string
@@ -3494,6 +3573,7 @@ func TestSyncRejectsInvalidSourceFamilyOptionsBeforeSetup(t *testing.T) {
 }
 
 func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -3691,6 +3771,7 @@ func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 }
 
 func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -3838,6 +3919,7 @@ func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 }
 
 func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -3974,6 +4056,7 @@ func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 }
 
 func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -4113,6 +4196,7 @@ func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing
 }
 
 func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -4294,6 +4378,7 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 }
 
 func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -4396,6 +4481,7 @@ func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
 }
 
 func TestSyncArchivesExerciseSessionDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -4501,6 +4587,7 @@ func TestSyncArchivesExerciseSessionDataPointsIdempotentlyAndTracksRevisions(t *
 // the sleep/exercise session shape because the live probe is deferred
 // until the user grants the scope against the live OAuth client.
 func TestSyncArchivesElectrocardiogramSessionDataPoints(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -4556,6 +4643,7 @@ func TestSyncArchivesElectrocardiogramSessionDataPoints(t *testing.T) {
 // Same harness as the ECG test, with the IRN-specific scope and
 // fixture payload.
 func TestSyncArchivesIrregularRhythmNotificationSessionDataPoints(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -4606,6 +4694,7 @@ func TestSyncArchivesIrregularRhythmNotificationSessionDataPoints(t *testing.T) 
 }
 
 func TestSyncArchivesWearableStepsViaReconcile(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -4715,6 +4804,7 @@ func TestSyncArchivesWearableStepsViaReconcile(t *testing.T) {
 }
 
 func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -4933,6 +5023,7 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 }
 
 func TestParseStepsDailyRollupRequiresCivilEndTime(t *testing.T) {
+	t.Parallel()
 	_, err := parseGoogleHealthRollup(archivedConnection{
 		providerName: "googlehealth",
 		id:           "googlehealth:111111256096816351",
@@ -4946,6 +5037,7 @@ func TestParseStepsDailyRollupRequiresCivilEndTime(t *testing.T) {
 }
 
 func TestSyncProviderFailureRecordsFailedRun(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -4997,6 +5089,7 @@ func TestSyncProviderFailureRecordsFailedRun(t *testing.T) {
 }
 
 func TestSyncRefusesDifferentProviderIdentityBeforeArchiving(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -5048,6 +5141,7 @@ func TestSyncRefusesDifferentProviderIdentityBeforeArchiving(t *testing.T) {
 }
 
 func TestSyncReportsFailedWhenCompletionRecordFails(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -5117,6 +5211,7 @@ func TestSyncReportsFailedWhenCompletionRecordFails(t *testing.T) {
 }
 
 func TestSyncFailsBeforeProviderWhenScopeMissing(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -5158,6 +5253,7 @@ func TestSyncFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 }
 
 func TestSyncSampleDataTypeFailsBeforeProviderWhenHealthMetricsScopeMissing(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -5200,6 +5296,7 @@ func TestSyncSampleDataTypeFailsBeforeProviderWhenHealthMetricsScopeMissing(t *t
 }
 
 func TestRawEndpointIdentityPrintsProviderJSONWithoutArchiving(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -5243,6 +5340,7 @@ func TestRawEndpointIdentityPrintsProviderJSONWithoutArchiving(t *testing.T) {
 }
 
 func TestRawDataTypeStepsPrintsFixtureJSON(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -5304,6 +5402,7 @@ func TestRawDataTypeStepsPrintsFixtureJSON(t *testing.T) {
 }
 
 func TestDailyNamedDataTypeListRequestIsNotRollup(t *testing.T) {
+	t.Parallel()
 	request, err := buildGoogleHealthDataTypeListRawRequest("daily-resting-heart-rate", "2026-01-01", "2026-01-02", 0, "")
 	if err != nil {
 		t.Fatalf("build daily-named list request: %v", err)
@@ -5334,6 +5433,7 @@ func TestDailyNamedDataTypeListRequestIsNotRollup(t *testing.T) {
 }
 
 func TestRawProviderErrorDoesNotLeakToken(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -5371,6 +5471,7 @@ func TestRawProviderErrorDoesNotLeakToken(t *testing.T) {
 }
 
 func TestRawDataTypeFailsBeforeProviderWhenScopeMissing(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -5427,6 +5528,7 @@ func TestRawDataTypeFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 }
 
 func TestBuildGoogleHealthRawRequestUsesProviderNamingConventions(t *testing.T) {
+	t.Parallel()
 	request, err := buildGoogleHealthRawRequest([]string{"endpoint", "dataTypes.heart-rate.list"}, "2026-01-01", "", 0, "")
 	if err != nil {
 		t.Fatalf("build raw request: %v", err)
@@ -5445,6 +5547,7 @@ func TestBuildGoogleHealthRawRequestUsesProviderNamingConventions(t *testing.T) 
 }
 
 func TestBuildGoogleHealthRawRequestRejectsNonListableDataTypes(t *testing.T) {
+	t.Parallel()
 	_, err := buildGoogleHealthRawRequest([]string{"data-type", "total-calories"}, "2026-01-01", "", 0, "")
 	if err == nil {
 		t.Fatal("build raw request error = nil, want unsupported Data Type")
@@ -5463,6 +5566,7 @@ func TestBuildGoogleHealthRawRequestRejectsNonListableDataTypes(t *testing.T) {
 // catalog entry changes and this test follows automatically — no inline
 // scope literals to update in main.go.
 func TestBuildGoogleHealthRawRequestEndpointCatalog(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		wantURL string
@@ -5506,6 +5610,7 @@ func TestBuildGoogleHealthRawRequestEndpointCatalog(t *testing.T) {
 // outpaces a catalog update) still surfaces as a clear error rather
 // than a nil request.
 func TestBuildGoogleHealthRawRequestUnknownEndpoint(t *testing.T) {
+	t.Parallel()
 	_, err := buildGoogleHealthRawRequest([]string{"endpoint", "nonexistent"}, "", "", 0, "")
 	if err == nil {
 		t.Fatal("build raw request error = nil, want unsupported raw endpoint")
@@ -5523,6 +5628,7 @@ func TestBuildGoogleHealthRawRequestUnknownEndpoint(t *testing.T) {
 // request's requiredScopes — proving the branch did a catalog lookup,
 // not a hard-coded literal.
 func TestBuildGoogleHealthRawRequestEndpointsReadFromCatalog(t *testing.T) {
+	t.Parallel()
 	for _, endpoint := range []string{"getIdentity", "getProfile", "getSettings", "pairedDevices", "getIrnProfile"} {
 		t.Run(endpoint, func(t *testing.T) {
 			original, ok := googleHealthIdentityEndpointScopes[endpoint]
@@ -5545,6 +5651,7 @@ func TestBuildGoogleHealthRawRequestEndpointsReadFromCatalog(t *testing.T) {
 }
 
 func TestGoogleHealthRawFilterFieldsCoverFirstReleaseDataTypes(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		dataType string
 		from     string
@@ -5619,6 +5726,7 @@ func TestGoogleHealthRawFilterFieldsCoverFirstReleaseDataTypes(t *testing.T) {
 }
 
 func TestGoogleHealthRawFilterPreservesFractionalRFC3339Bounds(t *testing.T) {
+	t.Parallel()
 	filter, err := googleHealthDataTypeListFilter("heart-rate", "2026-01-01T00:00:00.500Z", "2026-01-01T01:02:03.123456789+02:00")
 	if err != nil {
 		t.Fatalf("filter: %v", err)
@@ -5630,6 +5738,7 @@ func TestGoogleHealthRawFilterPreservesFractionalRFC3339Bounds(t *testing.T) {
 }
 
 func TestConnectAcceptsGlobalNoInput(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	wantNoInput := true
@@ -5644,6 +5753,7 @@ func TestConnectAcceptsGlobalNoInput(t *testing.T) {
 }
 
 func TestConnectMigratesLegacyV1ArchiveBeforeStoringIdentity(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	if err := os.Remove(archivePath); err != nil {
@@ -5678,6 +5788,7 @@ func TestConnectMigratesLegacyV1ArchiveBeforeStoringIdentity(t *testing.T) {
 }
 
 func TestDoctorMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	if err := os.Remove(archivePath); err != nil {
@@ -5702,6 +5813,7 @@ func TestDoctorMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
 }
 
 func TestInitMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	if err := os.Remove(archivePath); err != nil {
@@ -5732,6 +5844,7 @@ func TestInitMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
 }
 
 func TestConnectRejectsUnsupportedOSNativeStoreBeforeOAuth(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -5773,6 +5886,7 @@ func TestConnectRejectsUnsupportedOSNativeStoreBeforeOAuth(t *testing.T) {
 }
 
 func TestConnectRejectsFileCredentialStoreCollisionsBeforeOAuth(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name string
 		path func(tempDir, configPath, archivePath string) string
@@ -5847,6 +5961,7 @@ func TestConnectRejectsFileCredentialStoreCollisionsBeforeOAuth(t *testing.T) {
 }
 
 func TestConnectRejectsMissingLinuxCredentialHelperBeforeOAuth(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -5894,6 +6009,7 @@ func TestConnectRejectsMissingLinuxCredentialHelperBeforeOAuth(t *testing.T) {
 }
 
 func TestConnectRejectsWebOAuthClient(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	clientPath := filepath.Join(tempDir, "client_secret.json")
@@ -5921,6 +6037,7 @@ func TestConnectRejectsWebOAuthClient(t *testing.T) {
 }
 
 func TestParseOAuthClientConfigContentPinsHTTPSAndGoogleHosts(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		content string
@@ -5972,6 +6089,7 @@ func TestParseOAuthClientConfigContentPinsHTTPSAndGoogleHosts(t *testing.T) {
 }
 
 func TestOAuthScopesUseRecognizedGoogleHealthScopes(t *testing.T) {
+	t.Parallel()
 	scopes := oauthScopesForDataTypes(defaultDataTypes)
 	wantScopes := []string{
 		googleHealthActivityReadonlyScope,
@@ -5992,6 +6110,7 @@ func TestOAuthScopesUseRecognizedGoogleHealthScopes(t *testing.T) {
 }
 
 func TestListenForOAuthRedirectPreservesEmptyLoopbackPath(t *testing.T) {
+	t.Parallel()
 	listener, redirectURI, err := listenForOAuthRedirect([]string{"http://localhost"})
 	if err != nil {
 		t.Fatalf("listen for OAuth redirect: %v", err)
@@ -6008,6 +6127,7 @@ func TestListenForOAuthRedirectPreservesEmptyLoopbackPath(t *testing.T) {
 }
 
 func TestParseOAuthTokenResponseRequiresRefreshToken(t *testing.T) {
+	t.Parallel()
 	_, err := parseOAuthTokenResponse([]byte(`{
 		"access_token": "access-secret-value",
 		"expires_in": 3600,
@@ -6020,6 +6140,7 @@ func TestParseOAuthTokenResponseRequiresRefreshToken(t *testing.T) {
 }
 
 func TestFetchGoogleIdentityUsesGetIdentityEndpoint(t *testing.T) {
+	t.Parallel()
 	var gotURL string
 	doer := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		gotURL = request.URL.String()
@@ -6046,6 +6167,7 @@ func TestFetchGoogleIdentityUsesGetIdentityEndpoint(t *testing.T) {
 }
 
 func TestFetchGoogleProfileUsesProfileEndpoint(t *testing.T) {
+	t.Parallel()
 	var gotURL string
 	doer := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		gotURL = request.URL.String()
@@ -6075,6 +6197,7 @@ func TestFetchGoogleProfileUsesProfileEndpoint(t *testing.T) {
 }
 
 func TestFetchGoogleHealthRawUsesBearerAndHidesErrorBody(t *testing.T) {
+	t.Parallel()
 	doer := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.URL.String() != googleHealthIdentityURL {
 			t.Fatalf("raw URL = %q, want identity URL", request.URL.String())
@@ -6102,6 +6225,7 @@ func TestFetchGoogleHealthRawUsesBearerAndHidesErrorBody(t *testing.T) {
 }
 
 func TestReadLimitedBodyReportsOversize(t *testing.T) {
+	t.Parallel()
 	body, tooLarge, err := readLimitedBody(strings.NewReader("abcdef"), 5)
 	if err != nil {
 		t.Fatalf("read limited body: %v", err)
@@ -6115,6 +6239,7 @@ func TestReadLimitedBodyReportsOversize(t *testing.T) {
 }
 
 func TestOSNativeCredentialStoreDoesNotSendTokenAsArgument(t *testing.T) {
+	t.Parallel()
 	testRuntime := productionRuntimeAdapters()
 	testRuntime.currentOS = "darwin"
 
@@ -6187,6 +6312,7 @@ func TestSecurityCredentialStoreFeedsPromptWithoutTokenArgument(t *testing.T) {
 }
 
 func TestLinuxOSNativeCredentialStoreUsesSecretToolContent(t *testing.T) {
+	t.Parallel()
 	testRuntime := productionRuntimeAdapters()
 	testRuntime.currentOS = "linux"
 
@@ -6216,6 +6342,7 @@ func TestLinuxOSNativeCredentialStoreUsesSecretToolContent(t *testing.T) {
 }
 
 func TestWindowsOSNativeCredentialStoreUsesCredentialManagerContent(t *testing.T) {
+	t.Parallel()
 	testRuntime := productionRuntimeAdapters()
 	testRuntime.currentOS = "windows"
 
@@ -6245,6 +6372,7 @@ func TestWindowsOSNativeCredentialStoreUsesCredentialManagerContent(t *testing.T
 }
 
 func TestInitStoresSecretProviderReference(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -6292,6 +6420,7 @@ func TestInitStoresSecretProviderReference(t *testing.T) {
 }
 
 func TestInitRequiresExactOAuthClientSource(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.toml")
 	archivePath := filepath.Join(tempDir, "gohealthcli.sqlite")
@@ -6328,6 +6457,7 @@ func TestInitRequiresExactOAuthClientSource(t *testing.T) {
 }
 
 func TestInitOAuthClientItemWithoutSecretProviderNamesProvidedFlag(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.toml")
 	archivePath := filepath.Join(tempDir, "gohealthcli.sqlite")
@@ -6357,6 +6487,7 @@ func TestInitOAuthClientItemWithoutSecretProviderNamesProvidedFlag(t *testing.T)
 }
 
 func TestInitSecretProviderWithoutOAuthClientItemNamesProvidedFlag(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.toml")
 	archivePath := filepath.Join(tempDir, "gohealthcli.sqlite")
@@ -6386,6 +6517,7 @@ func TestInitSecretProviderWithoutOAuthClientItemNamesProvidedFlag(t *testing.T)
 }
 
 func TestInitRejectsInvalidOAuthClientFileBeforeCreatingSetup(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -6425,6 +6557,7 @@ func TestInitRejectsInvalidOAuthClientFileBeforeCreatingSetup(t *testing.T) {
 }
 
 func TestInitNamesMissingInstalledObjectForEmptyOAuthClientJSON(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -6473,6 +6606,7 @@ func TestInitNamesMissingInstalledObjectForEmptyOAuthClientJSON(t *testing.T) {
 }
 
 func TestInitRejectsWebOAuthClientFile(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -6517,6 +6651,7 @@ func TestInitRejectsWebOAuthClientFile(t *testing.T) {
 }
 
 func TestInitKeepsNonObjectMessageForNullOAuthClientJSON(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -6553,6 +6688,7 @@ func TestInitKeepsNonObjectMessageForNullOAuthClientJSON(t *testing.T) {
 }
 
 func TestInitIsIdempotentForExistingSetup(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -6585,6 +6721,7 @@ func TestInitIsIdempotentForExistingSetup(t *testing.T) {
 }
 
 func TestInitIdempotencyDoesNotRequireHealthyTokenMetadata(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -6642,6 +6779,7 @@ func TestInitIdempotencyDoesNotRequireHealthyTokenMetadata(t *testing.T) {
 }
 
 func TestInitRejectsExistingInvalidArchive(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -6682,6 +6820,7 @@ func TestInitRejectsExistingInvalidArchive(t *testing.T) {
 }
 
 func TestInitRejectsExistingInvalidConfig(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
@@ -6720,6 +6859,7 @@ func TestInitRejectsExistingInvalidConfig(t *testing.T) {
 }
 
 func TestInitRemovesCreatedConfigWhenArchiveCreationFails(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config", "config.toml")
 	archiveParentPath := filepath.Join(tempDir, "not-a-directory")
@@ -6750,6 +6890,7 @@ func TestInitRemovesCreatedConfigWhenArchiveCreationFails(t *testing.T) {
 }
 
 func TestInitRejectsExistingUnsafeDirectory(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configDir := filepath.Join(tempDir, "config")
 	if err := os.Mkdir(configDir, 0o755); err != nil {
@@ -6780,6 +6921,7 @@ func TestInitRejectsExistingUnsafeDirectory(t *testing.T) {
 }
 
 func TestInitJSONReportsWriteFailure(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	oauthClientPath := filepath.Join(tempDir, "client_secret.json")
 	if err := os.WriteFile(oauthClientPath, []byte(`{"installed":{"client_id":"test-client","client_secret":"test-secret"}}`), 0o600); err != nil {
@@ -6811,6 +6953,7 @@ func TestInitJSONReportsWriteFailure(t *testing.T) {
 }
 
 func TestValidateConfigDoesNotCreateMissingParent(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	parentPath := filepath.Join(tempDir, "missing")
 
@@ -6824,6 +6967,7 @@ func TestValidateConfigDoesNotCreateMissingParent(t *testing.T) {
 }
 
 func TestArchiveDSNUsesAbsoluteFileURI(t *testing.T) {
+	t.Parallel()
 	dsn, err := archiveDSN("relative.sqlite", false)
 	if err != nil {
 		t.Fatalf("archiveDSN: %v", err)

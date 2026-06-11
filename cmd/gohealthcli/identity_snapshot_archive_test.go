@@ -16,6 +16,7 @@ import (
 // test through the public archive surface: `gohealthcli init` succeeds
 // and the resulting SQLite file has the expected schema.
 func TestFreshArchiveHasIdentitySnapshotsTable(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -47,6 +48,7 @@ func TestFreshArchiveHasIdentitySnapshotsTable(t *testing.T) {
 // `query` command exposes) because the zombie Latest() reader was
 // deleted with the dead command-wrapper layer (#270).
 func TestIdentitySnapshotArchiveInsertAndLatestRoundTrip(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -93,6 +95,7 @@ func TestIdentitySnapshotArchiveInsertAndLatestRoundTrip(t *testing.T) {
 // even when other kinds and older rows of the same kind are also
 // present — i.e. Insert tags every row so kinds never bleed.
 func TestIdentitySnapshotArchiveLatestFiltersByKind(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -157,6 +160,7 @@ func TestIdentitySnapshotArchiveLatestFiltersByKind(t *testing.T) {
 // API. After `gohealthcli profile`, reading the newest profile snapshot
 // back from the archive must surface the row the command wrote.
 func TestProfileCommandWritesViaIdentitySnapshotArchive(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -212,6 +216,7 @@ func TestProfileCommandWritesViaIdentitySnapshotArchive(t *testing.T) {
 // payload via the Identity Snapshot Archive with kind='settings', and
 // reports success to the user.
 func TestSettingsCommandArchivesSnapshotWithKindSettings(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -267,6 +272,7 @@ func TestSettingsCommandArchivesSnapshotWithKindSettings(t *testing.T) {
 // returns one row per Connection projecting the latest payload as
 // columns (measurement_system, timezone) plus the source identifiers.
 func TestCurrentSettingsViewProjectsLatestSnapshot(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -328,6 +334,7 @@ func TestCurrentSettingsViewProjectsLatestSnapshot(t *testing.T) {
 // must project the row that was fetched most recently, not the row
 // inserted most recently.
 func TestIdentitySnapshotArchiveLatestUsesFetchedAtForRecency(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -384,6 +391,7 @@ func TestIdentitySnapshotArchiveLatestUsesFetchedAtForRecency(t *testing.T) {
 // snapshot_kind='profile'. The migration is the single ALTER RENAME +
 // ALTER ADD COLUMN; existing data must round-trip without manual repair.
 func TestV6ArchiveMigratesProfileSnapshotsWithKindDefault(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	if usesPOSIXPermissions() {
 		if err := os.Chmod(tempDir, 0o700); err != nil {

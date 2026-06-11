@@ -9,6 +9,7 @@ import "testing"
 // (connection, dataType) pair and confirms reads return the matching
 // row, not the wrong one.
 func TestSyncCursorRollupKindIndependence(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{

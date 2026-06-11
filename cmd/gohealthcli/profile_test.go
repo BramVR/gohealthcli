@@ -21,6 +21,7 @@ import (
 // automatically updates what gets stripped from the stored Connection,
 // keeping the test honest without manual edits.
 func TestProfileCommandFailsFastWhenScopeMissing(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -100,6 +101,7 @@ func TestProfileCommandFailsFastWhenScopeMissing(t *testing.T) {
 // already returns), and exits 0 with status "profile_archived" plus
 // a new identity_snapshots row whose snapshot_kind = 'profile'.
 func TestProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	connectAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

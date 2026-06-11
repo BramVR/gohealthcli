@@ -14,6 +14,7 @@ import (
 // files without rows), doctor --json surfaces them under an
 // `attachments` block. Reporting only — the archive is not modified.
 func TestDoctorJSONReportsAttachmentOrphans(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -105,6 +106,7 @@ func TestDoctorJSONReportsAttachmentOrphans(t *testing.T) {
 // This test seeds only an orphan file and asserts only the file-side
 // count line.
 func TestDoctorPlainReportsAttachmentOrphanCounts(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{

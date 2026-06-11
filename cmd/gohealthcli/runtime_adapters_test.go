@@ -15,6 +15,7 @@ import (
 // Provider request routed through the adapters seam keeps its deadline
 // and no code path falls back to the process-wide default client.
 func TestRuntimeAdaptersBindSharedTimeoutClientAsHTTPDoer(t *testing.T) {
+	t.Parallel()
 	production := productionRuntimeAdapters()
 	client, ok := production.httpDoer.(*http.Client)
 	if !ok {
@@ -44,6 +45,7 @@ func TestRuntimeAdaptersBindSharedTimeoutClientAsHTTPDoer(t *testing.T) {
 // building, bearer auth, and status mapping run against the fake
 // transport without any global being swapped.
 func TestWithDefaultsRoutesNilFetchersThroughInjectedDoer(t *testing.T) {
+	t.Parallel()
 	transport := &stubProviderTransport{status: 200, body: `{"healthUserId":"hu-1","legacyUserId":"fb-1"}`}
 	adapters := runtimeAdapters{httpDoer: providerDoer(transport)}.withDefaults()
 
@@ -86,6 +88,7 @@ func TestWithDefaultsRoutesNilFetchersThroughInjectedDoer(t *testing.T) {
 }
 
 func TestConnectSetupUsesRuntimeAdapter(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	now := time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC)

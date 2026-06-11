@@ -160,6 +160,7 @@ func seedSyncStatusFixture(t *testing.T, archivePath string) {
 // operator is polling for, so it must never age out of the default
 // view while still running.
 func TestSyncStatusListsRecentRunsWithWindowExemptRunningRows(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := fixedSyncStatusClock(time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
@@ -198,6 +199,7 @@ func TestSyncStatusListsRecentRunsWithWindowExemptRunningRows(t *testing.T) {
 // order and indentation pinned the way `status --json` consumers
 // already rely on.
 func TestSyncStatusJSONEmitsSharedEnvelope(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := fixedSyncStatusClock(time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
@@ -289,6 +291,7 @@ func jsonString(t *testing.T, value string) string {
 // a 4h window pulls the 2-hour-old completed run (fixture id 4) back
 // into view; the window echo and message follow the parsed duration.
 func TestSyncStatusWindowFlagWidensTheTerminalRowCutoff(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := fixedSyncStatusClock(time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
@@ -324,6 +327,7 @@ func TestSyncStatusWindowFlagWidensTheTerminalRowCutoff(t *testing.T) {
 // past the 24h cap all exit 1 with a targeted message and never open
 // the archive.
 func TestSyncStatusRejectsInvalidWindow(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -359,6 +363,7 @@ func TestSyncStatusRejectsInvalidWindow(t *testing.T) {
 // sync is a usage error, not a silent ignore. --window inverts the
 // rule: it only means something WITH --status.
 func TestSyncStatusRejectsSyncExecutionFlags(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -394,6 +399,7 @@ func TestSyncStatusRejectsSyncExecutionFlags(t *testing.T) {
 // use, with NULLable fields omitted rather than emitted empty, and the
 // multi-line upstream error truncated to its first line.
 func TestSyncStatusPlainEmitsKeyValueLinesPerRun(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := fixedSyncStatusClock(time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))

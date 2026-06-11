@@ -14,6 +14,7 @@ import (
 // `upstream_resource_name` from the list page (e.g.
 // `users/me/dataTypes/exercise/dataPoints/<id>`) is the `name` segment.
 func TestBuildGoogleHealthExportExerciseTcxRawRequest(t *testing.T) {
+	t.Parallel()
 	dataPointName := "users/me/dataTypes/exercise/dataPoints/12345"
 	request, err := buildGoogleHealthExportExerciseTcxRawRequest(dataPointName)
 	if err != nil {
@@ -52,6 +53,7 @@ func TestBuildGoogleHealthExportExerciseTcxRawRequest(t *testing.T) {
 // must still target `:exportExerciseTcx` on the fixed health.googleapis.com
 // host with no query string or fragment introduced.
 func TestBuildGoogleHealthExportExerciseTcxRawRequestEscapesFreeSegments(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		in   string
@@ -100,6 +102,7 @@ func TestBuildGoogleHealthExportExerciseTcxRawRequestEscapesFreeSegments(t *test
 // empty `name` would otherwise produce a URL ending in `:exportExerciseTcx`
 // at the wrong path.
 func TestBuildGoogleHealthExportExerciseTcxRawRequestRejectsBadName(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		in   string

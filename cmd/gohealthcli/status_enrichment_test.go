@@ -11,6 +11,7 @@ import (
 // omitempty contract: a clean archive with no identity_snapshots rows
 // produces no `identity_snapshots_freshness` JSON field at all.
 func TestStatusJSONOmitsFreshnessBlockWhenNoSnapshots(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -31,6 +32,7 @@ func TestStatusJSONOmitsFreshnessBlockWhenNoSnapshots(t *testing.T) {
 // kind plus paired_device_count from the most recent paired-devices
 // snapshot.
 func TestStatusJSONReportsIdentitySnapshotsFreshnessBlock(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -104,6 +106,7 @@ func TestStatusJSONReportsIdentitySnapshotsFreshnessBlock(t *testing.T) {
 // as an error or a missing field — matching the AC bullet "defaulting
 // to 0 when the scopes are not granted".
 func TestStatusJSONReportsTier2CountsAsZeroWhenScopesNotGranted(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -160,6 +163,7 @@ func TestStatusJSONReportsTier2CountsAsZeroWhenScopesNotGranted(t *testing.T) {
 // (matching the snapshot-freshness omitted-when-missing convention
 // from PR #128).
 func TestStatusPlainOmitsTier2CountsWhenScopesNotGranted(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -194,6 +198,7 @@ func TestStatusPlainOmitsTier2CountsWhenScopesNotGranted(t *testing.T) {
 // the row counts under the Tier 2 fields. Plain emits one line per
 // Data Type; JSON keeps both fields under `tier_2`.
 func TestStatusReportsTier2CountsWhenScopesGranted(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -262,6 +267,7 @@ func TestStatusReportsTier2CountsWhenScopesGranted(t *testing.T) {
 // fields but flips only `electrocardiogram_scope_granted=true`, and
 // `--plain` emits only the ECG line.
 func TestStatusReportsTier2CountsWithPartialScopeGrant(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -352,6 +358,7 @@ func insertTier2DataPoint(t *testing.T, archivePath, dataType, resourceID string
 // output: `paired_device_count: N` and one
 // `identity_snapshot.<kind>.fetched_at: <ts>` line per known kind.
 func TestStatusPlainReportsSnapshotFreshnessLines(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{

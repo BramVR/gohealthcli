@@ -19,6 +19,7 @@ import (
 // device carries name / deviceType / batteryStatus / batteryLevel /
 // deviceVersion.
 func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -108,6 +109,7 @@ func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
 // behaviour: the paired_devices view returns one row per device from
 // the latest paired-devices snapshot, with the contracted columns.
 func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -186,6 +188,7 @@ func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 // zero rows, not an error. Covers both an explicit empty list and a
 // bare {} payload (the key is omitted upstream when nothing is paired).
 func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -234,6 +237,7 @@ func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
 // users.pairedDevices.list and archives the payload through the
 // Identity Snapshot Archive with kind='paired-devices'.
 func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -297,6 +301,7 @@ func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
 // the catalog automatically updates what gets stripped from the
 // stored Connection, keeping the test honest without manual edits.
 func TestDevicesCommandFailsFastWhenScopeMissing(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -376,6 +381,7 @@ func TestDevicesCommandFailsFastWhenScopeMissing(t *testing.T) {
 // already returns), and exits 0 with status "devices_archived" plus
 // a new identity_snapshots row whose snapshot_kind = 'paired-devices'.
 func TestDevicesCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	connectAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -505,6 +511,7 @@ func connectionGrantedScopes(t *testing.T, archivePath string) []string {
 // have. Passing it now produces the Common Flag Set's targeted
 // "--no-input is not supported by devices" rejection and exits non-zero.
 func TestDevicesRejectsNoInputFlag(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t, "devices", "--no-input")
 	if code == 0 {
 		t.Fatalf("exit code = 0, want non-zero; stdout=%q stderr=%q", stdout.String(), stderr.String())

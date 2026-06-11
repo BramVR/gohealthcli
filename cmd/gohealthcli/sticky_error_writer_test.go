@@ -29,6 +29,7 @@ func (writer *writerFailingAfter) Write(payload []byte) (int, error) {
 // the first write error latches, and the caller checks once at the end.
 
 func TestStickyWriterForwardsPrintsToTheUnderlyingWriter(t *testing.T) {
+	t.Parallel()
 	buffer := new(bytes.Buffer)
 	writer := newStickyWriter(buffer)
 
@@ -44,6 +45,7 @@ func TestStickyWriterForwardsPrintsToTheUnderlyingWriter(t *testing.T) {
 }
 
 func TestStickyWriterLatchesTheFirstWriteErrorAndStopsWriting(t *testing.T) {
+	t.Parallel()
 	firstFailure := errors.New("broken pipe")
 	underlying := &writerFailingAfter{successes: 1, failure: firstFailure}
 	writer := newStickyWriter(underlying)
@@ -67,6 +69,7 @@ func TestStickyWriterLatchesTheFirstWriteErrorAndStopsWriting(t *testing.T) {
 // the result writer, so the sticky writer must also latch errors that
 // arrive through its io.Writer face.
 func TestStickyWriterLatchesErrorsFromLayeredWriterFlushes(t *testing.T) {
+	t.Parallel()
 	flushFailure := errors.New("disk full")
 	underlying := &writerFailingAfter{successes: 0, failure: flushFailure}
 	writer := newStickyWriter(underlying)
@@ -93,6 +96,7 @@ func (shortWriter) Write(payload []byte) (int, error) {
 }
 
 func TestStickyWriterLatchesShortWritesAsErrShortWrite(t *testing.T) {
+	t.Parallel()
 	writer := newStickyWriter(shortWriter{})
 
 	written, err := writer.Write([]byte("ID\tSTATUS\n"))

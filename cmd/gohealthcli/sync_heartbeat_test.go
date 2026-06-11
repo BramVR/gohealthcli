@@ -14,6 +14,7 @@ import (
 // transaction, so a 20-minute run polled as 0/0/0 the whole way —
 // liveness without progress.
 func TestSyncWritesHeartbeatAfterEachPage(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{

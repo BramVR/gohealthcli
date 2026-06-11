@@ -24,6 +24,7 @@ type preflightFailureExpectation struct {
 // orchestrator-level call exits non-zero and sync_runs count stays at 0.
 // AC #4 + AC #5 of issue #152.
 func TestRunSyncPreflightFailuresDoNotWriteAuditRow(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{

@@ -67,6 +67,7 @@ func shortTimeoutDoer() httpDoer {
 }
 
 func TestSharedProviderHTTPClientCarriesDocumentedTimeout(t *testing.T) {
+	t.Parallel()
 	if providerHTTPTimeout <= 0 {
 		t.Fatalf("providerHTTPTimeout = %v, want a positive deadline", providerHTTPTimeout)
 	}
@@ -82,6 +83,7 @@ func TestSharedProviderHTTPClientCarriesDocumentedTimeout(t *testing.T) {
 }
 
 func TestGoogleIdentityFetchRoutesThroughInjectedDoer(t *testing.T) {
+	t.Parallel()
 	transport := &stubProviderTransport{status: http.StatusOK, body: `{"healthUserId":"hu-123","legacyUserId":"fb-456"}`}
 
 	identity, err := fetchGoogleIdentity(providerGETWithDoer(transport), "test-access-token")
@@ -100,6 +102,7 @@ func TestGoogleIdentityFetchRoutesThroughInjectedDoer(t *testing.T) {
 }
 
 func TestGoogleProfileFetchRoutesThroughInjectedDoer(t *testing.T) {
+	t.Parallel()
 	transport := &stubProviderTransport{status: http.StatusOK, body: `{"name":"users/hu-789/profile"}`}
 
 	profile, err := fetchGoogleProfile(providerGETWithDoer(transport), "test-access-token")
@@ -115,6 +118,7 @@ func TestGoogleProfileFetchRoutesThroughInjectedDoer(t *testing.T) {
 }
 
 func TestPairedDevicesIdentitySnapshotFetchRoutesThroughInjectedDoer(t *testing.T) {
+	t.Parallel()
 	transport := &stubProviderTransport{status: http.StatusOK, body: `{"devices":[]}`}
 
 	devices, err := fetchGooglePairedDevices(providerGETWithDoer(transport), "test-access-token")
@@ -130,6 +134,7 @@ func TestPairedDevicesIdentitySnapshotFetchRoutesThroughInjectedDoer(t *testing.
 }
 
 func TestSettingsIdentitySnapshotFetchRoutesThroughInjectedDoer(t *testing.T) {
+	t.Parallel()
 	transport := &stubProviderTransport{status: http.StatusOK, body: `{"weightUnit":"KILOGRAM"}`}
 
 	settings, err := fetchGoogleSettings(providerGETWithDoer(transport), "test-access-token")
@@ -145,6 +150,7 @@ func TestSettingsIdentitySnapshotFetchRoutesThroughInjectedDoer(t *testing.T) {
 }
 
 func TestIRNProfileIdentitySnapshotFetchRoutesThroughInjectedDoer(t *testing.T) {
+	t.Parallel()
 	transport := &stubProviderTransport{status: http.StatusOK, body: `{"enrolled":true}`}
 
 	irn, err := fetchGoogleIRNProfile(providerGETWithDoer(transport), "test-access-token")
@@ -197,6 +203,7 @@ func (transport *recordingOAuthTransport) RoundTrip(request *http.Request) (*htt
 // it builds (grant, code, verifier, redirect) and the token response it
 // parses.
 func TestOAuthCodeExchangePostsFormThroughInjectedDoer(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 11, 8, 0, 0, 0, time.UTC)
 	transport := &recordingOAuthTransport{status: http.StatusOK, body: `{
 		"access_token": "exchanged-access-secret",
@@ -248,6 +255,7 @@ func TestOAuthCodeExchangePostsFormThroughInjectedDoer(t *testing.T) {
 // mapping verbatim: a non-2xx token endpoint answer fails with the
 // historical message and never parses the body.
 func TestOAuthCodeExchangeMapsNonSuccessStatus(t *testing.T) {
+	t.Parallel()
 	transport := &recordingOAuthTransport{status: http.StatusBadRequest, body: `{"error":"invalid_grant"}`}
 	client := oauthClientConfig{clientID: "id", clientSecret: "secret", tokenURI: "https://oauth2.googleapis.com/token"}
 
@@ -265,6 +273,7 @@ func TestOAuthCodeExchangeMapsNonSuccessStatus(t *testing.T) {
 // the response parse that keeps the prior refresh token when Google
 // omits it from the refresh answer.
 func TestOAuthTokenRefreshPostsFormThroughInjectedDoer(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 11, 8, 0, 0, 0, time.UTC)
 	transport := &recordingOAuthTransport{status: http.StatusOK, body: `{
 		"access_token": "refreshed-access-secret",
@@ -306,6 +315,7 @@ func TestOAuthTokenRefreshPostsFormThroughInjectedDoer(t *testing.T) {
 // TestOAuthTokenRefreshMapsNonSuccessStatus pins the refresh's status
 // mapping verbatim.
 func TestOAuthTokenRefreshMapsNonSuccessStatus(t *testing.T) {
+	t.Parallel()
 	transport := &recordingOAuthTransport{status: http.StatusUnauthorized, body: `{"error":"invalid_client"}`}
 	client := oauthClientConfig{clientID: "id", clientSecret: "secret", tokenURI: "https://oauth2.googleapis.com/token"}
 
@@ -319,6 +329,7 @@ func TestOAuthTokenRefreshMapsNonSuccessStatus(t *testing.T) {
 }
 
 func TestOAuthCodeExchangeFailsStalledTokenEndpointByDeadline(t *testing.T) {
+	t.Parallel()
 	server := startStalledProviderServer(t)
 
 	client := oauthClientConfig{clientID: "id", clientSecret: "secret", tokenURI: server.URL}
@@ -333,6 +344,7 @@ func TestOAuthCodeExchangeFailsStalledTokenEndpointByDeadline(t *testing.T) {
 }
 
 func TestOAuthTokenRefreshFailsStalledTokenEndpointByDeadline(t *testing.T) {
+	t.Parallel()
 	server := startStalledProviderServer(t)
 
 	client := oauthClientConfig{clientID: "id", clientSecret: "secret", tokenURI: server.URL}
@@ -347,6 +359,7 @@ func TestOAuthTokenRefreshFailsStalledTokenEndpointByDeadline(t *testing.T) {
 }
 
 func TestRawProviderFetchFailsStalledProviderByDeadline(t *testing.T) {
+	t.Parallel()
 	server := startStalledProviderServer(t)
 
 	_, err := fetchGoogleHealthRaw(shortTimeoutDoer(), rawProviderRequest{url: server.URL}, "test-access-token")
@@ -360,6 +373,7 @@ func TestRawProviderFetchFailsStalledProviderByDeadline(t *testing.T) {
 }
 
 func TestProviderHTTPClientFailsStalledRequestByDeadline(t *testing.T) {
+	t.Parallel()
 	server := startStalledProviderServer(t)
 
 	client := newProviderHTTPClient(50 * time.Millisecond)

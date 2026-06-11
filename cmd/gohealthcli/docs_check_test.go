@@ -24,6 +24,8 @@ import (
 // Like TestDocsCommandsRegenIsStable, the test SKIPs when `make` or
 // `node` are unavailable; CI runs with both installed.
 func TestDocsCheckFailsOnDrift(t *testing.T) {
+	// NOT t.Parallel(): mutates / regenerates the shared repo docs tree
+	// (docs/commands*), so it must never overlap the sibling docs tests.
 	requireDocsToolchain(t)
 	repoRoot := docsCheckRepoRoot(t)
 
@@ -62,6 +64,8 @@ func TestDocsCheckFailsOnDrift(t *testing.T) {
 // check false-positively flagging the hand-written preserved pages
 // (help.md, version.md) that the generator never emits.
 func TestDocsCheckPassesOnCleanTree(t *testing.T) {
+	// NOT t.Parallel(): mutates / regenerates the shared repo docs tree
+	// (docs/commands*), so it must never overlap the sibling docs tests.
 	requireDocsToolchain(t)
 	repoRoot := docsCheckRepoRoot(t)
 

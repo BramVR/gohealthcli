@@ -24,6 +24,7 @@ func recordingSleeper(record *[]time.Duration) googleHealthRetrySleeper {
 }
 
 func TestFetchWithRetryRetriesTransient429ThenSucceeds(t *testing.T) {
+	t.Parallel()
 	attempts := 0
 	fetcher := func(request rawProviderRequest, accessToken string) ([]byte, error) {
 		attempts++
@@ -58,6 +59,7 @@ func TestFetchWithRetryRetriesTransient429ThenSucceeds(t *testing.T) {
 }
 
 func TestFetchWithRetryRetries5xxThenSucceeds(t *testing.T) {
+	t.Parallel()
 	attempts := 0
 	fetcher := func(request rawProviderRequest, accessToken string) ([]byte, error) {
 		attempts++
@@ -77,6 +79,7 @@ func TestFetchWithRetryRetries5xxThenSucceeds(t *testing.T) {
 }
 
 func TestFetchWithRetryExhaustsBudgetAndReturnsAttemptedCount(t *testing.T) {
+	t.Parallel()
 	attempts := 0
 	fetcher := func(request rawProviderRequest, accessToken string) ([]byte, error) {
 		attempts++
@@ -109,6 +112,7 @@ func TestFetchWithRetryExhaustsBudgetAndReturnsAttemptedCount(t *testing.T) {
 }
 
 func TestFetchWithRetryDoesNotRetry401(t *testing.T) {
+	t.Parallel()
 	attempts := 0
 	fetcher := func(request rawProviderRequest, accessToken string) ([]byte, error) {
 		attempts++
@@ -128,6 +132,7 @@ func TestFetchWithRetryDoesNotRetry401(t *testing.T) {
 }
 
 func TestFetchWithRetryDoesNotRetryOther4xx(t *testing.T) {
+	t.Parallel()
 	for _, statusCode := range []int{400, 403, 404, 422} {
 		statusCode := statusCode
 		t.Run(fmt.Sprintf("status_%d", statusCode), func(t *testing.T) {
@@ -149,6 +154,7 @@ func TestFetchWithRetryDoesNotRetryOther4xx(t *testing.T) {
 }
 
 func TestFetchWithRetryDoesNotRetryNonHTTPError(t *testing.T) {
+	t.Parallel()
 	attempts := 0
 	fetcher := func(rawProviderRequest, string) ([]byte, error) {
 		attempts++
@@ -165,6 +171,7 @@ func TestFetchWithRetryDoesNotRetryNonHTTPError(t *testing.T) {
 }
 
 func TestFetchWithRetryHonorsRetryAfterAsMinimum(t *testing.T) {
+	t.Parallel()
 	attempts := 0
 	fetcher := func(rawProviderRequest, string) ([]byte, error) {
 		attempts++
@@ -188,6 +195,7 @@ func TestFetchWithRetryHonorsRetryAfterAsMinimum(t *testing.T) {
 }
 
 func TestFetchWithRetryRetryAfterIgnoredIfSmallerThanExponential(t *testing.T) {
+	t.Parallel()
 	// Force the second sleep to use exponential (500ms) rather than the smaller Retry-After (100ms).
 	attempts := 0
 	fetcher := func(rawProviderRequest, string) ([]byte, error) {
@@ -216,6 +224,7 @@ func TestFetchWithRetryRetryAfterIgnoredIfSmallerThanExponential(t *testing.T) {
 }
 
 func TestFetchWithRetryShortCircuitsBackoffOnCancel(t *testing.T) {
+	t.Parallel()
 	cancelCh := make(chan struct{})
 	close(cancelCh)
 	attempts := 0
@@ -243,6 +252,7 @@ func errorContains(err error, want string) bool {
 }
 
 func TestParseRetryAfterAcceptsDeltaSecondsAndIgnoresHTTPDate(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		header string
 		want   time.Duration
@@ -264,6 +274,7 @@ func TestParseRetryAfterAcceptsDeltaSecondsAndIgnoresHTTPDate(t *testing.T) {
 }
 
 func TestDefaultRetryJitterStaysWithinExpectedWindow(t *testing.T) {
+	t.Parallel()
 	base := 1 * time.Second
 	for i := 0; i < 200; i++ {
 		got := defaultRetryJitter(base)
@@ -277,6 +288,7 @@ func TestDefaultRetryJitterStaysWithinExpectedWindow(t *testing.T) {
 }
 
 func TestDefaultRetryJitterDoesNotPanicOnTinyDelays(t *testing.T) {
+	t.Parallel()
 	// delay/4 < 1 would feed 0 to rand.Int64N and panic; guard returns
 	// the delay unchanged for these sub-window cases.
 	for _, delay := range []time.Duration{1, 2, 3} {

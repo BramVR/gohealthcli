@@ -60,6 +60,7 @@ func connectedDevicesFixture(t *testing.T) (string, string, runtimeAdapters) {
 // consumers can distinguish a Provider outage from local
 // misconfiguration.
 func TestDevicesEmitsProviderUnreachableOnNetworkFailure(t *testing.T) {
+	t.Parallel()
 	configPath, archivePath, testRuntime := connectedDevicesFixture(t)
 	fetchErr := &url.Error{
 		Op:  "Get",
@@ -92,6 +93,7 @@ func TestDevicesEmitsProviderUnreachableOnNetworkFailure(t *testing.T) {
 // exhausts the budget and the message reports the attempt count while
 // keeping its endpoint-specific wording inside the wrap.
 func TestDevicesEmitsProviderUnreachableOnProviderHTTPFailure(t *testing.T) {
+	t.Parallel()
 	configPath, archivePath, testRuntime := connectedDevicesFixture(t)
 	var sleeps []time.Duration
 	bindFetcherProviderGET(&testRuntime.fetchPairedDevices, fetchGooglePairedDevices,
@@ -120,6 +122,7 @@ func TestDevicesEmitsProviderUnreachableOnProviderHTTPFailure(t *testing.T) {
 // keeps the typed googleHealthHTTPError reachable via errors.As, while
 // the user-facing message stays the historical wording verbatim.
 func TestFetchVerifiedIdentityPreservesTypedCauseChainOnUnauthorized(t *testing.T) {
+	t.Parallel()
 	runtime := productionRuntimeAdapters()
 	runtime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
 		return googleIdentity{}, &googleHealthHTTPError{StatusCode: 401, endpoint: "identity"}
@@ -154,6 +157,7 @@ func TestFetchVerifiedIdentityPreservesTypedCauseChainOnUnauthorized(t *testing.
 // googleHealthHTTPError still reachable via errors.As — instead of the
 // historical text-matched errors.New that discarded the cause chain.
 func TestSyncIngestionNormalizesTypedUnauthorizedPreservingChain(t *testing.T) {
+	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}
 	provider := funcIngestionProvider(func(request rawProviderRequest, accessToken string) ([]byte, error) {
 		return nil, &googleHealthHTTPError{StatusCode: 401}
@@ -199,6 +203,7 @@ func (transport failingProviderTransport) RoundTrip(*http.Request) (*http.Respon
 // and HTTP 503 — through the production fetcher, and expects the
 // provider_unreachable JSON failure status both times (issue #272).
 func TestSettingsEmitsProviderUnreachable(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		transport http.RoundTripper
@@ -231,6 +236,7 @@ func TestSettingsEmitsProviderUnreachable(t *testing.T) {
 // TestIRNProfileEmitsProviderUnreachable mirrors the settings case for
 // the irn-profile Identity Snapshot command (issue #272).
 func TestIRNProfileEmitsProviderUnreachable(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		transport http.RoundTripper
@@ -266,6 +272,7 @@ func TestIRNProfileEmitsProviderUnreachable(t *testing.T) {
 // fetchProfile package seam), so rebinding that seam over a fake-doer
 // module exercises the production fetcher end to end.
 func TestProfileEmitsProviderUnreachable(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		transport http.RoundTripper
@@ -301,6 +308,7 @@ func TestProfileEmitsProviderUnreachable(t *testing.T) {
 // fetchIdentity on the adapters, so the test rebinds that field to the
 // production fetcher over the fake-doer module.
 func TestIdentityEmitsProviderUnreachable(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		transport http.RoundTripper
@@ -337,6 +345,7 @@ func TestIdentityEmitsProviderUnreachable(t *testing.T) {
 // the documented StatusProviderUnreachable instead of the catch-all
 // operation_failed.
 func TestRawEmitsProviderUnreachableFailureStatus(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		transport http.RoundTripper
@@ -372,6 +381,7 @@ func TestRawEmitsProviderUnreachableFailureStatus(t *testing.T) {
 // "HTTP 401" is NOT a Provider auth rejection — it passes through
 // unchanged instead of being rewritten into the connect-again message.
 func TestFetchVerifiedIdentityDoesNotMatchOnErrorText(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("proxy relayed HTTP 401 from an unrelated hop")
 	runtime := productionRuntimeAdapters()
 	runtime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
