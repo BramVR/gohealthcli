@@ -47,10 +47,10 @@ func TestStatusJSONReportsIdentitySnapshotsFreshnessBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	connection, err := snapshots.CurrentConnection()
+	connection, err := readCurrentConnection(snapshots.db)
 	if err != nil {
 		snapshots.Close()
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
 	if _, err := snapshots.Insert(connection, "profile", `{"name":"users/me/profile"}`, "2026-06-01T00:00:00Z"); err != nil {
 		snapshots.Close()
@@ -367,10 +367,10 @@ func TestStatusPlainReportsSnapshotFreshnessLines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	connection, err := snapshots.CurrentConnection()
+	connection, err := readCurrentConnection(snapshots.db)
 	if err != nil {
 		snapshots.Close()
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
 	if _, err := snapshots.Insert(connection, "paired-devices", `{"devices":[{"model":"Pixel Watch 4"}]}`, "2026-06-08T13:00:00Z"); err != nil {
 		snapshots.Close()

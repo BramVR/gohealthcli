@@ -31,7 +31,7 @@ func TestAttachmentStoreStoreWritesSidecarAndRow(t *testing.T) {
 		rawJSON:      `{"exercise":{"exerciseType":"RUNNING"}}`,
 	})
 
-	store, err := openAttachmentStore(archivePath)
+	store, err := openAttachmentStoreMode(archivePath, writeArchive)
 	if err != nil {
 		t.Fatalf("open attachment store: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestAttachmentStoreStoreIsContentAddressedAndIdempotent(t *testing.T) {
 		dataSource: `{"platform":"FITBIT"}`, rawJSON: `{"exercise":{}}`,
 	})
 
-	store, err := openAttachmentStore(archivePath)
+	store, err := openAttachmentStoreMode(archivePath, writeArchive)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -107,38 +107,6 @@ func TestAttachmentStoreStoreIsContentAddressedAndIdempotent(t *testing.T) {
 	}
 }
 
-// TestAttachmentStoreResolveReturnsAbsolutePath: Resolve(sha) returns
-// the same absolute path Store(...) wrote; Resolve on a missing hash
-// surfaces a clear error so doctor/orphan reporting can act on it.
-func TestAttachmentStoreResolveReturnsAbsolutePath(t *testing.T) {
-	tempDir := t.TempDir()
-	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	insertStatusFixtureRows(t, archivePath)
-	insertExportDataPoint(t, archivePath, exportDataPointFixture{
-		dataType: "exercise", resourceName: "users/me/dataTypes/exercise/dataPoints/r",
-		recordKind: "session", startUTC: "2026-06-08T17:00:00Z", endUTC: "2026-06-08T17:30:00Z",
-		startCivil: "2026-06-08T18:00:00", endCivil: "2026-06-08T18:30:00", civilDate: "2026-06-08",
-		dataSource: `{}`, rawJSON: `{}`,
-	})
-	store, err := openAttachmentStore(archivePath)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	defer store.Close()
-	stored, err := store.Store(1, "tcx", []byte("payload"), "2026-06-08T17:35:00Z")
-	if err != nil {
-		t.Fatalf("Store: %v", err)
-	}
-	resolved, err := store.Resolve(stored.SHA256)
-	if err != nil || resolved != stored.AbsolutePath {
-		t.Fatalf("Resolve = (%q, %v), want %q", resolved, err, stored.AbsolutePath)
-	}
-	_, err = store.Resolve("0000000000000000000000000000000000000000000000000000000000000000")
-	if err == nil || !strings.Contains(err.Error(), "not found") {
-		t.Fatalf("Resolve(missing) = %v, want not-found error", err)
-	}
-}
-
 // TestAttachmentStoreSidecarFilesAreOwnerOnly verifies the POSIX
 // permission contract on the sidecar file (mode 0600) and the kind
 // subdir (mode 0700).
@@ -155,7 +123,7 @@ func TestAttachmentStoreSidecarFilesAreOwnerOnly(t *testing.T) {
 		startCivil: "2026-06-08T18:00:00", endCivil: "2026-06-08T18:30:00", civilDate: "2026-06-08",
 		dataSource: `{}`, rawJSON: `{}`,
 	})
-	store, err := openAttachmentStore(archivePath)
+	store, err := openAttachmentStoreMode(archivePath, writeArchive)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -180,57 +148,6 @@ func TestAttachmentStoreSidecarFilesAreOwnerOnly(t *testing.T) {
 	}
 }
 
-// TestAttachmentStoreResolveErrorsOnAmbiguousSHA pins the Copilot
-// finding: the same sha256 archived as two kinds would have made
-// Resolve return an arbitrary path. The current impl detects the
-// ambiguity and surfaces a clear error so a caller never silently
-// gets the wrong file.
-func TestAttachmentStoreResolveErrorsOnAmbiguousSHA(t *testing.T) {
-	tempDir := t.TempDir()
-	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	insertStatusFixtureRows(t, archivePath)
-	// Two different exercise sessions, both happening to share the same
-	// payload SHA but stored under different kinds. Real-world scenario:
-	// the same payload was archived as a TCX once and as an ECG
-	// blob another time — same content hash, different sidecar path.
-	insertExportDataPoint(t, archivePath, exportDataPointFixture{
-		dataType: "exercise", resourceName: "users/me/dataTypes/exercise/dataPoints/a1",
-		recordKind: "session", startUTC: "2026-06-08T17:00:00Z", endUTC: "2026-06-08T17:30:00Z",
-		startCivil: "2026-06-08T18:00:00", endCivil: "2026-06-08T18:30:00", civilDate: "2026-06-08",
-		dataSource: `{}`, rawJSON: `{}`,
-	})
-	insertExportDataPoint(t, archivePath, exportDataPointFixture{
-		dataType: "exercise", resourceName: "users/me/dataTypes/exercise/dataPoints/a2",
-		recordKind: "session", startUTC: "2026-06-08T19:00:00Z", endUTC: "2026-06-08T19:30:00Z",
-		startCivil: "2026-06-08T20:00:00", endCivil: "2026-06-08T20:30:00", civilDate: "2026-06-08",
-		dataSource: `{}`, rawJSON: `{}`,
-	})
-	store, err := openAttachmentStore(archivePath)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	defer store.Close()
-
-	if _, err := store.db.Exec(`INSERT INTO data_point_attachments (data_point_id, kind, sha256, path_relative, byte_size, fetched_at) VALUES (1, 'tcx', ?, ?, 7, ?)`,
-		"aaaabbbb00000000000000000000000000000000000000000000000000000000",
-		"tcx/aa/aaaabbbb00000000000000000000000000000000000000000000000000000000.tcx",
-		"2026-06-08T17:35:00Z"); err != nil {
-		t.Fatalf("seed tcx row: %v", err)
-	}
-	if _, err := store.db.Exec(`INSERT INTO data_point_attachments (data_point_id, kind, sha256, path_relative, byte_size, fetched_at) VALUES (2, 'ecg', ?, ?, 7, ?)`,
-		"aaaabbbb00000000000000000000000000000000000000000000000000000000",
-		"ecg/aa/aaaabbbb00000000000000000000000000000000000000000000000000000000.bin",
-		"2026-06-08T19:35:00Z"); err != nil {
-		t.Fatalf("seed ecg row: %v", err)
-	}
-
-	if _, err := store.Resolve("aaaabbbb00000000000000000000000000000000000000000000000000000000"); err == nil {
-		t.Fatal("Resolve returned no error for SHA appearing under two kinds; want ambiguity error")
-	} else if !strings.Contains(err.Error(), "ambiguous") {
-		t.Fatalf("Resolve error = %v, want 'ambiguous' substring", err)
-	}
-}
-
 // TestAttachmentStoreWalkReportsOrphansBothSides pins the slice B
 // behaviour: Walk(fn) yields orphan sidecar files (file on disk, no
 // row) AND orphan rows (row, no resolvable file). v1 doesn't prune;
@@ -245,7 +162,7 @@ func TestAttachmentStoreWalkReportsOrphansBothSides(t *testing.T) {
 		startCivil: "2026-06-08T18:00:00", endCivil: "2026-06-08T18:30:00", civilDate: "2026-06-08",
 		dataSource: `{}`, rawJSON: `{}`,
 	})
-	store, err := openAttachmentStore(archivePath)
+	store, err := openAttachmentStoreMode(archivePath, writeArchive)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -275,7 +192,7 @@ func TestAttachmentStoreWalkReportsOrphansBothSides(t *testing.T) {
 	}
 
 	store.Close()
-	store, err = openAttachmentStore(archivePath)
+	store, err = openAttachmentStoreMode(archivePath, writeArchive)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -346,7 +263,7 @@ func TestAttachmentStoreWalkRejectsTraversalPathRelative(t *testing.T) {
 		startCivil: "2026-06-08T18:00:00", endCivil: "2026-06-08T18:30:00", civilDate: "2026-06-08",
 		dataSource: `{}`, rawJSON: `{}`,
 	})
-	store, err := openAttachmentStore(archivePath)
+	store, err := openAttachmentStoreMode(archivePath, writeArchive)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -367,7 +284,7 @@ func TestAttachmentStoreWalkRejectsTraversalPathRelative(t *testing.T) {
 	}
 
 	store.Close()
-	store, err = openAttachmentStore(archivePath)
+	store, err = openAttachmentStoreMode(archivePath, writeArchive)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -406,48 +323,6 @@ func TestAttachmentStoreWalkRejectsTraversalPathRelative(t *testing.T) {
 	}
 	if !gotAbsoluteOrphan {
 		t.Errorf("Walk did not flag the absolute-path row as an orphan; orphans=%+v", orphans)
-	}
-}
-
-// TestAttachmentStoreResolveRejectsEscapingPathRelative pins #248 for
-// the Resolve seam: a stored path_relative that is absolute or contains
-// a "../" traversal must surface an error instead of handing back an
-// arbitrary-file-read path outside the attachment root.
-func TestAttachmentStoreResolveRejectsEscapingPathRelative(t *testing.T) {
-	tempDir := t.TempDir()
-	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	insertStatusFixtureRows(t, archivePath)
-	insertExportDataPoint(t, archivePath, exportDataPointFixture{
-		dataType: "exercise", resourceName: "users/me/dataTypes/exercise/dataPoints/resolvetrav",
-		recordKind: "session", startUTC: "2026-06-08T17:00:00Z", endUTC: "2026-06-08T17:30:00Z",
-		startCivil: "2026-06-08T18:00:00", endCivil: "2026-06-08T18:30:00", civilDate: "2026-06-08",
-		dataSource: `{}`, rawJSON: `{}`,
-	})
-	store, err := openAttachmentStore(archivePath)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	defer store.Close()
-
-	cases := []struct {
-		name         string
-		sha          string
-		pathRelative string
-	}{
-		{"traversal", "cafe000000000000000000000000000000000000000000000000000000000000", "../../../../etc/passwd"},
-		{"absolute", "beef000000000000000000000000000000000000000000000000000000000000", "/etc/passwd"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if _, err := store.db.Exec(`INSERT INTO data_point_attachments (data_point_id, kind, sha256, path_relative, byte_size, fetched_at) VALUES (1, 'tcx', ?, ?, 7, ?)`,
-				tc.sha, tc.pathRelative, "2026-06-08T17:35:00Z"); err != nil {
-				t.Fatalf("seed row: %v", err)
-			}
-			resolved, err := store.Resolve(tc.sha)
-			if err == nil {
-				t.Fatalf("Resolve(%s) = %q, want error for escaping path_relative", tc.name, resolved)
-			}
-		})
 	}
 }
 

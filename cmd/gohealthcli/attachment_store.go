@@ -97,14 +97,9 @@ func inspectAttachmentRoot(archivePath string) (string, string, error) {
 	return root, mode, nil
 }
 
-func openAttachmentStore(archivePath string) (*attachmentStore, error) {
-	return openAttachmentStoreMode(archivePath, writeArchive)
-}
-
 // openAttachmentStoreReadOnly opens the store without taking the
-// write lock on the SQLite handle. Resolve/Walk and the planned
-// doctor integration use this so integrity checks can run against
-// read-only copies.
+// write lock on the SQLite handle. Walk and the doctor integration
+// use this so integrity checks can run against read-only copies.
 func openAttachmentStoreReadOnly(archivePath string) (*attachmentStore, error) {
 	return openAttachmentStoreMode(archivePath, readOnlyArchive)
 }
@@ -187,40 +182,6 @@ func (store *attachmentStore) Store(dataPointID int64, kind string, payload []by
 		ByteSize:     int64(len(payload)),
 		FetchedAt:    fetchedAt,
 	}, nil
-}
-
-// Resolve returns the absolute path for a given sha256. The on-disk
-// location is kind-scoped, so the same SHA in two kinds would resolve
-// non-deterministically — guard against that by checking that every
-// row for the SHA points at the same path_relative. Returns a clear
-// error when the hash isn't in data_point_attachments.
-func (store *attachmentStore) Resolve(hashHex string) (string, error) {
-	rows, err := store.db.Query(`SELECT path_relative FROM data_point_attachments WHERE sha256 = ?`, hashHex)
-	if err != nil {
-		return "", err
-	}
-	defer rows.Close()
-	var canonical string
-	for rows.Next() {
-		var pathRelative string
-		if err := rows.Scan(&pathRelative); err != nil {
-			return "", err
-		}
-		if canonical == "" {
-			canonical = pathRelative
-			continue
-		}
-		if canonical != pathRelative {
-			return "", fmt.Errorf("attachment %s ambiguous: appears at %s AND %s", hashHex, canonical, pathRelative)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return "", err
-	}
-	if canonical == "" {
-		return "", fmt.Errorf("attachment %s not found", hashHex)
-	}
-	return resolveContainedPath(store.rootDir, canonical)
 }
 
 func (store *attachmentStore) findExisting(dataPointID int64, hashHex string) (attachmentRecord, bool, error) {
@@ -340,10 +301,10 @@ func (store *attachmentStore) Walk(fn func(attachmentOrphan) error) error {
 // tampered archive (see docs/security.md threat model: "archive
 // contents written by earlier runs") could carry an absolute path, a
 // "../" traversal, or any value that — after filepath.Join+Clean — no
-// longer sits under rootDir. Walk and Resolve share this helper so the
-// containment rule cannot drift between them. path_relative is stored
-// with forward slashes; FromSlash maps it to the OS separator before
-// joining (matching Store).
+// longer sits under rootDir. Walk owns the live containment rule
+// through this helper. path_relative is stored with forward slashes;
+// FromSlash maps it to the OS separator before joining (matching
+// Store).
 func resolveContainedPath(rootDir, pathRelative string) (string, error) {
 	osRelative := filepath.FromSlash(pathRelative)
 	if filepath.IsAbs(osRelative) {

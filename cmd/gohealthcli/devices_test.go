@@ -117,10 +117,10 @@ func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	connection, err := archive.CurrentConnection()
+	connection, err := readCurrentConnection(archive.db)
 	if err != nil {
 		archive.Close()
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
 	payload := `{"devices":[
 		{"deviceType":"WATCH","model":"Pixel Watch 2","manufacturer":"Google","batteryPercentage":76,"lastSyncTime":"2026-06-08T13:00:00Z","features":["HR","GPS"]},
@@ -185,10 +185,10 @@ func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	connection, err := archive.CurrentConnection()
+	connection, err := readCurrentConnection(archive.db)
 	if err != nil {
 		archive.Close()
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
 	if _, err := archive.Insert(connection, "paired-devices", `{"devices":[]}`, "2026-06-08T13:00:00Z"); err != nil {
 		archive.Close()
@@ -251,13 +251,13 @@ func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
 		t.Fatalf("open identity snapshot archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := readCurrentConnection(archive.db)
 	if err != nil {
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
-	latest, found, err := archive.Latest(connection, "paired-devices")
-	if err != nil || !found {
-		t.Fatalf("Latest(paired-devices): found=%v err=%v", found, err)
+	latest, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "paired-devices")
+	if !found {
+		t.Fatal("latest paired-devices snapshot: not found")
 	}
 	if latest.Kind != "paired-devices" {
 		t.Fatalf("Kind = %q, want paired-devices", latest.Kind)
