@@ -46,6 +46,9 @@ func (sticky *stickyWriter) Write(payload []byte) (int, error) {
 		return 0, sticky.err
 	}
 	written, err := sticky.writer.Write(payload)
+	if err == nil && written < len(payload) {
+		err = io.ErrShortWrite
+	}
 	if err != nil {
 		sticky.err = err
 	}

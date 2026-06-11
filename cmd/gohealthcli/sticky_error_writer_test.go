@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"io"
 	"testing"
 )
 
@@ -80,5 +81,28 @@ func TestStickyWriterLatchesErrorsFromLayeredWriterFlushes(t *testing.T) {
 	}
 	if underlying.attempts != 1 {
 		t.Fatalf("underlying write attempts = %d, want 1 (prints stop after a layered-write error)", underlying.attempts)
+	}
+}
+
+// shortWriter violates the io.Writer contract by reporting fewer bytes
+// written than requested without an error.
+type shortWriter struct{}
+
+func (shortWriter) Write(payload []byte) (int, error) {
+	return len(payload) - 1, nil
+}
+
+func TestStickyWriterLatchesShortWritesAsErrShortWrite(t *testing.T) {
+	writer := newStickyWriter(shortWriter{})
+
+	written, err := writer.Write([]byte("ID\tSTATUS\n"))
+	if !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("Write error = %v, want io.ErrShortWrite for a truncated write", err)
+	}
+	if written != 9 {
+		t.Fatalf("Write reported %d bytes, want the underlying writer's 9", written)
+	}
+	if got := writer.Err(); !errors.Is(got, io.ErrShortWrite) {
+		t.Fatalf("Err() = %v, want the latched io.ErrShortWrite", got)
 	}
 }
