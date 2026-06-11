@@ -173,7 +173,7 @@ func devicesSetupWithRuntime(configPath, archivePath string, runtime runtimeAdap
 	result.Devices = parsePairedDeviceSummaries(devices.rawJSON)
 	result.DeviceCount = len(result.Devices)
 	fetchedAt := runtime.now().UTC().Format(time.RFC3339)
-	snapshotID, err := writeIdentitySnapshotHandoff(archive, archivePath, connection, "paired-devices", devices.rawJSON, fetchedAt)
+	snapshotID, err := writeIdentitySnapshotHandoff(archive, archivePath, connection, snapshotKindPairedDevices, devices.rawJSON, fetchedAt)
 	archiveClosed = true
 	if err != nil {
 		return result, err

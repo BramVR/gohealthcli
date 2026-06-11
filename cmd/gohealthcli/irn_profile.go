@@ -148,7 +148,7 @@ func irnProfileSetupWithRuntime(configPath, archivePath string, runtime runtimeA
 		return result, normalizeProviderError(err)
 	}
 	fetchedAt := runtime.now().UTC().Format(time.RFC3339)
-	snapshotID, err := writeIdentitySnapshotHandoff(archive, archivePath, connection, "irn-profile", irn.rawJSON, fetchedAt)
+	snapshotID, err := writeIdentitySnapshotHandoff(archive, archivePath, connection, snapshotKindIRNProfile, irn.rawJSON, fetchedAt)
 	archiveClosed = true
 	if err != nil {
 		return result, err

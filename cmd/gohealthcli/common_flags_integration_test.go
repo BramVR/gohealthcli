@@ -154,7 +154,9 @@ func TestRawRejectsUnknownFlagViaStdlib(t *testing.T) {
 // acceptance criterion #5 of issue #180: a static guarantee that any
 // future drift in init / doctor / connect / sync / query / raw (or the
 // already-migrated identity / profile / settings / devices / irn-profile
-// / status) fails the build.
+// / status) fails the build. The Identity Snapshot family parses its
+// flags inside the shared engine runner (issue #282), so those
+// commands anchor on runIdentitySnapshotCommand.
 //
 // The check is intentionally precise: it pinpoints the function body of
 // each subcommand's flag-parser entry point and inspects only that
@@ -180,7 +182,7 @@ func TestMigratedSubcommandEntryPointsCallRegisterCommon(t *testing.T) {
 		{"query", "query.go", "func runQuery("},
 		{"identity", "main.go", "func runIdentityWithRuntime("},
 		{"profile", "main.go", "func runProfileWithRuntime("},
-		{"settings", "settings.go", "func runSettingsWithRuntime("},
+		{"settings", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
 		{"devices", "devices.go", "func runDevicesWithRuntime("},
 		{"irn-profile", "irn_profile.go", "func runIRNProfileWithRuntime("},
 		{"status", "main.go", "func runStatus("},

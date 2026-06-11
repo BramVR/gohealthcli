@@ -1593,7 +1593,7 @@ func profileSetupWithRuntime(configPath, archivePath string, runtime runtimeAdap
 		return result, err
 	}
 	fetchedAt := runtime.now().UTC().Format(time.RFC3339)
-	snapshotID, err := writeIdentitySnapshotHandoff(archive, archivePath, connection, "profile", profile.rawJSON, fetchedAt)
+	snapshotID, err := writeIdentitySnapshotHandoff(archive, archivePath, connection, snapshotKindProfile, profile.rawJSON, fetchedAt)
 	archiveClosed = true // handoff owns archive's lifecycle now
 	if err != nil {
 		return result, err
@@ -4132,7 +4132,7 @@ func writeStatusSnapshotFreshnessPlain(writer *stickyWriter, freshness *statusSn
 		writer.Printf("paired_device_count: %d\n", freshness.PairedDeviceCount)
 	}
 	// Emit kinds in a stable order so the output is reproducible.
-	for _, kind := range []string{"profile", "settings", "paired-devices", "irn-profile"} {
+	for _, kind := range identitySnapshotKinds {
 		if ts, ok := freshness.LatestFetchedAt[kind]; ok {
 			writer.Printf("identity_snapshot.%s.fetched_at: %s\n", kind, ts)
 		}
