@@ -3235,6 +3235,31 @@ func (envelope googleHealthDataPointEnvelope) upstreamResourceName() string {
 	return envelope.dataPointName
 }
 
+// requiredField returns the named value object, or the missing-value
+// error every Data Point parser shape reports for an absent field.
+func (envelope googleHealthDataPointEnvelope) requiredField(dataType, jsonField string) (json.RawMessage, error) {
+	rawValue, ok := envelope.fields[jsonField]
+	if !ok || len(rawValue) == 0 || string(rawValue) == "null" {
+		return nil, fmt.Errorf("Google Health %s Data Point missing %s value", dataType, jsonField)
+	}
+	return rawValue, nil
+}
+
+// parseGoogleHealthDataPointHead performs the envelope decode shared
+// by every Data Point parser shape: the canonical raw JSON archived on
+// the row plus the name / dataSource / field-map envelope.
+func parseGoogleHealthDataPointHead(dataType string, rawPoint json.RawMessage) (string, googleHealthDataPointEnvelope, error) {
+	canonicalRaw, err := compactJSONString(rawPoint)
+	if err != nil {
+		return "", googleHealthDataPointEnvelope{}, fmt.Errorf("Google Health %s Data Point is not valid JSON", dataType)
+	}
+	envelope, err := parseGoogleHealthDataPointEnvelope(dataType, rawPoint)
+	if err != nil {
+		return "", googleHealthDataPointEnvelope{}, err
+	}
+	return canonicalRaw, envelope, nil
+}
+
 func parseGoogleHealthIntervalMetadata(dataType string, interval googleHealthIntervalFields) (parsedGoogleHealthInterval, error) {
 	if interval.StartTime == "" || interval.EndTime == "" {
 		return parsedGoogleHealthInterval{}, fmt.Errorf("Google Health %s Data Point missing interval startTime or endTime", dataType)
@@ -3275,17 +3300,13 @@ func parseGoogleHealthIntervalMetadata(dataType string, interval googleHealthInt
 // the JSON field holding the upstream value object and the record
 // kind stored on the archived row (#278).
 func parseGoogleHealthIntervalShapedDataPoint(connection archivedConnection, dataType string, rawPoint json.RawMessage, sourceFamilyFilter, jsonField, recordKind string) (archivedDataPoint, error) {
-	canonicalRaw, err := compactJSONString(rawPoint)
-	if err != nil {
-		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not valid JSON", dataType)
-	}
-	envelope, err := parseGoogleHealthDataPointEnvelope(dataType, rawPoint)
+	canonicalRaw, envelope, err := parseGoogleHealthDataPointHead(dataType, rawPoint)
 	if err != nil {
 		return archivedDataPoint{}, err
 	}
-	rawValue, ok := envelope.fields[jsonField]
-	if !ok || len(rawValue) == 0 || string(rawValue) == "null" {
-		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point missing %s value", dataType, jsonField)
+	rawValue, err := envelope.requiredField(dataType, jsonField)
+	if err != nil {
+		return archivedDataPoint{}, err
 	}
 	var value struct {
 		Interval googleHealthIntervalFields `json:"interval"`
@@ -3316,18 +3337,14 @@ func parseGoogleHealthIntervalShapedDataPoint(connection archivedConnection, dat
 }
 
 func parseGoogleHealthSampleDataPoint(connection archivedConnection, dataType string, rawPoint json.RawMessage, sourceFamilyFilter string) (archivedDataPoint, error) {
-	canonicalRaw, err := compactJSONString(rawPoint)
-	if err != nil {
-		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not valid JSON", dataType)
-	}
-	envelope, err := parseGoogleHealthDataPointEnvelope(dataType, rawPoint)
+	canonicalRaw, envelope, err := parseGoogleHealthDataPointHead(dataType, rawPoint)
 	if err != nil {
 		return archivedDataPoint{}, err
 	}
 	jsonField := googleHealthSampleDataPointJSONField(dataType)
-	rawSample, ok := envelope.fields[jsonField]
-	if !ok || len(rawSample) == 0 || string(rawSample) == "null" {
-		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point missing %s value", dataType, jsonField)
+	rawSample, err := envelope.requiredField(dataType, jsonField)
+	if err != nil {
+		return archivedDataPoint{}, err
 	}
 	var sample struct {
 		SampleTime struct {
@@ -3371,11 +3388,7 @@ func parseGoogleHealthSampleDataPoint(connection archivedConnection, dataType st
 }
 
 func parseGoogleHealthDailyDataPoint(connection archivedConnection, dataType string, rawPoint json.RawMessage, sourceFamilyFilter string) (archivedDataPoint, error) {
-	canonicalRaw, err := compactJSONString(rawPoint)
-	if err != nil {
-		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not valid JSON", dataType)
-	}
-	envelope, err := parseGoogleHealthDataPointEnvelope(dataType, rawPoint)
+	canonicalRaw, envelope, err := parseGoogleHealthDataPointHead(dataType, rawPoint)
 	if err != nil {
 		return archivedDataPoint{}, err
 	}
@@ -3383,9 +3396,9 @@ func parseGoogleHealthDailyDataPoint(connection archivedConnection, dataType str
 	if !ok {
 		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not supported", dataType)
 	}
-	rawDaily, ok := envelope.fields[shape.jsonField]
-	if !ok || len(rawDaily) == 0 || string(rawDaily) == "null" {
-		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point missing %s value", dataType, shape.jsonField)
+	rawDaily, err := envelope.requiredField(dataType, shape.jsonField)
+	if err != nil {
+		return archivedDataPoint{}, err
 	}
 	var daily struct {
 		Date json.RawMessage `json:"date"`
