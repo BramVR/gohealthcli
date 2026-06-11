@@ -332,7 +332,7 @@ var commands = []commandDef{
 		Flags:       withCommonSubset(identitySnapshotCommonFlagNames()),
 		CommonFlags: identitySnapshotCommonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runDevicesWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runIdentitySnapshotCommand(devicesSnapshotCommand, args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
 		},
 	},
 	{

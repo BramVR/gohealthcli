@@ -183,7 +183,7 @@ func TestMigratedSubcommandEntryPointsCallRegisterCommon(t *testing.T) {
 		{"identity", "main.go", "func runIdentityWithRuntime("},
 		{"profile", "main.go", "func runProfileWithRuntime("},
 		{"settings", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
-		{"devices", "devices.go", "func runDevicesWithRuntime("},
+		{"devices", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
 		{"irn-profile", "irn_profile.go", "func runIRNProfileWithRuntime("},
 		{"status", "main.go", "func runStatus("},
 	}
