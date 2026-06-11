@@ -2019,7 +2019,7 @@ func TestPersistDoctorOnlineRefreshedTokenRollsBackOnMetadataFailure(t *testing.
 		t.Fatalf("open archive API: %v", err)
 	}
 	defer archive.Close()
-	err = persistDoctorOnlineRefreshedToken(archive, credentialStoreConfig{kind: "file", path: tokenStorePath}, "googlehealth:111111256096816351", refreshedToken, previousTokenMaterial)
+	err = persistDoctorOnlineRefreshedTokenWithRuntime(archive, credentialStoreConfig{kind: "file", path: tokenStorePath}, "googlehealth:111111256096816351", refreshedToken, previousTokenMaterial, productionRuntimeAdapters())
 	if err == nil {
 		t.Fatal("persist refreshed token succeeded after connection was removed")
 	}
@@ -4774,10 +4774,10 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 }
 
 func TestParseStepsDailyRollupRequiresCivilEndTime(t *testing.T) {
-	_, err := parseGoogleHealthStepsDailyRollup(archivedConnection{
+	_, err := parseGoogleHealthRollup(archivedConnection{
 		providerName: "googlehealth",
 		id:           "googlehealth:111111256096816351",
-	}, json.RawMessage(`{
+	}, "steps", "dailyRollUp", json.RawMessage(`{
 		"steps": {"countSum": "1234"},
 		"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}}
 	}`))
@@ -6004,7 +6004,7 @@ func TestOSNativeCredentialStoreDoesNotSendTokenAsArgument(t *testing.T) {
 		return nil
 	}
 
-	store, err := newCredentialStore(credentialStoreConfig{kind: "os_native", service: "gohealthcli"})
+	store, err := newCredentialStoreWithRuntime(credentialStoreConfig{kind: "os_native", service: "gohealthcli"}, productionRuntimeAdapters())
 	if err != nil {
 		t.Fatalf("new credential store: %v", err)
 	}
@@ -6081,7 +6081,7 @@ func TestLinuxOSNativeCredentialStoreUsesSecretToolContent(t *testing.T) {
 		return nil
 	}
 
-	store, err := newCredentialStore(credentialStoreConfig{kind: "os_native", service: "gohealthcli"})
+	store, err := newCredentialStoreWithRuntime(credentialStoreConfig{kind: "os_native", service: "gohealthcli"}, productionRuntimeAdapters())
 	if err != nil {
 		t.Fatalf("new credential store: %v", err)
 	}
@@ -6115,7 +6115,7 @@ func TestWindowsOSNativeCredentialStoreUsesCredentialManagerContent(t *testing.T
 		return nil
 	}
 
-	store, err := newCredentialStore(credentialStoreConfig{kind: "os_native", service: "gohealthcli"})
+	store, err := newCredentialStoreWithRuntime(credentialStoreConfig{kind: "os_native", service: "gohealthcli"}, productionRuntimeAdapters())
 	if err != nil {
 		t.Fatalf("new credential store: %v", err)
 	}

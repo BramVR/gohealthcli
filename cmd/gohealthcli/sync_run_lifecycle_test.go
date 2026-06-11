@@ -58,7 +58,7 @@ func TestSyncRunLifecycleStatusEnumOnEveryReachableReturn(t *testing.T) {
 			healthUserID:       "111111256096816351",
 			legacyFitbitUserID: "A1B2C3",
 		})
-		if _, err := connectSetupWithRuntime(configPath, archivePath, false, runtime); err != nil {
+		if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, runtime); err != nil {
 			t.Fatalf("connect setup: %v", err)
 		}
 		runtime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
@@ -87,7 +87,7 @@ func TestSyncRunLifecycleStatusEnumOnEveryReachableReturn(t *testing.T) {
 			healthUserID:       "111111256096816351",
 			legacyFitbitUserID: "A1B2C3",
 		})
-		if _, err := connectSetupWithRuntime(configPath, archivePath, false, runtime); err != nil {
+		if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, runtime); err != nil {
 			t.Fatalf("connect setup: %v", err)
 		}
 		runtime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
@@ -226,7 +226,7 @@ func TestConcurrentSyncRunsLeaveNoSyncRunningRows(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, seedRuntime); err != nil {
+	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, seedRuntime); err != nil {
 		t.Fatalf("connect setup: %v", err)
 	}
 
@@ -347,7 +347,7 @@ func TestSyncRunLifecycleConvertsBusyExhaustedToFailedWithRecoveryRow(t *testing
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
 		t.Fatalf("connect setup: %v", err)
 	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
@@ -467,7 +467,7 @@ func TestSyncRunLifecycleRecoveryWriteAlsoRetriesOnBusy(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
 		t.Fatalf("connect setup: %v", err)
 	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
@@ -527,7 +527,7 @@ func TestSyncRunLifecycleRecoveryBudgetExhaustedReturnsTypedError(t *testing.T) 
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
 		t.Fatalf("connect setup: %v", err)
 	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
@@ -585,7 +585,7 @@ func TestSyncRunLifecycleCanceledOutcomePreservedThroughRecovery(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
 		t.Fatalf("connect setup: %v", err)
 	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
@@ -672,7 +672,7 @@ func TestConcurrentSyncRunsForceSQLiteBusyContention(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, seedRuntime); err != nil {
+	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, seedRuntime); err != nil {
 		t.Fatalf("connect setup: %v", err)
 	}
 

@@ -29,10 +29,10 @@ func TestSearchableTextViewReturnsRowsFromAllFourSources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open snapshot archive: %v", err)
 	}
-	connection, err := snapshots.CurrentConnection()
+	connection, err := readCurrentConnection(snapshots.db)
 	if err != nil {
 		snapshots.Close()
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
 	if _, err := snapshots.Insert(connection, "paired-devices", `{"devices":[
 		{"deviceType":"WATCH","model":"Pixel Watch 2","manufacturer":"Google"},
@@ -120,10 +120,10 @@ func TestSearchableTextLIKENeedleAnswersAcrossKinds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open snapshots: %v", err)
 	}
-	connection, err := snapshots.CurrentConnection()
+	connection, err := readCurrentConnection(snapshots.db)
 	if err != nil {
 		snapshots.Close()
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
 	// "Pixel" appears in both a paired device model and a data source's device display name.
 	if _, err := snapshots.Insert(connection, "paired-devices", `{"devices":[{"deviceType":"WATCH","model":"Pixel Watch 2","manufacturer":"Google"}]}`, "2026-06-08T00:00:00Z"); err != nil {

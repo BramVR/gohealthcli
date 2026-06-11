@@ -62,10 +62,10 @@ func TestCurrentIRNProfileViewProjectsLatestSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	connection, err := archive.CurrentConnection()
+	connection, err := readCurrentConnection(archive.db)
 	if err != nil {
 		archive.Close()
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
 	if _, err := archive.Insert(connection, "irn-profile", `{"onboardingState":"PENDING","enrollmentState":"NOT_ENROLLED","lastUpdateTime":"2026-05-01T00:00:00Z"}`, "2026-05-01T00:00:00Z"); err != nil {
 		archive.Close()
@@ -136,13 +136,13 @@ func TestIRNProfileCommandArchivesSnapshotWhenScopeGranted(t *testing.T) {
 		t.Fatalf("open archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := readCurrentConnection(archive.db)
 	if err != nil {
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
-	latest, found, err := archive.Latest(connection, "irn-profile")
-	if err != nil || !found {
-		t.Fatalf("Latest(irn-profile): found=%v err=%v", found, err)
+	latest, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "irn-profile")
+	if !found {
+		t.Fatal("latest irn-profile snapshot: not found")
 	}
 	if latest.Kind != "irn-profile" {
 		t.Fatalf("Kind = %q, want irn-profile", latest.Kind)
@@ -165,7 +165,7 @@ func TestIRNProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
 		t.Fatalf("connect setup: %v", err)
 	}
 	// Mark the IRN scope as granted on the stored Connection so the

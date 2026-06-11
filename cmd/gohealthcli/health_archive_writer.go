@@ -68,8 +68,6 @@ type sqliteHealthArchiveWriter struct {
 	archivePath string
 }
 
-var finishSyncRunRecord = finishSyncRun
-
 func openHealthArchiveWriter(archivePath string) (healthArchiveWriter, error) {
 	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(writeArchive)
 	if err != nil {
@@ -95,7 +93,7 @@ func (archive *sqliteHealthArchiveWriter) StartSyncRun(connection archivedConnec
 }
 
 func (archive *sqliteHealthArchiveWriter) FinishSyncRun(id int64, status string, seenCount, newCount, updatedCount int, finishedAt, errorSummary string) error {
-	return finishSyncRunRecord(archive.db, id, status, seenCount, newCount, updatedCount, finishedAt, errorSummary)
+	return finishSyncRun(archive.db, id, status, seenCount, newCount, updatedCount, finishedAt, errorSummary)
 }
 
 // HeartbeatSyncRun is a single autocommit UPDATE — deliberately not a

@@ -25,7 +25,7 @@ func TestDoctorJSONReportsAttachmentOrphans(t *testing.T) {
 	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
-	store, err := openAttachmentStore(archivePath)
+	store, err := openAttachmentStoreMode(archivePath, writeArchive)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

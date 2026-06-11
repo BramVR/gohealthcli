@@ -46,7 +46,7 @@ func TestHealthArchiveReaderSummarizesQueriesAndExportsReadOnly(t *testing.T) {
 		t.Fatal("mutating query error = nil, want rejected")
 	}
 
-	rows, err := reader.DailySteps()
+	rows, err := reader.ExportRows(exportDatasetSpecs["daily-steps"])
 	if err != nil {
 		t.Fatalf("daily steps rows: %v", err)
 	}

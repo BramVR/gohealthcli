@@ -32,7 +32,7 @@ func TestRunSyncPreflightFailuresDoNotWriteAuditRow(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
+	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
 		t.Fatalf("connect setup: %v", err)
 	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
@@ -87,7 +87,7 @@ func TestRunSyncPreflightFailuresDoNotWriteAuditRow(t *testing.T) {
 			stderr := new(bytes.Buffer)
 			code := runSyncWithRuntime(tc.args, configPath, archivePath, outputMode{}, stdout, stderr, testRuntime)
 			if code == 0 {
-				t.Fatalf("runSync exit = 0, want non-zero (preflight rule must reject)\nstdout: %s\nstderr: %s", stdout.String(), stderr.String())
+				t.Fatalf("runSyncWithRuntime exit = 0, want non-zero (preflight rule must reject)\nstdout: %s\nstderr: %s", stdout.String(), stderr.String())
 			}
 
 			// AC #5: JSON envelope on preflight failure has

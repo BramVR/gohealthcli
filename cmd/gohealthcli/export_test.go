@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -82,7 +83,7 @@ func TestExportDatasetDefinitionsDriveViewMigrations(t *testing.T) {
 			}
 		})
 	}
-	if got := exportDatasetViewMigrationStatements(999); len(got) != 0 {
+	if got := normalizedViewsRegistry().MigrationStatements(999); len(got) != 0 {
 		t.Fatalf("unknown migration statements = %v, want empty", got)
 	}
 }
@@ -348,7 +349,7 @@ func TestDailyStepsNormalizedViewPrefersRollupsAndAggregatesDataPoints(t *testin
 	insertExportStepDataPointWithSourceFamily(t, archivePath, "users/me/dataTypes/steps/dataPoints/wearable", "2026-01-01T08:00:00Z", "2026-01-01T08:15:00Z", `{"steps":{"count":"256"}}`, "wearable")
 	insertExportStepDataPointWithSourceFamily(t, archivePath, "users/me/dataTypes/steps/dataPoints/wearable-rollup-day", "2026-01-04T08:00:00Z", "2026-01-04T08:15:00Z", `{"steps":{"count":"384"}}`, "wearable")
 
-	rows, err := dailyStepsExportRows(archivePath)
+	rows, err := exportRows(archivePath, exportDatasetSpecs["daily-steps"])
 	if err != nil {
 		t.Fatalf("daily steps rows: %v", err)
 	}
@@ -534,11 +535,27 @@ func TestExportDailyStepsJSONLToStdout(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("JSONL line count = %d, want 3\nstdout:\n%s", len(lines), stdout.String())
 	}
-	var first dailyStepsExportRow
+	var first struct {
+		ProviderName       string `json:"provider_name"`
+		ConnectionID       string `json:"connection_id"`
+		CivilDate          string `json:"civil_date"`
+		StepCount          int64  `json:"step_count"`
+		SourceKind         string `json:"source_kind"`
+		SourceFamilyFilter string `json:"source_family_filter"`
+		SourceRecordCount  int64  `json:"source_record_count"`
+	}
 	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
 		t.Fatalf("first JSONL line is invalid: %v\nline: %s", err, lines[0])
 	}
-	assertDailyStepsRow(t, first, "2026-01-01", 512, "dataPoints", "", 1)
+	if first.ProviderName != "googlehealth" ||
+		first.ConnectionID != "googlehealth:111111256096816351" ||
+		first.CivilDate != "2026-01-01" ||
+		first.StepCount != 512 ||
+		first.SourceKind != "dataPoints" ||
+		first.SourceFamilyFilter != "" ||
+		first.SourceRecordCount != 1 {
+		t.Fatalf("first JSONL row = %+v, want date=2026-01-01 steps=512 source=dataPoints source_family=\"\" records=1", first)
+	}
 	if !strings.Contains(lines[0], `"civil_date":"2026-01-01"`) || !strings.Contains(lines[0], `"step_count":512`) {
 		t.Fatalf("first JSONL line missing stable fields: %s", lines[0])
 	}
@@ -1263,15 +1280,21 @@ func TestExportPlainAndJSONMutuallyExclusive(t *testing.T) {
 	}
 }
 
-func assertDailyStepsRow(t *testing.T, row dailyStepsExportRow, civilDate string, stepCount int64, sourceKind, sourceFamily string, sourceRecordCount int64) {
+// assertDailyStepsRow asserts one daily-steps exportRow in the live
+// dataset field order (provider_name, connection_id, civil_date,
+// step_count, source_kind, source_family_filter, source_record_count,
+// latest_source_timestamp). The latest_source_timestamp column is
+// fixture-derived and not pinned here, matching the historical helper.
+func assertDailyStepsRow(t *testing.T, row exportRow, civilDate string, stepCount int64, sourceKind, sourceFamily string, sourceRecordCount int64) {
 	t.Helper()
-	if row.ProviderName != "googlehealth" ||
-		row.ConnectionID != "googlehealth:111111256096816351" ||
-		row.CivilDate != civilDate ||
-		row.StepCount != stepCount ||
-		row.SourceKind != sourceKind ||
-		row.SourceFamilyFilter != sourceFamily ||
-		row.SourceRecordCount != sourceRecordCount {
-		t.Fatalf("row = %+v, want date=%s steps=%d source=%s source_family=%s records=%d", row, civilDate, stepCount, sourceKind, sourceFamily, sourceRecordCount)
+	if len(row) != 8 ||
+		row[0] != "googlehealth" ||
+		row[1] != "googlehealth:111111256096816351" ||
+		row[2] != civilDate ||
+		row[3] != strconv.FormatInt(stepCount, 10) ||
+		row[4] != sourceKind ||
+		row[5] != sourceFamily ||
+		row[6] != strconv.FormatInt(sourceRecordCount, 10) {
+		t.Fatalf("row = %v, want date=%s steps=%d source=%s source_family=%s records=%d", row, civilDate, stepCount, sourceKind, sourceFamily, sourceRecordCount)
 	}
 }

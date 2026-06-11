@@ -88,7 +88,7 @@ func TestExpandConnectAddScopesMapsKeywordsToScopeStrings(t *testing.T) {
 func TestConnectHelpAddScopesUsageListsEveryAcceptedKeyword(t *testing.T) {
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := runConnect([]string{"--help"}, "config.json", "archive.db", false, outputMode{}, stdout, stderr)
+	code := runConnectWithRuntime([]string{"--help"}, "config.json", "archive.db", false, outputMode{}, stdout, stderr, runtimeAdapters{})
 	if code != 0 {
 		t.Fatalf("connect --help exit = %d, want 0 (stderr=%s)", code, stderr.String())
 	}

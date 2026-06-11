@@ -9,10 +9,10 @@ import (
 )
 
 // parseGoogleHealthRollup is the generic Rollup parser introduced in
-// #106. The previous steps-daily-only parser
-// (parseGoogleHealthStepsDailyRollup) keeps its old signature but
-// delegates here, preserving its byte-identical output (the #106 AC
-// regression guard).
+// #106, which replaced the steps-daily-only parser (deleted with the
+// dead command-wrapper layer, #270). Its output for the steps-daily
+// shape stays byte-identical to the legacy parser's — the #106 AC
+// regression guard in google_health_rollup_test.go pins it.
 //
 // The parser looks up the Data Type's endpointSupport.RollupValueType
 // for the active rollup family. RollupValueType drives the JSON-field

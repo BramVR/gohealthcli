@@ -41,9 +41,11 @@ func TestFreshArchiveHasIdentitySnapshotsTable(t *testing.T) {
 
 // TestIdentitySnapshotArchiveInsertAndLatestRoundTrip is the slice B
 // tracer: Insert(kind, raw, fetchedAt) writes a row tagged with the
-// supplied kind, and Latest(kind) returns it. Behaviour is verified
-// through the new module's public interface, not by querying the
-// underlying table directly.
+// supplied kind, and the newest-of-kind read-back returns it. Insert
+// is the live write seam every Identity Snapshot command reaches; the
+// read-back uses latestIdentitySnapshotRow (the same SQL surface the
+// `query` command exposes) because the zombie Latest() reader was
+// deleted with the dead command-wrapper layer (#270).
 func TestIdentitySnapshotArchiveInsertAndLatestRoundTrip(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -63,20 +65,17 @@ func TestIdentitySnapshotArchiveInsertAndLatestRoundTrip(t *testing.T) {
 	}
 	defer archive.Close()
 
-	connection, err := archive.CurrentConnection()
+	connection, err := readCurrentConnection(archive.db)
 	if err != nil {
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
 	if _, err := archive.Insert(connection, "settings", `{"unit":"metric"}`, "2026-06-01T00:00:00Z"); err != nil {
 		t.Fatalf("Insert: %v", err)
 	}
 
-	snapshot, found, err := archive.Latest(connection, "settings")
-	if err != nil {
-		t.Fatalf("Latest: %v", err)
-	}
+	snapshot, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "settings")
 	if !found {
-		t.Fatal("Latest(settings) returned not-found after Insert")
+		t.Fatal("latest settings snapshot returned not-found after Insert")
 	}
 	if snapshot.RawJSON != `{"unit":"metric"}` {
 		t.Fatalf("RawJSON = %q, want round-tripped payload", snapshot.RawJSON)
@@ -89,9 +88,10 @@ func TestIdentitySnapshotArchiveInsertAndLatestRoundTrip(t *testing.T) {
 	}
 }
 
-// TestIdentitySnapshotArchiveLatestFiltersByKind verifies that
-// Latest(kind) returns the newest row of the requested kind even when
-// other kinds and older rows of the same kind are also present.
+// TestIdentitySnapshotArchiveLatestFiltersByKind verifies that the
+// newest-of-kind read returns the newest row of the requested kind
+// even when other kinds and older rows of the same kind are also
+// present — i.e. Insert tags every row so kinds never bleed.
 func TestIdentitySnapshotArchiveLatestFiltersByKind(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -110,9 +110,9 @@ func TestIdentitySnapshotArchiveLatestFiltersByKind(t *testing.T) {
 		t.Fatalf("open archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := readCurrentConnection(archive.db)
 	if err != nil {
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
 
 	// Three settings snapshots (oldest → newest) plus one profile snapshot
@@ -131,31 +131,31 @@ func TestIdentitySnapshotArchiveLatestFiltersByKind(t *testing.T) {
 		}
 	}
 
-	latestSettings, found, err := archive.Latest(connection, "settings")
-	if err != nil || !found {
-		t.Fatalf("Latest(settings): found=%v err=%v", found, err)
+	latestSettings, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "settings")
+	if !found {
+		t.Fatal("latest settings snapshot: not found")
 	}
 	if latestSettings.RawJSON != `{"unit":"metric","timezone":"UTC"}` {
-		t.Fatalf("Latest(settings).RawJSON = %q, want newest settings row", latestSettings.RawJSON)
+		t.Fatalf("latest settings RawJSON = %q, want newest settings row", latestSettings.RawJSON)
 	}
-	latestProfile, found, err := archive.Latest(connection, "profile")
-	if err != nil || !found {
-		t.Fatalf("Latest(profile): found=%v err=%v", found, err)
+	latestProfile, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "profile")
+	if !found {
+		t.Fatal("latest profile snapshot: not found")
 	}
 	if latestProfile.RawJSON != `{"name":"Old"}` {
-		t.Fatalf("Latest(profile).RawJSON = %q, want profile row", latestProfile.RawJSON)
+		t.Fatalf("latest profile RawJSON = %q, want profile row", latestProfile.RawJSON)
 	}
 	// A kind never inserted must surface as not-found, not as some
 	// accidental cross-kind match.
-	if _, found, _ := archive.Latest(connection, "paired-devices"); found {
-		t.Fatal("Latest(paired-devices) returned a row, want not-found")
+	if _, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "paired-devices"); found {
+		t.Fatal("latest paired-devices snapshot returned a row, want not-found")
 	}
 }
 
 // TestProfileCommandWritesViaIdentitySnapshotArchive verifies the slice B
 // lifting: the `profile` command no longer writes through the Connection
-// API. After `gohealthcli profile`, opening the Identity Snapshot Archive
-// and asking for Latest('profile') must surface the row the command wrote.
+// API. After `gohealthcli profile`, reading the newest profile snapshot
+// back from the archive must surface the row the command wrote.
 func TestProfileCommandWritesViaIdentitySnapshotArchive(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -193,13 +193,13 @@ func TestProfileCommandWritesViaIdentitySnapshotArchive(t *testing.T) {
 		t.Fatalf("open identity snapshot archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := readCurrentConnection(archive.db)
 	if err != nil {
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
-	latest, found, err := archive.Latest(connection, "profile")
-	if err != nil || !found {
-		t.Fatalf("Latest(profile): found=%v err=%v", found, err)
+	latest, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "profile")
+	if !found {
+		t.Fatal("latest profile snapshot: not found")
 	}
 	if latest.Kind != "profile" {
 		t.Fatalf("Kind = %q, want profile", latest.Kind)
@@ -250,13 +250,13 @@ func TestSettingsCommandArchivesSnapshotWithKindSettings(t *testing.T) {
 		t.Fatalf("open identity snapshot archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := readCurrentConnection(archive.db)
 	if err != nil {
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
-	latest, found, err := archive.Latest(connection, "settings")
-	if err != nil || !found {
-		t.Fatalf("Latest(settings): found=%v err=%v", found, err)
+	latest, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "settings")
+	if !found {
+		t.Fatal("latest settings snapshot: not found")
 	}
 	if latest.Kind != "settings" {
 		t.Fatalf("Kind = %q, want settings", latest.Kind)
@@ -287,10 +287,10 @@ func TestCurrentSettingsViewProjectsLatestSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	connection, err := archive.CurrentConnection()
+	connection, err := readCurrentConnection(archive.db)
 	if err != nil {
 		archive.Close()
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
 	// Two settings snapshots: only the newest (id=2) should surface.
 	if _, err := archive.Insert(connection, "settings", `{"measurementSystem":"IMPERIAL","timezone":"America/New_York"}`, "2026-05-01T00:00:00Z"); err != nil {
@@ -326,8 +326,11 @@ func TestCurrentSettingsViewProjectsLatestSnapshot(t *testing.T) {
 // TestIdentitySnapshotArchiveLatestUsesFetchedAtForRecency guards against
 // id-order vs fetched_at-order divergence. Insert order is id=1 (newer
 // fetched_at) then id=2 (older fetched_at); a naive ORDER BY id DESC
-// would surface id=2 as "latest" — wrong. Latest must read the row
-// that was fetched most recently, not the row inserted most recently.
+// would surface id=2 as "latest" — wrong. The live newest-of-kind
+// reader is the current_settings Normalized View (the surface `query`
+// and `export` expose), so the assertion goes through it: the view
+// must project the row that was fetched most recently, not the row
+// inserted most recently.
 func TestIdentitySnapshotArchiveLatestUsesFetchedAtForRecency(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -345,27 +348,37 @@ func TestIdentitySnapshotArchiveLatestUsesFetchedAtForRecency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := readCurrentConnection(archive.db)
 	if err != nil {
-		t.Fatalf("CurrentConnection: %v", err)
+		archive.Close()
+		t.Fatalf("read current Connection: %v", err)
 	}
 
 	// id=1, fetched_at=2026-06-08 (the actually-newest)
-	if _, err := archive.Insert(connection, "settings", `{"newest":true}`, "2026-06-08T00:00:00Z"); err != nil {
+	if _, err := archive.Insert(connection, "settings", `{"measurementSystem":"NEWEST-FETCH"}`, "2026-06-08T00:00:00Z"); err != nil {
+		archive.Close()
 		t.Fatalf("Insert newer: %v", err)
 	}
 	// id=2, fetched_at=2026-05-01 (older, even though inserted later)
-	if _, err := archive.Insert(connection, "settings", `{"newest":false}`, "2026-05-01T00:00:00Z"); err != nil {
+	if _, err := archive.Insert(connection, "settings", `{"measurementSystem":"OLDER-FETCH"}`, "2026-05-01T00:00:00Z"); err != nil {
+		archive.Close()
 		t.Fatalf("Insert older: %v", err)
 	}
+	archive.Close()
 
-	latest, found, err := archive.Latest(connection, "settings")
-	if err != nil || !found {
-		t.Fatalf("Latest: found=%v err=%v", found, err)
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
 	}
-	if latest.RawJSON != `{"newest":true}` {
-		t.Fatalf("Latest.RawJSON = %q, want the row with the latest fetched_at (id ordering would have given the wrong answer)", latest.RawJSON)
+	defer db.Close()
+	var measurementSystem, fetchedAt string
+	err = db.QueryRow(`SELECT measurement_system, fetched_at FROM current_settings WHERE connection_id = ?`, connection.id).
+		Scan(&measurementSystem, &fetchedAt)
+	if err != nil {
+		t.Fatalf("query current_settings: %v", err)
+	}
+	if measurementSystem != "NEWEST-FETCH" || fetchedAt != "2026-06-08T00:00:00Z" {
+		t.Fatalf("current_settings = (%q, %q), want the row with the latest fetched_at (id ordering would have given the wrong answer)", measurementSystem, fetchedAt)
 	}
 }
 
@@ -419,6 +432,37 @@ func TestV6ArchiveMigratesProfileSnapshotsWithKindDefault(t *testing.T) {
 	if fetchedAt != "2026-06-01T00:00:00Z" {
 		t.Fatalf("fetched_at = %q, want round-tripped timestamp", fetchedAt)
 	}
+}
+
+// identitySnapshotRow is the test-side projection of one
+// identity_snapshots row.
+type identitySnapshotRow struct {
+	Kind      string
+	RawJSON   string
+	FetchedAt string
+}
+
+// latestIdentitySnapshotRow reads the newest snapshot of one kind back
+// through plain SQL on identity_snapshots — the same surface the
+// `query` command exposes to users — using the (fetched_at DESC,
+// id DESC) recency contract every live reader pins (current_settings,
+// paired_devices, readStatusSnapshotFreshness). Test-only: the binary
+// reads snapshots through the Normalized Views, never row-by-row.
+func latestIdentitySnapshotRow(t *testing.T, db *sql.DB, connectionID, kind string) (identitySnapshotRow, bool) {
+	t.Helper()
+	var row identitySnapshotRow
+	err := db.QueryRow(`SELECT snapshot_kind, raw_json, fetched_at
+		FROM identity_snapshots
+		WHERE connection_id = ? AND snapshot_kind = ?
+		ORDER BY fetched_at DESC, id DESC
+		LIMIT 1`, connectionID, kind).Scan(&row.Kind, &row.RawJSON, &row.FetchedAt)
+	if err == sql.ErrNoRows {
+		return identitySnapshotRow{}, false
+	}
+	if err != nil {
+		t.Fatalf("read latest %s snapshot: %v", kind, err)
+	}
+	return row, true
 }
 
 func archiveTableExists(t *testing.T, db *sql.DB, name string) bool {

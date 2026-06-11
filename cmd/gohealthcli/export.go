@@ -13,17 +13,6 @@ import (
 	"strings"
 )
 
-type dailyStepsExportRow struct {
-	ProviderName          string `json:"provider_name"`
-	ConnectionID          string `json:"connection_id"`
-	CivilDate             string `json:"civil_date"`
-	StepCount             int64  `json:"step_count"`
-	SourceKind            string `json:"source_kind"`
-	SourceFamilyFilter    string `json:"source_family_filter"`
-	SourceRecordCount     int64  `json:"source_record_count"`
-	LatestSourceTimestamp string `json:"latest_source_timestamp"`
-}
-
 type exportDatasetSpec struct {
 	name             string
 	view             string
@@ -1225,17 +1214,6 @@ func exportDatasetSpecByName(definitions []exportDatasetSpec) map[string]exportD
 	return specs
 }
 
-func exportDatasetViewMigrationStatements(migrationVersion int) []string {
-	var statements []string
-	for _, definition := range exportDatasetDefinitions {
-		if definition.migrationVersion != migrationVersion {
-			continue
-		}
-		statements = append(statements, exportDatasetViewMigrationStatement(definition))
-	}
-	return statements
-}
-
 func exportDatasetViewMigrationStatement(spec exportDatasetSpec) string {
 	return fmt.Sprintf("CREATE VIEW %s AS\n%s", spec.view, strings.TrimSpace(spec.viewSQL))
 }
@@ -1641,10 +1619,6 @@ func writeExportFile(rows []exportRow, spec exportDatasetSpec, format, path stri
 	return closeErr
 }
 
-func writeDailyStepsExportFile(rows []dailyStepsExportRow, format, path string) error {
-	return writeExportFile(dailyStepsExportRowsToExportRows(rows), exportDatasetSpecs["daily-steps"], format, path)
-}
-
 // errExportOutputSymlink reports that --output names a symbolic link. The
 // export writer refuses such paths so it never chmods or truncates the link
 // target; the caller surfaces this as a flag-invalid failure.
@@ -1695,10 +1669,6 @@ func writeExport(rows []exportRow, spec exportDatasetSpec, format string, writer
 	}
 }
 
-func writeDailyStepsExport(rows []dailyStepsExportRow, format string, writer io.Writer) error {
-	return writeExport(dailyStepsExportRowsToExportRows(rows), exportDatasetSpecs["daily-steps"], format, writer)
-}
-
 func writeExportCSV(rows []exportRow, spec exportDatasetSpec, writer io.Writer) error {
 	csvWriter := csv.NewWriter(writer)
 	if err := csvWriter.Write(exportFieldNames(spec)); err != nil {
@@ -1711,10 +1681,6 @@ func writeExportCSV(rows []exportRow, spec exportDatasetSpec, writer io.Writer) 
 	}
 	csvWriter.Flush()
 	return csvWriter.Error()
-}
-
-func writeDailyStepsCSV(rows []dailyStepsExportRow, writer io.Writer) error {
-	return writeExportCSV(dailyStepsExportRowsToExportRows(rows), exportDatasetSpecs["daily-steps"], writer)
 }
 
 func writeExportJSONL(rows []exportRow, spec exportDatasetSpec, writer io.Writer) error {
@@ -1763,37 +1729,12 @@ func writeExportJSONL(rows []exportRow, spec exportDatasetSpec, writer io.Writer
 	return nil
 }
 
-func writeDailyStepsJSONL(rows []dailyStepsExportRow, writer io.Writer) error {
-	return writeExportJSONL(dailyStepsExportRowsToExportRows(rows), exportDatasetSpecs["daily-steps"], writer)
-}
-
-func dailyStepsExportFields() []string {
-	return exportFieldNames(exportDatasetSpecs["daily-steps"])
-}
-
 func exportFieldNames(spec exportDatasetSpec) []string {
 	fields := make([]string, 0, len(spec.fields))
 	for _, field := range spec.fields {
 		fields = append(fields, field.name)
 	}
 	return fields
-}
-
-func dailyStepsExportRowsToExportRows(rows []dailyStepsExportRow) []exportRow {
-	out := make([]exportRow, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, exportRow{
-			row.ProviderName,
-			row.ConnectionID,
-			row.CivilDate,
-			strconv.FormatInt(row.StepCount, 10),
-			row.SourceKind,
-			row.SourceFamilyFilter,
-			strconv.FormatInt(row.SourceRecordCount, 10),
-			row.LatestSourceTimestamp,
-		})
-	}
-	return out
 }
 
 func exportRows(archivePath string, spec exportDatasetSpec) ([]exportRow, error) {

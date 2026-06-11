@@ -9,14 +9,6 @@ type syncRunExecutor struct {
 // the whole sync pipeline. Production always uses openHealthArchiveWriter.
 var healthArchiveWriterOpenerForTest = openHealthArchiveWriter
 
-func syncSetup(options syncCommandOptions) (syncResult, error) {
-	return syncSetupWithRuntime(options, productionRuntimeAdapters())
-}
-
-func syncSetupWithRuntime(options syncCommandOptions, runtime runtimeAdapters) (syncResult, error) {
-	return (syncRunExecutor{runtime: runtime}).Execute(options)
-}
-
 // preflightFailureResult shapes the syncResult returned when the gate
 // rejects an invocation. Status is always sync_failed (never the empty
 // string, per the JSON wire-shape AC); SyncRunID is unset so the JSON

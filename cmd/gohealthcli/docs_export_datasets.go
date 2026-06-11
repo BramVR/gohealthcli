@@ -13,16 +13,18 @@ import (
 // PRD #144 slice 4 (issue #165): the README's "Normalized export
 // datasets" section must be a pure projection of
 // exportDatasetCatalogSingleton.Names() so the prose and the binary
-// cannot drift. This file owns three small seams the make target and
-// the drift test both call:
+// cannot drift. This file owns the seams the make target calls:
 //
 //   - renderExportDatasetsBlock(names) — the markdown shape (sorted,
 //     one bullet per name, deterministic newlines).
 //   - spliceREADMEExportDatasets(content, block) — the byte-level
 //     rewrite between the stable markers; errors loudly when markers
 //     are absent so we never overwrite the wrong region.
-//   - extractREADMEExportDatasetsBlock(content) — the read side, used
-//     by the drift test to compare committed bytes to a fresh render.
+//
+// The read side (extractREADMEExportDatasetsBlock and
+// parseExportDatasetBlockNames) lives in docs_export_datasets_test.go:
+// only the drift guard reads the committed block back, so the binary
+// carries no dead extraction code.
 //
 // runDocsExportDatasets is the hidden subcommand wiring; the registry
 // entry lives in commands.go alongside the user-facing surface. The
@@ -106,57 +108,6 @@ func spliceREADMEExportDatasets(content, block string) (string, error) {
 		return "", err
 	}
 	return content[:bodyStart] + block + content[endIdx:], nil
-}
-
-// extractREADMEExportDatasetsBlock returns the bytes currently sitting
-// between the two markers in the input content. Used by the drift
-// guard test to compare committed bytes to a fresh render.
-func extractREADMEExportDatasetsBlock(content string) (string, error) {
-	bodyStart, endIdx, err := locateExportDatasetsRegion(content)
-	if err != nil {
-		return "", err
-	}
-	return content[bodyStart:endIdx], nil
-}
-
-// parseExportDatasetBlockNames pulls the inline-code names out of a
-// rendered block. Used by the drift guard to surface a useful "missing
-// X, extra Y" diff when the byte-equality check is too coarse to
-// pinpoint the drift. The bullet shape is strict — `- ` + backtick +
-// name + backtick + end-of-line, with no trailing characters — so a
-// hand-edit that breaks the contract (a name without backticks, a
-// stray trailing token, a missing closing backtick) is rejected loudly via the
-// returned non-nil error rather than silently producing a misleading
-// name list. Empty lines are tolerated so the helper composes with a
-// trailing-newline block.
-func parseExportDatasetBlockNames(block string) ([]string, error) {
-	var out []string
-	for lineNum, line := range strings.Split(block, "\n") {
-		if line == "" {
-			continue
-		}
-		rest, ok := strings.CutPrefix(line, "- `")
-		if !ok {
-			return nil, fmt.Errorf("line %d: expected `- `<name>``, got %q", lineNum+1, line)
-		}
-		name, ok := strings.CutSuffix(rest, "`")
-		if !ok {
-			return nil, fmt.Errorf("line %d: missing closing backtick: %q", lineNum+1, line)
-		}
-		if name == "" {
-			return nil, fmt.Errorf("line %d: empty dataset name", lineNum+1)
-		}
-		if strings.ContainsAny(name, "` ") {
-			// A stray space or extra backtick inside the inline-code
-			// span is structurally invalid for the auto-generated
-			// shape; the byte-equality drift guard catches the same
-			// shape error, but rejecting here keeps the
-			// "missing X, extra Y" diagnostic honest.
-			return nil, fmt.Errorf("line %d: malformed dataset name %q", lineNum+1, name)
-		}
-		out = append(out, name)
-	}
-	return out, nil
 }
 
 // runDocsExportDatasets is the hidden subcommand the `make
