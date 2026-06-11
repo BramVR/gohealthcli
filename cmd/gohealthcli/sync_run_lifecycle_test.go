@@ -788,7 +788,7 @@ func stubFinalizeSleeper(t *testing.T) {
 	t.Cleanup(func() { finalizeSyncRunSleeper = prev })
 }
 
-func (writer *fakeFinishRetryWriter) FinishSyncRun(id int64, status string, seenCount, newCount, updatedCount int, finishedAt, errorSummary string) error {
+func (writer *fakeFinishRetryWriter) FinishSyncRun(finish syncRunFinish) error {
 	writer.finishCallCounter++
 	if writer.finishCallsObserved != nil {
 		*writer.finishCallsObserved = writer.finishCallCounter
@@ -796,5 +796,5 @@ func (writer *fakeFinishRetryWriter) FinishSyncRun(id int64, status string, seen
 	if writer.finishCallCounter <= writer.finishBusyAttempts {
 		return errors.New("database is locked")
 	}
-	return writer.healthArchiveWriter.FinishSyncRun(id, status, seenCount, newCount, updatedCount, finishedAt, errorSummary)
+	return writer.healthArchiveWriter.FinishSyncRun(finish)
 }

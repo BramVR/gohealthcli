@@ -207,7 +207,14 @@ func TestFinalizeAfterFenceConvergesToTrueTerminalStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	syncRunID, err := writer.StartSyncRun(connection, []string{"steps"}, "2026-06-01", "2026-06-10", "list", "", "2026-06-10T11:00:00Z")
+	syncRunID, err := writer.StartSyncRun(syncRunStart{
+		Connection:     connection,
+		DataTypes:      []string{"steps"},
+		From:           "2026-06-01",
+		To:             "2026-06-10",
+		EndpointFamily: "list",
+		StartedAt:      "2026-06-10T11:00:00Z",
+	})
 	if err != nil {
 		t.Fatalf("StartSyncRun: %v", err)
 	}
@@ -222,7 +229,12 @@ func TestFinalizeAfterFenceConvergesToTrueTerminalStatus(t *testing.T) {
 
 	// A late heartbeat from the still-alive process must NOT
 	// resurrect the fenced row to sync_running.
-	if err := writer.HeartbeatSyncRun(syncRunID, 10, 10, 0, "2026-06-10T12:00:30Z"); err != nil {
+	if err := writer.HeartbeatSyncRun(syncRunHeartbeat{
+		SyncRunID: syncRunID,
+		SeenCount: 10,
+		NewCount:  10,
+		At:        "2026-06-10T12:00:30Z",
+	}); err != nil {
 		t.Fatalf("late heartbeat: %v", err)
 	}
 	afterHeartbeat := probeSyncRunRow(t, archivePath, syncRunID)
@@ -301,7 +313,14 @@ func TestFenceNeverAdvancesTheSyncCursor(t *testing.T) {
 		t.Fatalf("seed cursor: %v", err)
 	}
 	// An orphaned run covering a LATER range dies without heartbeats.
-	if _, err := writer.StartSyncRun(connection, []string{"steps"}, "2026-06-08", "2026-06-10", "list", "", "2026-06-10T11:00:00Z"); err != nil {
+	if _, err := writer.StartSyncRun(syncRunStart{
+		Connection:     connection,
+		DataTypes:      []string{"steps"},
+		From:           "2026-06-08",
+		To:             "2026-06-10",
+		EndpointFamily: "list",
+		StartedAt:      "2026-06-10T11:00:00Z",
+	}); err != nil {
 		t.Fatalf("StartSyncRun: %v", err)
 	}
 

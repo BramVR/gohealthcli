@@ -153,7 +153,15 @@ func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
 		ResumedFromCursor: resumedFromCursor,
 	}
 	startedAt := runtime.now().UTC().Format(time.RFC3339)
-	syncRunID, err := archive.StartSyncRun(connection, options.dataTypes, options.from, options.to, result.EndpointFamily, result.SourceFamily, startedAt)
+	syncRunID, err := archive.StartSyncRun(syncRunStart{
+		Connection:         connection,
+		DataTypes:          options.dataTypes,
+		From:               options.from,
+		To:                 options.to,
+		EndpointFamily:     result.EndpointFamily,
+		SourceFamilyFilter: result.SourceFamily,
+		StartedAt:          startedAt,
+	})
 	if err != nil {
 		// StartSyncRun failed before any audit row was written: no
 		// SyncRunID to populate. The status enum stays well-defined
@@ -186,7 +194,13 @@ func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
 		var snapshot syncResult
 		applyGoogleHealthIngestionCounts(&snapshot, counts)
 		seen, newCount, updated := syncResultTotalCounts(snapshot)
-		_ = archive.HeartbeatSyncRun(syncRunID, seen, newCount, updated, runtime.now().UTC().Format(time.RFC3339))
+		_ = archive.HeartbeatSyncRun(syncRunHeartbeat{
+			SyncRunID:    syncRunID,
+			SeenCount:    seen,
+			NewCount:     newCount,
+			UpdatedCount: updated,
+			At:           runtime.now().UTC().Format(time.RFC3339),
+		})
 	}
 	ingestionRequest.refreshAccessToken = connectionAccess.MidRunTokenRefresher()
 	ingestionResult, err := ingestion.Execute(archive, ingestionRequest)
@@ -284,7 +298,15 @@ func (lifecycle syncRunLifecycle) finalize(archive healthArchiveWriter, result s
 	// budget+backoff because if the original finalize lost the lock,
 	// the recovery write almost certainly hits the same contention.
 	recoveryErr := retryFinalizeSyncRunOnBusyWithSleep(finalizeSyncRunRetryBudget, finalizeSyncRunSleeper, func() error {
-		return archive.FinishSyncRun(syncRunID, recoveryStatus, seen, newCount, updated, now, result.Message)
+		return archive.FinishSyncRun(syncRunFinish{
+			SyncRunID:    syncRunID,
+			Status:       recoveryStatus,
+			SeenCount:    seen,
+			NewCount:     newCount,
+			UpdatedCount: updated,
+			FinishedAt:   now,
+			ErrorSummary: result.Message,
+		})
 	})
 	if recoveryErr != nil {
 		// Finding 3: errors.Join preserves BOTH typed chains —
