@@ -3190,17 +3190,14 @@ func parseGoogleHealthDataPoint(connection archivedConnection, dataType string, 
 	if dataType == "steps" {
 		return parseGoogleHealthStepsDataPoint(connection, rawPoint, sourceFamilyFilter)
 	}
-	if googleHealthIntervalDataPointJSONField(dataType) != "" {
-		return parseGoogleHealthIntervalDataPoint(connection, dataType, rawPoint, sourceFamilyFilter)
+	if jsonField, recordKind, ok := googleHealthIntervalShapedDataPointShape(dataType); ok {
+		return parseGoogleHealthIntervalShapedDataPoint(connection, dataType, rawPoint, sourceFamilyFilter, jsonField, recordKind)
 	}
 	if googleHealthSampleDataPointJSONField(dataType) != "" {
 		return parseGoogleHealthSampleDataPoint(connection, dataType, rawPoint, sourceFamilyFilter)
 	}
 	if googleHealthDailyDataPointJSONField(dataType) != "" {
 		return parseGoogleHealthDailyDataPoint(connection, dataType, rawPoint, sourceFamilyFilter)
-	}
-	if googleHealthSessionDataPointJSONField(dataType) != "" {
-		return parseGoogleHealthSessionDataPoint(connection, dataType, rawPoint, sourceFamilyFilter)
 	}
 	return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not supported", dataType)
 }
@@ -3314,7 +3311,12 @@ func parseGoogleHealthStepsDataPoint(connection archivedConnection, rawPoint jso
 	}, nil
 }
 
-func parseGoogleHealthIntervalDataPoint(connection archivedConnection, dataType string, rawPoint json.RawMessage, sourceFamilyFilter string) (archivedDataPoint, error) {
+// parseGoogleHealthIntervalShapedDataPoint is the single parser for
+// the interval-shaped Data Point kinds (steps, interval, session).
+// The Data Type catalog supplies the two values the kinds differ in:
+// the JSON field holding the upstream value object and the record
+// kind stored on the archived row (#278).
+func parseGoogleHealthIntervalShapedDataPoint(connection archivedConnection, dataType string, rawPoint json.RawMessage, sourceFamilyFilter, jsonField, recordKind string) (archivedDataPoint, error) {
 	canonicalRaw, err := compactJSONString(rawPoint)
 	if err != nil {
 		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not valid JSON", dataType)
@@ -3323,15 +3325,14 @@ func parseGoogleHealthIntervalDataPoint(connection archivedConnection, dataType 
 	if err != nil {
 		return archivedDataPoint{}, err
 	}
-	jsonField := googleHealthIntervalDataPointJSONField(dataType)
-	rawInterval, ok := envelope.fields[jsonField]
-	if !ok || len(rawInterval) == 0 || string(rawInterval) == "null" {
+	rawValue, ok := envelope.fields[jsonField]
+	if !ok || len(rawValue) == 0 || string(rawValue) == "null" {
 		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point missing %s value", dataType, jsonField)
 	}
 	var value struct {
 		Interval googleHealthIntervalFields `json:"interval"`
 	}
-	if err := json.Unmarshal(rawInterval, &value); err != nil {
+	if err := json.Unmarshal(rawValue, &value); err != nil {
 		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point %s is not valid JSON", dataType, jsonField)
 	}
 	interval, err := parseGoogleHealthIntervalMetadata(dataType, value.Interval)
@@ -3343,7 +3344,7 @@ func parseGoogleHealthIntervalDataPoint(connection archivedConnection, dataType 
 		connectionID:         connection.id,
 		dataType:             dataType,
 		upstreamResourceName: envelope.upstreamResourceName(),
-		recordKind:           "interval",
+		recordKind:           recordKind,
 		startTimeUTC:         interval.startTimeUTC,
 		endTimeUTC:           interval.endTimeUTC,
 		startCivilTime:       interval.startCivilTime,
@@ -3445,48 +3446,6 @@ func parseGoogleHealthDailyDataPoint(connection archivedConnection, dataType str
 		upstreamResourceName: envelope.upstreamResourceName(),
 		recordKind:           "daily",
 		providerCivilDate:    providerCivilDate,
-		dataSourceJSON:       envelope.dataSourceJSON,
-		sourceFamilyFilter:   sourceFamilyFilter,
-		rawJSON:              canonicalRaw,
-	}, nil
-}
-
-func parseGoogleHealthSessionDataPoint(connection archivedConnection, dataType string, rawPoint json.RawMessage, sourceFamilyFilter string) (archivedDataPoint, error) {
-	canonicalRaw, err := compactJSONString(rawPoint)
-	if err != nil {
-		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not valid JSON", dataType)
-	}
-	envelope, err := parseGoogleHealthDataPointEnvelope(dataType, rawPoint)
-	if err != nil {
-		return archivedDataPoint{}, err
-	}
-	jsonField := googleHealthSessionDataPointJSONField(dataType)
-	rawSession, ok := envelope.fields[jsonField]
-	if !ok || len(rawSession) == 0 || string(rawSession) == "null" {
-		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point missing %s value", dataType, jsonField)
-	}
-	var session struct {
-		Interval googleHealthIntervalFields `json:"interval"`
-	}
-	if err := json.Unmarshal(rawSession, &session); err != nil {
-		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point %s is not valid JSON", dataType, jsonField)
-	}
-	interval, err := parseGoogleHealthIntervalMetadata(dataType, session.Interval)
-	if err != nil {
-		return archivedDataPoint{}, err
-	}
-	return archivedDataPoint{
-		providerName:         connection.providerName,
-		connectionID:         connection.id,
-		dataType:             dataType,
-		upstreamResourceName: envelope.upstreamResourceName(),
-		recordKind:           "session",
-		startTimeUTC:         interval.startTimeUTC,
-		endTimeUTC:           interval.endTimeUTC,
-		startCivilTime:       interval.startCivilTime,
-		endCivilTime:         interval.endCivilTime,
-		providerCivilDate:    interval.providerCivilDate,
-		timezoneMetadataJSON: interval.timezoneMetadataJSON,
 		dataSourceJSON:       envelope.dataSourceJSON,
 		sourceFamilyFilter:   sourceFamilyFilter,
 		rawJSON:              canonicalRaw,

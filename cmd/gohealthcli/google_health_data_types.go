@@ -517,12 +517,22 @@ func googleHealthSampleDataPointJSONField(dataType string) string {
 	return entry.JSONField
 }
 
-func googleHealthIntervalDataPointJSONField(dataType string) string {
-	entry, ok := googleHealthDataTypes.Lookup(dataType)
-	if !ok || entry.Parser != "interval" {
-		return ""
+// googleHealthIntervalShapedDataPointShape returns the JSON field
+// accessor and record kind for Data Types served by the shared
+// interval-shaped Data Point parser (the interval and session shapes,
+// including steps). ok is false for Data Types parsed by the sample or
+// daily parsers and for Data Types without a parser shape.
+func googleHealthIntervalShapedDataPointShape(dataType string) (jsonField, recordKind string, ok bool) {
+	entry, found := googleHealthDataTypes.Lookup(dataType)
+	if !found || entry.JSONField == "" {
+		return "", "", false
 	}
-	return entry.JSONField
+	switch entry.Parser {
+	case "interval", "session":
+		return entry.JSONField, entry.RecordKind, true
+	default:
+		return "", "", false
+	}
 }
 
 type googleHealthDailyDataPointShape struct {
@@ -544,14 +554,6 @@ func googleHealthDailyDataPointJSONField(dataType string) string {
 		return shape.jsonField
 	}
 	return ""
-}
-
-func googleHealthSessionDataPointJSONField(dataType string) string {
-	entry, ok := googleHealthDataTypes.Lookup(dataType)
-	if !ok || entry.Parser != "session" {
-		return ""
-	}
-	return entry.JSONField
 }
 
 // syncDataPointDataTypeSupported returns true if the catalog has at
