@@ -172,6 +172,9 @@ type recordingOAuthTransport struct {
 
 func (transport *recordingOAuthTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	transport.request = request
+	// The RoundTripper contract: the transport owns the request body
+	// and must close it, even on error.
+	defer request.Body.Close()
 	payload, err := io.ReadAll(request.Body)
 	if err != nil {
 		return nil, err
