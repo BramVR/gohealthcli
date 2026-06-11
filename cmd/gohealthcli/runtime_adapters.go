@@ -5,6 +5,12 @@ import (
 )
 
 type runtimeAdapters struct {
+	// httpDoer is the transport seam every Provider HTTP request rides
+	// (#281): the production adapter binds the shared timeout client
+	// (#271), tests bind a fake. Code paths that build requests receive
+	// this doer (directly or via providerGET()) instead of reading a
+	// package-level client.
+	httpDoer                       httpDoer
 	runOAuthFlow                   func(oauthClientConfig, []string, bool) (oauthTokenResponse, error)
 	refreshOAuthToken              func(oauthClientConfig, string, []string) (oauthTokenResponse, error)
 	openBrowser                    func(string) error
@@ -24,6 +30,7 @@ type runtimeAdapters struct {
 
 func productionRuntimeAdapters() runtimeAdapters {
 	return runtimeAdapters{
+		httpDoer:                       providerHTTPClient,
 		runOAuthFlow:                   runOAuthFlow,
 		refreshOAuthToken:              refreshOAuthToken,
 		openBrowser:                    openBrowser,
@@ -42,8 +49,23 @@ func productionRuntimeAdapters() runtimeAdapters {
 	}
 }
 
+// providerGET derives the shared Provider GET module from the adapters'
+// HTTP doer, so Identity Snapshot fetches ride whatever transport the
+// adapters carry (production: the shared timeout client; tests: a fake
+// doer). Retry seams stay nil — fetchWithRetry falls back to real
+// backoff sleeps; tests that need virtual sleeps construct the module
+// value directly.
+func (adapters runtimeAdapters) providerGET() providerGET {
+	return providerGET{doer: adapters.httpDoer}
+}
+
 func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
 	production := productionRuntimeAdapters()
+	// The doer resolves first: the closures bound below capture the
+	// adapters value and must see the injected (or defaulted) doer.
+	if adapters.httpDoer == nil {
+		adapters.httpDoer = production.httpDoer
+	}
 	if adapters.openBrowser == nil {
 		adapters.openBrowser = production.openBrowser
 	}
@@ -60,14 +82,26 @@ func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
 			return refreshGoogleOAuthTokenWithRuntime(client, refreshToken, fallbackScopes, adapters)
 		}
 	}
+	// Nil fetchers default to the real fetcher bodies routed through the
+	// adapters' (possibly injected) doer, so runtimeAdapters{httpDoer:
+	// fake} exercises production URL building, headers, and status
+	// mapping against the fake transport. The production dispatch path
+	// never reaches these branches: productionRuntimeAdapters binds the
+	// package-level seams explicitly.
 	if adapters.fetchIdentity == nil {
-		adapters.fetchIdentity = production.fetchIdentity
+		adapters.fetchIdentity = func(accessToken string) (googleIdentity, error) {
+			return fetchGoogleIdentity(adapters.providerGET(), accessToken)
+		}
 	}
 	if adapters.fetchProfile == nil {
-		adapters.fetchProfile = production.fetchProfile
+		adapters.fetchProfile = func(accessToken string) (googleProfile, error) {
+			return fetchGoogleProfile(adapters.providerGET(), accessToken)
+		}
 	}
 	if adapters.fetchRawProvider == nil {
-		adapters.fetchRawProvider = production.fetchRawProvider
+		adapters.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+			return fetchGoogleHealthRaw(adapters.httpDoer, request, accessToken)
+		}
 	}
 	if adapters.currentOS == "" {
 		adapters.currentOS = production.currentOS

@@ -15,9 +15,12 @@ type googlePairedDevices struct {
 	rawJSON string
 }
 
-// fetchPairedDevices is the seam tests stub. Production uses
-// fetchGooglePairedDevices.
-var fetchPairedDevices = fetchGooglePairedDevices
+// fetchPairedDevices is the seam tests stub. Production binds the real
+// fetchGooglePairedDevices over the production Provider GET module
+// (shared timeout client as the HTTP doer, #281).
+var fetchPairedDevices = func(accessToken string) (googlePairedDevices, error) {
+	return fetchGooglePairedDevices(productionProviderGET(), accessToken)
+}
 
 type devicesResult struct {
 	Status             string                `json:"status"`
@@ -102,9 +105,10 @@ var devicesSnapshotCommand = identitySnapshotCommandSpec[devicesResult, googlePa
 // fetchGooglePairedDevices is a thin call site over the shared
 // Provider GET module (provider_get.go, issue #280), which owns the
 // transport behavior: bearer auth, size limit, timeout, typed labeled
-// status errors, JSON validity, and retry/Retry-After.
-func fetchGooglePairedDevices(accessToken string) (googlePairedDevices, error) {
-	body, err := fetchProviderJSON(googleHealthPairedDevicesURL, "pairedDevices", accessToken)
+// status errors, JSON validity, and retry/Retry-After. The module
+// value carries the HTTP doer (#281).
+func fetchGooglePairedDevices(get providerGET, accessToken string) (googlePairedDevices, error) {
+	body, err := fetchProviderJSON(get, googleHealthPairedDevicesURL, "pairedDevices", accessToken)
 	if err != nil {
 		return googlePairedDevices{}, err
 	}

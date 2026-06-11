@@ -412,9 +412,24 @@ type archivedRollup struct {
 
 var runOAuthFlow = runBrowserOAuthFlow
 var refreshOAuthToken = refreshGoogleOAuthToken
-var fetchIdentity = fetchGoogleIdentity
-var fetchProfile = fetchGoogleProfile
-var fetchRawProvider = fetchGoogleHealthRaw
+
+// fetchIdentity and fetchProfile bind the real fetchers over the
+// production Provider GET module (shared timeout client as the HTTP
+// doer, #281). They remain package-level seams the connect/doctor test
+// fixtures swap until the runtime adapters absorb them.
+var fetchIdentity = func(accessToken string) (googleIdentity, error) {
+	return fetchGoogleIdentity(productionProviderGET(), accessToken)
+}
+var fetchProfile = func(accessToken string) (googleProfile, error) {
+	return fetchGoogleProfile(productionProviderGET(), accessToken)
+}
+
+// fetchRawProvider binds the real raw Provider fetch over the shared
+// timeout client. Like fetchIdentity/fetchProfile above, it remains a
+// package-level seam until the runtime adapters absorb it.
+var fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	return fetchGoogleHealthRaw(providerHTTPClient, request, accessToken)
+}
 var currentTime = func() time.Time { return time.Now().UTC() }
 var currentOS = runtime.GOOS
 var runSecurityAddGenericPassword = runSecurityAddGenericPasswordCommand
@@ -2577,6 +2592,24 @@ func waitForOAuthCode(listener net.Listener, wantState string) (string, error) {
 	return outcome.code, outcome.err
 }
 
+// postOAuthForm posts url-encoded OAuth form values through the
+// runtime's HTTP doer, mirroring (*http.Client).PostForm. A nil doer
+// (callers that only set now, mirroring the nil-now fallback above)
+// falls back to the shared timeout client — never the process-wide
+// default client, which carries no deadline (#281).
+func postOAuthForm(runtime runtimeAdapters, tokenURI string, values url.Values) (*http.Response, error) {
+	doer := runtime.httpDoer
+	if doer == nil {
+		doer = providerHTTPClient
+	}
+	request, err := http.NewRequest(http.MethodPost, tokenURI, strings.NewReader(values.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return doer.Do(request)
+}
+
 func exchangeOAuthCodeWithRuntime(client oauthClientConfig, redirectURI, code, verifier string, runtime runtimeAdapters) (oauthTokenResponse, error) {
 	if runtime.now == nil {
 		runtime.now = currentTime
@@ -2588,7 +2621,7 @@ func exchangeOAuthCodeWithRuntime(client oauthClientConfig, redirectURI, code, v
 	values.Set("code_verifier", verifier)
 	values.Set("grant_type", "authorization_code")
 	values.Set("redirect_uri", redirectURI)
-	response, err := providerHTTPClient.PostForm(client.tokenURI, values)
+	response, err := postOAuthForm(runtime, client.tokenURI, values)
 	if err != nil {
 		return oauthTokenResponse{}, err
 	}
@@ -2616,7 +2649,7 @@ func refreshGoogleOAuthTokenWithRuntime(client oauthClientConfig, refreshToken s
 	values.Set("client_secret", client.clientSecret)
 	values.Set("refresh_token", refreshToken)
 	values.Set("grant_type", "refresh_token")
-	response, err := providerHTTPClient.PostForm(client.tokenURI, values)
+	response, err := postOAuthForm(runtime, client.tokenURI, values)
 	if err != nil {
 		return oauthTokenResponse{}, err
 	}
@@ -2727,10 +2760,11 @@ func parseOAuthRefreshTokenResponse(body []byte, now time.Time, fallbackRefreshT
 // fetchGoogleIdentity is a thin call site over the shared Provider GET
 // module (provider_get.go, issue #280), which owns the transport
 // behavior: bearer auth, size limit, timeout, typed labeled status
-// errors, JSON validity, and retry/Retry-After. Identity-shape
-// validation stays in parseGoogleIdentity.
-func fetchGoogleIdentity(accessToken string) (googleIdentity, error) {
-	body, err := fetchProviderJSON(googleHealthIdentityURL, "identity", accessToken)
+// errors, JSON validity, and retry/Retry-After. The module value
+// carries the HTTP doer (#281). Identity-shape validation stays in
+// parseGoogleIdentity.
+func fetchGoogleIdentity(get providerGET, accessToken string) (googleIdentity, error) {
+	body, err := fetchProviderJSON(get, googleHealthIdentityURL, "identity", accessToken)
 	if err != nil {
 		return googleIdentity{}, err
 	}
@@ -2740,10 +2774,11 @@ func fetchGoogleIdentity(accessToken string) (googleIdentity, error) {
 // fetchGoogleProfile is a thin call site over the shared Provider GET
 // module (provider_get.go, issue #280), which owns the transport
 // behavior: bearer auth, size limit, timeout, typed labeled status
-// errors, JSON validity, and retry/Retry-After. Profile-shape
-// validation stays in parseGoogleProfile.
-func fetchGoogleProfile(accessToken string) (googleProfile, error) {
-	body, err := fetchProviderJSON(googleHealthProfileURL, "profile", accessToken)
+// errors, JSON validity, and retry/Retry-After. The module value
+// carries the HTTP doer (#281). Profile-shape validation stays in
+// parseGoogleProfile.
+func fetchGoogleProfile(get providerGET, accessToken string) (googleProfile, error) {
+	body, err := fetchProviderJSON(get, googleHealthProfileURL, "profile", accessToken)
 	if err != nil {
 		return googleProfile{}, err
 	}
@@ -2925,7 +2960,11 @@ func googleHealthFilterValue(field, value string) (string, error) {
 	return "", errors.New("expected YYYY-MM-DD or RFC3339")
 }
 
-func fetchGoogleHealthRaw(request rawProviderRequest, accessToken string) ([]byte, error) {
+// fetchGoogleHealthRaw is the single-attempt raw Provider fetch. The
+// HTTP doer is injected (#281): production binds the shared timeout
+// client via the fetchRawProvider seam and the runtime adapters; tests
+// bind a fake doer to exercise this body directly.
+func fetchGoogleHealthRaw(doer httpDoer, request rawProviderRequest, accessToken string) ([]byte, error) {
 	method := request.method
 	if method == "" {
 		method = http.MethodGet
@@ -2943,7 +2982,7 @@ func fetchGoogleHealthRaw(request rawProviderRequest, accessToken string) ([]byt
 	if len(request.body) != 0 {
 		httpRequest.Header.Set("Content-Type", "application/json")
 	}
-	response, err := providerHTTPClient.Do(httpRequest)
+	response, err := doer.Do(httpRequest)
 	if err != nil {
 		return nil, err
 	}
