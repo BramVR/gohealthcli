@@ -105,6 +105,89 @@ func TestHealthArchiveWriterRecordsDataPointRevisionsRollupsAndSyncRun(t *testin
 	assertSyncRunForDataType(t, archivePath, syncRunID, "sync_completed", "steps", "list", 4, 2, 2, "")
 }
 
+// TestSyncRunStartFinishRoundTripsDistinctCounts pins the seen/new/
+// updated mapping through the Sync Run start/finish writer chain with
+// three DISTINCT values, so a count transposition introduced while the
+// chain converts to parameter structs (#277) cannot pass unnoticed —
+// the sibling round-trip test above finishes with 4/2/2, where a
+// new/updated swap is invisible.
+func TestSyncRunStartFinishRoundTripsDistinctCounts(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	archive, err := openHealthArchiveWriter(archivePath)
+	if err != nil {
+		t.Fatalf("open Health Archive writer: %v", err)
+	}
+	defer archive.Close()
+	connection, err := archive.CurrentConnection()
+	if err != nil {
+		t.Fatalf("CurrentConnection: %v", err)
+	}
+	syncRunID, err := archive.StartSyncRun(connection, []string{"steps"}, "2026-01-01", "2026-01-02", "list", "", "2026-01-01T00:00:00Z")
+	if err != nil {
+		t.Fatalf("StartSyncRun: %v", err)
+	}
+	if err := archive.FinishSyncRun(syncRunID, "sync_completed", 7, 3, 2, "2026-01-01T00:00:06Z", ""); err != nil {
+		t.Fatalf("FinishSyncRun: %v", err)
+	}
+	assertSyncRunForDataType(t, archivePath, syncRunID, "sync_completed", "steps", "list", 7, 3, 2, "")
+}
+
+// TestSyncRunHeartbeatRoundTripsDistinctCounts pins the same trio
+// through the advisory HeartbeatSyncRun write: each count must land in
+// its own sync_runs column while the row stays sync_running, so the
+// #277 struct conversion cannot transpose what a concurrent
+// `sync --status` poller reads mid-run.
+func TestSyncRunHeartbeatRoundTripsDistinctCounts(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	archive, err := openHealthArchiveWriter(archivePath)
+	if err != nil {
+		t.Fatalf("open Health Archive writer: %v", err)
+	}
+	defer archive.Close()
+	connection, err := archive.CurrentConnection()
+	if err != nil {
+		t.Fatalf("CurrentConnection: %v", err)
+	}
+	syncRunID, err := archive.StartSyncRun(connection, []string{"steps"}, "2026-01-01", "2026-01-02", "list", "", "2026-01-01T00:00:00Z")
+	if err != nil {
+		t.Fatalf("StartSyncRun: %v", err)
+	}
+	if err := archive.HeartbeatSyncRun(syncRunID, 5, 2, 1, "2026-01-01T00:00:03Z"); err != nil {
+		t.Fatalf("HeartbeatSyncRun: %v", err)
+	}
+	row := probeSyncRunRow(t, archivePath, syncRunID)
+	if row.status != "sync_running" {
+		t.Fatalf("status = %q, want sync_running", row.status)
+	}
+	if row.seenCount != 5 || row.newCount != 2 || row.updatedCount != 1 {
+		t.Fatalf("heartbeat counts = seen %d / new %d / updated %d, want 5 / 2 / 1",
+			row.seenCount, row.newCount, row.updatedCount)
+	}
+	if !row.lastProgressAt.Valid || row.lastProgressAt.String != "2026-01-01T00:00:03Z" {
+		t.Fatalf("last_progress_at = %v(%q), want 2026-01-01T00:00:03Z", row.lastProgressAt.Valid, row.lastProgressAt.String)
+	}
+}
+
 // TestHealthArchiveWriterStoreAttachmentWritesSidecarRow pins the
 // archive impl of StoreAttachment (#107 slice D): it resolves the
 // upserted Data Point row, writes the bytes as a content-addressed
