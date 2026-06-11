@@ -300,3 +300,66 @@ func (transport countingFailingTransport) RoundTrip(*http.Request) (*http.Respon
 	*transport.attempts++
 	return nil, transport.err
 }
+
+// assertFetcherKeepsLabeledErrorMessages pins one Identity Snapshot
+// fetcher's historical error strings — the per-fetch label on a
+// non-2xx status and on an invalid-JSON body — so converting the
+// fetcher into a thin call site over the Provider GET module cannot
+// drift its user-facing messages (issue #280 AC).
+func assertFetcherKeepsLabeledErrorMessages(t *testing.T, label string, fetch func(accessToken string) error) {
+	t.Helper()
+	swapSharedProviderHTTPClient(t, &stubProviderTransport{status: 404, body: `{"error":"not found"}`})
+	err := fetch("test-access-token")
+	if want := "Google Health " + label + " request failed with HTTP 404"; err == nil || err.Error() != want {
+		t.Fatalf("status error = %v, want %q verbatim", err, want)
+	}
+
+	swapSharedProviderHTTPClient(t, &stubProviderTransport{status: 200, body: `{"truncated":`})
+	err = fetch("test-access-token")
+	if want := "Google Health " + label + " response is not valid JSON"; err == nil || err.Error() != want {
+		t.Fatalf("invalid-JSON error = %v, want %q verbatim", err, want)
+	}
+}
+
+// assertFetcherRetriesTransient503 drives one Identity Snapshot
+// fetcher against a Provider that fails once with a 503 and then
+// recovers, proving the fetcher rides the shared Provider GET module's
+// retry instead of carrying its own single-shot transport (issue #280).
+func assertFetcherRetriesTransient503(t *testing.T, happyBody string, fetch func(accessToken string) (string, error)) {
+	t.Helper()
+	transport := &sequencedProviderTransport{responses: []stubProviderResponse{
+		{status: 503, body: `{"error":"unavailable"}`},
+		{status: 200, body: happyBody},
+	}}
+	swapSharedProviderHTTPClient(t, transport)
+	var sleeps []time.Duration
+	swapSharedProviderGETRetrySeams(t, &sleeps)
+
+	rawJSON, err := fetch("test-access-token")
+	if err != nil {
+		t.Fatalf("fetcher = %v, want success after one transient 503 retry", err)
+	}
+	if rawJSON != happyBody {
+		t.Fatalf("rawJSON = %q, want the recovered payload %q", rawJSON, happyBody)
+	}
+	if transport.served != 2 {
+		t.Fatalf("Provider served %d requests, want 2 (one 503 then recovery)", transport.served)
+	}
+	if len(sleeps) != 1 {
+		t.Fatalf("sleeps = %v, want exactly one backoff between the attempts", sleeps)
+	}
+}
+
+func TestPairedDevicesFetcherKeepsLabeledErrorMessages(t *testing.T) {
+	assertFetcherKeepsLabeledErrorMessages(t, "pairedDevices", func(accessToken string) error {
+		_, err := fetchGooglePairedDevices(accessToken)
+		return err
+	})
+}
+
+func TestPairedDevicesFetcherRetriesTransientFailures(t *testing.T) {
+	assertFetcherRetriesTransient503(t, `{"devices":[]}`, func(accessToken string) (string, error) {
+		devices, err := fetchGooglePairedDevices(accessToken)
+		return devices.rawJSON, err
+	})
+}

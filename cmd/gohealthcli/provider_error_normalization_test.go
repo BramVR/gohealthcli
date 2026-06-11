@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+	"time"
 )
 
 // installDevicesProviderFailure points the paired-devices Identity
@@ -81,11 +82,15 @@ func TestDevicesEmitsProviderUnreachableOnNetworkFailure(t *testing.T) {
 // 503 (via the shared Provider HTTP client's stub transport). The
 // fetcher must surface the typed upstream HTTP error so the
 // translation layer classifies the failure as provider_unreachable —
-// not the generic devices_failed — and the message keeps its
-// endpoint-specific wording.
+// not the generic devices_failed. Since #280 the fetcher rides the
+// shared Provider GET module's bounded retry, so a persistent 503
+// exhausts the budget and the message reports the attempt count while
+// keeping its endpoint-specific wording inside the wrap.
 func TestDevicesEmitsProviderUnreachableOnProviderHTTPFailure(t *testing.T) {
 	configPath, archivePath := connectedDevicesFixture(t)
 	swapSharedProviderHTTPClient(t, &stubProviderTransport{status: 503, body: `{"error":"unavailable"}`})
+	var sleeps []time.Duration
+	swapSharedProviderGETRetrySeams(t, &sleeps)
 
 	stdout := new(bytes.Buffer)
 	code := run([]string{"devices", "--config", configPath, "--db", archivePath, "--json"}, stdout, new(bytes.Buffer))
@@ -97,7 +102,10 @@ func TestDevicesEmitsProviderUnreachableOnProviderHTTPFailure(t *testing.T) {
 		t.Fatalf("decode devices --json: %v\n%s", err, stdout.String())
 	}
 	assertJSONString(t, got, "status", "provider_unreachable")
-	assertJSONString(t, got, "message", "Google Health pairedDevices request failed with HTTP 503")
+	assertJSONString(t, got, "message", "Google Health request failed after 5 attempts: Google Health pairedDevices request failed with HTTP 503")
+	if len(sleeps) != googleHealthRetryMaxAttempts-1 {
+		t.Fatalf("sleeps = %d, want %d (devices rides the shared retry budget)", len(sleeps), googleHealthRetryMaxAttempts-1)
+	}
 }
 
 // TestFetchVerifiedIdentityPreservesTypedCauseChainOnUnauthorized pins
