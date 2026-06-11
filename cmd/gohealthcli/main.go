@@ -1638,7 +1638,7 @@ func profileSetupWithRuntime(configPath, archivePath string, runtime runtimeAdap
 	}
 	profile, err := runtime.fetchProfile(accessToken)
 	if err != nil {
-		return result, currentConnectionProviderError(err)
+		return result, normalizeProviderError(err)
 	}
 	profileHealthUserID := profile.healthUserID
 	if profileHealthUserID == "" {
@@ -1849,7 +1849,7 @@ func rawSetupWithRuntime(configPath, archivePath string, request rawProviderRequ
 	}
 	body, err := runtime.fetchRawProvider(request, accessToken)
 	if err != nil {
-		return nil, currentConnectionProviderError(err)
+		return nil, normalizeProviderError(err)
 	}
 	return body, nil
 }
@@ -3177,11 +3177,20 @@ func fetchGoogleHealthRaw(request rawProviderRequest, accessToken string) ([]byt
 // googleHealthHTTPError carries the upstream status code plus an optional
 // Retry-After hint. The ingestion retry middleware uses these to decide
 // whether to retry transient failures (429, 5xx) and how long to wait
-// before doing so. Other callers can still read the error string.
+// before doing so; the Provider error translation layer
+// (provider_error_normalization.go) reads StatusCode via errors.As to
+// detect auth rejections and provider_unreachable failures without
+// matching on message text (issue #272). Other callers can still read
+// the error string.
 type googleHealthHTTPError struct {
 	StatusCode int
 	RetryAfter time.Duration
 	Body       []byte
+	// endpoint labels which Provider request failed ("identity",
+	// "pairedDevices", ...) so each fetcher keeps its historical
+	// user-facing message verbatim. Empty means the raw Provider fetch
+	// path, whose message predates the label.
+	endpoint string
 }
 
 func (err *googleHealthHTTPError) Error() string {
@@ -3189,7 +3198,11 @@ func (err *googleHealthHTTPError) Error() string {
 	// bearer token in some error responses (covered by
 	// TestFetchGoogleHealthRawUsesBearerAndHidesErrorBody). Callers that
 	// need the body can read err.Body directly.
-	return fmt.Sprintf("Google Health raw request failed with HTTP %d", err.StatusCode)
+	label := err.endpoint
+	if label == "" {
+		label = "raw"
+	}
+	return fmt.Sprintf("Google Health %s request failed with HTTP %d", label, err.StatusCode)
 }
 
 // parseRetryAfter parses the Retry-After header. RFC 7231 allows either

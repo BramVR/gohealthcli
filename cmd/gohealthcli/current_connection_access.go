@@ -135,7 +135,7 @@ func wrapAutoRefreshFailure(err error) error {
 func (access currentConnectionAccess) FetchVerifiedIdentity(accessToken string) (googleIdentity, error) {
 	identity, err := access.runtime.fetchIdentity(accessToken)
 	if err != nil {
-		return googleIdentity{}, currentConnectionProviderError(err)
+		return googleIdentity{}, normalizeProviderError(err)
 	}
 	if err := access.RequireMatchingHealthUserID(identity.healthUserID); err != nil {
 		return googleIdentity{}, err
@@ -197,13 +197,6 @@ func accessTokenFromTokenMaterial(tokenMaterial map[string]any) (string, error) 
 		return "", errCurrentConnectionMissingAccessToken
 	}
 	return accessToken, nil
-}
-
-func currentConnectionProviderError(err error) error {
-	if strings.Contains(err.Error(), "HTTP 401") {
-		return errCurrentConnectionProviderUnauthorized
-	}
-	return err
 }
 
 func isCurrentConnectionIdentityMismatch(err error) bool {

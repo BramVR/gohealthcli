@@ -140,7 +140,7 @@ func irnProfileSetupWithRuntime(configPath, archivePath string, runtime runtimeA
 	}
 	irn, err := fetchIRNProfile(accessToken)
 	if err != nil {
-		return result, currentConnectionProviderError(err)
+		return result, normalizeProviderError(err)
 	}
 	fetchedAt := runtime.now().UTC().Format(time.RFC3339)
 	snapshotID, err := writeIdentitySnapshotHandoff(archive, archivePath, connection, "irn-profile", irn.rawJSON, fetchedAt)

@@ -199,14 +199,6 @@ func (provider *midRunRefreshIngestionProvider) Fetch(request rawProviderRequest
 	return provider.inner.Fetch(request, refreshed, cancelCh)
 }
 
-// isUnauthorizedHTTPError reports whether err is an upstream HTTP 401.
-// 401 is the only status that means "access token no longer valid";
-// 403 is a scope/authorization problem a fresh token cannot fix.
-func isUnauthorizedHTTPError(err error) bool {
-	var httpErr *googleHealthHTTPError
-	return errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusUnauthorized
-}
-
 func (ingestion googleHealthIngestion) Plan(request googleHealthIngestionRequest) (googleHealthIngestionPlan, error) {
 	entry, ok := googleHealthDataTypes.Lookup(request.dataType)
 	if !ok {

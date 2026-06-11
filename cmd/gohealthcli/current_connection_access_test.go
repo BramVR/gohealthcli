@@ -275,7 +275,9 @@ func TestCurrentConnectionAccessTokenScopeMissingNamesAddScopesRecovery(t *testi
 func TestCurrentConnectionAccessFetchVerifiedIdentityNormalizesUnauthorized(t *testing.T) {
 	runtime := productionRuntimeAdapters()
 	runtime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
-		return googleIdentity{}, errors.New("Google Health raw request failed with HTTP 401")
+		// Typed 401: the translation layer detects auth rejections via
+		// errors.As on the typed HTTP error, never message text (#272).
+		return googleIdentity{}, &googleHealthHTTPError{StatusCode: 401, endpoint: "identity"}
 	}
 	access := newCurrentConnectionAccessWithRuntime(
 		credentialStoreConfig{},
