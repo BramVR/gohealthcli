@@ -153,10 +153,9 @@ func TestProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 		}, nil
 	}
 
-	// profile reaches the Provider through runtime.fetchProfile (not the
-	// package-var seam) so the auto-refresh path's stub MUST live on the
-	// runtime adapters; setting the package var alone would leak the real
-	// HTTP fetchGoogleProfile into the test.
+	// profile reaches the Provider through runtime.fetchProfile, so the
+	// auto-refresh path's stub lives on the runtime adapters; without it
+	// the real HTTP fetchGoogleProfile would leak into the test.
 	var calledWithToken string
 	testRuntime.fetchProfile = func(accessToken string) (googleProfile, error) {
 		calledWithToken = accessToken

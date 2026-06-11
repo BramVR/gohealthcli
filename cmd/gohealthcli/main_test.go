@@ -5171,8 +5171,8 @@ func TestSyncReportsFailedWhenCompletionRecordFails(t *testing.T) {
 	// Wrap the writer so FinalizeSyncRun (the atomic sync_run+cursor write)
 	// fails when called for a sync_completed outcome. This exercises the
 	// CLI's "atomic finalize failed → recover-as-sync_failed" path without
-	// reaching into the legacy package-level indirection that the executor
-	// no longer routes through for completed runs.
+	// reaching past the adapters seam the executor routes every archive
+	// open through.
 	testRuntime.openHealthArchiveWriter = func(path string) (healthArchiveWriter, error) {
 		inner, err := openHealthArchiveWriter(path)
 		if err != nil {
@@ -7858,27 +7858,9 @@ func setArchiveUserVersion(t *testing.T, archivePath string, version int) {
 	}
 }
 
-func runConnectCommand(t *testing.T, configPath, archivePath string) int {
-	t.Helper()
-
-	stdout := new(bytes.Buffer)
-	stderr := new(bytes.Buffer)
-	code := run([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
-	if stdout.String() != "" {
-		var got map[string]any
-		if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
-			t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
-		}
-	}
-	if stderr.String() != "" {
-		t.Fatalf("stderr = %q, want empty", stderr.String())
-	}
-	return code
-}
-
-// runConnectCommandWithRuntime is the injected-adapters sibling of
-// runConnectCommand: fakes enter through the runtimeAdapters value
-// (built by newConnectFakeRuntime) instead of patched package state.
+// runConnectCommandWithRuntime runs a faked `connect` end-to-end:
+// fakes enter through the runtimeAdapters value (built by
+// newConnectFakeRuntime) instead of patched package state (#283).
 func runConnectCommandWithRuntime(t *testing.T, configPath, archivePath string, runtime runtimeAdapters) int {
 	t.Helper()
 

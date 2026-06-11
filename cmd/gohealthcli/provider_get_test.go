@@ -437,9 +437,9 @@ func TestProfileFetcherRetriesTransientFailures(t *testing.T) {
 
 // TestProductionProviderGETBindsSharedTimeoutClient pins the wiring
 // the doer conversion (#281) must not break: productionProviderGET —
-// the module value every package-level fetcher seam binds — carries
-// the shared timeout client as its doer, so production Identity
-// Snapshot fetches keep the #271 deadline.
+// the module value every production fetcher binds — carries the
+// shared timeout client as its doer, so production Identity Snapshot
+// fetches keep the #271 deadline.
 func TestProductionProviderGETBindsSharedTimeoutClient(t *testing.T) {
 	t.Parallel()
 	get := productionProviderGET()

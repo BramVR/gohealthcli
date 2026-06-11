@@ -137,8 +137,8 @@ func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
 	// adapters' (possibly injected) doer, so runtimeAdapters{httpDoer:
 	// fake} exercises production URL building, headers, and status
 	// mapping against the fake transport. The production dispatch path
-	// never reaches these branches: productionRuntimeAdapters binds the
-	// package-level seams explicitly.
+	// never reaches these branches: productionRuntimeAdapters binds
+	// every field to a concrete production function explicitly.
 	if adapters.fetchIdentity == nil {
 		adapters.fetchIdentity = func(accessToken string) (googleIdentity, error) {
 			return fetchGoogleIdentity(adapters.providerGET(), accessToken)
