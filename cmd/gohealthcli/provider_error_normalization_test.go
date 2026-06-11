@@ -124,6 +124,41 @@ func TestFetchVerifiedIdentityPreservesTypedCauseChainOnUnauthorized(t *testing.
 	}
 }
 
+// TestSyncIngestionNormalizesTypedUnauthorizedPreservingChain pins the
+// issue #272 chain AC on the Sync Run ingestion path: an upstream
+// typed HTTP 401 during pagination surfaces as the shared "run
+// `gohealthcli connect` again" category with the typed
+// googleHealthHTTPError still reachable via errors.As — instead of the
+// historical text-matched errors.New that discarded the cause chain.
+func TestSyncIngestionNormalizesTypedUnauthorizedPreservingChain(t *testing.T) {
+	archive := &fakeGoogleHealthIngestionArchive{}
+	provider := funcIngestionProvider(func(request rawProviderRequest, accessToken string) ([]byte, error) {
+		return nil, &googleHealthHTTPError{StatusCode: 401}
+	})
+	ingestion := midRunRefreshTestIngestion(t, provider)
+
+	_, err := ingestion.Execute(archive, googleHealthIngestionRequest{
+		connection:  archivedConnection{id: "googlehealth:111"},
+		dataType:    "steps",
+		from:        "2026-01-01T00:00:00Z",
+		to:          "2026-01-02T00:00:00Z",
+		accessToken: "revoked-access",
+	})
+	if err == nil {
+		t.Fatal("Execute returned nil, want normalized unauthorized error")
+	}
+	if !errors.Is(err, errCurrentConnectionProviderUnauthorized) {
+		t.Fatalf("err = %v, want errCurrentConnectionProviderUnauthorized category", err)
+	}
+	var httpErr *googleHealthHTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != 401 {
+		t.Fatalf("err = %v, want typed googleHealthHTTPError with status 401 preserved in the chain", err)
+	}
+	if err.Error() != errCurrentConnectionProviderUnauthorized.Error() {
+		t.Fatalf("err.Error() = %q, want the historical message %q verbatim", err.Error(), errCurrentConnectionProviderUnauthorized.Error())
+	}
+}
+
 // TestFetchVerifiedIdentityDoesNotMatchOnErrorText pins the issue #272
 // no-string-matching AC: an untyped error whose text merely mentions
 // "HTTP 401" is NOT a Provider auth rejection — it passes through
