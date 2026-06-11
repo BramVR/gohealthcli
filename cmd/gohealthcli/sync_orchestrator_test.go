@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"net/url"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -410,6 +412,102 @@ func TestSyncOrchestratorCancelsActiveDataTypeMidPagination(t *testing.T) {
 		rollupKind:   syncCursorRollupKindNone,
 	}); err != nil || found {
 		t.Fatalf("steps cursor after canceled run: found=%v err=%v, want absent (ADR-0008)", found, err)
+	}
+}
+
+// TestSyncRunExecutorCancelMidFetchFinalizesCanceledAndKeepsCursor is
+// the #284 end-to-end pin at the executor seam: the cancel fires while
+// the Provider fetch is IN FLIGHT (the fake blocks until the run
+// context cancels — there is no next page boundary to save us). The
+// run must return promptly, finalize as sync_canceled in both the
+// envelope and the persisted sync_runs row, and leave the Sync Cursor
+// un-advanced (ADR-0008).
+func TestSyncRunExecutorCancelMidFetchFinalizesCanceledAndKeepsCursor(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
+		t.Fatalf("connect setup: %v", err)
+	}
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fetchEntered := make(chan struct{})
+	var enterOnce sync.Once
+	testRuntime.fetchRawProvider = func(ctx context.Context, request rawProviderRequest, _ string) ([]byte, error) {
+		enterOnce.Do(func() { close(fetchEntered) })
+		// Simulate a stalled upstream: the request only returns when the
+		// run context aborts it, exactly like net/http with a
+		// context-scoped request.
+		<-ctx.Done()
+		return nil, &url.Error{Op: "Get", URL: request.url, Err: ctx.Err()}
+	}
+
+	type executeOutcome struct {
+		result syncResult
+		err    error
+	}
+	done := make(chan executeOutcome, 1)
+	go func() {
+		result, err := (syncRunExecutor{runtime: testRuntime}).Execute(ctx, syncCommandOptions{
+			configPath:  configPath,
+			archivePath: archivePath,
+			dataTypes:   []string{"steps"},
+			from:        "2026-01-01",
+			to:          "2026-01-02T00:00:00Z",
+		})
+		done <- executeOutcome{result: result, err: err}
+	}()
+
+	select {
+	case <-fetchEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Provider fetch never started")
+	}
+	cancel()
+
+	var outcome executeOutcome
+	select {
+	case outcome = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Execute did not return within 2s of cancel; the in-flight fetch was not aborted")
+	}
+	if !errors.Is(outcome.err, errSyncCanceled) {
+		t.Fatalf("Execute err = %v, want errSyncCanceled", outcome.err)
+	}
+	if outcome.result.Status != "sync_canceled" {
+		t.Fatalf("Status = %q, want sync_canceled", outcome.result.Status)
+	}
+	if outcome.result.SyncRunID == 0 {
+		t.Fatal("SyncRunID = 0, want a persisted audit row (cancel landed mid-run, after StartSyncRun)")
+	}
+
+	// The persisted audit row must agree with the envelope, and the
+	// canceled run must not have advanced any cursor (ADR-0008).
+	db, err := openArchiveReadOnly(archivePath)
+	if err != nil {
+		t.Fatalf("reopen archive: %v", err)
+	}
+	defer db.Close()
+	var persistedStatus string
+	if err := db.QueryRow(`SELECT status FROM sync_runs WHERE id = ?`, outcome.result.SyncRunID).Scan(&persistedStatus); err != nil {
+		t.Fatalf("scan sync_runs status: %v", err)
+	}
+	if persistedStatus != "sync_canceled" {
+		t.Fatalf("persisted sync_runs.status = %q, want sync_canceled", persistedStatus)
+	}
+	var cursorCount int
+	if err := db.QueryRow(`SELECT count(*) FROM sync_cursors`).Scan(&cursorCount); err != nil {
+		t.Fatalf("scan sync_cursors count: %v", err)
+	}
+	if cursorCount != 0 {
+		t.Fatalf("sync_cursors rows = %d, want 0 (canceled run must not advance any cursor)", cursorCount)
 	}
 }
 
