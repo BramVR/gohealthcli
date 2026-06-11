@@ -25,7 +25,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantSyncDataPoint:     true,
 			wantReconcile:         true,
 			wantDailyRollup:       true,
-			wantParser:            "steps",
+			wantParser:            "interval",
 			wantRecordKind:        "interval",
 			wantDefaultConfigType: true,
 		},
