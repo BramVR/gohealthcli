@@ -68,8 +68,11 @@ provider failures do not require restarting a multi-year backfill:
 - Bounded at `5` total attempts per request; after the budget is exhausted
   the last error surfaces and the Sync Run is recorded as `sync_failed`.
 
-The retry layer wraps only `sync`. `raw` is an exploration tool and surfaces
-upstream errors immediately so failure modes stay visible.
+The Identity Snapshot commands (`devices`, `settings`, `irn-profile`,
+`identity`, `profile`) ride the same retry middleware through the shared
+Provider GET module (#280), with the same backoff schedule, `Retry-After`
+floor, and 5-attempt budget per fetch. `raw` is an exploration tool and
+surfaces upstream errors immediately so failure modes stay visible.
 
 ## Naming Trap
 
