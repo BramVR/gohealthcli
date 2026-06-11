@@ -185,7 +185,7 @@ func fetchGooglePairedDevices(accessToken string) (googlePairedDevices, error) {
 	}
 	request.Header.Set("Authorization", "Bearer "+accessToken)
 	request.Header.Set("Accept", "application/json")
-	response, err := http.DefaultClient.Do(request)
+	response, err := providerHTTPClient.Do(request)
 	if err != nil {
 		return googlePairedDevices{}, err
 	}

@@ -5882,11 +5882,11 @@ func TestParseOAuthTokenResponseRequiresRefreshToken(t *testing.T) {
 }
 
 func TestFetchGoogleIdentityUsesGetIdentityEndpoint(t *testing.T) {
-	originalClient := http.DefaultClient
-	t.Cleanup(func() { http.DefaultClient = originalClient })
+	originalClient := providerHTTPClient
+	t.Cleanup(func() { providerHTTPClient = originalClient })
 
 	var gotURL string
-	http.DefaultClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+	providerHTTPClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		gotURL = request.URL.String()
 		if request.Header.Get("Authorization") != "Bearer access-secret-value" {
 			t.Fatalf("Authorization = %q, want bearer token", request.Header.Get("Authorization"))
@@ -5911,11 +5911,11 @@ func TestFetchGoogleIdentityUsesGetIdentityEndpoint(t *testing.T) {
 }
 
 func TestFetchGoogleProfileUsesProfileEndpoint(t *testing.T) {
-	originalClient := http.DefaultClient
-	t.Cleanup(func() { http.DefaultClient = originalClient })
+	originalClient := providerHTTPClient
+	t.Cleanup(func() { providerHTTPClient = originalClient })
 
 	var gotURL string
-	http.DefaultClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+	providerHTTPClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		gotURL = request.URL.String()
 		if request.Header.Get("Authorization") != "Bearer access-secret-value" {
 			t.Fatalf("Authorization = %q, want bearer token", request.Header.Get("Authorization"))
@@ -5943,10 +5943,10 @@ func TestFetchGoogleProfileUsesProfileEndpoint(t *testing.T) {
 }
 
 func TestFetchGoogleHealthRawUsesBearerAndHidesErrorBody(t *testing.T) {
-	originalClient := http.DefaultClient
-	t.Cleanup(func() { http.DefaultClient = originalClient })
+	originalClient := providerHTTPClient
+	t.Cleanup(func() { providerHTTPClient = originalClient })
 
-	http.DefaultClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+	providerHTTPClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.URL.String() != googleHealthIdentityURL {
 			t.Fatalf("raw URL = %q, want identity URL", request.URL.String())
 		}

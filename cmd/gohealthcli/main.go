@@ -2779,7 +2779,7 @@ func exchangeOAuthCodeWithRuntime(client oauthClientConfig, redirectURI, code, v
 	values.Set("code_verifier", verifier)
 	values.Set("grant_type", "authorization_code")
 	values.Set("redirect_uri", redirectURI)
-	response, err := http.PostForm(client.tokenURI, values)
+	response, err := providerHTTPClient.PostForm(client.tokenURI, values)
 	if err != nil {
 		return oauthTokenResponse{}, err
 	}
@@ -2807,7 +2807,7 @@ func refreshGoogleOAuthTokenWithRuntime(client oauthClientConfig, refreshToken s
 	values.Set("client_secret", client.clientSecret)
 	values.Set("refresh_token", refreshToken)
 	values.Set("grant_type", "refresh_token")
-	response, err := http.PostForm(client.tokenURI, values)
+	response, err := providerHTTPClient.PostForm(client.tokenURI, values)
 	if err != nil {
 		return oauthTokenResponse{}, err
 	}
@@ -2922,7 +2922,7 @@ func fetchGoogleIdentity(accessToken string) (googleIdentity, error) {
 	}
 	request.Header.Set("Authorization", "Bearer "+accessToken)
 	request.Header.Set("Accept", "application/json")
-	response, err := http.DefaultClient.Do(request)
+	response, err := providerHTTPClient.Do(request)
 	if err != nil {
 		return googleIdentity{}, err
 	}
@@ -2944,7 +2944,7 @@ func fetchGoogleProfile(accessToken string) (googleProfile, error) {
 	}
 	request.Header.Set("Authorization", "Bearer "+accessToken)
 	request.Header.Set("Accept", "application/json")
-	response, err := http.DefaultClient.Do(request)
+	response, err := providerHTTPClient.Do(request)
 	if err != nil {
 		return googleProfile{}, err
 	}
@@ -3152,7 +3152,7 @@ func fetchGoogleHealthRaw(request rawProviderRequest, accessToken string) ([]byt
 	if len(request.body) != 0 {
 		httpRequest.Header.Set("Content-Type", "application/json")
 	}
-	response, err := http.DefaultClient.Do(httpRequest)
+	response, err := providerHTTPClient.Do(httpRequest)
 	if err != nil {
 		return nil, err
 	}
