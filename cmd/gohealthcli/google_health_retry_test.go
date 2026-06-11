@@ -251,6 +251,7 @@ func TestFetchWithRetryShortCircuitsBackoffOnCancel(t *testing.T) {
 // the middleware must wake immediately with errSyncCanceled instead of
 // serving out the sleep.
 func TestFetchWithRetryCancelDuringBackoffSleepReturnsPromptly(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	attempts := 0

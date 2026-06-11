@@ -100,6 +100,7 @@ func TestProviderGETReturnsValidatedJSONWithBearerAuth(t *testing.T) {
 // Asserting on request.Context() values rather than the doer returning
 // keeps the pin independent of transport internals.
 func TestProviderGETScopesRequestToCallerContext(t *testing.T) {
+	t.Parallel()
 	transport := &stubProviderTransport{status: 200, body: `{}`}
 	type ctxKey struct{}
 	ctx := context.WithValue(context.Background(), ctxKey{}, "marker")

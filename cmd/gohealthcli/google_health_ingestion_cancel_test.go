@@ -37,6 +37,7 @@ func (doer *blockingDoer) Do(request *http.Request) (*http.Response, error) {
 // not hang until a page boundary that will never come, and not surface
 // the transport's wrapping of context.Canceled as a sync failure.
 func TestIngestionCancelAbortsInFlightProviderFetch(t *testing.T) {
+	t.Parallel()
 	doer := newBlockingDoer()
 	runtime := runtimeAdapters{
 		httpDoer: doer,

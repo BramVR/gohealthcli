@@ -427,6 +427,7 @@ func TestSyncOrchestratorCancelsActiveDataTypeMidPagination(t *testing.T) {
 // envelope and the persisted sync_runs row, and leave the Sync Cursor
 // un-advanced (ADR-0008).
 func TestSyncRunExecutorCancelMidFetchFinalizesCanceledAndKeepsCursor(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
