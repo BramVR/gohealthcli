@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"time"
 )
 
@@ -169,30 +168,14 @@ func settingsSetupWithRuntime(configPath, archivePath string, runtime runtimeAda
 	return result, nil
 }
 
+// fetchGoogleSettings is a thin call site over the shared Provider GET
+// module (provider_get.go, issue #280), which owns the transport
+// behavior: bearer auth, size limit, timeout, typed labeled status
+// errors, JSON validity, and retry/Retry-After.
 func fetchGoogleSettings(accessToken string) (googleSettings, error) {
-	request, err := http.NewRequest(http.MethodGet, googleHealthSettingsURL, nil)
+	body, err := fetchProviderJSON(googleHealthSettingsURL, "settings", accessToken)
 	if err != nil {
 		return googleSettings{}, err
-	}
-	request.Header.Set("Authorization", "Bearer "+accessToken)
-	request.Header.Set("Accept", "application/json")
-	response, err := providerHTTPClient.Do(request)
-	if err != nil {
-		return googleSettings{}, err
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
-		return googleSettings{}, err
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		// Typed so the translation layer can branch on the status code
-		// via errors.As instead of message text (issue #272). The
-		// endpoint label keeps the historical message verbatim.
-		return googleSettings{}, &googleHealthHTTPError{StatusCode: response.StatusCode, endpoint: "settings"}
-	}
-	if !json.Valid(body) {
-		return googleSettings{}, errors.New("Google Health settings response is not valid JSON")
 	}
 	return googleSettings{rawJSON: string(body)}, nil
 }

@@ -363,3 +363,17 @@ func TestPairedDevicesFetcherRetriesTransientFailures(t *testing.T) {
 		return devices.rawJSON, err
 	})
 }
+
+func TestSettingsFetcherKeepsLabeledErrorMessages(t *testing.T) {
+	assertFetcherKeepsLabeledErrorMessages(t, "settings", func(accessToken string) error {
+		_, err := fetchGoogleSettings(accessToken)
+		return err
+	})
+}
+
+func TestSettingsFetcherRetriesTransientFailures(t *testing.T) {
+	assertFetcherRetriesTransient503(t, `{"distanceUnit":"METRIC"}`, func(accessToken string) (string, error) {
+		settings, err := fetchGoogleSettings(accessToken)
+		return settings.rawJSON, err
+	})
+}
