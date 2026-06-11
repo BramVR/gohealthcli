@@ -102,8 +102,9 @@ the latest snapshot of each kind per Connection into queryable columns:
 - `current_settings` — `kind='settings'` projected as measurement system,
   timezone, stride length type.
 - `paired_devices` — `kind='paired-devices'` exploded via `json_each` into
-  one row per device with `device_type`, `model`, `manufacturer`,
-  `battery_percentage`, `last_sync_time`, and `features`.
+  one row per device with `name`, `device_type`, `device_version`,
+  `battery_status`, and `battery_level` (the real
+  `users.pairedDevices.list` shape, #298).
 - `current_irn_profile` — `kind='irn-profile'` projected as
   `onboarding_state`, `enrollment_state`, `last_update_time`. Requires
   the `irn.readonly` OAuth scope granted via `connect --add-scopes irn`.

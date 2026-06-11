@@ -3,9 +3,9 @@ title: "gohealthcli devices"
 description: "Archive a Paired Devices Snapshot from the provider."
 ---
 
-Fetch the upstream `users.pairedDevices.list` payload and append it to the Health Archive as a new Identity Snapshot of kind `paired-devices`. The `paired_devices` Normalized View explodes the latest snapshot via `json_each`, returning one row per device with `device_type`, `model`, `manufacturer`, `battery_percentage`, `last_sync_time`, and `features`.
+Fetch the upstream `users.pairedDevices.list` payload and append it to the Health Archive as a new Identity Snapshot of kind `paired-devices`. The `paired_devices` Normalized View explodes the latest snapshot via `json_each`, returning one row per device with `name`, `device_type`, `device_version`, `battery_status`, and `battery_level` — the real payload shape verified against a live archive (#298).
 
-This is the LLM's path to questions like "which Pixel Watch synced last?" or "what's my Fitbit battery?" — every projection is read-only against the raw snapshot, so new fields can be added without re-syncing.
+This is the LLM's path to questions like "which devices are paired?" or "what's my watch battery?" — every projection is read-only against the raw snapshot, so new fields can be added without re-syncing.
 
 Requires the `settings.readonly` OAuth scope (PRD #142 #176 confirmed empirically — `profile.readonly` alone returns HTTP 403). If the scope is missing, `devices` exits with status `devices_scope_missing` and a remediation hint; run `gohealthcli connect --add-scopes settings` once to grant it. No second base-set browser sign-in is needed.
 
