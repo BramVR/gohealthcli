@@ -59,10 +59,6 @@ type doctorOnlineTokenCheck struct {
 	previousTokenMaterial map[string]any
 }
 
-func newCurrentConnectionAccess(credentialStore credentialStoreConfig, connection archivedConnection, protectedPaths []string) currentConnectionAccess {
-	return newCurrentConnectionAccessWithRuntime(credentialStore, connection, protectedPaths, productionRuntimeAdapters())
-}
-
 func newCurrentConnectionAccessWithRuntime(credentialStore credentialStoreConfig, connection archivedConnection, protectedPaths []string, runtime runtimeAdapters) currentConnectionAccess {
 	return currentConnectionAccess{
 		credentialStore: credentialStore,

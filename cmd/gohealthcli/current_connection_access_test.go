@@ -11,13 +11,14 @@ import (
 )
 
 func TestCurrentConnectionAccessTokenValidatesMetadataBeforeCredentialStore(t *testing.T) {
-	access := newCurrentConnectionAccess(
+	access := newCurrentConnectionAccessWithRuntime(
 		credentialStoreConfig{kind: "bogus"},
 		archivedConnection{
 			id:                "googlehealth:111",
 			tokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope}),
 		},
 		nil,
+		productionRuntimeAdapters(),
 	)
 	access.runtime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
@@ -28,13 +29,14 @@ func TestCurrentConnectionAccessTokenValidatesMetadataBeforeCredentialStore(t *t
 }
 
 func TestCurrentConnectionAccessTokenRequiresScopesBeforeCredentialStore(t *testing.T) {
-	access := newCurrentConnectionAccess(
+	access := newCurrentConnectionAccessWithRuntime(
 		credentialStoreConfig{kind: "bogus"},
 		archivedConnection{
 			id:                "googlehealth:111",
 			tokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC), []string{googleHealthActivityReadonlyScope}),
 		},
 		nil,
+		productionRuntimeAdapters(),
 	)
 	access.runtime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
@@ -114,13 +116,14 @@ func TestCurrentConnectionAccessTokenScopeMissingSentinel(t *testing.T) {
 		{
 			name: "missing required scope matches sentinel",
 			setup: func(t *testing.T) currentConnectionAccess {
-				access := newCurrentConnectionAccess(
+				access := newCurrentConnectionAccessWithRuntime(
 					credentialStoreConfig{kind: "bogus"},
 					archivedConnection{
 						id:                "googlehealth:111",
 						tokenMetadataJSON: tokenMetadataJSON(t, expiresFuture, []string{googleHealthActivityReadonlyScope}),
 					},
 					nil,
+					productionRuntimeAdapters(),
 				)
 				access.runtime.now = func() time.Time { return now }
 				return access
@@ -131,13 +134,14 @@ func TestCurrentConnectionAccessTokenScopeMissingSentinel(t *testing.T) {
 		{
 			name: "expired token without auto-refresh does not match sentinel",
 			setup: func(t *testing.T) currentConnectionAccess {
-				access := newCurrentConnectionAccess(
+				access := newCurrentConnectionAccessWithRuntime(
 					credentialStoreConfig{kind: "bogus"},
 					archivedConnection{
 						id:                "googlehealth:111",
 						tokenMetadataJSON: tokenMetadataJSON(t, expiresPast, []string{googleHealthIrnReadonlyScope}),
 					},
 					nil,
+					productionRuntimeAdapters(),
 				)
 				access.runtime.now = func() time.Time { return now }
 				return access
@@ -152,13 +156,14 @@ func TestCurrentConnectionAccessTokenScopeMissingSentinel(t *testing.T) {
 					"refresh_token": "stored-refresh",
 					"token_type":    "Bearer",
 				})
-				access := newCurrentConnectionAccess(
+				access := newCurrentConnectionAccessWithRuntime(
 					fixture.credentialStore,
 					archivedConnection{
 						id:                "googlehealth:111",
 						tokenMetadataJSON: tokenMetadataJSON(t, expiresFuture, []string{googleHealthIrnReadonlyScope}),
 					},
 					nil,
+					productionRuntimeAdapters(),
 				)
 				access.runtime.now = func() time.Time { return now }
 				return access
@@ -242,13 +247,14 @@ func TestCurrentConnectionAccessTokenScopeMissingNamesAddScopesRecovery(t *testi
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			access := newCurrentConnectionAccess(
+			access := newCurrentConnectionAccessWithRuntime(
 				credentialStoreConfig{kind: "bogus"},
 				archivedConnection{
 					id:                "googlehealth:111",
 					tokenMetadataJSON: tokenMetadataJSON(t, expiresFuture, []string{googleHealthActivityReadonlyScope}),
 				},
 				nil,
+				productionRuntimeAdapters(),
 			)
 			access.runtime.now = func() time.Time { return now }
 
@@ -398,7 +404,7 @@ func setupAutoRefreshFixture(t *testing.T, seedTokenMaterial map[string]any) aut
 		t.Fatalf("write oauth client file: %v", err)
 	}
 	credentialStore := credentialStoreConfig{kind: "file", path: filepath.Join(tempDir, "tokens.json")}
-	store, err := newCredentialStore(credentialStore)
+	store, err := newCredentialStoreWithRuntime(credentialStore, productionRuntimeAdapters())
 	if err != nil {
 		t.Fatalf("new credential store: %v", err)
 	}
@@ -454,7 +460,7 @@ func TestCurrentConnectionAccessTokenAutoRefreshPersistsToCredentialStoreAndArch
 		"refresh_token": "stored-refresh",
 		"token_type":    "Bearer",
 	})
-	store, err := newCredentialStore(fixture.credentialStore)
+	store, err := newCredentialStoreWithRuntime(fixture.credentialStore, productionRuntimeAdapters())
 	if err != nil {
 		t.Fatalf("new credential store: %v", err)
 	}

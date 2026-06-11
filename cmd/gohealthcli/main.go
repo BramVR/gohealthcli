@@ -1796,10 +1796,6 @@ func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtim
 	return result, nil
 }
 
-func persistDoctorOnlineRefreshedToken(archive connectionTokenWriter, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse, previousTokenMaterial map[string]any) error {
-	return persistDoctorOnlineRefreshedTokenWithRuntime(archive, credentialStore, connectionID, token, previousTokenMaterial, productionRuntimeAdapters())
-}
-
 func persistDoctorOnlineRefreshedTokenWithRuntime(archive connectionTokenWriter, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse, previousTokenMaterial map[string]any, runtime runtimeAdapters) error {
 	runtime = runtime.withDefaults()
 	store, err := newCredentialStoreWithRuntime(credentialStore, runtime)
@@ -3706,10 +3702,6 @@ func openBrowser(target string) error {
 type credentialStore interface {
 	Store(key string, tokenMaterial map[string]any) error
 	Load(key string) (map[string]any, error)
-}
-
-func newCredentialStore(config credentialStoreConfig) (credentialStore, error) {
-	return newCredentialStoreWithRuntime(config, productionRuntimeAdapters())
 }
 
 func newCredentialStoreWithRuntime(config credentialStoreConfig, runtime runtimeAdapters) (credentialStore, error) {
