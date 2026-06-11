@@ -300,6 +300,180 @@ func TestStatusWriterEmitsByteIdenticalOutputAcrossModes(t *testing.T) {
 	}
 }
 
+func doctorWriterFixtureRich() doctorResult {
+	schemaVersion := 21
+	connectionCount := 1
+	return doctorResult{
+		Status:             "ok",
+		ConfigPath:         "/home/bram/.config/gohealthcli/config.toml",
+		ArchivePath:        "/home/bram/.local/share/gohealthcli/gohealthcli.sqlite",
+		OAuthClientSource:  "file:client_secret.json",
+		CredentialStore:    "os_native",
+		SchemaVersion:      &schemaVersion,
+		ConnectionCount:    &connectionCount,
+		TokenStatus:        "ok",
+		AttachmentRootPath: "/home/bram/.local/share/gohealthcli/attachments",
+		AttachmentRootMode: "0700",
+		Attachments: &doctorAttachmentReport{
+			OrphanRows:  []doctorOrphanRow{{SHA256: "abc", PathRelative: "ab/abc", DataPointID: 7}},
+			OrphanFiles: []doctorOrphanFile{{AbsolutePath: "/tmp/orphan"}},
+		},
+		Message: "local gohealthcli setup is initialized",
+	}
+}
+
+func doctorWriterFixtureMinimal() doctorResult {
+	return doctorResult{
+		Status:      "setup_missing",
+		ConfigPath:  "/home/bram/.config/gohealthcli/config.toml",
+		ArchivePath: "/home/bram/.local/share/gohealthcli/gohealthcli.sqlite",
+		TokenStatus: "unknown",
+		Message:     "local gohealthcli setup not found",
+	}
+}
+
+const doctorWriterRichJSON = `{
+  "status": "ok",
+  "config_path": "/home/bram/.config/gohealthcli/config.toml",
+  "archive_path": "/home/bram/.local/share/gohealthcli/gohealthcli.sqlite",
+  "oauth_client_source": "file:client_secret.json",
+  "credential_store": "os_native",
+  "schema_version": 21,
+  "connection_count": 1,
+  "token_status": "ok",
+  "attachment_root_path": "/home/bram/.local/share/gohealthcli/attachments",
+  "attachment_root_mode": "0700",
+  "attachments": {
+    "orphan_rows": [
+      {
+        "sha256": "abc",
+        "path_relative": "ab/abc",
+        "data_point_id": 7
+      }
+    ],
+    "orphan_files": [
+      {
+        "absolute_path": "/tmp/orphan"
+      }
+    ]
+  },
+  "message": "local gohealthcli setup is initialized"
+}
+`
+
+const doctorWriterRichPlain = `status: ok
+config_path: /home/bram/.config/gohealthcli/config.toml
+archive_path: /home/bram/.local/share/gohealthcli/gohealthcli.sqlite
+oauth_client_source: file:client_secret.json
+credential_store: os_native
+schema_version: 21
+connection_count: 1
+token_status: ok
+attachment_root_path: /home/bram/.local/share/gohealthcli/attachments
+attachment_root_mode: 0700
+attachments_orphan_files: 1
+attachments_orphan_rows: 1
+message: local gohealthcli setup is initialized
+`
+
+const doctorWriterRichHuman = `Setup ok
+Config: /home/bram/.config/gohealthcli/config.toml
+Health Archive: /home/bram/.local/share/gohealthcli/gohealthcli.sqlite
+OAuth client source: file:client_secret.json
+Credential Store: os_native
+Schema version: 21
+Connections: 1
+Token status: ok
+Message: local gohealthcli setup is initialized
+`
+
+const doctorWriterMinimalJSON = `{
+  "status": "setup_missing",
+  "config_path": "/home/bram/.config/gohealthcli/config.toml",
+  "archive_path": "/home/bram/.local/share/gohealthcli/gohealthcli.sqlite",
+  "oauth_client_source": "",
+  "credential_store": "",
+  "schema_version": null,
+  "connection_count": null,
+  "token_status": "unknown",
+  "message": "local gohealthcli setup not found"
+}
+`
+
+const doctorWriterMinimalPlain = `status: setup_missing
+config_path: /home/bram/.config/gohealthcli/config.toml
+archive_path: /home/bram/.local/share/gohealthcli/gohealthcli.sqlite
+token_status: unknown
+message: local gohealthcli setup not found
+`
+
+const doctorWriterMinimalHuman = `Setup missing
+Config: /home/bram/.config/gohealthcli/config.toml
+Health Archive: /home/bram/.local/share/gohealthcli/gohealthcli.sqlite
+Token status: unknown
+Message: local gohealthcli setup not found
+`
+
+func TestDoctorWriterEmitsByteIdenticalOutputAcrossModes(t *testing.T) {
+	unhealthy := doctorResult{Status: "connection_unhealthy", ConfigPath: "/c", ArchivePath: "/a", Message: "refresh failed"}
+	invalid := doctorResult{Status: "setup_invalid", ConfigPath: "/c", ArchivePath: "/a", Message: "config check failed"}
+	for _, testCase := range []struct {
+		name   string
+		result doctorResult
+		mode   outputMode
+		want   string
+	}{
+		{"rich json", doctorWriterFixtureRich(), outputMode{json: true}, doctorWriterRichJSON},
+		{"rich plain", doctorWriterFixtureRich(), outputMode{plain: true}, doctorWriterRichPlain},
+		{"rich human", doctorWriterFixtureRich(), outputMode{}, doctorWriterRichHuman},
+		{"minimal json", doctorWriterFixtureMinimal(), outputMode{json: true}, doctorWriterMinimalJSON},
+		{"minimal plain", doctorWriterFixtureMinimal(), outputMode{plain: true}, doctorWriterMinimalPlain},
+		{"minimal human", doctorWriterFixtureMinimal(), outputMode{}, doctorWriterMinimalHuman},
+		{"unhealthy human header", unhealthy, outputMode{}, "Connection unhealthy\nConfig: /c\nHealth Archive: /a\nMessage: refresh failed\n"},
+		{"invalid human header", invalid, outputMode{}, "Setup invalid\nConfig: /c\nHealth Archive: /a\nMessage: config check failed\n"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			buffer := new(bytes.Buffer)
+			if err := writeDoctorResult(testCase.result, testCase.mode, buffer); err != nil {
+				t.Fatalf("writeDoctorResult: %v", err)
+			}
+			if got := buffer.String(); got != testCase.want {
+				t.Fatalf("doctor %s output drifted:\ngot:\n%q\nwant:\n%q", testCase.name, got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestDoctorReportsFirstWriteErrorOnce pins the doctor side of the
+// write-output failure contract (#274): a stdout that rejects the very
+// first write must surface exactly one `doctor: write output: ...`
+// stderr line with exit code 1 — not the setup_missing exit code 2,
+// because the failure is the broken stdout, not the missing setup.
+func TestDoctorReportsFirstWriteErrorOnce(t *testing.T) {
+	tempDir := t.TempDir()
+	stderr := new(bytes.Buffer)
+
+	code := runDoctorWithRuntime(
+		[]string{"--config", filepath.Join(tempDir, "config.toml"), "--db", filepath.Join(tempDir, "missing.sqlite")},
+		defaultConfigPath(),
+		defaultArchivePath(),
+		outputMode{},
+		failingWriter{},
+		stderr,
+		productionRuntimeAdapters(),
+	)
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if got, want := stderr.String(), "doctor: write output: write failed\n"; got != want {
+		t.Fatalf("stderr = %q, want exactly %q", got, want)
+	}
+	if count := strings.Count(stderr.String(), "write output"); count != 1 {
+		t.Fatalf("write failure reported %d times, want once", count)
+	}
+}
+
 // TestStatusReportsFirstWriteErrorOnce pins the write-output failure
 // contract the sticky-error writer must preserve (#274): when stdout
 // rejects the very first write, status exits 1 and the operator sees

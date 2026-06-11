@@ -714,12 +714,7 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 		}
 		result.Attachments = attachments
 		if err := writeDoctorResult(result, mode, stdout); err != nil {
-			return ReportFailure(FailureReport{
-				Command: "doctor",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", err),
-				Mode:    mode,
-			}, stdout, stderr)
+			return reportWriteFailure("doctor", err, mode, stdout, stderr)
 		}
 		return 0
 	}
@@ -736,12 +731,7 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 	}
 
 	if err := writeDoctorResult(result, mode, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "doctor",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("doctor", err, mode, stdout, stderr)
 	}
 
 	// The structured envelope already landed on stdout via
@@ -763,12 +753,7 @@ func runDoctorInvalid(configPath, archivePath, message string, mode outputMode, 
 		Message:     message,
 	}
 	if err := writeDoctorResult(result, mode, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "doctor",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("doctor", err, mode, stdout, stderr)
 	}
 	return 1
 }
@@ -781,22 +766,12 @@ func runDoctorOnlineWithRuntime(configPath, archivePath string, mode outputMode,
 		}
 		result.Message = err.Error()
 		if writeErr := writeDoctorResult(result, mode, stdout); writeErr != nil {
-			return ReportFailure(FailureReport{
-				Command: "doctor",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", writeErr),
-				Mode:    mode,
-			}, stdout, stderr)
+			return reportWriteFailure("doctor", writeErr, mode, stdout, stderr)
 		}
 		return 1
 	}
 	if err := writeDoctorResult(result, mode, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "doctor",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("doctor", err, mode, stdout, stderr)
 	}
 	return 0
 }
@@ -5071,118 +5046,80 @@ func writeDoctorResult(result doctorResult, mode outputMode, stdout io.Writer) e
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(result)
 	}
+	writer := newStickyWriter(stdout)
 	if mode.plain {
-		if _, err := fmt.Fprintf(stdout, "status: %s\n", result.Status); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "config_path: %s\n", result.ConfigPath); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "archive_path: %s\n", result.ArchivePath); err != nil {
-			return err
-		}
-		if result.OAuthClientSource != "" {
-			if _, err := fmt.Fprintf(stdout, "oauth_client_source: %s\n", result.OAuthClientSource); err != nil {
-				return err
-			}
-		}
-		if result.CredentialStore != "" {
-			if _, err := fmt.Fprintf(stdout, "credential_store: %s\n", result.CredentialStore); err != nil {
-				return err
-			}
-		}
-		if result.SchemaVersion != nil {
-			if _, err := fmt.Fprintf(stdout, "schema_version: %d\n", *result.SchemaVersion); err != nil {
-				return err
-			}
-		}
-		if result.ConnectionCount != nil {
-			if _, err := fmt.Fprintf(stdout, "connection_count: %d\n", *result.ConnectionCount); err != nil {
-				return err
-			}
-		}
-		if result.TokenStatus != "" {
-			if _, err := fmt.Fprintf(stdout, "token_status: %s\n", result.TokenStatus); err != nil {
-				return err
-			}
-		}
-		if result.AttachmentRootPath != "" {
-			if _, err := fmt.Fprintf(stdout, "attachment_root_path: %s\n", result.AttachmentRootPath); err != nil {
-				return err
-			}
-			if result.AttachmentRootMode != "" {
-				if _, err := fmt.Fprintf(stdout, "attachment_root_mode: %s\n", result.AttachmentRootMode); err != nil {
-					return err
-				}
-			}
-		}
-		if result.Attachments != nil {
-			if n := len(result.Attachments.OrphanFiles); n > 0 {
-				if _, err := fmt.Fprintf(stdout, "attachments_orphan_files: %d\n", n); err != nil {
-					return err
-				}
-			}
-			if n := len(result.Attachments.OrphanRows); n > 0 {
-				if _, err := fmt.Fprintf(stdout, "attachments_orphan_rows: %d\n", n); err != nil {
-					return err
-				}
-			}
-		}
-		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
-		return err
+		writeDoctorPlain(writer, result)
+	} else {
+		writeDoctorHuman(writer, result)
 	}
+	return writer.Err()
+}
 
-	switch result.Status {
-	case "ok":
-		if _, err := fmt.Fprintln(stdout, "Setup ok"); err != nil {
-			return err
-		}
-	case "connection_unhealthy":
-		if _, err := fmt.Fprintln(stdout, "Connection unhealthy"); err != nil {
-			return err
-		}
-	case "setup_invalid":
-		if _, err := fmt.Fprintln(stdout, "Setup invalid"); err != nil {
-			return err
-		}
-	default:
-		if _, err := fmt.Fprintln(stdout, "Setup missing"); err != nil {
-			return err
-		}
-	}
-	if _, err := fmt.Fprintf(stdout, "Config: %s\n", result.ConfigPath); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(stdout, "Health Archive: %s\n", result.ArchivePath); err != nil {
-		return err
-	}
+func writeDoctorPlain(writer *stickyWriter, result doctorResult) {
+	writer.Printf("status: %s\n", result.Status)
+	writer.Printf("config_path: %s\n", result.ConfigPath)
+	writer.Printf("archive_path: %s\n", result.ArchivePath)
 	if result.OAuthClientSource != "" {
-		if _, err := fmt.Fprintf(stdout, "OAuth client source: %s\n", result.OAuthClientSource); err != nil {
-			return err
-		}
+		writer.Printf("oauth_client_source: %s\n", result.OAuthClientSource)
 	}
 	if result.CredentialStore != "" {
-		if _, err := fmt.Fprintf(stdout, "Credential Store: %s\n", result.CredentialStore); err != nil {
-			return err
-		}
+		writer.Printf("credential_store: %s\n", result.CredentialStore)
 	}
 	if result.SchemaVersion != nil {
-		if _, err := fmt.Fprintf(stdout, "Schema version: %d\n", *result.SchemaVersion); err != nil {
-			return err
-		}
+		writer.Printf("schema_version: %d\n", *result.SchemaVersion)
 	}
 	if result.ConnectionCount != nil {
-		if _, err := fmt.Fprintf(stdout, "Connections: %d\n", *result.ConnectionCount); err != nil {
-			return err
-		}
+		writer.Printf("connection_count: %d\n", *result.ConnectionCount)
 	}
 	if result.TokenStatus != "" {
-		if _, err := fmt.Fprintf(stdout, "Token status: %s\n", result.TokenStatus); err != nil {
-			return err
+		writer.Printf("token_status: %s\n", result.TokenStatus)
+	}
+	if result.AttachmentRootPath != "" {
+		writer.Printf("attachment_root_path: %s\n", result.AttachmentRootPath)
+		if result.AttachmentRootMode != "" {
+			writer.Printf("attachment_root_mode: %s\n", result.AttachmentRootMode)
 		}
 	}
-	_, err := fmt.Fprintf(stdout, "Message: %s\n", result.Message)
-	return err
+	if result.Attachments != nil {
+		if n := len(result.Attachments.OrphanFiles); n > 0 {
+			writer.Printf("attachments_orphan_files: %d\n", n)
+		}
+		if n := len(result.Attachments.OrphanRows); n > 0 {
+			writer.Printf("attachments_orphan_rows: %d\n", n)
+		}
+	}
+	writer.Printf("message: %s\n", result.Message)
+}
+
+func writeDoctorHuman(writer *stickyWriter, result doctorResult) {
+	switch result.Status {
+	case "ok":
+		writer.Println("Setup ok")
+	case "connection_unhealthy":
+		writer.Println("Connection unhealthy")
+	case "setup_invalid":
+		writer.Println("Setup invalid")
+	default:
+		writer.Println("Setup missing")
+	}
+	writer.Printf("Config: %s\n", result.ConfigPath)
+	writer.Printf("Health Archive: %s\n", result.ArchivePath)
+	if result.OAuthClientSource != "" {
+		writer.Printf("OAuth client source: %s\n", result.OAuthClientSource)
+	}
+	if result.CredentialStore != "" {
+		writer.Printf("Credential Store: %s\n", result.CredentialStore)
+	}
+	if result.SchemaVersion != nil {
+		writer.Printf("Schema version: %d\n", *result.SchemaVersion)
+	}
+	if result.ConnectionCount != nil {
+		writer.Printf("Connections: %d\n", *result.ConnectionCount)
+	}
+	if result.TokenStatus != "" {
+		writer.Printf("Token status: %s\n", result.TokenStatus)
+	}
+	writer.Printf("Message: %s\n", result.Message)
 }
 
 func writeConnectResult(result connectResult, mode outputMode, stdout io.Writer) error {
