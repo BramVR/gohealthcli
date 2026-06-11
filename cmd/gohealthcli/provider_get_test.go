@@ -92,6 +92,28 @@ func TestProviderGETReturnsValidatedJSONWithBearerAuth(t *testing.T) {
 	}
 }
 
+// TestProviderGETScopesRequestToCallerContext pins #284 on the shared
+// Provider GET module: the HTTP request handed to the doer must carry
+// the caller's context (http.NewRequestWithContext), so canceling the
+// caller aborts the in-flight Identity Snapshot fetch at the transport.
+// Asserting on request.Context() values rather than the doer returning
+// keeps the pin independent of transport internals.
+func TestProviderGETScopesRequestToCallerContext(t *testing.T) {
+	transport := &stubProviderTransport{status: 200, body: `{}`}
+	type ctxKey struct{}
+	ctx := context.WithValue(context.Background(), ctxKey{}, "marker")
+
+	if _, err := fetchProviderJSON(ctx, providerGETWithDoer(transport), googleHealthSettingsURL, "settings", "test-access-token"); err != nil {
+		t.Fatalf("fetchProviderJSON: %v", err)
+	}
+	if transport.request == nil {
+		t.Fatal("Provider GET never reached the doer")
+	}
+	if got := transport.request.Context().Value(ctxKey{}); got != "marker" {
+		t.Fatalf("request context value = %v, want the caller's context threaded onto the request", got)
+	}
+}
+
 func TestProviderGETReturnsTypedStatusErrorCarryingLabel(t *testing.T) {
 	get := providerGETWithDoer(&stubProviderTransport{status: 404, body: `{"error":"not found"}`})
 

@@ -364,7 +364,11 @@ func TestProviderHTTPClientFailsStalledRequestByDeadline(t *testing.T) {
 	server := startStalledProviderServer(t)
 
 	client := newProviderHTTPClient(50 * time.Millisecond)
-	response, err := client.Get(server.URL)
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	response, err := client.Do(request)
 	if err == nil {
 		response.Body.Close()
 		t.Fatal("expected a stalled Provider request to fail by deadline, got a response")

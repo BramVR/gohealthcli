@@ -2508,7 +2508,11 @@ func listenForOAuthRedirect(redirectURIs []string) (net.Listener, string, error)
 		redirectPath = parsed.EscapedPath()
 		break
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	// Background-scoped (#284): the loopback redirect listener for the
+	// interactive OAuth flow has no cancellation instrumentation — the
+	// flow is bounded by the user closing the browser or the process
+	// exiting, not by a context.
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, "", err
 	}
@@ -2596,13 +2600,19 @@ func waitForOAuthCode(listener net.Listener, wantState string) (string, error) {
 // runtime's HTTP doer, mirroring (*http.Client).PostForm. A nil doer
 // (callers that only set now, mirroring the nil-now fallback above)
 // falls back to the shared timeout client — never the process-wide
-// default client, which carries no deadline (#281).
+// default client, which carries no deadline (#281). The request is
+// Background-scoped (#284): OAuth token exchange/refresh runs from the
+// interactive connect flow and the mid-run refresh hook, neither of
+// which carries SIGINT instrumentation, and the doer's timeout still
+// bounds the call. Threading the Sync Run context through the refresh
+// hook would change its func() shape and is out of #284's
+// in-place-conversion scope.
 func postOAuthForm(runtime runtimeAdapters, tokenURI string, values url.Values) (*http.Response, error) {
 	doer := runtime.httpDoer
 	if doer == nil {
 		doer = providerHTTPClient
 	}
-	request, err := http.NewRequest(http.MethodPost, tokenURI, strings.NewReader(values.Encode()))
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost, tokenURI, strings.NewReader(values.Encode()))
 	if err != nil {
 		return nil, err
 	}
