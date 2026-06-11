@@ -1,20 +1,110 @@
 package main
 
+import (
+	"fmt"
+	"strings"
+)
+
+// exportDatasetSpec is one Normalized View dataset definition: the
+// CLI-facing dataset name, the SQL view it projects, the view SQL the
+// Health Archive lifecycle applies at migrationVersion, the exported
+// field order, and the stable sort order `export` reads with. The
+// definitions themselves live in category-named view files
+// (views_steps.go, views_sleep.go, views_identity.go, …); this file
+// owns the assembled registry.
+type exportDatasetSpec struct {
+	name             string
+	view             string
+	viewSQL          string
+	migrationVersion int
+	fields           []exportFieldSpec
+	orderBy          string
+}
+
+type exportFieldSpec struct {
+	name string
+	kind string
+}
+
+// exportDatasetDefinitions is the canonical Normalized View registry
+// slice (issue #276 finished the spec-storage move documented under
+// closed #109): each entry is defined in its category-named view file
+// and listed here once, in registration order. Order is contract —
+// Catalog() and describe-schema --json emit it verbatim, and within a
+// schema version the migration runner applies CREATE VIEWs in this
+// order — so append new views; never reorder existing entries. Every
+// consumer reads through normalizedViewsRegistry(), never this slice
+// directly.
+var exportDatasetDefinitions = []exportDatasetSpec{
+	dailyStepsViewSpec,
+	heartRateSamplesViewSpec,
+	restingHeartRateByDayViewSpec,
+	sleepSessionsViewSpec,
+	exerciseSessionsViewSpec,
+	weightSamplesViewSpec,
+	activeMinutesIntervalsViewSpec,
+	activeZoneMinutesIntervalsViewSpec,
+	altitudeIntervalsViewSpec,
+	activityLevelIntervalsViewSpec,
+	sedentaryPeriodIntervalsViewSpec,
+	timeInHeartRateZoneIntervalsViewSpec,
+	swimLengthsDataIntervalsViewSpec,
+	vo2MaxSamplesViewSpec,
+	runVo2MaxSamplesViewSpec,
+	dailyVo2MaxViewSpec,
+	dailyHeartRateZonesViewSpec,
+	dailySleepTemperatureDerivationsViewSpec,
+	respiratoryRateSleepSummaryViewSpec,
+	floorsIntervalsViewSpec,
+	electrocardiogramSessionsViewSpec,
+	irregularRhythmNotificationsViewSpec,
+	hydrationLogSessionsViewSpec,
+	searchableTextViewSpec,
+	sleepStagesViewSpec,
+	exerciseSplitsViewSpec,
+	currentIrnProfileViewSpec,
+	pairedDevicesViewSpec,
+	currentSettingsViewSpec,
+	bodyFatSamplesViewSpec,
+	bloodGlucoseSamplesViewSpec,
+	coreBodyTemperatureSamplesViewSpec,
+	heightSamplesViewSpec,
+	currentHeightViewSpec,
+}
+
+var exportDatasetSpecs = exportDatasetSpecByName(exportDatasetDefinitions)
+
+func exportDatasetSpecByName(definitions []exportDatasetSpec) map[string]exportDatasetSpec {
+	specs := make(map[string]exportDatasetSpec, len(definitions))
+	for _, definition := range definitions {
+		if definition.name == "" {
+			panic("export dataset definition missing name")
+		}
+		if _, exists := specs[definition.name]; exists {
+			panic(fmt.Sprintf("duplicate export dataset definition: %s", definition.name))
+		}
+		specs[definition.name] = definition
+	}
+	return specs
+}
+
+func exportDatasetViewMigrationStatement(spec exportDatasetSpec) string {
+	return fmt.Sprintf("CREATE VIEW %s AS\n%s", spec.view, strings.TrimSpace(spec.viewSQL))
+}
+
 // normalizedViewsRegistryHandle is the entry point through which every
 // consumer reads Normalized View specs:
 //   - The export writer (export.go) looks up a spec by name to render CSV/JSONL.
 //   - Archive migrations apply MigrationStatements(version) so a fresh
 //     archive's CREATE VIEWs match what an upgraded archive sees.
-//   - A future describe-schema --json (#109) emits the catalog so an LLM
-//     reading the archive knows what views are available.
+//   - describe-schema --json emits the catalog so an LLM reading the
+//     archive knows what views are available.
 //
-// The spec storage currently lives in export.go (as the historical
-// exportDatasetDefinitions slice) for transitional reasons; #109 splits
-// it into category-named files (views_steps.go, views_sleep.go,
-// views_identity.go, …) and re-anchors the Registry as the only place
-// the slice is defined. The Registry's surface (View / MigrationStatements
-// / Catalog) stays stable across that move — downstream consumers
-// reading through the Registry today don't need to change.
+// The spec storage lives in category-named view files (views_steps.go,
+// views_sleep.go, views_identity.go, …) assembled into the
+// exportDatasetDefinitions slice above. The Registry's surface
+// (View / MigrationStatements / Catalog) is the stable contract —
+// downstream consumers never read the per-category vars directly.
 type normalizedViewsRegistryHandle struct {
 	definitions []exportDatasetSpec
 }

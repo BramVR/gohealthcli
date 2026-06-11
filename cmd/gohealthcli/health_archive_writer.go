@@ -11,19 +11,19 @@ import (
 type healthArchiveWriter interface {
 	Close() error
 	CurrentConnection() (archivedConnection, error)
-	StartSyncRun(connection archivedConnection, dataTypes []string, from, to, endpointFamily, sourceFamilyFilter, startedAt string) (int64, error)
+	StartSyncRun(start syncRunStart) (int64, error)
 	// HeartbeatSyncRun refreshes the running counts and the
 	// last_progress_at heartbeat on an in-flight sync_running row
 	// (#236). Heartbeats are advisory snapshots for concurrent
 	// `sync --status` readers; FinalizeSyncRun stays the authoritative
 	// terminal write.
-	HeartbeatSyncRun(id int64, seenCount, newCount, updatedCount int, at string) error
+	HeartbeatSyncRun(heartbeat syncRunHeartbeat) error
 	// FenceAbandonedSyncRuns drives orphaned sync_running rows to
 	// sync_failed on the writer's own handle (#236) — the sync
 	// lifecycle runs it on entry so a killed process's corpse row
 	// never sits next to a live one. See fenceAbandonedSyncRuns.
 	FenceAbandonedSyncRuns(now time.Time) (int64, error)
-	FinishSyncRun(id int64, status string, seenCount, newCount, updatedCount int, finishedAt, errorSummary string) error
+	FinishSyncRun(finish syncRunFinish) error
 	FinalizeSyncRun(finalize syncRunFinalize) error
 	UpsertDataPoint(point archivedDataPoint, now string) (string, error)
 	UpsertRollup(rollup archivedRollup, now string) (string, error)
@@ -38,6 +38,50 @@ type healthArchiveWriter interface {
 	// token on the same writer it is already holding open, so the
 	// auto-refresh path does not need to open a second archive handle.
 	UpdateConnectionTokenMetadata(connectionID string, token oauthTokenResponse, now time.Time) error
+}
+
+// syncRunStart bundles the inputs StartSyncRun writes into the
+// sync_runs audit row. Matches the syncRunFinalize parameter-struct
+// pattern (#277) so the start/finish/finalize writer chain shares one
+// shape language and no call site lines up seven positional arguments.
+type syncRunStart struct {
+	Connection         archivedConnection
+	DataTypes          []string
+	From               string
+	To                 string
+	EndpointFamily     string
+	SourceFamilyFilter string
+	StartedAt          string
+}
+
+// syncRunFinish bundles the terminal-row UPDATE parameters shared by
+// FinishSyncRun and the finalize transaction's run-status write (#277).
+// The three counts ride named fields (SeenCount/NewCount/UpdatedCount)
+// so adjacent bare ints can no longer be silently transposed at a call
+// site. Status stays a string here — the lifecycle's recovery write
+// legitimately diverges from the original outcome (sync_completed
+// downgrades to sync_failed after a rolled-back finalize) and the
+// outcome-sealed path already goes through syncRunFinalize.
+type syncRunFinish struct {
+	SyncRunID    int64
+	Status       string
+	SeenCount    int
+	NewCount     int
+	UpdatedCount int
+	FinishedAt   string
+	ErrorSummary string
+}
+
+// syncRunHeartbeat bundles the advisory progress UPDATE parameters for
+// HeartbeatSyncRun (#236) — same named-count rationale as
+// syncRunFinish, so the trio a concurrent `sync --status` poller reads
+// mid-run cannot be transposed either.
+type syncRunHeartbeat struct {
+	SyncRunID    int64
+	SeenCount    int
+	NewCount     int
+	UpdatedCount int
+	At           string
 }
 
 // syncRunFinalize bundles the writes that finalize a Sync Run into one
@@ -58,6 +102,22 @@ type syncRunFinalize struct {
 	CursorKey      syncCursorKey
 	CursorTo       string
 	CursorAdvanced string
+}
+
+// runFinish projects the finalize bundle onto the terminal-row UPDATE
+// parameters, so the atomic finalize path and the standalone
+// FinishSyncRun write the sync_runs row through one field mapping —
+// the advisory and authoritative count columns cannot drift.
+func (finalize syncRunFinalize) runFinish() syncRunFinish {
+	return syncRunFinish{
+		SyncRunID:    finalize.SyncRunID,
+		Status:       string(finalize.Outcome),
+		SeenCount:    finalize.SeenCount,
+		NewCount:     finalize.NewCount,
+		UpdatedCount: finalize.UpdatedCount,
+		FinishedAt:   finalize.FinishedAt,
+		ErrorSummary: finalize.ErrorSummary,
+	}
 }
 
 type sqliteHealthArchiveWriter struct {
@@ -88,12 +148,12 @@ func (archive *sqliteHealthArchiveWriter) CurrentConnection() (archivedConnectio
 	return connection, err
 }
 
-func (archive *sqliteHealthArchiveWriter) StartSyncRun(connection archivedConnection, dataTypes []string, from, to, endpointFamily, sourceFamilyFilter, startedAt string) (int64, error) {
-	return insertSyncRun(archive.db, connection, dataTypes, from, to, endpointFamily, sourceFamilyFilter, startedAt)
+func (archive *sqliteHealthArchiveWriter) StartSyncRun(start syncRunStart) (int64, error) {
+	return insertSyncRun(archive.db, start)
 }
 
-func (archive *sqliteHealthArchiveWriter) FinishSyncRun(id int64, status string, seenCount, newCount, updatedCount int, finishedAt, errorSummary string) error {
-	return finishSyncRun(archive.db, id, status, seenCount, newCount, updatedCount, finishedAt, errorSummary)
+func (archive *sqliteHealthArchiveWriter) FinishSyncRun(finish syncRunFinish) error {
+	return finishSyncRun(archive.db, finish)
 }
 
 // HeartbeatSyncRun is a single autocommit UPDATE — deliberately not a
@@ -103,13 +163,19 @@ func (archive *sqliteHealthArchiveWriter) FinishSyncRun(id int64, status string,
 // The WHERE clause keeps the heartbeat from resurrecting a row that a
 // concurrent fence (or finalize) already drove to a terminal status:
 // a late heartbeat against a non-running row touches zero rows.
-func (archive *sqliteHealthArchiveWriter) HeartbeatSyncRun(id int64, seenCount, newCount, updatedCount int, at string) error {
+func (archive *sqliteHealthArchiveWriter) HeartbeatSyncRun(heartbeat syncRunHeartbeat) error {
 	_, err := archive.db.Exec(`UPDATE sync_runs SET
 		seen_count = ?,
 		new_count = ?,
 		updated_count = ?,
 		last_progress_at = ?
-	WHERE id = ? AND status = 'sync_running'`, seenCount, newCount, updatedCount, at, id)
+	WHERE id = ? AND status = 'sync_running'`,
+		heartbeat.SeenCount,
+		heartbeat.NewCount,
+		heartbeat.UpdatedCount,
+		heartbeat.At,
+		heartbeat.SyncRunID,
+	)
 	return err
 }
 
@@ -191,7 +257,7 @@ func (archive *sqliteHealthArchiveWriter) finalizeSyncRunAttempt(finalize syncRu
 			_ = tx.Rollback()
 		}
 	}()
-	if err := finishSyncRunTx(tx, finalize.SyncRunID, string(finalize.Outcome), finalize.SeenCount, finalize.NewCount, finalize.UpdatedCount, finalize.FinishedAt, finalize.ErrorSummary); err != nil {
+	if err := finishSyncRun(tx, finalize.runFinish()); err != nil {
 		return err
 	}
 	if err := commitSyncCursorTx(tx, finalize.CursorKey, finalize.Outcome, finalize.CursorTo, finalize.CursorAdvanced); err != nil {
@@ -204,12 +270,12 @@ func (archive *sqliteHealthArchiveWriter) finalizeSyncRunAttempt(finalize syncRu
 	return nil
 }
 
-func insertSyncRun(db *sql.DB, connection archivedConnection, dataTypes []string, from, to, endpointFamily, sourceFamilyFilter, startedAt string) (int64, error) {
-	dataTypesJSON, err := json.Marshal(dataTypes)
+func insertSyncRun(db *sql.DB, start syncRunStart) (int64, error) {
+	dataTypesJSON, err := json.Marshal(start.DataTypes)
 	if err != nil {
 		return 0, err
 	}
-	rangeJSON, err := json.Marshal(map[string]string{"from": from, "to": to})
+	rangeJSON, err := json.Marshal(map[string]string{"from": start.From, "to": start.To})
 	if err != nil {
 		return 0, err
 	}
@@ -223,14 +289,14 @@ func insertSyncRun(db *sql.DB, connection archivedConnection, dataTypes []string
 		status,
 		started_at
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		connection.providerName,
-		connection.id,
+		start.Connection.providerName,
+		start.Connection.id,
 		string(dataTypesJSON),
 		string(rangeJSON),
-		endpointFamily,
-		nullString(sourceFamilyFilter),
+		start.EndpointFamily,
+		nullString(start.SourceFamilyFilter),
 		"sync_running",
-		startedAt,
+		start.StartedAt,
 	)
 	if err != nil {
 		return 0, err
@@ -238,22 +304,15 @@ func insertSyncRun(db *sql.DB, connection archivedConnection, dataTypes []string
 	return result.LastInsertId()
 }
 
-func finishSyncRun(db *sql.DB, syncRunID int64, status string, seen, newCount, updated int, finishedAt, errorSummary string) error {
-	return finishSyncRunExec(db, syncRunID, status, seen, newCount, updated, finishedAt, errorSummary)
-}
-
-// finishSyncRunTx is the same write as finishSyncRun but bound to an open
-// transaction so it can compose with commitSyncCursorTx inside
-// FinalizeSyncRun.
-func finishSyncRunTx(tx *sql.Tx, syncRunID int64, status string, seen, newCount, updated int, finishedAt, errorSummary string) error {
-	return finishSyncRunExec(tx, syncRunID, status, seen, newCount, updated, finishedAt, errorSummary)
-}
-
 type sqlExecutor interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }
 
-func finishSyncRunExec(executor sqlExecutor, syncRunID int64, status string, seen, newCount, updated int, finishedAt, errorSummary string) error {
+// finishSyncRun is the one terminal-row UPDATE. It accepts the
+// sqlExecutor seam so the standalone FinishSyncRun (autocommit on the
+// db handle) and the atomic finalize transaction compose the same
+// write — there is no second column list to drift.
+func finishSyncRun(executor sqlExecutor, finish syncRunFinish) error {
 	_, err := executor.Exec(`UPDATE sync_runs SET
 		status = ?,
 		seen_count = ?,
@@ -261,7 +320,15 @@ func finishSyncRunExec(executor sqlExecutor, syncRunID int64, status string, see
 		updated_count = ?,
 		finished_at = ?,
 		error_summary = ?
-	WHERE id = ?`, status, seen, newCount, updated, finishedAt, nullString(errorSummary), syncRunID)
+	WHERE id = ?`,
+		finish.Status,
+		finish.SeenCount,
+		finish.NewCount,
+		finish.UpdatedCount,
+		finish.FinishedAt,
+		nullString(finish.ErrorSummary),
+		finish.SyncRunID,
+	)
 	return err
 }
 

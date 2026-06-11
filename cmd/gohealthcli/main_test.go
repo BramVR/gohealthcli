@@ -4027,7 +4027,7 @@ func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing
 	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `distance.interval.start_time >= "2026-01-01T00:00:00Z" AND distance.interval.start_time < "2026-01-02T00:00:00Z"` {
 		t.Fatalf("distance filter = %q", gotFilter)
 	}
-	assertArchivedIntervalDataPoint(t, archivePath, "users/me/dataTypes/distance/dataPoints/distance-2026-01-01", "distance", "2026-01-01T07:00:00Z", "2026-01-01T07:30:00Z", "2026-01-01T08:00:00", "2026-01-01T08:30:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"millimeters":"2450"`)
+	assertArchivedIntervalDataPoint(t, archivePath, "users/me/dataTypes/distance/dataPoints/distance-2026-01-01", "distance", "2026-01-01T07:00:00Z", "2026-01-01T07:30:00Z", "2026-01-01T08:00:00", "2026-01-01T08:30:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, "", `"millimeters":"2450"`)
 	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "distance", "list", 1, 1, 0, "")
 
 	installDataPointSyncFetchFake(t, "connect-access-secret", "distance", map[string]string{"": distancePage})
@@ -4077,7 +4077,7 @@ func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing
 	assertJSONNumber(t, got, "data_points_new", 0)
 	assertJSONNumber(t, got, "data_points_updated", 1)
 	assertArchiveTableCount(t, archivePath, "data_point_revisions", 1)
-	assertArchivedIntervalDataPoint(t, archivePath, "users/me/dataTypes/distance/dataPoints/distance-2026-01-01", "distance", "2026-01-01T07:00:00Z", "2026-01-01T07:30:00Z", "2026-01-01T08:00:00", "2026-01-01T08:30:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"millimeters":"2500"`)
+	assertArchivedIntervalDataPoint(t, archivePath, "users/me/dataTypes/distance/dataPoints/distance-2026-01-01", "distance", "2026-01-01T07:00:00Z", "2026-01-01T07:30:00Z", "2026-01-01T08:00:00", "2026-01-01T08:30:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, "", `"millimeters":"2500"`)
 	assertSyncRunForDataType(t, archivePath, 3, "sync_completed", "distance", "list", 1, 0, 1, "")
 
 	reconciledDistancePage := `{"dataPoints": [{
@@ -4122,7 +4122,7 @@ func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 2)
 	assertDataPointSourceFamilyCounts(t, archivePath, map[string]int{"": 1, "wearable": 1})
-	assertArchivedIntervalDataPoint(t, archivePath, "users/me/dataTypes/distance/dataPoints/distance-2026-01-01-wearable", "distance", "2026-01-01T07:00:00Z", "2026-01-01T07:30:00Z", "2026-01-01T08:00:00", "2026-01-01T08:30:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, "{}", `"millimeters":"2450"`)
+	assertArchivedIntervalDataPoint(t, archivePath, "users/me/dataTypes/distance/dataPoints/distance-2026-01-01-wearable", "distance", "2026-01-01T07:00:00Z", "2026-01-01T07:30:00Z", "2026-01-01T08:00:00", "2026-01-01T08:30:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, "{}", "wearable", `"millimeters":"2450"`)
 	assertSyncRunForDataTypeWithSourceFamily(t, archivePath, 4, "sync_completed", "distance", "reconcile", "wearable", 1, 1, 0, "")
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
@@ -7807,33 +7807,9 @@ func createLegacyArchive(t *testing.T, archivePath string, schemaVersion int) {
 	if err != nil {
 		t.Fatalf("begin legacy migration: %v", err)
 	}
-	for _, statement := range initialMigrationStatements() {
-		if _, err := tx.Exec(statement); err != nil {
-			_ = tx.Rollback()
-			t.Fatalf("apply legacy migration statement: %v", err)
-		}
-	}
-	if _, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (1, 'initial_archive_schema', ?)`, time.Date(2026, 5, 31, 21, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
+	if err := applySchemaMigrationSteps(tx, 0, schemaVersion, time.Date(2026, 5, 31, 21, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
 		_ = tx.Rollback()
-		t.Fatalf("record legacy migration: %v", err)
-	}
-	if schemaVersion >= 2 {
-		if err := applyGoogleIdentityArchiveMigration(tx, time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
-			_ = tx.Rollback()
-			t.Fatalf("apply legacy identity migration: %v", err)
-		}
-	}
-	if schemaVersion >= 3 {
-		if err := applySourceFamilyArchiveMigration(tx, time.Date(2026, 5, 31, 23, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
-			_ = tx.Rollback()
-			t.Fatalf("apply legacy source family migration: %v", err)
-		}
-	}
-	if schemaVersion >= 4 {
-		if err := applyDailyStepsViewMigration(tx, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
-			_ = tx.Rollback()
-			t.Fatalf("apply legacy daily steps view migration: %v", err)
-		}
+		t.Fatalf("apply legacy schema migrations through version %d: %v", schemaVersion, err)
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 		_ = tx.Rollback()
@@ -8005,8 +7981,11 @@ func assertArchivedStepDataPoint(t *testing.T, archivePath string) {
 		t.Fatalf("open archive: %v", err)
 	}
 	defer db.Close()
-	var dataType, resourceName, recordKind, startUTC, endUTC, startCivil, endCivil, civilDate, timezoneMetadata, dataSourceJSON, rawJSON string
+	var providerName, connectionID, dataType, resourceName, recordKind, startUTC, endUTC, startCivil, endCivil, civilDate, timezoneMetadata, dataSourceJSON, rawJSON string
+	var sourceFamilyFilter sql.NullString
 	if err := db.QueryRow(`SELECT
+		provider_name,
+		connection_id,
 		data_type,
 		upstream_resource_name,
 		record_kind,
@@ -8017,10 +7996,13 @@ func assertArchivedStepDataPoint(t *testing.T, archivePath string) {
 		provider_civil_date,
 		timezone_metadata,
 		data_source_json,
+		source_family_filter,
 		raw_json
 	FROM data_points
 	WHERE upstream_resource_name = ?
 	ORDER BY id`, "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a").Scan(
+		&providerName,
+		&connectionID,
 		&dataType,
 		&resourceName,
 		&recordKind,
@@ -8031,9 +8013,13 @@ func assertArchivedStepDataPoint(t *testing.T, archivePath string) {
 		&civilDate,
 		&timezoneMetadata,
 		&dataSourceJSON,
+		&sourceFamilyFilter,
 		&rawJSON,
 	); err != nil {
 		t.Fatalf("query archived step Data Point: %v", err)
+	}
+	if providerName != "googlehealth" || connectionID != "googlehealth:111111256096816351" {
+		t.Fatalf("Data Point connection = (%q, %q), want googlehealth connection", providerName, connectionID)
 	}
 	if dataType != "steps" || resourceName != "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a" || recordKind != "interval" {
 		t.Fatalf("Data Point identity = (%q, %q, %q), want steps interval resource", dataType, resourceName, recordKind)
@@ -8050,12 +8036,53 @@ func assertArchivedStepDataPoint(t *testing.T, archivePath string) {
 	if dataSourceJSON != `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}` {
 		t.Fatalf("data_source_json = %q, want compact Data Source", dataSourceJSON)
 	}
+	if sourceFamilyFilter.Valid {
+		t.Fatalf("source_family_filter = %q, want omitted for unfiltered sync", sourceFamilyFilter.String)
+	}
 	if !strings.Contains(rawJSON, `"count":"512"`) {
 		t.Fatalf("raw_json = %s, want original steps count", rawJSON)
 	}
+
+	// The second fixture page row carries only the required interval
+	// fields — no civil times, no offsets. Pin the optional columns NULL
+	// so the parser cannot start inventing values for absent fields.
+	var minimalStartUTC, minimalEndUTC, minimalRecordKind, minimalDataSourceJSON string
+	var minimalStartCivil, minimalEndCivil, minimalCivilDate, minimalTimezoneMetadata sql.NullString
+	if err := db.QueryRow(`SELECT
+		record_kind,
+		start_time_utc,
+		end_time_utc,
+		start_civil_time,
+		end_civil_time,
+		provider_civil_date,
+		timezone_metadata,
+		data_source_json
+	FROM data_points
+	WHERE upstream_resource_name = ?
+	ORDER BY id`, "users/me/dataTypes/steps/dataPoints/step-2026-01-01-b").Scan(
+		&minimalRecordKind,
+		&minimalStartUTC,
+		&minimalEndUTC,
+		&minimalStartCivil,
+		&minimalEndCivil,
+		&minimalCivilDate,
+		&minimalTimezoneMetadata,
+		&minimalDataSourceJSON,
+	); err != nil {
+		t.Fatalf("query minimal archived step Data Point: %v", err)
+	}
+	if minimalRecordKind != "interval" || minimalStartUTC != "2026-01-01T09:00:00Z" || minimalEndUTC != "2026-01-01T09:05:00Z" {
+		t.Fatalf("minimal step Data Point = (%q, %q, %q), want UTC-only interval", minimalRecordKind, minimalStartUTC, minimalEndUTC)
+	}
+	if minimalStartCivil.Valid || minimalEndCivil.Valid || minimalCivilDate.Valid || minimalTimezoneMetadata.Valid {
+		t.Fatalf("minimal step civil/timezone columns = (%v, %v, %v, %v), want all omitted", minimalStartCivil.Valid, minimalEndCivil.Valid, minimalCivilDate.Valid, minimalTimezoneMetadata.Valid)
+	}
+	if minimalDataSourceJSON != `{"platform":"FITBIT"}` {
+		t.Fatalf("minimal step data_source_json = %q, want platform-only Data Source", minimalDataSourceJSON)
+	}
 }
 
-func assertArchivedIntervalDataPoint(t *testing.T, archivePath, resourceName, wantDataType, wantStartUTC, wantEndUTC, wantStartCivil, wantEndCivil, wantCivilDate, wantTimezoneMetadata, wantDataSourceJSON, wantRawContains string) {
+func assertArchivedIntervalDataPoint(t *testing.T, archivePath, resourceName, wantDataType, wantStartUTC, wantEndUTC, wantStartCivil, wantEndCivil, wantCivilDate, wantTimezoneMetadata, wantDataSourceJSON, wantSourceFamily, wantRawContains string) {
 	t.Helper()
 
 	db, err := openArchive(archivePath)
@@ -8063,9 +8090,11 @@ func assertArchivedIntervalDataPoint(t *testing.T, archivePath, resourceName, wa
 		t.Fatalf("open archive: %v", err)
 	}
 	defer db.Close()
-	var dataType, recordKind, startUTC, endUTC, dataSourceJSON, rawJSON string
-	var startCivil, endCivil, civilDate, timezoneMetadata sql.NullString
+	var providerName, connectionID, dataType, recordKind, startUTC, endUTC, dataSourceJSON, rawJSON string
+	var startCivil, endCivil, civilDate, timezoneMetadata, sourceFamilyFilter sql.NullString
 	if err := db.QueryRow(`SELECT
+		provider_name,
+		connection_id,
 		data_type,
 		record_kind,
 		start_time_utc,
@@ -8075,10 +8104,13 @@ func assertArchivedIntervalDataPoint(t *testing.T, archivePath, resourceName, wa
 		provider_civil_date,
 		timezone_metadata,
 		data_source_json,
+		source_family_filter,
 		raw_json
 	FROM data_points
 	WHERE upstream_resource_name = ?
 	ORDER BY id`, resourceName).Scan(
+		&providerName,
+		&connectionID,
 		&dataType,
 		&recordKind,
 		&startUTC,
@@ -8088,12 +8120,19 @@ func assertArchivedIntervalDataPoint(t *testing.T, archivePath, resourceName, wa
 		&civilDate,
 		&timezoneMetadata,
 		&dataSourceJSON,
+		&sourceFamilyFilter,
 		&rawJSON,
 	); err != nil {
 		t.Fatalf("query archived interval Data Point: %v", err)
 	}
+	if providerName != "googlehealth" || connectionID != "googlehealth:111111256096816351" {
+		t.Fatalf("Data Point connection = (%q, %q), want googlehealth connection", providerName, connectionID)
+	}
 	if dataType != wantDataType || recordKind != "interval" {
 		t.Fatalf("Data Point identity = (%q, %q), want (%q, interval)", dataType, recordKind, wantDataType)
+	}
+	if sourceFamilyFilter.String != wantSourceFamily || sourceFamilyFilter.Valid != (wantSourceFamily != "") {
+		t.Fatalf("source_family_filter = %v(%q), want %q", sourceFamilyFilter.Valid, sourceFamilyFilter.String, wantSourceFamily)
 	}
 	if startUTC != wantStartUTC || endUTC != wantEndUTC {
 		t.Fatalf("physical time = (%q, %q), want (%q, %q)", startUTC, endUTC, wantStartUTC, wantEndUTC)
@@ -8234,9 +8273,11 @@ func assertArchivedSessionDataPoint(t *testing.T, archivePath, resourceName, wan
 		t.Fatalf("open archive: %v", err)
 	}
 	defer db.Close()
-	var dataType, recordKind, startUTC, endUTC, dataSourceJSON, rawJSON string
-	var startCivil, endCivil, civilDate, timezoneMetadata sql.NullString
+	var providerName, connectionID, dataType, recordKind, startUTC, endUTC, dataSourceJSON, rawJSON string
+	var startCivil, endCivil, civilDate, timezoneMetadata, sourceFamilyFilter sql.NullString
 	if err := db.QueryRow(`SELECT
+		provider_name,
+		connection_id,
 		data_type,
 		record_kind,
 		start_time_utc,
@@ -8246,10 +8287,13 @@ func assertArchivedSessionDataPoint(t *testing.T, archivePath, resourceName, wan
 		provider_civil_date,
 		timezone_metadata,
 		data_source_json,
+		source_family_filter,
 		raw_json
 	FROM data_points
 	WHERE upstream_resource_name = ?
 	ORDER BY id`, resourceName).Scan(
+		&providerName,
+		&connectionID,
 		&dataType,
 		&recordKind,
 		&startUTC,
@@ -8259,12 +8303,19 @@ func assertArchivedSessionDataPoint(t *testing.T, archivePath, resourceName, wan
 		&civilDate,
 		&timezoneMetadata,
 		&dataSourceJSON,
+		&sourceFamilyFilter,
 		&rawJSON,
 	); err != nil {
 		t.Fatalf("query archived session Data Point: %v", err)
 	}
+	if providerName != "googlehealth" || connectionID != "googlehealth:111111256096816351" {
+		t.Fatalf("Data Point connection = (%q, %q), want googlehealth connection", providerName, connectionID)
+	}
 	if dataType != wantDataType || recordKind != "session" {
 		t.Fatalf("Data Point identity = (%q, %q), want (%q, session)", dataType, recordKind, wantDataType)
+	}
+	if sourceFamilyFilter.Valid {
+		t.Fatalf("source_family_filter = %q, want omitted for session list sync", sourceFamilyFilter.String)
 	}
 	if startUTC != wantStartUTC || endUTC != wantEndUTC {
 		t.Fatalf("physical time = (%q, %q), want (%q, %q)", startUTC, endUTC, wantStartUTC, wantEndUTC)

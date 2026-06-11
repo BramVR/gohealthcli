@@ -28,7 +28,6 @@ import (
 )
 
 const setupMissingExitCode = 2
-const currentSchemaVersion = 22
 const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
 const googleHealthSleepReadonlyScope = "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
@@ -1745,10 +1744,7 @@ func persistDoctorOnlineRefreshedTokenWithRuntime(archive connectionTokenWriter,
 	}
 	if err := archive.UpdateConnectionTokenMetadata(connectionID, token, runtime.now()); err != nil {
 		if rollbackErr := store.Store(connectionID, previousTokenMaterial); rollbackErr != nil {
-			// The secondary rollback error is deliberately %v, not %w: only
-			// the primary archive error may carry the typed-error chain
-			// callers branch on (#272 translation layer).
-			return fmt.Errorf("%w; rollback Credential Store token material: %v", err, rollbackErr) //nolint:errorlint // deliberate non-wrapping %v for the secondary error
+			return fmt.Errorf("%w; rollback Credential Store token material: %v", err, rollbackErr)
 		}
 		return err
 	}
@@ -3190,20 +3186,14 @@ func parseGoogleHealthDataPointList(body []byte) (googleHealthDataPointList, err
 }
 
 func parseGoogleHealthDataPoint(connection archivedConnection, dataType string, rawPoint json.RawMessage, sourceFamilyFilter string) (archivedDataPoint, error) {
-	if dataType == "steps" {
-		return parseGoogleHealthStepsDataPoint(connection, rawPoint, sourceFamilyFilter)
-	}
-	if googleHealthIntervalDataPointJSONField(dataType) != "" {
-		return parseGoogleHealthIntervalDataPoint(connection, dataType, rawPoint, sourceFamilyFilter)
+	if jsonField, recordKind, ok := googleHealthIntervalShapedDataPointShape(dataType); ok {
+		return parseGoogleHealthIntervalShapedDataPoint(connection, dataType, rawPoint, sourceFamilyFilter, jsonField, recordKind)
 	}
 	if googleHealthSampleDataPointJSONField(dataType) != "" {
 		return parseGoogleHealthSampleDataPoint(connection, dataType, rawPoint, sourceFamilyFilter)
 	}
 	if googleHealthDailyDataPointJSONField(dataType) != "" {
 		return parseGoogleHealthDailyDataPoint(connection, dataType, rawPoint, sourceFamilyFilter)
-	}
-	if googleHealthSessionDataPointJSONField(dataType) != "" {
-		return parseGoogleHealthSessionDataPoint(connection, dataType, rawPoint, sourceFamilyFilter)
 	}
 	return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not supported", dataType)
 }
@@ -3244,6 +3234,31 @@ func (envelope googleHealthDataPointEnvelope) upstreamResourceName() string {
 	return envelope.dataPointName
 }
 
+// requiredField returns the named value object, or the missing-value
+// error every Data Point parser shape reports for an absent field.
+func (envelope googleHealthDataPointEnvelope) requiredField(dataType, jsonField string) (json.RawMessage, error) {
+	rawValue, ok := envelope.fields[jsonField]
+	if !ok || len(rawValue) == 0 || string(rawValue) == "null" {
+		return nil, fmt.Errorf("Google Health %s Data Point missing %s value", dataType, jsonField)
+	}
+	return rawValue, nil
+}
+
+// parseGoogleHealthDataPointHead performs the envelope decode shared
+// by every Data Point parser shape: the canonical raw JSON archived on
+// the row plus the name / dataSource / field-map envelope.
+func parseGoogleHealthDataPointHead(dataType string, rawPoint json.RawMessage) (string, googleHealthDataPointEnvelope, error) {
+	canonicalRaw, err := compactJSONString(rawPoint)
+	if err != nil {
+		return "", googleHealthDataPointEnvelope{}, fmt.Errorf("Google Health %s Data Point is not valid JSON", dataType)
+	}
+	envelope, err := parseGoogleHealthDataPointEnvelope(dataType, rawPoint)
+	if err != nil {
+		return "", googleHealthDataPointEnvelope{}, err
+	}
+	return canonicalRaw, envelope, nil
+}
+
 func parseGoogleHealthIntervalMetadata(dataType string, interval googleHealthIntervalFields) (parsedGoogleHealthInterval, error) {
 	if interval.StartTime == "" || interval.EndTime == "" {
 		return parsedGoogleHealthInterval{}, fmt.Errorf("Google Health %s Data Point missing interval startTime or endTime", dataType)
@@ -3278,63 +3293,24 @@ func parseGoogleHealthIntervalMetadata(dataType string, interval googleHealthInt
 	}, nil
 }
 
-func parseGoogleHealthStepsDataPoint(connection archivedConnection, rawPoint json.RawMessage, sourceFamilyFilter string) (archivedDataPoint, error) {
-	canonicalRaw, err := compactJSONString(rawPoint)
-	if err != nil {
-		return archivedDataPoint{}, errors.New("Google Health steps Data Point is not valid JSON")
-	}
-	envelope, err := parseGoogleHealthDataPointEnvelope("steps", rawPoint)
-	if err != nil {
-		return archivedDataPoint{}, err
-	}
-	var raw struct {
-		Steps struct {
-			Interval googleHealthIntervalFields `json:"interval"`
-		} `json:"steps"`
-	}
-	if err := json.Unmarshal(rawPoint, &raw); err != nil {
-		return archivedDataPoint{}, errors.New("Google Health steps Data Point is not valid JSON")
-	}
-	interval, err := parseGoogleHealthIntervalMetadata("steps", raw.Steps.Interval)
+// parseGoogleHealthIntervalShapedDataPoint is the single parser for
+// the interval-shaped Data Point kinds (steps, interval, session).
+// The Data Type catalog supplies the two values the kinds differ in:
+// the JSON field holding the upstream value object and the record
+// kind stored on the archived row (#278).
+func parseGoogleHealthIntervalShapedDataPoint(connection archivedConnection, dataType string, rawPoint json.RawMessage, sourceFamilyFilter, jsonField, recordKind string) (archivedDataPoint, error) {
+	canonicalRaw, envelope, err := parseGoogleHealthDataPointHead(dataType, rawPoint)
 	if err != nil {
 		return archivedDataPoint{}, err
 	}
-	return archivedDataPoint{
-		providerName:         connection.providerName,
-		connectionID:         connection.id,
-		dataType:             "steps",
-		upstreamResourceName: envelope.upstreamResourceName(),
-		recordKind:           "interval",
-		startTimeUTC:         interval.startTimeUTC,
-		endTimeUTC:           interval.endTimeUTC,
-		startCivilTime:       interval.startCivilTime,
-		endCivilTime:         interval.endCivilTime,
-		providerCivilDate:    interval.providerCivilDate,
-		timezoneMetadataJSON: interval.timezoneMetadataJSON,
-		dataSourceJSON:       envelope.dataSourceJSON,
-		sourceFamilyFilter:   sourceFamilyFilter,
-		rawJSON:              canonicalRaw,
-	}, nil
-}
-
-func parseGoogleHealthIntervalDataPoint(connection archivedConnection, dataType string, rawPoint json.RawMessage, sourceFamilyFilter string) (archivedDataPoint, error) {
-	canonicalRaw, err := compactJSONString(rawPoint)
-	if err != nil {
-		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not valid JSON", dataType)
-	}
-	envelope, err := parseGoogleHealthDataPointEnvelope(dataType, rawPoint)
+	rawValue, err := envelope.requiredField(dataType, jsonField)
 	if err != nil {
 		return archivedDataPoint{}, err
-	}
-	jsonField := googleHealthIntervalDataPointJSONField(dataType)
-	rawInterval, ok := envelope.fields[jsonField]
-	if !ok || len(rawInterval) == 0 || string(rawInterval) == "null" {
-		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point missing %s value", dataType, jsonField)
 	}
 	var value struct {
 		Interval googleHealthIntervalFields `json:"interval"`
 	}
-	if err := json.Unmarshal(rawInterval, &value); err != nil {
+	if err := json.Unmarshal(rawValue, &value); err != nil {
 		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point %s is not valid JSON", dataType, jsonField)
 	}
 	interval, err := parseGoogleHealthIntervalMetadata(dataType, value.Interval)
@@ -3346,7 +3322,7 @@ func parseGoogleHealthIntervalDataPoint(connection archivedConnection, dataType 
 		connectionID:         connection.id,
 		dataType:             dataType,
 		upstreamResourceName: envelope.upstreamResourceName(),
-		recordKind:           "interval",
+		recordKind:           recordKind,
 		startTimeUTC:         interval.startTimeUTC,
 		endTimeUTC:           interval.endTimeUTC,
 		startCivilTime:       interval.startCivilTime,
@@ -3360,18 +3336,14 @@ func parseGoogleHealthIntervalDataPoint(connection archivedConnection, dataType 
 }
 
 func parseGoogleHealthSampleDataPoint(connection archivedConnection, dataType string, rawPoint json.RawMessage, sourceFamilyFilter string) (archivedDataPoint, error) {
-	canonicalRaw, err := compactJSONString(rawPoint)
-	if err != nil {
-		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not valid JSON", dataType)
-	}
-	envelope, err := parseGoogleHealthDataPointEnvelope(dataType, rawPoint)
+	canonicalRaw, envelope, err := parseGoogleHealthDataPointHead(dataType, rawPoint)
 	if err != nil {
 		return archivedDataPoint{}, err
 	}
 	jsonField := googleHealthSampleDataPointJSONField(dataType)
-	rawSample, ok := envelope.fields[jsonField]
-	if !ok || len(rawSample) == 0 || string(rawSample) == "null" {
-		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point missing %s value", dataType, jsonField)
+	rawSample, err := envelope.requiredField(dataType, jsonField)
+	if err != nil {
+		return archivedDataPoint{}, err
 	}
 	var sample struct {
 		SampleTime struct {
@@ -3415,11 +3387,7 @@ func parseGoogleHealthSampleDataPoint(connection archivedConnection, dataType st
 }
 
 func parseGoogleHealthDailyDataPoint(connection archivedConnection, dataType string, rawPoint json.RawMessage, sourceFamilyFilter string) (archivedDataPoint, error) {
-	canonicalRaw, err := compactJSONString(rawPoint)
-	if err != nil {
-		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not valid JSON", dataType)
-	}
-	envelope, err := parseGoogleHealthDataPointEnvelope(dataType, rawPoint)
+	canonicalRaw, envelope, err := parseGoogleHealthDataPointHead(dataType, rawPoint)
 	if err != nil {
 		return archivedDataPoint{}, err
 	}
@@ -3427,9 +3395,9 @@ func parseGoogleHealthDailyDataPoint(connection archivedConnection, dataType str
 	if !ok {
 		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not supported", dataType)
 	}
-	rawDaily, ok := envelope.fields[shape.jsonField]
-	if !ok || len(rawDaily) == 0 || string(rawDaily) == "null" {
-		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point missing %s value", dataType, shape.jsonField)
+	rawDaily, err := envelope.requiredField(dataType, shape.jsonField)
+	if err != nil {
+		return archivedDataPoint{}, err
 	}
 	var daily struct {
 		Date json.RawMessage `json:"date"`
@@ -3448,48 +3416,6 @@ func parseGoogleHealthDailyDataPoint(connection archivedConnection, dataType str
 		upstreamResourceName: envelope.upstreamResourceName(),
 		recordKind:           "daily",
 		providerCivilDate:    providerCivilDate,
-		dataSourceJSON:       envelope.dataSourceJSON,
-		sourceFamilyFilter:   sourceFamilyFilter,
-		rawJSON:              canonicalRaw,
-	}, nil
-}
-
-func parseGoogleHealthSessionDataPoint(connection archivedConnection, dataType string, rawPoint json.RawMessage, sourceFamilyFilter string) (archivedDataPoint, error) {
-	canonicalRaw, err := compactJSONString(rawPoint)
-	if err != nil {
-		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point is not valid JSON", dataType)
-	}
-	envelope, err := parseGoogleHealthDataPointEnvelope(dataType, rawPoint)
-	if err != nil {
-		return archivedDataPoint{}, err
-	}
-	jsonField := googleHealthSessionDataPointJSONField(dataType)
-	rawSession, ok := envelope.fields[jsonField]
-	if !ok || len(rawSession) == 0 || string(rawSession) == "null" {
-		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point missing %s value", dataType, jsonField)
-	}
-	var session struct {
-		Interval googleHealthIntervalFields `json:"interval"`
-	}
-	if err := json.Unmarshal(rawSession, &session); err != nil {
-		return archivedDataPoint{}, fmt.Errorf("Google Health %s Data Point %s is not valid JSON", dataType, jsonField)
-	}
-	interval, err := parseGoogleHealthIntervalMetadata(dataType, session.Interval)
-	if err != nil {
-		return archivedDataPoint{}, err
-	}
-	return archivedDataPoint{
-		providerName:         connection.providerName,
-		connectionID:         connection.id,
-		dataType:             dataType,
-		upstreamResourceName: envelope.upstreamResourceName(),
-		recordKind:           "session",
-		startTimeUTC:         interval.startTimeUTC,
-		endTimeUTC:           interval.endTimeUTC,
-		startCivilTime:       interval.startCivilTime,
-		endCivilTime:         interval.endCivilTime,
-		providerCivilDate:    interval.providerCivilDate,
-		timezoneMetadataJSON: interval.timezoneMetadataJSON,
 		dataSourceJSON:       envelope.dataSourceJSON,
 		sourceFamilyFilter:   sourceFamilyFilter,
 		rawJSON:              canonicalRaw,
@@ -4156,639 +4082,6 @@ func archiveDSN(archivePath string, readOnly bool) (string, error) {
 		query.Add("mode", "ro")
 	}
 	return (&url.URL{Scheme: "file", Path: uriPath, RawQuery: query.Encode()}).String(), nil
-}
-
-func applyMigrations(db *sql.DB) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	// Rollback after a successful Commit returns sql.ErrTxDone; the error is
-	// deliberately ignored because this defer is only the abort path.
-	defer func() { _ = tx.Rollback() }()
-
-	for _, statement := range initialMigrationStatements() {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	if _, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (1, 'initial_archive_schema', ?)`, now); err != nil {
-		return err
-	}
-	if err := applyGoogleIdentityArchiveMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applySourceFamilyArchiveMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applyDailyStepsViewMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applyFirstReleaseNormalizedViewsMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applySyncCursorsMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applyIdentitySnapshotsMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applyCurrentSettingsViewMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applyPairedDevicesViewMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applyCurrentIRNProfileViewMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applySleepExerciseViewsMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applyExerciseSplitsRealShapeMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applySearchableTextViewMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applySearchableTextLatestProfileMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applyDataPointAttachmentsMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applyFloorsIntervalsViewMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applyTier1ActivityViewsMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applyTier1HealthMetricsViewsMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applyTier1DailyHydrationViewsMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applyTier2EcgIrnViewsMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applyHydrationLogSessionsViewMigration(tx, now); err != nil {
-		return err
-	}
-	if err := applySyncRunHeartbeatMigration(tx, now); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`PRAGMA user_version = 22`); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-func migrateArchiveIfNeeded(archivePath string) error {
-	// healthArchiveLifecycle.Migrate already backfills the attachment
-	// root, so this thin wrapper just forwards.
-	return (healthArchiveLifecycle{path: archivePath}).Migrate()
-}
-
-func applyPendingMigrations(db *sql.DB) error {
-	var userVersion int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
-		return err
-	}
-	switch userVersion {
-	case currentSchemaVersion:
-		return nil
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21:
-		tx, err := db.Begin()
-		if err != nil {
-			return err
-		}
-		// Rollback after a successful Commit returns sql.ErrTxDone; the
-		// error is deliberately ignored: this defer is only the abort path.
-		defer func() { _ = tx.Rollback() }()
-		now := time.Now().UTC().Format(time.RFC3339)
-		if userVersion == 1 {
-			if err := applyGoogleIdentityArchiveMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 2 {
-			if err := applySourceFamilyArchiveMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 3 {
-			if err := applyDailyStepsViewMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 4 {
-			if err := applyFirstReleaseNormalizedViewsMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 5 {
-			if err := applySyncCursorsMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 6 {
-			if err := applyIdentitySnapshotsMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 7 {
-			if err := applyCurrentSettingsViewMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 8 {
-			if err := applyPairedDevicesViewMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 9 {
-			if err := applyCurrentIRNProfileViewMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 10 {
-			if err := applySleepExerciseViewsMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 11 {
-			if err := applyExerciseSplitsRealShapeMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 12 {
-			if err := applySearchableTextViewMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 13 {
-			if err := applySearchableTextLatestProfileMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 14 {
-			if err := applyDataPointAttachmentsMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 15 {
-			if err := applyFloorsIntervalsViewMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 16 {
-			if err := applyTier1ActivityViewsMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 17 {
-			if err := applyTier1HealthMetricsViewsMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 18 {
-			if err := applyTier1DailyHydrationViewsMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 19 {
-			if err := applyTier2EcgIrnViewsMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if userVersion <= 20 {
-			if err := applyHydrationLogSessionsViewMigration(tx, now); err != nil {
-				return err
-			}
-		}
-		if err := applySyncRunHeartbeatMigration(tx, now); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(`PRAGMA user_version = 22`); err != nil {
-			return err
-		}
-		return tx.Commit()
-	default:
-		return fmt.Errorf("schema version %d, want %d", userVersion, currentSchemaVersion)
-	}
-}
-
-func applyGoogleIdentityArchiveMigration(tx *sql.Tx, appliedAt string) error {
-	if _, err := tx.Exec(`ALTER TABLE connections ADD COLUMN google_identity_json TEXT NOT NULL DEFAULT '{}'`); err != nil {
-		return err
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (2, 'add_google_identity_json', ?)`, appliedAt)
-	return err
-}
-
-func applySourceFamilyArchiveMigration(tx *sql.Tx, appliedAt string) error {
-	for _, statement := range []string{
-		`ALTER TABLE data_points ADD COLUMN source_family_filter TEXT`,
-		`ALTER TABLE sync_runs ADD COLUMN source_family_filter TEXT`,
-	} {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (3, 'add_source_family_filter', ?)`, appliedAt)
-	return err
-}
-
-func applyDailyStepsViewMigration(tx *sql.Tx, appliedAt string) error {
-	for _, statement := range dailyStepsViewMigrationStatements() {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (4, 'add_daily_steps_view', ?)`, appliedAt)
-	return err
-}
-
-func applyFirstReleaseNormalizedViewsMigration(tx *sql.Tx, appliedAt string) error {
-	for _, statement := range firstReleaseNormalizedViewMigrationStatements() {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (5, 'add_first_release_normalized_views', ?)`, appliedAt)
-	return err
-}
-
-func applySyncCursorsMigration(tx *sql.Tx, appliedAt string) error {
-	for _, statement := range syncCursorsMigrationStatements() {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (6, 'add_sync_cursors', ?)`, appliedAt)
-	return err
-}
-
-func applyTier1ActivityViewsMigration(tx *sql.Tx, appliedAt string) error {
-	for _, statement := range normalizedViewsRegistry().MigrationStatements(17) {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (17, 'add_tier1_activity_views', ?)`, appliedAt)
-	return err
-}
-
-func applyTier1HealthMetricsViewsMigration(tx *sql.Tx, appliedAt string) error {
-	for _, statement := range normalizedViewsRegistry().MigrationStatements(18) {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (18, 'add_tier1_health_metrics_views', ?)`, appliedAt)
-	return err
-}
-
-// applyTier1DailyHydrationViewsMigration installs the four daily/sample
-// Normalized Views for #103: daily_vo2_max, daily_heart_rate_zones,
-// daily_sleep_temperature_derivations, respiratory_rate_sleep_summary.
-// The session-shaped hydration_log_sessions view ships separately at
-// schema version 21 (applyHydrationLogSessionsViewMigration) so the
-// migration row history records the two payload shapes independently.
-func applyTier1DailyHydrationViewsMigration(tx *sql.Tx, appliedAt string) error {
-	for _, statement := range normalizedViewsRegistry().MigrationStatements(19) {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (19, 'add_tier1_daily_hydration_views', ?)`, appliedAt)
-	return err
-}
-
-// applyHydrationLogSessionsViewMigration installs the session-shaped
-// hydration_log_sessions Normalized View (#103). The view projects
-// $.hydrationLog.volume.liters (TEXT for precision) plus the standard
-// session timing columns. Pinned to schema version 21 — the daily/sample
-// Tier 1 daily+hydration views shipped at v19; this seals the slice.
-func applyHydrationLogSessionsViewMigration(tx *sql.Tx, appliedAt string) error {
-	for _, statement := range normalizedViewsRegistry().MigrationStatements(21) {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (21, 'add_hydration_log_sessions_view', ?)`, appliedAt)
-	return err
-}
-
-// applySyncRunHeartbeatMigration adds the last_progress_at heartbeat
-// column to sync_runs (#236). The ingestion writes it (together with
-// the running counts) after every archived page, so a concurrent
-// `sync --status` reader can tell an alive long run from an abandoned
-// one. NULL on historical rows: those predate heartbeats, and the
-// stale-run fence falls back to started_at for them.
-func applySyncRunHeartbeatMigration(tx *sql.Tx, appliedAt string) error {
-	if _, err := tx.Exec(`ALTER TABLE sync_runs ADD COLUMN last_progress_at TEXT`); err != nil {
-		return err
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (22, 'add_sync_run_heartbeat', ?)`, appliedAt)
-	return err
-}
-
-// applyTier2EcgIrnViewsMigration registers the Tier 2 ECG and IRN
-// Normalized Views (#104) — electrocardiogram_sessions and
-// irregular_rhythm_notifications. The view SQL itself lives in the
-// shared exportDatasetDefinitions registry; this migration just
-// runs the registered CREATE VIEW statements pinned to schema
-// version 20 and records the migration row.
-func applyTier2EcgIrnViewsMigration(tx *sql.Tx, appliedAt string) error {
-	for _, statement := range normalizedViewsRegistry().MigrationStatements(20) {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (20, 'add_tier2_ecg_irn_views', ?)`, appliedAt)
-	return err
-}
-
-func applyFloorsIntervalsViewMigration(tx *sql.Tx, appliedAt string) error {
-	for _, statement := range normalizedViewsRegistry().MigrationStatements(16) {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (16, 'add_floors_intervals_view', ?)`, appliedAt)
-	return err
-}
-
-func applyDataPointAttachmentsMigration(tx *sql.Tx, appliedAt string) error {
-	if _, err := tx.Exec(`CREATE TABLE data_point_attachments (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		data_point_id INTEGER NOT NULL,
-		kind TEXT NOT NULL,
-		sha256 TEXT NOT NULL,
-		path_relative TEXT NOT NULL,
-		byte_size INTEGER NOT NULL,
-		fetched_at TEXT NOT NULL,
-		FOREIGN KEY (data_point_id) REFERENCES data_points(id)
-	)`); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`CREATE UNIQUE INDEX data_point_attachments_dp_sha ON data_point_attachments (data_point_id, sha256)`); err != nil {
-		return err
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (15, 'add_data_point_attachments', ?)`, appliedAt)
-	return err
-}
-
-// applySearchableTextLatestProfileMigration drops the migration-13
-// searchable_text view and recreates it from the Registry. The new
-// definition restricts the profile kind to the latest snapshot per
-// Connection and filters empty-string values from data_source and
-// exercise_type rows (Copilot findings on PR #121).
-func applySearchableTextLatestProfileMigration(tx *sql.Tx, appliedAt string) error {
-	if _, err := tx.Exec(`DROP VIEW IF EXISTS searchable_text`); err != nil {
-		return err
-	}
-	spec, ok := normalizedViewsRegistry().View("searchable-text")
-	if !ok {
-		return fmt.Errorf("searchable-text view missing from registry; cannot recreate")
-	}
-	if _, err := tx.Exec(exportDatasetViewMigrationStatement(spec)); err != nil {
-		return err
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (14, 'fix_searchable_text_latest_profile_and_empty_filter', ?)`, appliedAt)
-	return err
-}
-
-func applySearchableTextViewMigration(tx *sql.Tx, appliedAt string) error {
-	for _, statement := range normalizedViewsRegistry().MigrationStatements(13) {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (13, 'add_searchable_text_view', ?)`, appliedAt)
-	return err
-}
-
-// applyExerciseSplitsRealShapeMigration drops the migration-11 view that
-// extracted distance from $.distanceMeters (a path Google Health API
-// does not emit) and recreates it against the real shape:
-// $.metricsSummary.distanceMillimeters in millimeters. Live testing in
-// the original #105 PR returned all-NULL distances; this is the
-// follow-up that pins the view to what the upstream actually returns.
-func applyExerciseSplitsRealShapeMigration(tx *sql.Tx, appliedAt string) error {
-	if _, err := tx.Exec(`DROP VIEW IF EXISTS exercise_splits`); err != nil {
-		return err
-	}
-	spec, ok := normalizedViewsRegistry().View("exercise-splits")
-	if !ok {
-		return fmt.Errorf("exercise-splits view missing from registry; cannot recreate")
-	}
-	if _, err := tx.Exec(exportDatasetViewMigrationStatement(spec)); err != nil {
-		return err
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (12, 'fix_exercise_splits_real_shape', ?)`, appliedAt)
-	return err
-}
-
-func applySleepExerciseViewsMigration(tx *sql.Tx, appliedAt string) error {
-	for _, statement := range normalizedViewsRegistry().MigrationStatements(11) {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (11, 'add_sleep_stages_and_exercise_splits_views', ?)`, appliedAt)
-	return err
-}
-
-func applyCurrentIRNProfileViewMigration(tx *sql.Tx, appliedAt string) error {
-	for _, statement := range normalizedViewsRegistry().MigrationStatements(10) {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (10, 'add_current_irn_profile_view', ?)`, appliedAt)
-	return err
-}
-
-func applyPairedDevicesViewMigration(tx *sql.Tx, appliedAt string) error {
-	for _, statement := range normalizedViewsRegistry().MigrationStatements(9) {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (9, 'add_paired_devices_view', ?)`, appliedAt)
-	return err
-}
-
-func applyCurrentSettingsViewMigration(tx *sql.Tx, appliedAt string) error {
-	for _, statement := range normalizedViewsRegistry().MigrationStatements(8) {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (8, 'add_current_settings_view', ?)`, appliedAt)
-	return err
-}
-
-func applyIdentitySnapshotsMigration(tx *sql.Tx, appliedAt string) error {
-	for _, statement := range identitySnapshotsMigrationStatements() {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	_, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (7, 'rename_profile_snapshots_to_identity_snapshots', ?)`, appliedAt)
-	return err
-}
-
-// identitySnapshotsMigrationStatements renames profile_snapshots to
-// identity_snapshots and adds the snapshot_kind discriminator. All
-// existing rows keep snapshot_kind = 'profile' via the column default,
-// preserving every prior profile snapshot's identity without a
-// parallel-table-with-view shim (per the PRD §"identity_snapshots
-// migration: explicit strategy").
-func identitySnapshotsMigrationStatements() []string {
-	return []string{
-		`ALTER TABLE profile_snapshots RENAME TO identity_snapshots`,
-		`ALTER TABLE identity_snapshots ADD COLUMN snapshot_kind TEXT NOT NULL DEFAULT 'profile'`,
-	}
-}
-
-func syncCursorsMigrationStatements() []string {
-	return []string{
-		`CREATE TABLE sync_cursors (
-			connection_id TEXT NOT NULL,
-			data_type TEXT NOT NULL,
-			source_family_filter TEXT NOT NULL DEFAULT '',
-			rollup_kind TEXT NOT NULL DEFAULT 'none',
-			cursor_time TEXT NOT NULL,
-			advanced_at TEXT NOT NULL,
-			PRIMARY KEY (connection_id, data_type, source_family_filter, rollup_kind),
-			FOREIGN KEY (connection_id) REFERENCES connections(id)
-		)`,
-	}
-}
-
-func expectedSchemaMigrations() map[int]string {
-	return map[int]string{
-		1:  "initial_archive_schema",
-		2:  "add_google_identity_json",
-		3:  "add_source_family_filter",
-		4:  "add_daily_steps_view",
-		5:  "add_first_release_normalized_views",
-		6:  "add_sync_cursors",
-		7:  "rename_profile_snapshots_to_identity_snapshots",
-		8:  "add_current_settings_view",
-		9:  "add_paired_devices_view",
-		10: "add_current_irn_profile_view",
-		11: "add_sleep_stages_and_exercise_splits_views",
-		12: "fix_exercise_splits_real_shape",
-		13: "add_searchable_text_view",
-		14: "fix_searchable_text_latest_profile_and_empty_filter",
-		15: "add_data_point_attachments",
-		16: "add_floors_intervals_view",
-		17: "add_tier1_activity_views",
-		18: "add_tier1_health_metrics_views",
-		19: "add_tier1_daily_hydration_views",
-		20: "add_tier2_ecg_irn_views",
-		21: "add_hydration_log_sessions_view",
-		22: "add_sync_run_heartbeat",
-	}
-}
-
-func initialMigrationStatements() []string {
-	return []string{
-		`CREATE TABLE schema_migrations (
-			version INTEGER PRIMARY KEY,
-			name TEXT NOT NULL,
-			applied_at TEXT NOT NULL
-		)`,
-		`CREATE TABLE connections (
-			id TEXT PRIMARY KEY,
-			provider_name TEXT NOT NULL,
-			google_health_user_id TEXT NOT NULL,
-			legacy_fitbit_user_id TEXT,
-			token_metadata_json TEXT NOT NULL DEFAULT '{}',
-			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL
-		)`,
-		`CREATE TABLE data_points (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			provider_name TEXT NOT NULL,
-			connection_id TEXT NOT NULL,
-			data_type TEXT NOT NULL,
-			upstream_resource_name TEXT,
-			record_kind TEXT NOT NULL,
-			start_time_utc TEXT,
-			end_time_utc TEXT,
-			start_civil_time TEXT,
-			end_civil_time TEXT,
-			provider_civil_date TEXT,
-			timezone_metadata TEXT,
-			data_source_json TEXT NOT NULL,
-			raw_json TEXT NOT NULL,
-			inserted_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL,
-			FOREIGN KEY (connection_id) REFERENCES connections(id)
-		)`,
-		`CREATE TABLE data_point_revisions (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			data_point_id INTEGER NOT NULL,
-			previous_raw_json TEXT NOT NULL,
-			replaced_at TEXT NOT NULL,
-			replacement_reason TEXT,
-			FOREIGN KEY (data_point_id) REFERENCES data_points(id)
-		)`,
-		`CREATE TABLE rollups (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			provider_name TEXT NOT NULL,
-			connection_id TEXT NOT NULL,
-			data_type TEXT NOT NULL,
-			rollup_kind TEXT NOT NULL,
-			window_start_utc TEXT,
-			window_end_utc TEXT,
-			civil_date TEXT,
-			timezone_metadata TEXT,
-			raw_json TEXT NOT NULL,
-			inserted_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL,
-			FOREIGN KEY (connection_id) REFERENCES connections(id)
-		)`,
-		`CREATE TABLE profile_snapshots (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			provider_name TEXT NOT NULL,
-			connection_id TEXT NOT NULL,
-			raw_json TEXT NOT NULL,
-			fetched_at TEXT NOT NULL,
-			FOREIGN KEY (connection_id) REFERENCES connections(id)
-		)`,
-		`CREATE TABLE sync_runs (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			provider_name TEXT NOT NULL,
-			connection_id TEXT,
-			data_types_requested TEXT NOT NULL,
-			range_requested_json TEXT NOT NULL,
-			endpoint_family TEXT NOT NULL,
-			status TEXT NOT NULL,
-			seen_count INTEGER NOT NULL DEFAULT 0,
-			new_count INTEGER NOT NULL DEFAULT 0,
-			updated_count INTEGER NOT NULL DEFAULT 0,
-			started_at TEXT NOT NULL,
-			finished_at TEXT,
-			error_summary TEXT,
-			FOREIGN KEY (connection_id) REFERENCES connections(id)
-		)`,
-	}
-}
-
-func dailyStepsViewMigrationStatements() []string {
-	return normalizedViewsRegistry().MigrationStatements(4)
-}
-
-func firstReleaseNormalizedViewMigrationStatements() []string {
-	return normalizedViewsRegistry().MigrationStatements(5)
 }
 
 func writeStatusResult(result statusResult, mode outputMode, stdout io.Writer) error {

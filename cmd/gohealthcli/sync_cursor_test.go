@@ -461,7 +461,14 @@ func TestArchiveFinalizeSyncRunAtomicallyCommitsRunAndCursor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	syncRunID, err := archive.StartSyncRun(connection, []string{"steps"}, "2026-01-01", "2026-01-02T00:00:00Z", "list", "", "2026-01-05T00:00:00Z")
+	syncRunID, err := archive.StartSyncRun(syncRunStart{
+		Connection:     connection,
+		DataTypes:      []string{"steps"},
+		From:           "2026-01-01",
+		To:             "2026-01-02T00:00:00Z",
+		EndpointFamily: "list",
+		StartedAt:      "2026-01-05T00:00:00Z",
+	})
 	if err != nil {
 		t.Fatalf("StartSyncRun: %v", err)
 	}
@@ -520,7 +527,14 @@ func TestArchiveFinalizeSyncRunRollsBackRunStatusWhenCursorUpsertFails(t *testin
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	syncRunID, err := archive.StartSyncRun(connection, []string{"steps"}, "2026-01-01", "2026-01-02T00:00:00Z", "list", "", "2026-01-05T00:00:00Z")
+	syncRunID, err := archive.StartSyncRun(syncRunStart{
+		Connection:     connection,
+		DataTypes:      []string{"steps"},
+		From:           "2026-01-01",
+		To:             "2026-01-02T00:00:00Z",
+		EndpointFamily: "list",
+		StartedAt:      "2026-01-05T00:00:00Z",
+	})
 	if err != nil {
 		t.Fatalf("StartSyncRun: %v", err)
 	}
@@ -592,7 +606,14 @@ func TestArchiveFinalizeSyncRunSkipsCursorAdvanceForNonCompletedOutcomes(t *test
 			if err != nil {
 				t.Fatalf("CurrentConnection: %v", err)
 			}
-			syncRunID, err := archive.StartSyncRun(connection, []string{"steps"}, "2026-01-01", "2026-01-02T00:00:00Z", "list", "", "2026-01-05T00:00:00Z")
+			syncRunID, err := archive.StartSyncRun(syncRunStart{
+				Connection:     connection,
+				DataTypes:      []string{"steps"},
+				From:           "2026-01-01",
+				To:             "2026-01-02T00:00:00Z",
+				EndpointFamily: "list",
+				StartedAt:      "2026-01-05T00:00:00Z",
+			})
 			if err != nil {
 				t.Fatalf("StartSyncRun: %v", err)
 			}

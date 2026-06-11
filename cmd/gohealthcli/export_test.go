@@ -55,12 +55,12 @@ func TestExportDatasetDefinitionsDriveViewMigrations(t *testing.T) {
 	}{
 		{
 			name:       "daily steps migration",
-			statements: dailyStepsViewMigrationStatements(),
+			statements: normalizedViewsRegistry().MigrationStatements(4),
 			wantViews:  []string{"daily_steps"},
 		},
 		{
 			name:       "first release normalized views migration",
-			statements: firstReleaseNormalizedViewMigrationStatements(),
+			statements: normalizedViewsRegistry().MigrationStatements(5),
 			wantViews: []string{
 				"heart_rate_samples",
 				"resting_heart_rate_by_day",
