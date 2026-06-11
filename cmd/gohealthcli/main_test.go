@@ -6403,6 +6403,7 @@ func TestInitRejectsInvalidOAuthClientFileBeforeCreatingSetup(t *testing.T) {
 		outputMode{},
 		stdout,
 		stderr,
+		runtimeAdapters{},
 	)
 
 	if code == 0 {
@@ -6445,6 +6446,7 @@ func TestInitNamesMissingInstalledObjectForEmptyOAuthClientJSON(t *testing.T) {
 		outputMode{},
 		stdout,
 		stderr,
+		runtimeAdapters{},
 	)
 
 	if code == 0 {
@@ -6493,6 +6495,7 @@ func TestInitRejectsWebOAuthClientFile(t *testing.T) {
 		outputMode{},
 		stdout,
 		stderr,
+		runtimeAdapters{},
 	)
 
 	if code == 0 {
@@ -6537,6 +6540,7 @@ func TestInitKeepsNonObjectMessageForNullOAuthClientJSON(t *testing.T) {
 		outputMode{},
 		stdout,
 		stderr,
+		runtimeAdapters{},
 	)
 
 	if code == 0 {
@@ -6795,6 +6799,7 @@ func TestInitJSONReportsWriteFailure(t *testing.T) {
 		outputMode{},
 		failingWriter{},
 		stderr,
+		runtimeAdapters{},
 	)
 
 	if code == 0 {

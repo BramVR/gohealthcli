@@ -22,7 +22,7 @@ func TestParseCommonFlowsValuesThrough(t *testing.T) {
 	spec := CommonFlagSpec{Accepted: []string{"config", "db", "json", "plain", "no-input"}}
 	values := RegisterCommon(fs, spec, defaults)
 
-	if err := ParseCommon(fs, values, []string{"--config", "/etc/x.toml", "--db", "/tmp/y.db", "--no-input"}); err != nil {
+	if err := ParseCommon(fs, values, []string{"--config", "/etc/x.toml", "--db", "/tmp/y.db", "--no-input"}, nil); err != nil {
 		t.Fatalf("ParseCommon: %v", err)
 	}
 	if values.ConfigPath != "/etc/x.toml" {
@@ -52,7 +52,7 @@ func TestParseCommonHonoursDefaults(t *testing.T) {
 	spec := CommonFlagSpec{Accepted: []string{"config", "db", "json", "plain", "no-input"}}
 	values := RegisterCommon(fs, spec, defaults)
 
-	if err := ParseCommon(fs, values, nil); err != nil {
+	if err := ParseCommon(fs, values, nil, nil); err != nil {
 		t.Fatalf("ParseCommon: %v", err)
 	}
 	if values.ConfigPath != "/default/config" {
@@ -77,7 +77,7 @@ func TestParseCommonRejectsUnknownButKnownGlobal(t *testing.T) {
 	spec := CommonFlagSpec{Accepted: []string{"config", "db", "json"}}
 	values := RegisterCommon(fs, spec, CommonFlagValues{})
 
-	err := ParseCommon(fs, values, []string{"--plain"})
+	err := ParseCommon(fs, values, []string{"--plain"}, nil)
 	if err == nil {
 		t.Fatalf("ParseCommon with --plain should return an error when spec omits 'plain'")
 	}
@@ -99,7 +99,7 @@ func TestParseCommonPreservesParseUsageOnError(t *testing.T) {
 	fs.SetOutput(stderr)
 	values := RegisterCommon(fs, AllCommonFlagsSpec(), CommonFlagValues{})
 
-	err := ParseCommon(fs, values, []string{"--bogus"})
+	err := ParseCommon(fs, values, []string{"--bogus"}, nil)
 	if err == nil {
 		t.Fatalf("ParseCommon should return an error for --bogus")
 	}
@@ -123,7 +123,7 @@ func TestParseCommonPreservesHelpUsage(t *testing.T) {
 	fs.SetOutput(stderr)
 	values := RegisterCommon(fs, AllCommonFlagsSpec(), CommonFlagValues{})
 
-	err := ParseCommon(fs, values, []string{"--help"})
+	err := ParseCommon(fs, values, []string{"--help"}, nil)
 	if !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("error = %v, want flag.ErrHelp", err)
 	}
@@ -142,7 +142,7 @@ func TestParseCommonHandlesDashValueForPriorFlag(t *testing.T) {
 	fs.SetOutput(io.Discard)
 	values := RegisterCommon(fs, AllCommonFlagsSpec(), CommonFlagValues{})
 
-	if err := ParseCommon(fs, values, []string{"--config", "-weird-path", "--plain"}); err != nil {
+	if err := ParseCommon(fs, values, []string{"--config", "-weird-path", "--plain"}, nil); err != nil {
 		t.Fatalf("ParseCommon: %v", err)
 	}
 	if values.ConfigPath != "-weird-path" {
@@ -162,7 +162,7 @@ func TestParseCommonRejectsPlainAndJSON(t *testing.T) {
 	spec := CommonFlagSpec{Accepted: []string{"config", "db", "json", "plain", "no-input"}}
 	values := RegisterCommon(fs, spec, CommonFlagValues{})
 
-	err := ParseCommon(fs, values, []string{"--plain", "--json"})
+	err := ParseCommon(fs, values, []string{"--plain", "--json"}, nil)
 	if err == nil {
 		t.Fatalf("ParseCommon with --plain --json should return an error")
 	}

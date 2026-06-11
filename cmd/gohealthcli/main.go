@@ -600,17 +600,22 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 		// between the two and is handled by the runUnknownCommand helper.
 		return runUnknownCommand(flags.Arg(0), outputMode{json: *jsonOutput, plain: *plainOutput}, stdout, stderr)
 	}
+	return dispatchCommand(cmd, flags.Args()[1:], common, stdout, stderr, runtime)
+}
+
+// dispatchCommand invokes a registry entry's Run adapter, guarding the
+// nil case: TestEveryCommandHasRunAdapter pins the invariant that every
+// entry's Run is wired, but if a future change slips a registry entry
+// through without an adapter we exit cleanly with a targeted stderr
+// message instead of panicking on the nil call. The error wording names
+// the offending command so an operator can flag the bug without
+// inspecting a stack trace.
+func dispatchCommand(cmd commandDef, args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	if cmd.Run == nil {
-		// Defensive guard: TestEveryCommandHasRunAdapter pins the invariant
-		// that every entry's Run is wired, but if a future change slips a
-		// registry entry through without an adapter we exit cleanly with a
-		// targeted stderr message instead of panicking on the nil call.
-		// The error wording names the offending command so an operator can
-		// flag the bug without inspecting a stack trace.
 		fmt.Fprintf(stderr, "internal error: command %q has no Run adapter\n", cmd.Name)
 		return 1
 	}
-	return cmd.Run(flags.Args()[1:], common, stdout, stderr, runtime)
+	return cmd.Run(args, common, stdout, stderr, runtime)
 }
 
 // runUnknownCommand renders the unknown-command failure: the canonical
@@ -668,7 +673,7 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 	})
 	doctorOnline := flags.Bool("online", false, "refresh tokens and check provider reachability")
 
-	if err := ParseCommon(flags, common, args); err != nil {
+	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
@@ -797,7 +802,7 @@ func runStatus(args []string, configPath, archivePath string, configPathExplicit
 		ConfigPathExplicit:  configPathExplicit,
 	})
 
-	if err := ParseCommon(flags, common, args); err != nil {
+	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
@@ -835,7 +840,7 @@ func runStatus(args []string, configPath, archivePath string, configPathExplicit
 	return 0
 }
 
-func runInit(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer) int {
+func runInit(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("init", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -849,7 +854,7 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 	secretProvider := flags.String("secret-provider", "", "Secret Provider name for OAuth client setup")
 	oauthClientItem := flags.String("oauth-client-item", "", "Secret Provider item name for OAuth client setup")
 
-	if err := ParseCommon(flags, common, args); err != nil {
+	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
@@ -967,7 +972,7 @@ func runConnectWithRuntime(args []string, configPath, archivePath string, global
 	// accepts again (#148: `nutrition` was accepted but invisible).
 	connectAddScopes := flags.String("add-scopes", "", connectAddScopesUsage())
 
-	if err := ParseCommon(flags, common, args); err != nil {
+	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
@@ -1139,7 +1144,7 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 	syncStatus := flags.Bool("status", false, "list recent Sync Runs from the local archive instead of syncing")
 	syncWindow := flags.String("window", "", "with --status: how far back to list finished Sync Runs (Go duration, default 15m, max 24h)")
 
-	if err := ParseCommon(flags, common, args); err != nil {
+	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
@@ -1301,7 +1306,7 @@ func runRawWithRuntime(args []string, configPath, archivePath string, mode outpu
 	// positionals trail; the FlagSet then parses everything, and
 	// fs.Args() returns just the trailing positionals.
 	reordered, target := partitionRawFlagArgs(flags, args)
-	if err := ParseCommon(flags, common, reordered); err != nil {
+	if err := ParseCommon(flags, common, reordered, runtime.observeSubcommandFlagSet); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			// --help / -h flowed through; raw's success output is the
 			// provider's raw bytes on stdout, so the bespoke usage

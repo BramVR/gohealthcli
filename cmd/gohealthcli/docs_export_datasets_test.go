@@ -234,7 +234,7 @@ func TestRunDocsExportDatasetsRewritesREADME(t *testing.T) {
 	}
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	code := runDocsExportDatasets([]string{"--readme", scratch}, stdout, stderr)
+	code := runDocsExportDatasets([]string{"--readme", scratch}, stdout, stderr, nil)
 	if code != 0 {
 		t.Fatalf("runDocsExportDatasets exit code = %d, want 0\nstdout=%s\nstderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -261,7 +261,7 @@ func TestRunDocsExportDatasetsRewritesREADME(t *testing.T) {
 func TestRunDocsExportDatasetsRequiresREADMEFlag(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	code := runDocsExportDatasets(nil, stdout, stderr)
+	code := runDocsExportDatasets(nil, stdout, stderr, nil)
 	if code == 0 {
 		t.Fatalf("runDocsExportDatasets without --readme should fail; got exit 0\nstderr=%s", stderr.String())
 	}
@@ -278,7 +278,7 @@ func TestRunDocsExportDatasetsRequiresREADMEFlag(t *testing.T) {
 func TestRunDocsExportDatasetsRejectsUnexpectedPositional(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	code := runDocsExportDatasets([]string{"--readme", "README.md", "stray-typo"}, stdout, stderr)
+	code := runDocsExportDatasets([]string{"--readme", "README.md", "stray-typo"}, stdout, stderr, nil)
 	if code == 0 {
 		t.Fatalf("runDocsExportDatasets with stray positional should fail; got exit 0\nstderr=%s", stderr.String())
 	}

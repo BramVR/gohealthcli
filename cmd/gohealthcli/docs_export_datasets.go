@@ -115,11 +115,11 @@ func spliceREADMEExportDatasets(content, block string) (string, error) {
 // --readme, splices in a freshly rendered block, and writes it back.
 // Errors land on stderr; success is silent (no stdout noise) so the
 // target composes cleanly in shell pipelines.
-func runDocsExportDatasets(args []string, stdout, stderr io.Writer) int {
+func runDocsExportDatasets(args []string, stdout, stderr io.Writer, observe flagSetObserver) int {
 	flags := flag.NewFlagSet("docs-export-datasets", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	readmePath := flags.String("readme", "", "path to README.md to rewrite in place")
-	notifySubcommandFlagSetObserver(flags)
+	notifySubcommandFlagSetObserver(observe, flags)
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0

@@ -25,12 +25,12 @@ type schemaDocument struct {
 // reference to `commands` would create — Go's var-init checker sees
 // the cycle even though closures defer the actual call — and keeps the
 // data and the adapter in lockstep.
-func runSchemaWithRegistry(args []string, registry []commandDef, stdout, stderr io.Writer) int {
+func runSchemaWithRegistry(args []string, registry []commandDef, stdout, stderr io.Writer, observe flagSetObserver) int {
 	flags := flag.NewFlagSet("schema", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	jsonOutput := flags.Bool("json", true, "emit the registry as JSON (default and currently the only output mode)")
 
-	notifySubcommandFlagSetObserver(flags)
+	notifySubcommandFlagSetObserver(observe, flags)
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0

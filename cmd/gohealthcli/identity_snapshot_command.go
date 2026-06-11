@@ -150,7 +150,7 @@ func runIdentitySnapshotCommand[R, P any](spec identitySnapshotCommandSpec[R, P]
 		PlainOutput: mode.plain,
 	})
 
-	if err := ParseCommon(flags, common, args); err != nil {
+	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}

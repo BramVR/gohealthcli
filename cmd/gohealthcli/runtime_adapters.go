@@ -26,8 +26,12 @@ type runtimeAdapters struct {
 	// Sync Run path uses (gate connection lookup + lifecycle). Tests
 	// wrap it to inject failing writers; production binds the real
 	// opener.
-	openHealthArchiveWriter        func(string) (healthArchiveWriter, error)
-	now                            func() time.Time
+	openHealthArchiveWriter func(string) (healthArchiveWriter, error)
+	now                     func() time.Time
+	// sleep is the blocking-wait seam the Sync Run finalize retry loop
+	// rides between SQLITE_BUSY attempts. Production binds time.Sleep;
+	// tests bind a no-op so retry scenarios stay instant.
+	sleep                          func(time.Duration)
 	currentOS                      string
 	findExecutable                 func(string) (string, error)
 	runSecurityAddGenericPassword  func(string, string, []byte) error
@@ -36,6 +40,10 @@ type runtimeAdapters struct {
 	runSecretToolLookup            func(string, string) ([]byte, error)
 	runWindowsCredentialWrite      func(string, string, []byte) error
 	runWindowsCredentialRead       func(string, string) ([]byte, error)
+	// observeSubcommandFlagSet is the issue #76 schema-drift test hook
+	// (see flagSetObserver in common_flags.go). Production leaves it
+	// nil — notifySubcommandFlagSetObserver treats nil as a no-op.
+	observeSubcommandFlagSet flagSetObserver
 }
 
 // productionFetchPairedDevices, productionFetchSettings, and
@@ -77,6 +85,7 @@ func productionRuntimeAdapters() runtimeAdapters {
 		fetchRawProvider:               productionFetchRawProvider,
 		openHealthArchiveWriter:        openHealthArchiveWriter,
 		now:                            productionNow,
+		sleep:                          time.Sleep,
 		currentOS:                      goruntime.GOOS,
 		findExecutable:                 exec.LookPath,
 		runSecurityAddGenericPassword:  runSecurityAddGenericPasswordCommand,
@@ -110,6 +119,9 @@ func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
 	}
 	if adapters.now == nil {
 		adapters.now = production.now
+	}
+	if adapters.sleep == nil {
+		adapters.sleep = production.sleep
 	}
 	if adapters.runOAuthFlow == nil {
 		adapters.runOAuthFlow = func(client oauthClientConfig, scopes []string, noInput bool) (oauthTokenResponse, error) {

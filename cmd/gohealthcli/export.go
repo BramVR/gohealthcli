@@ -140,7 +140,7 @@ var exportCommonFlagUsageOverrides = map[string]string{
 	"no-input": "accepted for uniformity; export does no prompting",
 }
 
-func runExport(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, stdout, stderr io.Writer) int {
+func runExport(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("export", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -201,7 +201,7 @@ func runExport(args []string, configPath, archivePath string, configPathExplicit
 		return ReportFailure(FailureReport{Command: "export", Status: StatusFlagInvalid, Message: err.Error()}, stdout, stderr)
 	}
 
-	if err := ParseCommon(flags, common, parseArgs); err != nil {
+	if err := ParseCommon(flags, common, parseArgs, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	// mode is the unified output-mode the failure_reporter contract pivots

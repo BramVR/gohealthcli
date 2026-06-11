@@ -46,30 +46,18 @@ func TestEveryVisibleCommandHelpExitsZero(t *testing.T) {
 }
 
 // TestRunWithRuntimeRejectsNilRunAdapter pins the defensive guard in
-// runWithRuntime: a registry entry with a nil Run adapter exits with a
+// dispatch: a registry entry with a nil Run adapter exits with a
 // clean "internal error" message instead of panicking. The guard is
 // belt-and-braces (TestEveryCommandHasRunAdapter already pins the same
 // invariant at build time), but the test means future maintainers can
 // see the failure mode at a glance instead of inferring it from a
-// stack trace. We mutate a fresh in-memory registry to simulate a
-// regression — the package-level `commands` slice is left untouched.
+// stack trace. The synthetic commandDef exercises dispatchCommand —
+// the exact guard runWithRuntime routes every lookup through — without
+// mutating the package-level registry (#283).
 func TestRunWithRuntimeRejectsNilRunAdapter(t *testing.T) {
-	// Snapshot the existing schema entry, blank its Run, and run the
-	// dispatch through the real runWithRuntime path. We restore the
-	// adapter on test exit so subsequent tests still see a wired
-	// registry.
-	for i := range commands {
-		if commands[i].Name != "schema" {
-			continue
-		}
-		original := commands[i].Run
-		commands[i].Run = nil
-		t.Cleanup(func() { commands[i].Run = original })
-		break
-	}
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := runWithRuntime([]string{"schema"}, stdout, stderr, runtimeAdapters{})
+	code := dispatchCommand(commandDef{Name: "schema"}, nil, CommonFlagValues{}, stdout, stderr, runtimeAdapters{})
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1\nstderr: %s", code, stderr.String())
 	}

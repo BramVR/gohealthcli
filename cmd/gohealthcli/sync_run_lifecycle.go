@@ -297,7 +297,7 @@ func (lifecycle syncRunLifecycle) finalize(archive healthArchiveWriter, result s
 	// Finding 2: the recovery write itself runs under the same retry
 	// budget+backoff because if the original finalize lost the lock,
 	// the recovery write almost certainly hits the same contention.
-	recoveryErr := retryFinalizeSyncRunOnBusyWithSleep(finalizeSyncRunRetryBudget, finalizeSyncRunSleeper, func() error {
+	recoveryErr := retryFinalizeSyncRunOnBusyWithSleep(finalizeSyncRunRetryBudget, runtime.sleep, func() error {
 		return archive.FinishSyncRun(syncRunFinish{
 			SyncRunID:    syncRunID,
 			Status:       recoveryStatus,
@@ -348,11 +348,11 @@ const finalizeSyncRunRetryBudget = 8
 // errors short-circuit on the first occurrence so unrelated failures
 // (constraint violations, IO errors) surface immediately.
 //
-// The wrapper sleeps between busy attempts via finalizeSyncRunSleeper.
-// retryFinalizeSyncRunOnBusyWithSleep is the seam tests use to swap in
-// a no-op sleeper without consuming wallclock time.
+// The wrapper sleeps between busy attempts via time.Sleep.
+// retryFinalizeSyncRunOnBusyWithSleep is the seam tests use to pass a
+// no-op sleeper without consuming wallclock time.
 func retryFinalizeSyncRunOnBusy(budget int, attempt func() error) error {
-	return retryFinalizeSyncRunOnBusyWithSleep(budget, finalizeSyncRunSleeper, attempt)
+	return retryFinalizeSyncRunOnBusyWithSleep(budget, time.Sleep, attempt)
 }
 
 // retryFinalizeSyncRunOnBusyWithSleep is the injectable-sleep variant
@@ -401,11 +401,6 @@ const (
 	finalizeSyncRunBackoffBase = 50 * time.Millisecond
 	finalizeSyncRunBackoffCap  = 1 * time.Second
 )
-
-// finalizeSyncRunSleeper is the package-level sleeper the production
-// retry loop calls between busy attempts. Tests swap this for a no-op
-// to keep suite runtime bounded.
-var finalizeSyncRunSleeper = time.Sleep
 
 // isSQLiteBusy returns true when err originates from the SQLite
 // adapter reporting SQLITE_BUSY (or its extended variants). The

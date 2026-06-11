@@ -36,7 +36,7 @@ type queryResult struct {
 	Message     string   `json:"message"`
 }
 
-func runQuery(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer) int {
+func runQuery(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("query", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -55,7 +55,7 @@ func runQuery(args []string, configPath, archivePath string, configPathExplicit,
 	var rawText bool
 	flags.BoolVar(&rawText, "raw-text", false, "in JSON mode, return JSON-typed columns as strings instead of nested objects")
 
-	if err := ParseCommon(flags, common, args); err != nil {
+	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
