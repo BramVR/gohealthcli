@@ -294,7 +294,7 @@ var commands = []commandDef{
 		Flags:       withCommon(),
 		CommonFlags: commonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runIdentityWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runIdentitySnapshotCommand(identityCommand, args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
 		},
 	},
 	{

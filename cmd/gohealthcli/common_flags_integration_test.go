@@ -180,7 +180,7 @@ func TestMigratedSubcommandEntryPointsCallRegisterCommon(t *testing.T) {
 		{"sync", "main.go", "func runSyncWithRuntime("},
 		{"raw", "main.go", "func runRawWithRuntime("},
 		{"query", "query.go", "func runQuery("},
-		{"identity", "main.go", "func runIdentityWithRuntime("},
+		{"identity", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
 		{"profile", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
 		{"settings", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
 		{"devices", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},

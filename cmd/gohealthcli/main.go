@@ -1002,45 +1002,59 @@ func runConnectWithRuntime(args []string, configPath, archivePath string, global
 	return 0
 }
 
-func runIdentityWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-	flags := flag.NewFlagSet("identity", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-
-	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
-		ConfigPath:  configPath,
-		ArchivePath: archivePath,
-		JSONOutput:  mode.json,
-		PlainOutput: mode.plain,
-	})
-
-	if err := ParseCommon(flags, common, args); err != nil {
-		return commonFlagsExitCode(flags, err, stdout, stderr)
-	}
-	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
-	if flags.NArg() != 0 {
-		return ReportFailure(FailureReport{
-			Command: "identity",
-			Status:  StatusUnexpectedArgument,
-			Message: fmt.Sprintf("unexpected identity argument: %s", flags.Arg(0)),
-			Mode:    mode,
-		}, stdout, stderr)
-	}
-
-	result, err := identitySetupWithRuntime(common.ConfigPath, common.ArchivePath, runtime)
-	if err != nil {
-		if result.Status == "" {
-			result.Status = "identity_failed"
+// identityCommand is identity's Identity Snapshot engine spec (issue
+// #282). identity joined the engine via the #273 parity decision: it
+// shares the whole pipeline through Connection access (auto-refresh
+// for file-based OAuth Connections, the getIdentity scope pre-check —
+// the same catalog entry `raw endpoint getIdentity` consumes). Its
+// genuinely-unique decoration is the act override: instead of
+// archiving a snapshot, identity re-fetches the verified Google
+// Identity and refreshes the metadata stored alongside the Connection
+// — which is also why its spec name carries no "Snapshot" and it sets
+// no snapshotKind.
+var identityCommand = identitySnapshotCommandSpec[identityResult, googleIdentity]{
+	command:            "identity",
+	commonFlags:        AllCommonFlagsSpec,
+	statusFailed:       "identity_failed",
+	statusUnavailable:  "identity_unavailable",
+	statusScopeMissing: "identity_scope_missing",
+	scopeEndpointKey:   "getIdentity",
+	seedResult: func(connection archivedConnection) identityResult {
+		return identityResult{
+			ConnectionID:       connection.id,
+			ProviderName:       connection.providerName,
+			GoogleHealthUserID: connection.googleHealthUserID,
+			LegacyFitbitUserID: connection.legacyFitbitUserID,
 		}
-		result.Message = err.Error()
-		if writeErr := writeIdentityResult(result, mode, stdout); writeErr != nil {
-			return reportWriteFailure("identity", writeErr, mode, stdout, stderr)
+	},
+	status:      func(result *identityResult) string { return result.Status },
+	setStatus:   func(result *identityResult, status string) { result.Status = status },
+	setMessage:  func(result *identityResult, message string) { result.Message = message },
+	writeResult: writeIdentityResult,
+	act: func(engine identitySnapshotCommandContext, result *identityResult) error {
+		identity, err := engine.connectionAccess.FetchVerifiedIdentity(engine.accessToken)
+		if err != nil {
+			if isCurrentConnectionIdentityMismatch(err) {
+				result.Status = "identity_mismatch"
+			} else if isProviderUnreachableError(err) {
+				// Provider outage (non-auth HTTP failure or network error)
+				// gets its own documented JSON failure status so automation
+				// can tell it apart from local misconfiguration (issue #272).
+				result.Status = "provider_unreachable"
+			}
+			return err
 		}
-		return 1
-	}
-	if err := writeIdentityResult(result, mode, stdout); err != nil {
-		return reportWriteFailure("identity", err, mode, stdout, stderr)
-	}
-	return 0
+		if err := engine.archive.RefreshConnectionIdentity(engine.connection, identity, engine.runtime.now()); err != nil {
+			return err
+		}
+		result.Status = "identity_refreshed"
+		result.GoogleHealthUserID = identity.healthUserID
+		if identity.legacyFitbitUserID != "" {
+			result.LegacyFitbitUserID = identity.legacyFitbitUserID
+		}
+		result.Message = "Google Identity refreshed"
+		return nil
+	},
 }
 
 // profileSnapshotCommand is profile's Identity Snapshot engine spec
@@ -1458,76 +1472,6 @@ func connectSetupWithRuntimeAndExtraScopes(configPath, archivePath string, noInp
 		TokenStatus:        "metadata_present",
 		Message:            "Google Identity connected",
 	}, nil
-}
-
-func identitySetupWithRuntime(configPath, archivePath string, runtime runtimeAdapters) (identityResult, error) {
-	runtime = runtime.withDefaults()
-	config, err := inspectIdentityConfig(configPath, archivePath)
-	if err != nil {
-		return identityResult{}, fmt.Errorf("config check failed: %w", err)
-	}
-	archive, err := openHealthArchiveConnectionAPI(archivePath)
-	if err != nil {
-		return identityResult{}, err
-	}
-	defer archive.Close()
-	connection, err := archive.CurrentConnection()
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return identityResult{Status: "identity_unavailable"}, errors.New("no Connection found; run `gohealthcli connect` first")
-		}
-		return identityResult{}, err
-	}
-	result := identityResult{
-		ConnectionID:       connection.id,
-		ProviderName:       connection.providerName,
-		GoogleHealthUserID: connection.googleHealthUserID,
-		LegacyFitbitUserID: connection.legacyFitbitUserID,
-	}
-	// Issue #273 parity decision: identity wires WithAutoRefresh for
-	// file-based OAuth Connections exactly like its devices/settings/
-	// irn-profile/profile siblings — the archive handle
-	// openHealthArchiveConnectionAPI returned already satisfies
-	// connectionTokenWriter — so an expired access token refreshes and
-	// persists transparently instead of failing with "run `gohealthcli
-	// connect` again" when every sibling would have recovered. The
-	// historical nil scope request becomes the catalog's getIdentity
-	// entry (the same one `raw endpoint getIdentity` already consumes),
-	// with the errCurrentConnectionScopeMissing sentinel mapped to the
-	// sibling-shaped "identity_scope_missing" status.
-	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{configPath, archivePath}, runtime)
-	if config.oauthClient.kind == "file" {
-		connectionAccess = connectionAccess.WithAutoRefresh(config.oauthClient, archive)
-	}
-	accessToken, err := connectionAccess.AccessToken(googleHealthIdentityEndpointScopes["getIdentity"])
-	if err != nil {
-		if errors.Is(err, errCurrentConnectionScopeMissing) {
-			result.Status = "identity_scope_missing"
-		}
-		return result, err
-	}
-	identity, err := connectionAccess.FetchVerifiedIdentity(accessToken)
-	if err != nil {
-		if isCurrentConnectionIdentityMismatch(err) {
-			result.Status = "identity_mismatch"
-		} else if isProviderUnreachableError(err) {
-			// Provider outage (non-auth HTTP failure or network error)
-			// gets its own documented JSON failure status so automation
-			// can tell it apart from local misconfiguration (issue #272).
-			result.Status = "provider_unreachable"
-		}
-		return result, err
-	}
-	if err := archive.RefreshConnectionIdentity(connection, identity, runtime.now()); err != nil {
-		return result, err
-	}
-	result.Status = "identity_refreshed"
-	result.GoogleHealthUserID = identity.healthUserID
-	if identity.legacyFitbitUserID != "" {
-		result.LegacyFitbitUserID = identity.legacyFitbitUserID
-	}
-	result.Message = "Google Identity refreshed"
-	return result, nil
 }
 
 // resolveConfiguredArchivePath was the legacy read+write resolver. PRD
