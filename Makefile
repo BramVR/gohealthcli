@@ -1,4 +1,4 @@
-.PHONY: build build-info fmt fmt-check docs-site docs-site-clean docs-commands docs-check docs-export-datasets
+.PHONY: build build-info fmt fmt-check lint docs-site docs-site-clean docs-commands docs-check docs-export-datasets
 
 # build embeds the three Version-module identifiers (version/commit/built)
 # at link time via -ldflags. Defaults are "dev" so an unstamped `go build`
@@ -33,6 +33,21 @@ fmt-check:
 		echo "gofmt drift in:"; echo "$$out"; \
 		echo "run 'make fmt' to fix"; exit 1; \
 	fi
+
+# lint runs golangci-lint with the checked-in .golangci.yml (issue #279).
+# CI pins the same version via golangci/golangci-lint-action in
+# .github/workflows/ci.yml; keep GOLANGCI_LINT_VERSION in sync with that
+# workflow. Install the pinned version locally with:
+#   go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+# The version probe below only warns (no hard fail) so a newer local
+# build stays usable; CI remains the authoritative pinned run.
+GOLANGCI_LINT_VERSION := v2.12.2
+lint:
+	@local_version="v$$(golangci-lint version --short 2>/dev/null || echo unknown)"; \
+	if [ "$$local_version" != "$(GOLANGCI_LINT_VERSION)" ]; then \
+		echo "warning: local golangci-lint $$local_version != pinned $(GOLANGCI_LINT_VERSION)"; \
+	fi; \
+	golangci-lint run
 
 docs-site:
 	@node scripts/build-docs-site.mjs
