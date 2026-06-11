@@ -895,12 +895,7 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 			Message:          "local gohealthcli setup already exists",
 		}
 		if err := writeInitResult(result, mode, stdout); err != nil {
-			return ReportFailure(FailureReport{
-				Command: "init",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", err),
-				Mode:    mode,
-			}, stdout, stderr)
+			return reportWriteFailure("init", err, mode, stdout, stderr)
 		}
 		return 0
 	}
@@ -949,12 +944,7 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 		SchemaVersion:     currentSchemaVersion,
 	}
 	if err := writeInitResult(result, mode, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "init",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("init", err, mode, stdout, stderr)
 	}
 	return 0
 }
@@ -1003,22 +993,12 @@ func runConnectWithRuntime(args []string, configPath, archivePath string, global
 		result.Status = "connect_failed"
 		result.Message = err.Error()
 		if writeErr := writeConnectResult(result, mode, stdout); writeErr != nil {
-			return ReportFailure(FailureReport{
-				Command: "connect",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", writeErr),
-				Mode:    mode,
-			}, stdout, stderr)
+			return reportWriteFailure("connect", writeErr, mode, stdout, stderr)
 		}
 		return 1
 	}
 	if err := writeConnectResult(result, mode, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "connect",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("connect", err, mode, stdout, stderr)
 	}
 	return 0
 }
@@ -1054,22 +1034,12 @@ func runIdentityWithRuntime(args []string, configPath, archivePath string, mode 
 		}
 		result.Message = err.Error()
 		if writeErr := writeIdentityResult(result, mode, stdout); writeErr != nil {
-			return ReportFailure(FailureReport{
-				Command: "identity",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", writeErr),
-				Mode:    mode,
-			}, stdout, stderr)
+			return reportWriteFailure("identity", writeErr, mode, stdout, stderr)
 		}
 		return 1
 	}
 	if err := writeIdentityResult(result, mode, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "identity",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("identity", err, mode, stdout, stderr)
 	}
 	return 0
 }
@@ -1105,22 +1075,12 @@ func runProfileWithRuntime(args []string, configPath, archivePath string, mode o
 		}
 		result.Message = err.Error()
 		if writeErr := writeProfileResult(result, mode, stdout); writeErr != nil {
-			return ReportFailure(FailureReport{
-				Command: "profile",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", writeErr),
-				Mode:    mode,
-			}, stdout, stderr)
+			return reportWriteFailure("profile", writeErr, mode, stdout, stderr)
 		}
 		return 1
 	}
 	if err := writeProfileResult(result, mode, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "profile",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("profile", err, mode, stdout, stderr)
 	}
 	return 0
 }
@@ -1353,12 +1313,7 @@ func runRawWithRuntime(args []string, configPath, archivePath string, mode outpu
 		return ReportFailure(FailureReport{Command: "raw", Status: status, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	if _, err := stdout.Write(body); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "raw",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("raw", err, mode, stdout, stderr)
 	}
 	return 0
 }
