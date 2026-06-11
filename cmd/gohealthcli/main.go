@@ -714,12 +714,7 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 		}
 		result.Attachments = attachments
 		if err := writeDoctorResult(result, mode, stdout); err != nil {
-			return ReportFailure(FailureReport{
-				Command: "doctor",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", err),
-				Mode:    mode,
-			}, stdout, stderr)
+			return reportWriteFailure("doctor", err, mode, stdout, stderr)
 		}
 		return 0
 	}
@@ -736,12 +731,7 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 	}
 
 	if err := writeDoctorResult(result, mode, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "doctor",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("doctor", err, mode, stdout, stderr)
 	}
 
 	// The structured envelope already landed on stdout via
@@ -763,12 +753,7 @@ func runDoctorInvalid(configPath, archivePath, message string, mode outputMode, 
 		Message:     message,
 	}
 	if err := writeDoctorResult(result, mode, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "doctor",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("doctor", err, mode, stdout, stderr)
 	}
 	return 1
 }
@@ -781,22 +766,12 @@ func runDoctorOnlineWithRuntime(configPath, archivePath string, mode outputMode,
 		}
 		result.Message = err.Error()
 		if writeErr := writeDoctorResult(result, mode, stdout); writeErr != nil {
-			return ReportFailure(FailureReport{
-				Command: "doctor",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", writeErr),
-				Mode:    mode,
-			}, stdout, stderr)
+			return reportWriteFailure("doctor", writeErr, mode, stdout, stderr)
 		}
 		return 1
 	}
 	if err := writeDoctorResult(result, mode, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "doctor",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("doctor", err, mode, stdout, stderr)
 	}
 	return 0
 }
@@ -837,12 +812,7 @@ func runStatus(args []string, configPath, archivePath string, configPathExplicit
 	if err != nil {
 		result := statusResult{Status: "status_failed", ArchivePath: common.ArchivePath, Message: err.Error()}
 		if writeErr := writeStatusResult(result, mode, stdout); writeErr != nil {
-			return ReportFailure(FailureReport{
-				Command: "status",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", writeErr),
-				Mode:    mode,
-			}, stdout, stderr)
+			return reportWriteFailure("status", writeErr, mode, stdout, stderr)
 		}
 		return 1
 	}
@@ -853,22 +823,12 @@ func runStatus(args []string, configPath, archivePath string, configPathExplicit
 		}
 		result.Message = err.Error()
 		if writeErr := writeStatusResult(result, mode, stdout); writeErr != nil {
-			return ReportFailure(FailureReport{
-				Command: "status",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", writeErr),
-				Mode:    mode,
-			}, stdout, stderr)
+			return reportWriteFailure("status", writeErr, mode, stdout, stderr)
 		}
 		return 1
 	}
 	if err := writeStatusResult(result, mode, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "status",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("status", err, mode, stdout, stderr)
 	}
 	return 0
 }
@@ -935,12 +895,7 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 			Message:          "local gohealthcli setup already exists",
 		}
 		if err := writeInitResult(result, mode, stdout); err != nil {
-			return ReportFailure(FailureReport{
-				Command: "init",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", err),
-				Mode:    mode,
-			}, stdout, stderr)
+			return reportWriteFailure("init", err, mode, stdout, stderr)
 		}
 		return 0
 	}
@@ -989,12 +944,7 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 		SchemaVersion:     currentSchemaVersion,
 	}
 	if err := writeInitResult(result, mode, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "init",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("init", err, mode, stdout, stderr)
 	}
 	return 0
 }
@@ -1043,22 +993,12 @@ func runConnectWithRuntime(args []string, configPath, archivePath string, global
 		result.Status = "connect_failed"
 		result.Message = err.Error()
 		if writeErr := writeConnectResult(result, mode, stdout); writeErr != nil {
-			return ReportFailure(FailureReport{
-				Command: "connect",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", writeErr),
-				Mode:    mode,
-			}, stdout, stderr)
+			return reportWriteFailure("connect", writeErr, mode, stdout, stderr)
 		}
 		return 1
 	}
 	if err := writeConnectResult(result, mode, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "connect",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("connect", err, mode, stdout, stderr)
 	}
 	return 0
 }
@@ -1094,22 +1034,12 @@ func runIdentityWithRuntime(args []string, configPath, archivePath string, mode 
 		}
 		result.Message = err.Error()
 		if writeErr := writeIdentityResult(result, mode, stdout); writeErr != nil {
-			return ReportFailure(FailureReport{
-				Command: "identity",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", writeErr),
-				Mode:    mode,
-			}, stdout, stderr)
+			return reportWriteFailure("identity", writeErr, mode, stdout, stderr)
 		}
 		return 1
 	}
 	if err := writeIdentityResult(result, mode, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "identity",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("identity", err, mode, stdout, stderr)
 	}
 	return 0
 }
@@ -1145,22 +1075,12 @@ func runProfileWithRuntime(args []string, configPath, archivePath string, mode o
 		}
 		result.Message = err.Error()
 		if writeErr := writeProfileResult(result, mode, stdout); writeErr != nil {
-			return ReportFailure(FailureReport{
-				Command: "profile",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", writeErr),
-				Mode:    mode,
-			}, stdout, stderr)
+			return reportWriteFailure("profile", writeErr, mode, stdout, stderr)
 		}
 		return 1
 	}
 	if err := writeProfileResult(result, mode, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "profile",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("profile", err, mode, stdout, stderr)
 	}
 	return 0
 }
@@ -1249,12 +1169,7 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 			Message:   err.Error(),
 		}
 		if writeErr := writeSyncResult(fallback, mode, stdout); writeErr != nil {
-			return ReportFailure(FailureReport{
-				Command: "sync",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", writeErr),
-				Mode:    mode,
-			}, stdout, stderr)
+			return reportWriteFailure("sync", writeErr, mode, stdout, stderr)
 		}
 		return 1
 	}
@@ -1275,12 +1190,7 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 			single = results[0]
 		}
 		if writeErr := writeSyncResult(single, mode, stdout); writeErr != nil {
-			return ReportFailure(FailureReport{
-				Command: "sync",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", writeErr),
-				Mode:    mode,
-			}, stdout, stderr)
+			return reportWriteFailure("sync", writeErr, mode, stdout, stderr)
 		}
 		if single.Status != "sync_completed" {
 			return 1
@@ -1288,12 +1198,7 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 		return 0
 	}
 	if writeErr := writeSyncFanOutResult(results, options, mode, stdout); writeErr != nil {
-		return ReportFailure(FailureReport{
-			Command: "sync",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", writeErr),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("sync", writeErr, mode, stdout, stderr)
 	}
 	// fanOutStatus folds the same empty-results case to sync_canceled
 	// (see fanOutStatus), so an empty fan-out should also exit non-zero
@@ -1408,12 +1313,7 @@ func runRawWithRuntime(args []string, configPath, archivePath string, mode outpu
 		return ReportFailure(FailureReport{Command: "raw", Status: status, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	if _, err := stdout.Write(body); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "raw",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("raw", err, mode, stdout, stderr)
 	}
 	return 0
 }
@@ -4890,177 +4790,139 @@ func writeStatusResult(result statusResult, mode outputMode, stdout io.Writer) e
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(result)
 	}
+	writer := newStickyWriter(stdout)
 	if mode.plain {
-		if _, err := fmt.Fprintf(stdout, "status: %s\n", result.Status); err != nil {
-			return err
-		}
-		if result.ArchivePath != "" {
-			if _, err := fmt.Fprintf(stdout, "archive_path: %s\n", result.ArchivePath); err != nil {
-				return err
-			}
-		}
-		if result.SchemaVersion != 0 {
-			if _, err := fmt.Fprintf(stdout, "schema_version: %d\n", result.SchemaVersion); err != nil {
-				return err
-			}
-		}
-		if err := writeStatusCounts(result, stdout); err != nil {
-			return err
-		}
-		if len(result.DataTypes) != 0 {
-			// Read the shared KnownDataTypes field instead of
-			// re-synthesising from DataTypes — PRD #144 slice 9
-			// guarantees both modes carry the same array.
-			if _, err := fmt.Fprintf(stdout, "known_data_types: %s\n", strings.Join(result.KnownDataTypes, ",")); err != nil {
-				return err
-			}
-			for _, dataType := range result.DataTypes {
-				prefix := "data_type." + dataType.DataType + "."
-				if _, err := fmt.Fprintf(stdout, "%sdata_point_count: %d\n", prefix, dataType.DataPointCount); err != nil {
-					return err
-				}
-				if _, err := fmt.Fprintf(stdout, "%srollup_count: %d\n", prefix, dataType.RollupCount); err != nil {
-					return err
-				}
-				if dataType.NewestDataPointTimestamp != "" {
-					if _, err := fmt.Fprintf(stdout, "%snewest_data_point_timestamp: %s\n", prefix, dataType.NewestDataPointTimestamp); err != nil {
-						return err
-					}
-				}
-				if dataType.NewestRollupTimestamp != "" {
-					if _, err := fmt.Fprintf(stdout, "%snewest_rollup_timestamp: %s\n", prefix, dataType.NewestRollupTimestamp); err != nil {
-						return err
-					}
-				}
-				for index, cursor := range dataType.SyncCursors {
-					cursorPrefix := fmt.Sprintf("%ssync_cursor.%d.", prefix, index)
-					if _, err := fmt.Fprintf(stdout, "%srollup_kind: %s\n", cursorPrefix, cursor.RollupKind); err != nil {
-						return err
-					}
-					if cursor.SourceFamilyFilter != "" {
-						if _, err := fmt.Fprintf(stdout, "%ssource_family_filter: %s\n", cursorPrefix, cursor.SourceFamilyFilter); err != nil {
-							return err
-						}
-					}
-					if _, err := fmt.Fprintf(stdout, "%scursor_time: %s\n", cursorPrefix, cursor.CursorTime); err != nil {
-						return err
-					}
-					if _, err := fmt.Fprintf(stdout, "%sadvanced_at: %s\n", cursorPrefix, cursor.AdvancedAt); err != nil {
-						return err
-					}
-				}
-			}
-		}
-		if result.IdentitySnapshotsFreshness != nil {
-			if result.IdentitySnapshotsFreshness.PairedDeviceCount > 0 {
-				if _, err := fmt.Fprintf(stdout, "paired_device_count: %d\n", result.IdentitySnapshotsFreshness.PairedDeviceCount); err != nil {
-					return err
-				}
-			}
-			// Emit kinds in a stable order so the output is reproducible.
-			for _, kind := range []string{"profile", "settings", "paired-devices", "irn-profile"} {
-				if ts, ok := result.IdentitySnapshotsFreshness.LatestFetchedAt[kind]; ok {
-					if _, err := fmt.Fprintf(stdout, "identity_snapshot.%s.fetched_at: %s\n", kind, ts); err != nil {
-						return err
-					}
-				}
-			}
-		}
-		if result.Tier2 != nil {
-			// Plain output omits Tier 2 lines when the scope has not
-			// been granted — matches PR #128's omitted-when-missing
-			// convention for snapshot kinds. JSON always carries the
-			// block so downstream tooling sees a stable shape.
-			if result.Tier2.ElectrocardiogramScopeGranted {
-				if _, err := fmt.Fprintf(stdout, "electrocardiogram_event_count: %d\n", result.Tier2.ElectrocardiogramEventCount); err != nil {
-					return err
-				}
-			}
-			if result.Tier2.IrregularRhythmNotificationScopeGranted {
-				if _, err := fmt.Fprintf(stdout, "irregular_rhythm_notification_count: %d\n", result.Tier2.IrregularRhythmNotificationCount); err != nil {
-					return err
-				}
-			}
-		}
-		if err := writeStatusSyncRunPlain(stdout, "latest_successful_sync_run", result.LatestSuccessfulRun); err != nil {
-			return err
-		}
-		if err := writeStatusSyncRunPlain(stdout, "latest_failed_sync_run", result.LatestFailedRun); err != nil {
-			return err
-		}
-		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
-		return err
-	}
-
-	if result.Status == "ok" {
-		if _, err := fmt.Fprintln(stdout, "Health Archive status"); err != nil {
-			return err
-		}
+		writeStatusPlain(writer, result)
 	} else {
-		if _, err := fmt.Fprintln(stdout, "Health Archive status failed"); err != nil {
-			return err
-		}
+		writeStatusHuman(writer, result)
 	}
-	if result.ArchivePath != "" {
-		if _, err := fmt.Fprintf(stdout, "Health Archive: %s\n", result.ArchivePath); err != nil {
-			return err
-		}
-	}
-	if result.SchemaVersion != 0 {
-		if _, err := fmt.Fprintf(stdout, "Schema version: %d\n", result.SchemaVersion); err != nil {
-			return err
-		}
-	}
-	if _, err := fmt.Fprintf(stdout, "Counts: %d Data Points, %d Rollups, %d Identity Snapshots (%d Profile), %d Sync Runs\n", result.DataPointCount, result.RollupCount, result.IdentitySnapshotCount, result.ProfileSnapshotCount, result.SyncRunCount); err != nil {
-		return err
-	}
-	if len(result.DataTypes) != 0 {
-		if _, err := fmt.Fprintf(stdout, "Known Data Types: %s\n", strings.Join(statusDataTypeNames(result.DataTypes), ", ")); err != nil {
-			return err
-		}
-		for _, dataType := range result.DataTypes {
-			if _, err := fmt.Fprintf(stdout, "- %s: %d Data Points, %d Rollups", dataType.DataType, dataType.DataPointCount, dataType.RollupCount); err != nil {
-				return err
-			}
-			if dataType.NewestDataPointTimestamp != "" {
-				if _, err := fmt.Fprintf(stdout, ", newest Data Point %s", dataType.NewestDataPointTimestamp); err != nil {
-					return err
-				}
-			}
-			if dataType.NewestRollupTimestamp != "" {
-				if _, err := fmt.Fprintf(stdout, ", newest Rollup %s", dataType.NewestRollupTimestamp); err != nil {
-					return err
-				}
-			}
-			for _, cursor := range dataType.SyncCursors {
-				label := cursor.RollupKind
-				if cursor.SourceFamilyFilter != "" {
-					label = label + "/" + cursor.SourceFamilyFilter
-				}
-				if _, err := fmt.Fprintf(stdout, ", Sync Cursor (%s) %s", label, cursor.CursorTime); err != nil {
-					return err
-				}
-			}
-			if _, err := fmt.Fprintln(stdout); err != nil {
-				return err
-			}
-		}
-	}
-	if result.LatestSuccessfulRun != nil {
-		if _, err := fmt.Fprintf(stdout, "Latest successful Sync Run: %d (%s to %s)\n", result.LatestSuccessfulRun.ID, result.LatestSuccessfulRun.From, result.LatestSuccessfulRun.To); err != nil {
-			return err
-		}
-	}
-	if result.LatestFailedRun != nil {
-		if _, err := fmt.Fprintf(stdout, "Latest failed Sync Run: %d (%s)\n", result.LatestFailedRun.ID, result.LatestFailedRun.ErrorSummary); err != nil {
-			return err
-		}
-	}
-	_, err := fmt.Fprintf(stdout, "Message: %s\n", result.Message)
-	return err
+	return writer.Err()
 }
 
-func writeStatusCounts(result statusResult, stdout io.Writer) error {
+func writeStatusPlain(writer *stickyWriter, result statusResult) {
+	writer.Printf("status: %s\n", result.Status)
+	if result.ArchivePath != "" {
+		writer.Printf("archive_path: %s\n", result.ArchivePath)
+	}
+	if result.SchemaVersion != 0 {
+		writer.Printf("schema_version: %d\n", result.SchemaVersion)
+	}
+	writeStatusCounts(writer, result)
+	if len(result.DataTypes) != 0 {
+		// Read the shared KnownDataTypes field instead of
+		// re-synthesising from DataTypes — PRD #144 slice 9
+		// guarantees both modes carry the same array.
+		writer.Printf("known_data_types: %s\n", strings.Join(result.KnownDataTypes, ","))
+	}
+	for _, dataType := range result.DataTypes {
+		writeStatusDataTypePlain(writer, dataType)
+	}
+	writeStatusSnapshotFreshnessPlain(writer, result.IdentitySnapshotsFreshness)
+	writeStatusTier2Plain(writer, result.Tier2)
+	writeStatusSyncRunPlain(writer, "latest_successful_sync_run", result.LatestSuccessfulRun)
+	writeStatusSyncRunPlain(writer, "latest_failed_sync_run", result.LatestFailedRun)
+	writer.Printf("message: %s\n", result.Message)
+}
+
+func writeStatusDataTypePlain(writer *stickyWriter, dataType statusDataType) {
+	prefix := "data_type." + dataType.DataType + "."
+	writer.Printf("%sdata_point_count: %d\n", prefix, dataType.DataPointCount)
+	writer.Printf("%srollup_count: %d\n", prefix, dataType.RollupCount)
+	if dataType.NewestDataPointTimestamp != "" {
+		writer.Printf("%snewest_data_point_timestamp: %s\n", prefix, dataType.NewestDataPointTimestamp)
+	}
+	if dataType.NewestRollupTimestamp != "" {
+		writer.Printf("%snewest_rollup_timestamp: %s\n", prefix, dataType.NewestRollupTimestamp)
+	}
+	for index, cursor := range dataType.SyncCursors {
+		cursorPrefix := fmt.Sprintf("%ssync_cursor.%d.", prefix, index)
+		writer.Printf("%srollup_kind: %s\n", cursorPrefix, cursor.RollupKind)
+		if cursor.SourceFamilyFilter != "" {
+			writer.Printf("%ssource_family_filter: %s\n", cursorPrefix, cursor.SourceFamilyFilter)
+		}
+		writer.Printf("%scursor_time: %s\n", cursorPrefix, cursor.CursorTime)
+		writer.Printf("%sadvanced_at: %s\n", cursorPrefix, cursor.AdvancedAt)
+	}
+}
+
+func writeStatusSnapshotFreshnessPlain(writer *stickyWriter, freshness *statusSnapshotFreshness) {
+	if freshness == nil {
+		return
+	}
+	if freshness.PairedDeviceCount > 0 {
+		writer.Printf("paired_device_count: %d\n", freshness.PairedDeviceCount)
+	}
+	// Emit kinds in a stable order so the output is reproducible.
+	for _, kind := range []string{"profile", "settings", "paired-devices", "irn-profile"} {
+		if ts, ok := freshness.LatestFetchedAt[kind]; ok {
+			writer.Printf("identity_snapshot.%s.fetched_at: %s\n", kind, ts)
+		}
+	}
+}
+
+func writeStatusTier2Plain(writer *stickyWriter, tier2 *statusTier2) {
+	if tier2 == nil {
+		return
+	}
+	// Plain output omits Tier 2 lines when the scope has not been
+	// granted — matches PR #128's omitted-when-missing convention for
+	// snapshot kinds. JSON always carries the block so downstream
+	// tooling sees a stable shape.
+	if tier2.ElectrocardiogramScopeGranted {
+		writer.Printf("electrocardiogram_event_count: %d\n", tier2.ElectrocardiogramEventCount)
+	}
+	if tier2.IrregularRhythmNotificationScopeGranted {
+		writer.Printf("irregular_rhythm_notification_count: %d\n", tier2.IrregularRhythmNotificationCount)
+	}
+}
+
+func writeStatusHuman(writer *stickyWriter, result statusResult) {
+	if result.Status == "ok" {
+		writer.Println("Health Archive status")
+	} else {
+		writer.Println("Health Archive status failed")
+	}
+	if result.ArchivePath != "" {
+		writer.Printf("Health Archive: %s\n", result.ArchivePath)
+	}
+	if result.SchemaVersion != 0 {
+		writer.Printf("Schema version: %d\n", result.SchemaVersion)
+	}
+	writer.Printf("Counts: %d Data Points, %d Rollups, %d Identity Snapshots (%d Profile), %d Sync Runs\n", result.DataPointCount, result.RollupCount, result.IdentitySnapshotCount, result.ProfileSnapshotCount, result.SyncRunCount)
+	if len(result.DataTypes) != 0 {
+		writer.Printf("Known Data Types: %s\n", strings.Join(statusDataTypeNames(result.DataTypes), ", "))
+	}
+	for _, dataType := range result.DataTypes {
+		writeStatusDataTypeHuman(writer, dataType)
+	}
+	if result.LatestSuccessfulRun != nil {
+		writer.Printf("Latest successful Sync Run: %d (%s to %s)\n", result.LatestSuccessfulRun.ID, result.LatestSuccessfulRun.From, result.LatestSuccessfulRun.To)
+	}
+	if result.LatestFailedRun != nil {
+		writer.Printf("Latest failed Sync Run: %d (%s)\n", result.LatestFailedRun.ID, result.LatestFailedRun.ErrorSummary)
+	}
+	writer.Printf("Message: %s\n", result.Message)
+}
+
+func writeStatusDataTypeHuman(writer *stickyWriter, dataType statusDataType) {
+	writer.Printf("- %s: %d Data Points, %d Rollups", dataType.DataType, dataType.DataPointCount, dataType.RollupCount)
+	if dataType.NewestDataPointTimestamp != "" {
+		writer.Printf(", newest Data Point %s", dataType.NewestDataPointTimestamp)
+	}
+	if dataType.NewestRollupTimestamp != "" {
+		writer.Printf(", newest Rollup %s", dataType.NewestRollupTimestamp)
+	}
+	for _, cursor := range dataType.SyncCursors {
+		label := cursor.RollupKind
+		if cursor.SourceFamilyFilter != "" {
+			label = label + "/" + cursor.SourceFamilyFilter
+		}
+		writer.Printf(", Sync Cursor (%s) %s", label, cursor.CursorTime)
+	}
+	writer.Println()
+}
+
+func writeStatusCounts(writer *stickyWriter, result statusResult) {
 	for _, item := range []struct {
 		key   string
 		count int
@@ -5071,11 +4933,8 @@ func writeStatusCounts(result statusResult, stdout io.Writer) error {
 		{"identity_snapshot_count", result.IdentitySnapshotCount},
 		{"sync_run_count", result.SyncRunCount},
 	} {
-		if _, err := fmt.Fprintf(stdout, "%s: %d\n", item.key, item.count); err != nil {
-			return err
-		}
+		writer.Printf("%s: %d\n", item.key, item.count)
 	}
-	return nil
 }
 
 func statusDataTypeNames(dataTypes []statusDataType) []string {
@@ -5086,66 +4945,39 @@ func statusDataTypeNames(dataTypes []statusDataType) []string {
 	return names
 }
 
-func writeStatusSyncRunPlain(stdout io.Writer, prefix string, run *statusSyncRun) error {
+func writeStatusSyncRunPlain(writer *stickyWriter, prefix string, run *statusSyncRun) {
 	if run == nil {
-		return nil
+		return
 	}
-	if _, err := fmt.Fprintf(stdout, "%s_id: %d\n", prefix, run.ID); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(stdout, "%s_status: %s\n", prefix, run.Status); err != nil {
-		return err
-	}
+	writer.Printf("%s_id: %d\n", prefix, run.ID)
+	writer.Printf("%s_status: %s\n", prefix, run.Status)
 	if len(run.DataTypes) != 0 {
-		if _, err := fmt.Fprintf(stdout, "%s_data_types: %s\n", prefix, strings.Join(run.DataTypes, ",")); err != nil {
-			return err
-		}
+		writer.Printf("%s_data_types: %s\n", prefix, strings.Join(run.DataTypes, ","))
 	}
 	if run.From != "" {
-		if _, err := fmt.Fprintf(stdout, "%s_from: %s\n", prefix, run.From); err != nil {
-			return err
-		}
+		writer.Printf("%s_from: %s\n", prefix, run.From)
 	}
 	if run.To != "" {
-		if _, err := fmt.Fprintf(stdout, "%s_to: %s\n", prefix, run.To); err != nil {
-			return err
-		}
+		writer.Printf("%s_to: %s\n", prefix, run.To)
 	}
 	if run.EndpointFamily != "" {
-		if _, err := fmt.Fprintf(stdout, "%s_endpoint_family: %s\n", prefix, run.EndpointFamily); err != nil {
-			return err
-		}
+		writer.Printf("%s_endpoint_family: %s\n", prefix, run.EndpointFamily)
 	}
 	if run.SourceFamilyFilter != "" {
-		if _, err := fmt.Fprintf(stdout, "%s_source_family_filter: %s\n", prefix, escapePlainControlChars(run.SourceFamilyFilter)); err != nil {
-			return err
-		}
+		writer.Printf("%s_source_family_filter: %s\n", prefix, escapePlainControlChars(run.SourceFamilyFilter))
 	}
-	if _, err := fmt.Fprintf(stdout, "%s_seen_count: %d\n", prefix, run.SeenCount); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(stdout, "%s_new_count: %d\n", prefix, run.NewCount); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(stdout, "%s_updated_count: %d\n", prefix, run.UpdatedCount); err != nil {
-		return err
-	}
+	writer.Printf("%s_seen_count: %d\n", prefix, run.SeenCount)
+	writer.Printf("%s_new_count: %d\n", prefix, run.NewCount)
+	writer.Printf("%s_updated_count: %d\n", prefix, run.UpdatedCount)
 	if run.StartedAt != "" {
-		if _, err := fmt.Fprintf(stdout, "%s_started_at: %s\n", prefix, run.StartedAt); err != nil {
-			return err
-		}
+		writer.Printf("%s_started_at: %s\n", prefix, run.StartedAt)
 	}
 	if run.FinishedAt != "" {
-		if _, err := fmt.Fprintf(stdout, "%s_finished_at: %s\n", prefix, run.FinishedAt); err != nil {
-			return err
-		}
+		writer.Printf("%s_finished_at: %s\n", prefix, run.FinishedAt)
 	}
 	if run.ErrorSummary != "" {
-		if _, err := fmt.Fprintf(stdout, "%s_error_summary: %s\n", prefix, escapePlainControlChars(run.ErrorSummary)); err != nil {
-			return err
-		}
+		writer.Printf("%s_error_summary: %s\n", prefix, escapePlainControlChars(run.ErrorSummary))
 	}
-	return nil
 }
 
 func writeDoctorResult(result doctorResult, mode outputMode, stdout io.Writer) error {
@@ -5154,118 +4986,80 @@ func writeDoctorResult(result doctorResult, mode outputMode, stdout io.Writer) e
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(result)
 	}
+	writer := newStickyWriter(stdout)
 	if mode.plain {
-		if _, err := fmt.Fprintf(stdout, "status: %s\n", result.Status); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "config_path: %s\n", result.ConfigPath); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "archive_path: %s\n", result.ArchivePath); err != nil {
-			return err
-		}
-		if result.OAuthClientSource != "" {
-			if _, err := fmt.Fprintf(stdout, "oauth_client_source: %s\n", result.OAuthClientSource); err != nil {
-				return err
-			}
-		}
-		if result.CredentialStore != "" {
-			if _, err := fmt.Fprintf(stdout, "credential_store: %s\n", result.CredentialStore); err != nil {
-				return err
-			}
-		}
-		if result.SchemaVersion != nil {
-			if _, err := fmt.Fprintf(stdout, "schema_version: %d\n", *result.SchemaVersion); err != nil {
-				return err
-			}
-		}
-		if result.ConnectionCount != nil {
-			if _, err := fmt.Fprintf(stdout, "connection_count: %d\n", *result.ConnectionCount); err != nil {
-				return err
-			}
-		}
-		if result.TokenStatus != "" {
-			if _, err := fmt.Fprintf(stdout, "token_status: %s\n", result.TokenStatus); err != nil {
-				return err
-			}
-		}
-		if result.AttachmentRootPath != "" {
-			if _, err := fmt.Fprintf(stdout, "attachment_root_path: %s\n", result.AttachmentRootPath); err != nil {
-				return err
-			}
-			if result.AttachmentRootMode != "" {
-				if _, err := fmt.Fprintf(stdout, "attachment_root_mode: %s\n", result.AttachmentRootMode); err != nil {
-					return err
-				}
-			}
-		}
-		if result.Attachments != nil {
-			if n := len(result.Attachments.OrphanFiles); n > 0 {
-				if _, err := fmt.Fprintf(stdout, "attachments_orphan_files: %d\n", n); err != nil {
-					return err
-				}
-			}
-			if n := len(result.Attachments.OrphanRows); n > 0 {
-				if _, err := fmt.Fprintf(stdout, "attachments_orphan_rows: %d\n", n); err != nil {
-					return err
-				}
-			}
-		}
-		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
-		return err
+		writeDoctorPlain(writer, result)
+	} else {
+		writeDoctorHuman(writer, result)
 	}
+	return writer.Err()
+}
 
-	switch result.Status {
-	case "ok":
-		if _, err := fmt.Fprintln(stdout, "Setup ok"); err != nil {
-			return err
-		}
-	case "connection_unhealthy":
-		if _, err := fmt.Fprintln(stdout, "Connection unhealthy"); err != nil {
-			return err
-		}
-	case "setup_invalid":
-		if _, err := fmt.Fprintln(stdout, "Setup invalid"); err != nil {
-			return err
-		}
-	default:
-		if _, err := fmt.Fprintln(stdout, "Setup missing"); err != nil {
-			return err
-		}
-	}
-	if _, err := fmt.Fprintf(stdout, "Config: %s\n", result.ConfigPath); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(stdout, "Health Archive: %s\n", result.ArchivePath); err != nil {
-		return err
-	}
+func writeDoctorPlain(writer *stickyWriter, result doctorResult) {
+	writer.Printf("status: %s\n", result.Status)
+	writer.Printf("config_path: %s\n", result.ConfigPath)
+	writer.Printf("archive_path: %s\n", result.ArchivePath)
 	if result.OAuthClientSource != "" {
-		if _, err := fmt.Fprintf(stdout, "OAuth client source: %s\n", result.OAuthClientSource); err != nil {
-			return err
-		}
+		writer.Printf("oauth_client_source: %s\n", result.OAuthClientSource)
 	}
 	if result.CredentialStore != "" {
-		if _, err := fmt.Fprintf(stdout, "Credential Store: %s\n", result.CredentialStore); err != nil {
-			return err
-		}
+		writer.Printf("credential_store: %s\n", result.CredentialStore)
 	}
 	if result.SchemaVersion != nil {
-		if _, err := fmt.Fprintf(stdout, "Schema version: %d\n", *result.SchemaVersion); err != nil {
-			return err
-		}
+		writer.Printf("schema_version: %d\n", *result.SchemaVersion)
 	}
 	if result.ConnectionCount != nil {
-		if _, err := fmt.Fprintf(stdout, "Connections: %d\n", *result.ConnectionCount); err != nil {
-			return err
-		}
+		writer.Printf("connection_count: %d\n", *result.ConnectionCount)
 	}
 	if result.TokenStatus != "" {
-		if _, err := fmt.Fprintf(stdout, "Token status: %s\n", result.TokenStatus); err != nil {
-			return err
+		writer.Printf("token_status: %s\n", result.TokenStatus)
+	}
+	if result.AttachmentRootPath != "" {
+		writer.Printf("attachment_root_path: %s\n", result.AttachmentRootPath)
+		if result.AttachmentRootMode != "" {
+			writer.Printf("attachment_root_mode: %s\n", result.AttachmentRootMode)
 		}
 	}
-	_, err := fmt.Fprintf(stdout, "Message: %s\n", result.Message)
-	return err
+	if result.Attachments != nil {
+		if n := len(result.Attachments.OrphanFiles); n > 0 {
+			writer.Printf("attachments_orphan_files: %d\n", n)
+		}
+		if n := len(result.Attachments.OrphanRows); n > 0 {
+			writer.Printf("attachments_orphan_rows: %d\n", n)
+		}
+	}
+	writer.Printf("message: %s\n", result.Message)
+}
+
+func writeDoctorHuman(writer *stickyWriter, result doctorResult) {
+	switch result.Status {
+	case "ok":
+		writer.Println("Setup ok")
+	case "connection_unhealthy":
+		writer.Println("Connection unhealthy")
+	case "setup_invalid":
+		writer.Println("Setup invalid")
+	default:
+		writer.Println("Setup missing")
+	}
+	writer.Printf("Config: %s\n", result.ConfigPath)
+	writer.Printf("Health Archive: %s\n", result.ArchivePath)
+	if result.OAuthClientSource != "" {
+		writer.Printf("OAuth client source: %s\n", result.OAuthClientSource)
+	}
+	if result.CredentialStore != "" {
+		writer.Printf("Credential Store: %s\n", result.CredentialStore)
+	}
+	if result.SchemaVersion != nil {
+		writer.Printf("Schema version: %d\n", *result.SchemaVersion)
+	}
+	if result.ConnectionCount != nil {
+		writer.Printf("Connections: %d\n", *result.ConnectionCount)
+	}
+	if result.TokenStatus != "" {
+		writer.Printf("Token status: %s\n", result.TokenStatus)
+	}
+	writer.Printf("Message: %s\n", result.Message)
 }
 
 func writeConnectResult(result connectResult, mode outputMode, stdout io.Writer) error {
@@ -5503,124 +5297,81 @@ func writeSyncResult(result syncResult, mode outputMode, stdout io.Writer) error
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(result)
 	}
+	writer := newStickyWriter(stdout)
 	if mode.plain {
-		if _, err := fmt.Fprintf(stdout, "status: %s\n", result.Status); err != nil {
-			return err
-		}
-		if result.SyncRunID != 0 {
-			if _, err := fmt.Fprintf(stdout, "sync_run_id: %d\n", result.SyncRunID); err != nil {
-				return err
-			}
-		}
-		if result.ConnectionID != "" {
-			if _, err := fmt.Fprintf(stdout, "connection_id: %s\n", result.ConnectionID); err != nil {
-				return err
-			}
-		}
-		if result.ProviderName != "" {
-			if _, err := fmt.Fprintf(stdout, "provider_name: %s\n", result.ProviderName); err != nil {
-				return err
-			}
-		}
-		if len(result.DataTypes) != 0 {
-			if _, err := fmt.Fprintf(stdout, "data_types: %s\n", strings.Join(result.DataTypes, ",")); err != nil {
-				return err
-			}
-		}
-		if result.From != "" {
-			if _, err := fmt.Fprintf(stdout, "from: %s\n", result.From); err != nil {
-				return err
-			}
-		}
-		if result.ResumedFromCursor {
-			if _, err := fmt.Fprintln(stdout, "resumed_from_cursor: true"); err != nil {
-				return err
-			}
-		}
-		if result.To != "" {
-			if _, err := fmt.Fprintf(stdout, "to: %s\n", result.To); err != nil {
-				return err
-			}
-		}
-		if result.EndpointFamily != "" {
-			if _, err := fmt.Fprintf(stdout, "endpoint_family: %s\n", result.EndpointFamily); err != nil {
-				return err
-			}
-		}
-		if result.SourceFamily != "" {
-			if _, err := fmt.Fprintf(stdout, "source_family: %s\n", result.SourceFamily); err != nil {
-				return err
-			}
-		}
-		if _, err := fmt.Fprintf(stdout, "data_points_seen: %d\n", result.DataPointsSeen); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "data_points_new: %d\n", result.DataPointsNew); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "data_points_updated: %d\n", result.DataPointsUpdated); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "rollups_seen: %d\n", result.RollupsSeen); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "rollups_new: %d\n", result.RollupsNew); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "rollups_updated: %d\n", result.RollupsUpdated); err != nil {
-			return err
-		}
-		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
-		return err
+		writeSyncPlain(writer, result)
+	} else {
+		writeSyncHuman(writer, result)
 	}
-	switch result.Status {
-	case "sync_completed":
-		if _, err := fmt.Fprintln(stdout, "Sync Run completed"); err != nil {
-			return err
-		}
-	default:
-		if _, err := fmt.Fprintln(stdout, "Sync Run failed"); err != nil {
-			return err
-		}
-	}
+	return writer.Err()
+}
+
+func writeSyncPlain(writer *stickyWriter, result syncResult) {
+	writer.Printf("status: %s\n", result.Status)
 	if result.SyncRunID != 0 {
-		if _, err := fmt.Fprintf(stdout, "Sync Run: %d\n", result.SyncRunID); err != nil {
-			return err
-		}
+		writer.Printf("sync_run_id: %d\n", result.SyncRunID)
 	}
 	if result.ConnectionID != "" {
-		if _, err := fmt.Fprintf(stdout, "Connection: %s\n", result.ConnectionID); err != nil {
-			return err
-		}
+		writer.Printf("connection_id: %s\n", result.ConnectionID)
+	}
+	if result.ProviderName != "" {
+		writer.Printf("provider_name: %s\n", result.ProviderName)
 	}
 	if len(result.DataTypes) != 0 {
-		if _, err := fmt.Fprintf(stdout, "Data Types: %s\n", strings.Join(result.DataTypes, ",")); err != nil {
-			return err
-		}
+		writer.Printf("data_types: %s\n", strings.Join(result.DataTypes, ","))
 	}
-	if result.From != "" || result.To != "" {
-		if _, err := fmt.Fprintf(stdout, "Range: %s to %s\n", result.From, result.To); err != nil {
-			return err
-		}
+	if result.From != "" {
+		writer.Printf("from: %s\n", result.From)
 	}
 	if result.ResumedFromCursor {
-		if _, err := fmt.Fprintln(stdout, "Resumed from Sync Cursor"); err != nil {
-			return err
-		}
+		writer.Println("resumed_from_cursor: true")
+	}
+	if result.To != "" {
+		writer.Printf("to: %s\n", result.To)
+	}
+	if result.EndpointFamily != "" {
+		writer.Printf("endpoint_family: %s\n", result.EndpointFamily)
 	}
 	if result.SourceFamily != "" {
-		if _, err := fmt.Fprintf(stdout, "Source family: %s\n", result.SourceFamily); err != nil {
-			return err
-		}
+		writer.Printf("source_family: %s\n", result.SourceFamily)
 	}
-	if _, err := fmt.Fprintf(stdout, "Data Points: seen %d, new %d, updated %d\n", result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated); err != nil {
-		return err
+	writer.Printf("data_points_seen: %d\n", result.DataPointsSeen)
+	writer.Printf("data_points_new: %d\n", result.DataPointsNew)
+	writer.Printf("data_points_updated: %d\n", result.DataPointsUpdated)
+	writer.Printf("rollups_seen: %d\n", result.RollupsSeen)
+	writer.Printf("rollups_new: %d\n", result.RollupsNew)
+	writer.Printf("rollups_updated: %d\n", result.RollupsUpdated)
+	writer.Printf("message: %s\n", result.Message)
+}
+
+func writeSyncHuman(writer *stickyWriter, result syncResult) {
+	switch result.Status {
+	case "sync_completed":
+		writer.Println("Sync Run completed")
+	default:
+		writer.Println("Sync Run failed")
 	}
-	if _, err := fmt.Fprintf(stdout, "Rollups: seen %d, new %d, updated %d\n", result.RollupsSeen, result.RollupsNew, result.RollupsUpdated); err != nil {
-		return err
+	if result.SyncRunID != 0 {
+		writer.Printf("Sync Run: %d\n", result.SyncRunID)
 	}
-	_, err := fmt.Fprintf(stdout, "Message: %s\n", result.Message)
-	return err
+	if result.ConnectionID != "" {
+		writer.Printf("Connection: %s\n", result.ConnectionID)
+	}
+	if len(result.DataTypes) != 0 {
+		writer.Printf("Data Types: %s\n", strings.Join(result.DataTypes, ","))
+	}
+	if result.From != "" || result.To != "" {
+		writer.Printf("Range: %s to %s\n", result.From, result.To)
+	}
+	if result.ResumedFromCursor {
+		writer.Println("Resumed from Sync Cursor")
+	}
+	if result.SourceFamily != "" {
+		writer.Printf("Source family: %s\n", result.SourceFamily)
+	}
+	writer.Printf("Data Points: seen %d, new %d, updated %d\n", result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated)
+	writer.Printf("Rollups: seen %d, new %d, updated %d\n", result.RollupsSeen, result.RollupsNew, result.RollupsUpdated)
+	writer.Printf("Message: %s\n", result.Message)
 }
 
 // syncFanOutResult is the JSON/Plain wire shape for a multi-Data-Type
@@ -5648,95 +5399,73 @@ func writeSyncFanOutResult(results []syncResult, options syncCommandOptions, mod
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(envelope)
 	}
+	writer := newStickyWriter(stdout)
 	if mode.plain {
-		if _, err := fmt.Fprintf(stdout, "status: %s\n", status); err != nil {
-			return err
-		}
-		for index, result := range results {
-			prefix := fmt.Sprintf("results.%d.", index)
-			if _, err := fmt.Fprintf(stdout, "%sstatus: %s\n", prefix, result.Status); err != nil {
-				return err
-			}
-			if len(result.DataTypes) > 0 {
-				if _, err := fmt.Fprintf(stdout, "%sdata_type: %s\n", prefix, result.DataTypes[0]); err != nil {
-					return err
-				}
-			}
-			if result.SyncRunID != 0 {
-				if _, err := fmt.Fprintf(stdout, "%ssync_run_id: %d\n", prefix, result.SyncRunID); err != nil {
-					return err
-				}
-			}
-			for _, counter := range []struct {
-				key   string
-				value int
-			}{
-				{"data_points_seen", result.DataPointsSeen},
-				{"data_points_new", result.DataPointsNew},
-				{"data_points_updated", result.DataPointsUpdated},
-				{"rollups_seen", result.RollupsSeen},
-				{"rollups_new", result.RollupsNew},
-				{"rollups_updated", result.RollupsUpdated},
-			} {
-				if _, err := fmt.Fprintf(stdout, "%s%s: %d\n", prefix, counter.key, counter.value); err != nil {
-					return err
-				}
-			}
-			if result.Message != "" {
-				if _, err := fmt.Fprintf(stdout, "%smessage: %s\n", prefix, result.Message); err != nil {
-					return err
-				}
-			}
-		}
-		if _, err := fmt.Fprintf(stdout, "totals.data_points_seen: %d\n", summary.DataPointsSeen); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "totals.data_points_new: %d\n", summary.DataPointsNew); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "totals.data_points_updated: %d\n", summary.DataPointsUpdated); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "totals.rollups_seen: %d\n", summary.RollupsSeen); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "totals.rollups_new: %d\n", summary.RollupsNew); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "totals.rollups_updated: %d\n", summary.RollupsUpdated); err != nil {
-			return err
-		}
-		_, err := fmt.Fprintf(stdout, "message: %s\n", message)
-		return err
+		writeSyncFanOutPlain(writer, results, summary, status, message)
+	} else {
+		writeSyncFanOutHuman(writer, results, summary, status, message)
 	}
+	return writer.Err()
+}
+
+func writeSyncFanOutPlain(writer *stickyWriter, results []syncResult, summary syncFanOutSummary, status, message string) {
+	writer.Printf("status: %s\n", status)
+	for index, result := range results {
+		writeSyncFanOutResultPlain(writer, fmt.Sprintf("results.%d.", index), result)
+	}
+	writer.Printf("totals.data_points_seen: %d\n", summary.DataPointsSeen)
+	writer.Printf("totals.data_points_new: %d\n", summary.DataPointsNew)
+	writer.Printf("totals.data_points_updated: %d\n", summary.DataPointsUpdated)
+	writer.Printf("totals.rollups_seen: %d\n", summary.RollupsSeen)
+	writer.Printf("totals.rollups_new: %d\n", summary.RollupsNew)
+	writer.Printf("totals.rollups_updated: %d\n", summary.RollupsUpdated)
+	writer.Printf("message: %s\n", message)
+}
+
+func writeSyncFanOutResultPlain(writer *stickyWriter, prefix string, result syncResult) {
+	writer.Printf("%sstatus: %s\n", prefix, result.Status)
+	if len(result.DataTypes) > 0 {
+		writer.Printf("%sdata_type: %s\n", prefix, result.DataTypes[0])
+	}
+	if result.SyncRunID != 0 {
+		writer.Printf("%ssync_run_id: %d\n", prefix, result.SyncRunID)
+	}
+	for _, counter := range []struct {
+		key   string
+		value int
+	}{
+		{"data_points_seen", result.DataPointsSeen},
+		{"data_points_new", result.DataPointsNew},
+		{"data_points_updated", result.DataPointsUpdated},
+		{"rollups_seen", result.RollupsSeen},
+		{"rollups_new", result.RollupsNew},
+		{"rollups_updated", result.RollupsUpdated},
+	} {
+		writer.Printf("%s%s: %d\n", prefix, counter.key, counter.value)
+	}
+	if result.Message != "" {
+		writer.Printf("%smessage: %s\n", prefix, result.Message)
+	}
+}
+
+func writeSyncFanOutHuman(writer *stickyWriter, results []syncResult, summary syncFanOutSummary, status, message string) {
 	switch status {
 	case "sync_completed":
-		if _, err := fmt.Fprintf(stdout, "Sync Run fan-out completed across %d Data Types\n", len(results)); err != nil {
-			return err
-		}
+		writer.Printf("Sync Run fan-out completed across %d Data Types\n", len(results))
 	case "sync_canceled":
-		if _, err := fmt.Fprintf(stdout, "Sync Run fan-out canceled across %d Data Types\n", len(results)); err != nil {
-			return err
-		}
+		writer.Printf("Sync Run fan-out canceled across %d Data Types\n", len(results))
 	default:
-		if _, err := fmt.Fprintf(stdout, "Sync Run fan-out failed across %d Data Types\n", len(results)); err != nil {
-			return err
-		}
+		writer.Printf("Sync Run fan-out failed across %d Data Types\n", len(results))
 	}
 	for _, result := range results {
 		dataType := "?"
 		if len(result.DataTypes) > 0 {
 			dataType = result.DataTypes[0]
 		}
-		if _, err := fmt.Fprintf(stdout, "- %s: %s — Data Points new=%d updated=%d, Rollups new=%d updated=%d\n", dataType, result.Status, result.DataPointsNew, result.DataPointsUpdated, result.RollupsNew, result.RollupsUpdated); err != nil {
-			return err
-		}
+		writer.Printf("- %s: %s — Data Points new=%d updated=%d, Rollups new=%d updated=%d\n", dataType, result.Status, result.DataPointsNew, result.DataPointsUpdated, result.RollupsNew, result.RollupsUpdated)
 	}
-	if _, err := fmt.Fprintf(stdout, "Totals: Data Points seen=%d new=%d updated=%d, Rollups seen=%d new=%d updated=%d\n", summary.DataPointsSeen, summary.DataPointsNew, summary.DataPointsUpdated, summary.RollupsSeen, summary.RollupsNew, summary.RollupsUpdated); err != nil {
-		return err
-	}
-	_, err := fmt.Fprintln(stdout, message)
-	return err
+	writer.Printf("Totals: Data Points seen=%d new=%d updated=%d, Rollups seen=%d new=%d updated=%d\n", summary.DataPointsSeen, summary.DataPointsNew, summary.DataPointsUpdated, summary.RollupsSeen, summary.RollupsNew, summary.RollupsUpdated)
+	writer.Println(message)
 }
 
 func writeInitResult(result initResult, mode outputMode, stdout io.Writer) error {
