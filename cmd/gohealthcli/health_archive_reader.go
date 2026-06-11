@@ -426,8 +426,8 @@ func readStatusSnapshotFreshness(db *sql.DB) (*statusSnapshotFreshness, error) {
 // reporting 0 — paired-devices rows in identity_snapshots are
 // supposed to be valid JSON the snapshot writer just persisted. The
 // list lives under the pairedDevices key in the real
-// users.pairedDevices.list payload (#298), not the devices key #111
-// assumed.
+// users.pairedDevices.list payload (#298), not the devices key the
+// original #98 paired-devices slice assumed.
 func countPairedDevicesIn(rawJSON string) (int, error) {
 	var envelope struct {
 		PairedDevices []json.RawMessage `json:"pairedDevices"`

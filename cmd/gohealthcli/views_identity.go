@@ -58,7 +58,9 @@ var pairedDevicesViewSpec = exportDatasetSpec{
 	name:             "paired-devices",
 	view:             "paired_devices",
 	migrationVersion: 9,
-	orderBy:          "connection_id, device_version",
+	// name breaks ties between devices sharing a device_version so
+	// export row order stays deterministic.
+	orderBy: "connection_id, device_version, name",
 	viewSQL: `WITH latest AS (
 			SELECT
 				provider_name,
