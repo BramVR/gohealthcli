@@ -34,7 +34,7 @@ Preflight failures exit before contacting the provider and do NOT write a `sync_
 - `--all` expanding to zero supported Data Types.
 - SIGINT received before any Data Type has started its audit row (no run is in flight to mark).
 
-SIGINT (Ctrl-C) during a fan-out marks the in-flight Sync Run `sync_canceled`, leaves its Sync Cursor un-advanced, and stops cleanly; prior Data Types remain `sync_completed`.
+SIGINT (Ctrl-C) aborts the in-flight Provider request (every request is scoped to the run's context, and a Retry-After backoff sleep is cut short the same way), marks the in-flight Sync Run `sync_canceled`, leaves its Sync Cursor un-advanced, and stops cleanly; prior Data Types remain `sync_completed` and later ones are skipped.
 
 Terminal writes are resilient to SQLite contention: on `SQLITE_BUSY`, the terminal write retries with bounded exponential backoff plus full jitter. If the retry budget is exhausted, the run surfaces as `sync_failed` with a contention-aware message and a separate short-transaction recovery write drives the row to a terminal state under the same retry budget so a `sync_running` row never lingers. `sync_canceled` outcomes are preserved through the recovery path — they are never reclassified as `sync_failed`.
 
