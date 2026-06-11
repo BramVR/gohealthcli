@@ -6070,11 +6070,8 @@ func TestParseOAuthTokenResponseRequiresRefreshToken(t *testing.T) {
 }
 
 func TestFetchGoogleIdentityUsesGetIdentityEndpoint(t *testing.T) {
-	originalClient := providerHTTPClient
-	t.Cleanup(func() { providerHTTPClient = originalClient })
-
 	var gotURL string
-	providerHTTPClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+	doer := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		gotURL = request.URL.String()
 		if request.Header.Get("Authorization") != "Bearer access-secret-value" {
 			t.Fatalf("Authorization = %q, want bearer token", request.Header.Get("Authorization"))
@@ -6086,7 +6083,7 @@ func TestFetchGoogleIdentityUsesGetIdentityEndpoint(t *testing.T) {
 		}, nil
 	})}
 
-	identity, err := fetchGoogleIdentity("access-secret-value")
+	identity, err := fetchGoogleIdentity(providerGET{doer: doer}, "access-secret-value")
 	if err != nil {
 		t.Fatalf("fetch identity: %v", err)
 	}
@@ -6099,11 +6096,8 @@ func TestFetchGoogleIdentityUsesGetIdentityEndpoint(t *testing.T) {
 }
 
 func TestFetchGoogleProfileUsesProfileEndpoint(t *testing.T) {
-	originalClient := providerHTTPClient
-	t.Cleanup(func() { providerHTTPClient = originalClient })
-
 	var gotURL string
-	providerHTTPClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+	doer := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		gotURL = request.URL.String()
 		if request.Header.Get("Authorization") != "Bearer access-secret-value" {
 			t.Fatalf("Authorization = %q, want bearer token", request.Header.Get("Authorization"))
@@ -6115,7 +6109,7 @@ func TestFetchGoogleProfileUsesProfileEndpoint(t *testing.T) {
 		}, nil
 	})}
 
-	profile, err := fetchGoogleProfile("access-secret-value")
+	profile, err := fetchGoogleProfile(providerGET{doer: doer}, "access-secret-value")
 	if err != nil {
 		t.Fatalf("fetch profile: %v", err)
 	}
@@ -6131,10 +6125,7 @@ func TestFetchGoogleProfileUsesProfileEndpoint(t *testing.T) {
 }
 
 func TestFetchGoogleHealthRawUsesBearerAndHidesErrorBody(t *testing.T) {
-	originalClient := providerHTTPClient
-	t.Cleanup(func() { providerHTTPClient = originalClient })
-
-	providerHTTPClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+	doer := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.URL.String() != googleHealthIdentityURL {
 			t.Fatalf("raw URL = %q, want identity URL", request.URL.String())
 		}
@@ -6148,7 +6139,7 @@ func TestFetchGoogleHealthRawUsesBearerAndHidesErrorBody(t *testing.T) {
 		}, nil
 	})}
 
-	_, err := fetchGoogleHealthRaw(rawProviderRequest{endpointName: "getIdentity", url: googleHealthIdentityURL}, "access-secret-value")
+	_, err := fetchGoogleHealthRaw(doer, rawProviderRequest{endpointName: "getIdentity", url: googleHealthIdentityURL}, "access-secret-value")
 	if err == nil {
 		t.Fatal("fetch raw error = nil, want HTTP failure")
 	}

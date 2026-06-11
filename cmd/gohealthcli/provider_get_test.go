@@ -10,10 +10,10 @@ import (
 )
 
 // These tests exercise the one shared Provider GET module (issue #280)
-// at its public interface — URL + per-fetch label in, validated JSON
-// out — through the shared Provider HTTP client's stub transport, the
-// same seam the rest of the suite uses until the HTTP doer joins the
-// runtime adapters (#281).
+// at its public interface — module + URL + per-fetch label in,
+// validated JSON out — with a fake HTTP doer injected as the module's
+// transport (#281). No global is reassigned: each test constructs the
+// providerGET value it drives.
 
 // stubProviderResponse is one canned Provider answer for the
 // sequenced transport below.
@@ -51,22 +51,26 @@ func (transport *sequencedProviderTransport) RoundTrip(request *http.Request) (*
 	}, nil
 }
 
-// swapSharedProviderGETRetrySeams installs a recording sleeper and
-// deterministic jitter into the shared Provider GET module for the
-// duration of the test, so retry timing is observable without real
-// backoff sleeps.
-func swapSharedProviderGETRetrySeams(t *testing.T, record *[]time.Duration) {
-	t.Helper()
-	original := sharedProviderGET
-	sharedProviderGET = providerGET{sleeper: recordingSleeper(record), jitter: noopRetryJitter}
-	t.Cleanup(func() { sharedProviderGET = original })
+// providerGETWithDoer is the Provider GET module under test with the
+// given fake transport injected as its HTTP doer.
+func providerGETWithDoer(transport http.RoundTripper) providerGET {
+	return providerGET{doer: providerDoer(transport)}
+}
+
+// providerGETWithRetrySeams is providerGETWithDoer plus a recording
+// sleeper and deterministic jitter, so retry timing is observable
+// without real backoff sleeps.
+func providerGETWithRetrySeams(transport http.RoundTripper, record *[]time.Duration) providerGET {
+	get := providerGETWithDoer(transport)
+	get.sleeper = recordingSleeper(record)
+	get.jitter = noopRetryJitter
+	return get
 }
 
 func TestProviderGETReturnsValidatedJSONWithBearerAuth(t *testing.T) {
 	transport := &stubProviderTransport{status: 200, body: `{"devices":[]}`}
-	swapSharedProviderHTTPClient(t, transport)
 
-	body, err := fetchProviderJSON(googleHealthPairedDevicesURL, "pairedDevices", "test-access-token")
+	body, err := fetchProviderJSON(providerGETWithDoer(transport), googleHealthPairedDevicesURL, "pairedDevices", "test-access-token")
 	if err != nil {
 		t.Fatalf("fetchProviderJSON: %v", err)
 	}
@@ -88,9 +92,9 @@ func TestProviderGETReturnsValidatedJSONWithBearerAuth(t *testing.T) {
 }
 
 func TestProviderGETReturnsTypedStatusErrorCarryingLabel(t *testing.T) {
-	swapSharedProviderHTTPClient(t, &stubProviderTransport{status: 404, body: `{"error":"not found"}`})
+	get := providerGETWithDoer(&stubProviderTransport{status: 404, body: `{"error":"not found"}`})
 
-	_, err := fetchProviderJSON(googleHealthSettingsURL, "settings", "test-access-token")
+	_, err := fetchProviderJSON(get, googleHealthSettingsURL, "settings", "test-access-token")
 	if err == nil {
 		t.Fatal("fetchProviderJSON returned nil error, want typed status error")
 	}
@@ -105,9 +109,9 @@ func TestProviderGETReturnsTypedStatusErrorCarryingLabel(t *testing.T) {
 }
 
 func TestProviderGETRejectsInvalidJSONCarryingLabel(t *testing.T) {
-	swapSharedProviderHTTPClient(t, &stubProviderTransport{status: 200, body: `{"truncated":`})
+	get := providerGETWithDoer(&stubProviderTransport{status: 200, body: `{"truncated":`})
 
-	_, err := fetchProviderJSON(googleHealthIRNProfileURL, "irnProfile", "test-access-token")
+	_, err := fetchProviderJSON(get, googleHealthIRNProfileURL, "irnProfile", "test-access-token")
 	if err == nil {
 		t.Fatal("fetchProviderJSON returned nil error, want invalid-JSON rejection")
 	}
@@ -125,9 +129,9 @@ func TestProviderGETBoundsResponseBodySize(t *testing.T) {
 		t.Fatalf("providerGETResponseLimit = %d, want the historical 1 MiB cap", providerGETResponseLimit)
 	}
 	oversized := `{"padding":"` + strings.Repeat("a", providerGETResponseLimit) + `"}`
-	swapSharedProviderHTTPClient(t, &stubProviderTransport{status: 200, body: oversized})
+	get := providerGETWithDoer(&stubProviderTransport{status: 200, body: oversized})
 
-	_, err := fetchProviderJSON(googleHealthSettingsURL, "settings", "test-access-token")
+	_, err := fetchProviderJSON(get, googleHealthSettingsURL, "settings", "test-access-token")
 	if err == nil {
 		t.Fatal("fetchProviderJSON returned nil error, want truncated oversized body rejected")
 	}
@@ -146,11 +150,10 @@ func TestProviderGETRetriesTransient429HonoringRetryAfter(t *testing.T) {
 		{status: 429, body: `{"error":"rate limited"}`, retryAfter: "7"},
 		{status: 200, body: `{"ok":true}`},
 	}}
-	swapSharedProviderHTTPClient(t, transport)
 	var sleeps []time.Duration
-	swapSharedProviderGETRetrySeams(t, &sleeps)
+	get := providerGETWithRetrySeams(transport, &sleeps)
 
-	body, err := fetchProviderJSON(googleHealthProfileURL, "profile", "test-access-token")
+	body, err := fetchProviderJSON(get, googleHealthProfileURL, "profile", "test-access-token")
 	if err != nil {
 		t.Fatalf("fetchProviderJSON = %v, want success after two 429 retries", err)
 	}
@@ -173,11 +176,10 @@ func TestProviderGETRetriesTransient5xxWithBoundedBackoff(t *testing.T) {
 		{status: 502, body: `{"error":"bad gateway"}`},
 		{status: 200, body: `{"recovered":true}`},
 	}}
-	swapSharedProviderHTTPClient(t, transport)
 	var sleeps []time.Duration
-	swapSharedProviderGETRetrySeams(t, &sleeps)
+	get := providerGETWithRetrySeams(transport, &sleeps)
 
-	body, err := fetchProviderJSON(googleHealthIdentityURL, "identity", "test-access-token")
+	body, err := fetchProviderJSON(get, googleHealthIdentityURL, "identity", "test-access-token")
 	if err != nil {
 		t.Fatalf("fetchProviderJSON = %v, want success after transient 5xx retries", err)
 	}
@@ -204,11 +206,10 @@ func TestProviderGETExhaustsRetryBudgetKeepingLabelAndTypedChain(t *testing.T) {
 	transport := &sequencedProviderTransport{responses: []stubProviderResponse{
 		{status: 503, body: `{"error":"unavailable"}`},
 	}}
-	swapSharedProviderHTTPClient(t, transport)
 	var sleeps []time.Duration
-	swapSharedProviderGETRetrySeams(t, &sleeps)
+	get := providerGETWithRetrySeams(transport, &sleeps)
 
-	_, err := fetchProviderJSON(googleHealthIRNProfileURL, "irnProfile", "test-access-token")
+	_, err := fetchProviderJSON(get, googleHealthIRNProfileURL, "irnProfile", "test-access-token")
 	if err == nil {
 		t.Fatal("fetchProviderJSON returned nil error, want exhausted-retries failure")
 	}
@@ -240,11 +241,10 @@ func TestProviderGETDoesNotRetryUnauthorized(t *testing.T) {
 	transport := &sequencedProviderTransport{responses: []stubProviderResponse{
 		{status: 401, body: `{"error":"unauthorized"}`},
 	}}
-	swapSharedProviderHTTPClient(t, transport)
 	var sleeps []time.Duration
-	swapSharedProviderGETRetrySeams(t, &sleeps)
+	get := providerGETWithRetrySeams(transport, &sleeps)
 
-	_, err := fetchProviderJSON(googleHealthIdentityURL, "identity", "expired-access-token")
+	_, err := fetchProviderJSON(get, googleHealthIdentityURL, "identity", "expired-access-token")
 	if err == nil {
 		t.Fatal("fetchProviderJSON returned nil error, want unauthorized failure")
 	}
@@ -269,11 +269,10 @@ func TestProviderGETDoesNotRetryUnauthorized(t *testing.T) {
 // expects.
 func TestProviderGETDoesNotRetryNetworkFailure(t *testing.T) {
 	attempts := 0
-	swapSharedProviderHTTPClient(t, countingFailingTransport{attempts: &attempts, err: errors.New("connect: connection refused")})
 	var sleeps []time.Duration
-	swapSharedProviderGETRetrySeams(t, &sleeps)
+	get := providerGETWithRetrySeams(countingFailingTransport{attempts: &attempts, err: errors.New("connect: connection refused")}, &sleeps)
 
-	_, err := fetchProviderJSON(googleHealthSettingsURL, "settings", "test-access-token")
+	_, err := fetchProviderJSON(get, googleHealthSettingsURL, "settings", "test-access-token")
 	if err == nil {
 		t.Fatal("fetchProviderJSON returned nil error, want network failure")
 	}
@@ -305,17 +304,16 @@ func (transport countingFailingTransport) RoundTrip(*http.Request) (*http.Respon
 // fetcher's historical error strings — the per-fetch label on a
 // non-2xx status and on an invalid-JSON body — so converting the
 // fetcher into a thin call site over the Provider GET module cannot
-// drift its user-facing messages (issue #280 AC).
-func assertFetcherKeepsLabeledErrorMessages(t *testing.T, label string, fetch func(accessToken string) error) {
+// drift its user-facing messages (issue #280 AC). The fetcher receives
+// the module value with the fake doer injected (#281).
+func assertFetcherKeepsLabeledErrorMessages(t *testing.T, label string, fetch func(get providerGET, accessToken string) error) {
 	t.Helper()
-	swapSharedProviderHTTPClient(t, &stubProviderTransport{status: 404, body: `{"error":"not found"}`})
-	err := fetch("test-access-token")
+	err := fetch(providerGETWithDoer(&stubProviderTransport{status: 404, body: `{"error":"not found"}`}), "test-access-token")
 	if want := "Google Health " + label + " request failed with HTTP 404"; err == nil || err.Error() != want {
 		t.Fatalf("status error = %v, want %q verbatim", err, want)
 	}
 
-	swapSharedProviderHTTPClient(t, &stubProviderTransport{status: 200, body: `{"truncated":`})
-	err = fetch("test-access-token")
+	err = fetch(providerGETWithDoer(&stubProviderTransport{status: 200, body: `{"truncated":`}), "test-access-token")
 	if want := "Google Health " + label + " response is not valid JSON"; err == nil || err.Error() != want {
 		t.Fatalf("invalid-JSON error = %v, want %q verbatim", err, want)
 	}
@@ -325,17 +323,15 @@ func assertFetcherKeepsLabeledErrorMessages(t *testing.T, label string, fetch fu
 // fetcher against a Provider that fails once with a 503 and then
 // recovers, proving the fetcher rides the shared Provider GET module's
 // retry instead of carrying its own single-shot transport (issue #280).
-func assertFetcherRetriesTransient503(t *testing.T, happyBody string, fetch func(accessToken string) (string, error)) {
+func assertFetcherRetriesTransient503(t *testing.T, happyBody string, fetch func(get providerGET, accessToken string) (string, error)) {
 	t.Helper()
 	transport := &sequencedProviderTransport{responses: []stubProviderResponse{
 		{status: 503, body: `{"error":"unavailable"}`},
 		{status: 200, body: happyBody},
 	}}
-	swapSharedProviderHTTPClient(t, transport)
 	var sleeps []time.Duration
-	swapSharedProviderGETRetrySeams(t, &sleeps)
 
-	rawJSON, err := fetch("test-access-token")
+	rawJSON, err := fetch(providerGETWithRetrySeams(transport, &sleeps), "test-access-token")
 	if err != nil {
 		t.Fatalf("fetcher = %v, want success after one transient 503 retry", err)
 	}
@@ -351,71 +347,87 @@ func assertFetcherRetriesTransient503(t *testing.T, happyBody string, fetch func
 }
 
 func TestPairedDevicesFetcherKeepsLabeledErrorMessages(t *testing.T) {
-	assertFetcherKeepsLabeledErrorMessages(t, "pairedDevices", func(accessToken string) error {
-		_, err := fetchGooglePairedDevices(accessToken)
+	assertFetcherKeepsLabeledErrorMessages(t, "pairedDevices", func(get providerGET, accessToken string) error {
+		_, err := fetchGooglePairedDevices(get, accessToken)
 		return err
 	})
 }
 
 func TestPairedDevicesFetcherRetriesTransientFailures(t *testing.T) {
-	assertFetcherRetriesTransient503(t, `{"devices":[]}`, func(accessToken string) (string, error) {
-		devices, err := fetchGooglePairedDevices(accessToken)
+	assertFetcherRetriesTransient503(t, `{"devices":[]}`, func(get providerGET, accessToken string) (string, error) {
+		devices, err := fetchGooglePairedDevices(get, accessToken)
 		return devices.rawJSON, err
 	})
 }
 
 func TestSettingsFetcherKeepsLabeledErrorMessages(t *testing.T) {
-	assertFetcherKeepsLabeledErrorMessages(t, "settings", func(accessToken string) error {
-		_, err := fetchGoogleSettings(accessToken)
+	assertFetcherKeepsLabeledErrorMessages(t, "settings", func(get providerGET, accessToken string) error {
+		_, err := fetchGoogleSettings(get, accessToken)
 		return err
 	})
 }
 
 func TestSettingsFetcherRetriesTransientFailures(t *testing.T) {
-	assertFetcherRetriesTransient503(t, `{"distanceUnit":"METRIC"}`, func(accessToken string) (string, error) {
-		settings, err := fetchGoogleSettings(accessToken)
+	assertFetcherRetriesTransient503(t, `{"distanceUnit":"METRIC"}`, func(get providerGET, accessToken string) (string, error) {
+		settings, err := fetchGoogleSettings(get, accessToken)
 		return settings.rawJSON, err
 	})
 }
 
 func TestIRNProfileFetcherKeepsLabeledErrorMessages(t *testing.T) {
-	assertFetcherKeepsLabeledErrorMessages(t, "irnProfile", func(accessToken string) error {
-		_, err := fetchGoogleIRNProfile(accessToken)
+	assertFetcherKeepsLabeledErrorMessages(t, "irnProfile", func(get providerGET, accessToken string) error {
+		_, err := fetchGoogleIRNProfile(get, accessToken)
 		return err
 	})
 }
 
 func TestIRNProfileFetcherRetriesTransientFailures(t *testing.T) {
-	assertFetcherRetriesTransient503(t, `{"irns":[]}`, func(accessToken string) (string, error) {
-		profile, err := fetchGoogleIRNProfile(accessToken)
+	assertFetcherRetriesTransient503(t, `{"irns":[]}`, func(get providerGET, accessToken string) (string, error) {
+		profile, err := fetchGoogleIRNProfile(get, accessToken)
 		return profile.rawJSON, err
 	})
 }
 
 func TestIdentityFetcherKeepsLabeledErrorMessages(t *testing.T) {
-	assertFetcherKeepsLabeledErrorMessages(t, "identity", func(accessToken string) error {
-		_, err := fetchGoogleIdentity(accessToken)
+	assertFetcherKeepsLabeledErrorMessages(t, "identity", func(get providerGET, accessToken string) error {
+		_, err := fetchGoogleIdentity(get, accessToken)
 		return err
 	})
 }
 
 func TestIdentityFetcherRetriesTransientFailures(t *testing.T) {
-	assertFetcherRetriesTransient503(t, `{"healthUserId":"111111256096816351"}`, func(accessToken string) (string, error) {
-		identity, err := fetchGoogleIdentity(accessToken)
+	assertFetcherRetriesTransient503(t, `{"healthUserId":"111111256096816351"}`, func(get providerGET, accessToken string) (string, error) {
+		identity, err := fetchGoogleIdentity(get, accessToken)
 		return identity.rawJSON, err
 	})
 }
 
 func TestProfileFetcherKeepsLabeledErrorMessages(t *testing.T) {
-	assertFetcherKeepsLabeledErrorMessages(t, "profile", func(accessToken string) error {
-		_, err := fetchGoogleProfile(accessToken)
+	assertFetcherKeepsLabeledErrorMessages(t, "profile", func(get providerGET, accessToken string) error {
+		_, err := fetchGoogleProfile(get, accessToken)
 		return err
 	})
 }
 
 func TestProfileFetcherRetriesTransientFailures(t *testing.T) {
-	assertFetcherRetriesTransient503(t, `{"name":"profiles/111111256096816351"}`, func(accessToken string) (string, error) {
-		profile, err := fetchGoogleProfile(accessToken)
+	assertFetcherRetriesTransient503(t, `{"name":"profiles/111111256096816351"}`, func(get providerGET, accessToken string) (string, error) {
+		profile, err := fetchGoogleProfile(get, accessToken)
 		return profile.rawJSON, err
 	})
+}
+
+// TestProductionSeamsRouteThroughProductionProviderGET pins the wiring
+// the doer conversion (#281) must not break: the package-level fetcher
+// seams (production values) and productionProviderGET itself carry the
+// shared timeout client as their doer, so production Identity Snapshot
+// fetches keep the #271 deadline.
+func TestProductionSeamsRouteThroughProductionProviderGET(t *testing.T) {
+	get := productionProviderGET()
+	client, ok := get.doer.(*http.Client)
+	if !ok || client != providerHTTPClient {
+		t.Fatalf("productionProviderGET doer = %#v, want the shared Provider HTTP client", get.doer)
+	}
+	if get.sleeper != nil || get.jitter != nil {
+		t.Fatal("productionProviderGET must leave retry seams nil (real backoff in production)")
+	}
 }

@@ -22,6 +22,21 @@ func installDevicesProviderFailure(t *testing.T, fetchErr error) {
 	t.Cleanup(func() { fetchPairedDevices = original })
 }
 
+// installFetcherProviderGET rebinds one package-level fetcher seam so a
+// full command run keeps the REAL fetcher body in the path while riding
+// the given Provider GET module — a fake doer plus virtual retry sleeps
+// — instead of the production module. This replaces the historical
+// shared-HTTP-client swap (#281): the transport is injected through the
+// module value, no global client is reassigned.
+func installFetcherProviderGET[Result any](t *testing.T, seam *func(string) (Result, error), fetch func(providerGET, string) (Result, error), get providerGET) {
+	t.Helper()
+	original := *seam
+	*seam = func(accessToken string) (Result, error) {
+		return fetch(get, accessToken)
+	}
+	t.Cleanup(func() { *seam = original })
+}
+
 // connectedProviderFixture initializes config + Health Archive, runs a
 // faked connect, and grants any extra scopes the command under test
 // requires, so it reaches its Provider fetch.
@@ -79,8 +94,8 @@ func TestDevicesEmitsProviderUnreachableOnNetworkFailure(t *testing.T) {
 
 // TestDevicesEmitsProviderUnreachableOnProviderHTTPFailure drives the
 // production pairedDevices fetcher against a Provider answering HTTP
-// 503 (via the shared Provider HTTP client's stub transport). The
-// fetcher must surface the typed upstream HTTP error so the
+// 503 (a stub transport injected as the Provider GET module's doer).
+// The fetcher must surface the typed upstream HTTP error so the
 // translation layer classifies the failure as provider_unreachable —
 // not the generic devices_failed. Since #280 the fetcher rides the
 // shared Provider GET module's bounded retry, so a persistent 503
@@ -88,9 +103,9 @@ func TestDevicesEmitsProviderUnreachableOnNetworkFailure(t *testing.T) {
 // keeping its endpoint-specific wording inside the wrap.
 func TestDevicesEmitsProviderUnreachableOnProviderHTTPFailure(t *testing.T) {
 	configPath, archivePath := connectedDevicesFixture(t)
-	swapSharedProviderHTTPClient(t, &stubProviderTransport{status: 503, body: `{"error":"unavailable"}`})
 	var sleeps []time.Duration
-	swapSharedProviderGETRetrySeams(t, &sleeps)
+	installFetcherProviderGET(t, &fetchPairedDevices, fetchGooglePairedDevices,
+		providerGETWithRetrySeams(&stubProviderTransport{status: 503, body: `{"error":"unavailable"}`}, &sleeps))
 
 	stdout := new(bytes.Buffer)
 	code := run([]string{"devices", "--config", configPath, "--db", archivePath, "--json"}, stdout, new(bytes.Buffer))
@@ -204,10 +219,10 @@ func TestSettingsEmitsProviderUnreachable(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			configPath, archivePath := connectedDevicesFixture(t)
-			swapSharedProviderHTTPClient(t, tt.transport)
 			// The 503 case exhausts the shared Provider GET retry budget
-			// (#280); the stubbed seams keep the backoff sleeps virtual.
-			swapSharedProviderGETRetrySeams(t, &[]time.Duration{})
+			// (#280); the module's stubbed seams keep the sleeps virtual.
+			installFetcherProviderGET(t, &fetchSettings, fetchGoogleSettings,
+				providerGETWithRetrySeams(tt.transport, &[]time.Duration{}))
 
 			stdout := new(bytes.Buffer)
 			code := run([]string{"settings", "--config", configPath, "--db", archivePath, "--json"}, stdout, new(bytes.Buffer))
@@ -236,10 +251,10 @@ func TestIRNProfileEmitsProviderUnreachable(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			configPath, archivePath := connectedProviderFixture(t, googleHealthIrnReadonlyScope)
-			swapSharedProviderHTTPClient(t, tt.transport)
 			// The 503 case exhausts the shared Provider GET retry budget
-			// (#280); the stubbed seams keep the backoff sleeps virtual.
-			swapSharedProviderGETRetrySeams(t, &[]time.Duration{})
+			// (#280); the module's stubbed seams keep the sleeps virtual.
+			installFetcherProviderGET(t, &fetchIRNProfile, fetchGoogleIRNProfile,
+				providerGETWithRetrySeams(tt.transport, &[]time.Duration{}))
 
 			stdout := new(bytes.Buffer)
 			code := run([]string{"irn-profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, new(bytes.Buffer))
@@ -257,9 +272,9 @@ func TestIRNProfileEmitsProviderUnreachable(t *testing.T) {
 
 // TestProfileEmitsProviderUnreachable mirrors the settings case for
 // the profile Identity Snapshot command (issue #272). The profile
-// fetcher rides the runtime adapters seam whose production default
-// uses the shared Provider HTTP client, so the transport stub
-// exercises the production fetcher end to end.
+// fetcher rides the runtime adapters seam (production binding: the
+// fetchProfile package seam), so rebinding that seam over a fake-doer
+// module exercises the production fetcher end to end.
 func TestProfileEmitsProviderUnreachable(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -271,10 +286,10 @@ func TestProfileEmitsProviderUnreachable(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			configPath, archivePath := connectedProviderFixture(t)
-			swapSharedProviderHTTPClient(t, tt.transport)
 			// The 503 case exhausts the shared Provider GET retry budget
-			// (#280); the stubbed seams keep the backoff sleeps virtual.
-			swapSharedProviderGETRetrySeams(t, &[]time.Duration{})
+			// (#280); the module's stubbed seams keep the sleeps virtual.
+			installFetcherProviderGET(t, &fetchProfile, fetchGoogleProfile,
+				providerGETWithRetrySeams(tt.transport, &[]time.Duration{}))
 
 			stdout := new(bytes.Buffer)
 			code := run([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, new(bytes.Buffer))
@@ -294,7 +309,7 @@ func TestProfileEmitsProviderUnreachable(t *testing.T) {
 // the identity command, whose Provider round trip is the verified
 // identity fetch (issue #272). The connect fixture replaces the
 // package-level fetchIdentity seam with a connect fake, so the test
-// pins it back to the production fetcher before stubbing transport.
+// rebinds it to the production fetcher over the fake-doer module.
 func TestIdentityEmitsProviderUnreachable(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -306,13 +321,10 @@ func TestIdentityEmitsProviderUnreachable(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			configPath, archivePath := connectedProviderFixture(t)
-			originalFetchIdentity := fetchIdentity
-			fetchIdentity = fetchGoogleIdentity
-			t.Cleanup(func() { fetchIdentity = originalFetchIdentity })
-			swapSharedProviderHTTPClient(t, tt.transport)
 			// The 503 case exhausts the shared Provider GET retry budget
-			// (#280); the stubbed seams keep the backoff sleeps virtual.
-			swapSharedProviderGETRetrySeams(t, &[]time.Duration{})
+			// (#280); the module's stubbed seams keep the sleeps virtual.
+			installFetcherProviderGET(t, &fetchIdentity, fetchGoogleIdentity,
+				providerGETWithRetrySeams(tt.transport, &[]time.Duration{}))
 
 			stdout := new(bytes.Buffer)
 			code := run([]string{"identity", "--config", configPath, "--db", archivePath, "--json"}, stdout, new(bytes.Buffer))
@@ -345,7 +357,13 @@ func TestRawEmitsProviderUnreachableFailureStatus(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			configPath, archivePath := connectedProviderFixture(t)
-			swapSharedProviderHTTPClient(t, tt.transport)
+			// Rebind the raw Provider seam over the real single-shot
+			// fetcher with the stub transport as its doer (#281).
+			originalFetchRawProvider := fetchRawProvider
+			fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+				return fetchGoogleHealthRaw(providerDoer(tt.transport), request, accessToken)
+			}
+			t.Cleanup(func() { fetchRawProvider = originalFetchRawProvider })
 
 			stdout := new(bytes.Buffer)
 			code := run([]string{"--json", "raw", "endpoint", "getIdentity", "--config", configPath, "--db", archivePath}, stdout, new(bytes.Buffer))

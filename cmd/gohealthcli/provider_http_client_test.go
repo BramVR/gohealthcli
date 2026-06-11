@@ -30,13 +30,12 @@ func (transport *stubProviderTransport) RoundTrip(request *http.Request) (*http.
 	}, nil
 }
 
-// swapSharedProviderHTTPClient routes the shared Provider HTTP client
-// through the given transport for the duration of the test.
-func swapSharedProviderHTTPClient(t *testing.T, transport http.RoundTripper) {
-	t.Helper()
-	original := providerHTTPClient
-	providerHTTPClient = &http.Client{Timeout: providerHTTPTimeout, Transport: transport}
-	t.Cleanup(func() { providerHTTPClient = original })
+// providerDoer wraps a stub transport in an http.Client carrying the
+// production timeout — a fake HTTP doer tests inject through the
+// runtime adapters seam or the Provider GET module value, instead of
+// reassigning any package-level client (#281).
+func providerDoer(transport http.RoundTripper) httpDoer {
+	return &http.Client{Timeout: providerHTTPTimeout, Transport: transport}
 }
 
 // startStalledProviderServer returns a Provider stand-in that stalls
@@ -60,15 +59,11 @@ func startStalledProviderServer(t *testing.T) *httptest.Server {
 	return server
 }
 
-// swapSharedProviderHTTPClientWithTimeout shrinks the shared Provider
-// HTTP client's deadline for the duration of the test so stalled-
-// request behavior is observable without waiting out the production
-// timeout.
-func swapSharedProviderHTTPClientWithTimeout(t *testing.T, timeout time.Duration) {
-	t.Helper()
-	original := providerHTTPClient
-	providerHTTPClient = newProviderHTTPClient(timeout)
-	t.Cleanup(func() { providerHTTPClient = original })
+// shortTimeoutDoer is a real Provider HTTP client with a shrunken
+// deadline, injected as the doer so stalled-request behavior is
+// observable without waiting out the production timeout.
+func shortTimeoutDoer() httpDoer {
+	return newProviderHTTPClient(50 * time.Millisecond)
 }
 
 func TestSharedProviderHTTPClientCarriesDocumentedTimeout(t *testing.T) {
@@ -86,16 +81,15 @@ func TestSharedProviderHTTPClientCarriesDocumentedTimeout(t *testing.T) {
 	}
 }
 
-func TestGoogleIdentityFetchUsesSharedProviderHTTPClient(t *testing.T) {
+func TestGoogleIdentityFetchRoutesThroughInjectedDoer(t *testing.T) {
 	transport := &stubProviderTransport{status: http.StatusOK, body: `{"healthUserId":"hu-123","legacyUserId":"fb-456"}`}
-	swapSharedProviderHTTPClient(t, transport)
 
-	identity, err := fetchGoogleIdentity("test-access-token")
+	identity, err := fetchGoogleIdentity(providerGETWithDoer(transport), "test-access-token")
 	if err != nil {
 		t.Fatalf("fetchGoogleIdentity: %v", err)
 	}
 	if transport.request == nil {
-		t.Fatal("Google identity fetch bypassed the shared Provider HTTP client")
+		t.Fatal("Google identity fetch bypassed the injected HTTP doer")
 	}
 	if got := transport.request.Header.Get("Authorization"); got != "Bearer test-access-token" {
 		t.Fatalf("Authorization header = %q, want bearer token", got)
@@ -105,64 +99,60 @@ func TestGoogleIdentityFetchUsesSharedProviderHTTPClient(t *testing.T) {
 	}
 }
 
-func TestGoogleProfileFetchUsesSharedProviderHTTPClient(t *testing.T) {
+func TestGoogleProfileFetchRoutesThroughInjectedDoer(t *testing.T) {
 	transport := &stubProviderTransport{status: http.StatusOK, body: `{"name":"users/hu-789/profile"}`}
-	swapSharedProviderHTTPClient(t, transport)
 
-	profile, err := fetchGoogleProfile("test-access-token")
+	profile, err := fetchGoogleProfile(providerGETWithDoer(transport), "test-access-token")
 	if err != nil {
 		t.Fatalf("fetchGoogleProfile: %v", err)
 	}
 	if transport.request == nil {
-		t.Fatal("Google profile fetch bypassed the shared Provider HTTP client")
+		t.Fatal("Google profile fetch bypassed the injected HTTP doer")
 	}
 	if profile.healthUserID != "hu-789" {
 		t.Fatalf("profile = %+v, want healthUserID parsed from stub payload", profile)
 	}
 }
 
-func TestPairedDevicesIdentitySnapshotFetchUsesSharedProviderHTTPClient(t *testing.T) {
+func TestPairedDevicesIdentitySnapshotFetchRoutesThroughInjectedDoer(t *testing.T) {
 	transport := &stubProviderTransport{status: http.StatusOK, body: `{"devices":[]}`}
-	swapSharedProviderHTTPClient(t, transport)
 
-	devices, err := fetchGooglePairedDevices("test-access-token")
+	devices, err := fetchGooglePairedDevices(providerGETWithDoer(transport), "test-access-token")
 	if err != nil {
 		t.Fatalf("fetchGooglePairedDevices: %v", err)
 	}
 	if transport.request == nil {
-		t.Fatal("paired-devices Identity Snapshot fetch bypassed the shared Provider HTTP client")
+		t.Fatal("paired-devices Identity Snapshot fetch bypassed the injected HTTP doer")
 	}
 	if devices.rawJSON != `{"devices":[]}` {
 		t.Fatalf("devices.rawJSON = %q, want the stub payload", devices.rawJSON)
 	}
 }
 
-func TestSettingsIdentitySnapshotFetchUsesSharedProviderHTTPClient(t *testing.T) {
+func TestSettingsIdentitySnapshotFetchRoutesThroughInjectedDoer(t *testing.T) {
 	transport := &stubProviderTransport{status: http.StatusOK, body: `{"weightUnit":"KILOGRAM"}`}
-	swapSharedProviderHTTPClient(t, transport)
 
-	settings, err := fetchGoogleSettings("test-access-token")
+	settings, err := fetchGoogleSettings(providerGETWithDoer(transport), "test-access-token")
 	if err != nil {
 		t.Fatalf("fetchGoogleSettings: %v", err)
 	}
 	if transport.request == nil {
-		t.Fatal("settings Identity Snapshot fetch bypassed the shared Provider HTTP client")
+		t.Fatal("settings Identity Snapshot fetch bypassed the injected HTTP doer")
 	}
 	if settings.rawJSON != `{"weightUnit":"KILOGRAM"}` {
 		t.Fatalf("settings.rawJSON = %q, want the stub payload", settings.rawJSON)
 	}
 }
 
-func TestIRNProfileIdentitySnapshotFetchUsesSharedProviderHTTPClient(t *testing.T) {
+func TestIRNProfileIdentitySnapshotFetchRoutesThroughInjectedDoer(t *testing.T) {
 	transport := &stubProviderTransport{status: http.StatusOK, body: `{"enrolled":true}`}
-	swapSharedProviderHTTPClient(t, transport)
 
-	irn, err := fetchGoogleIRNProfile("test-access-token")
+	irn, err := fetchGoogleIRNProfile(providerGETWithDoer(transport), "test-access-token")
 	if err != nil {
 		t.Fatalf("fetchGoogleIRNProfile: %v", err)
 	}
 	if transport.request == nil {
-		t.Fatal("irn-profile Identity Snapshot fetch bypassed the shared Provider HTTP client")
+		t.Fatal("irn-profile Identity Snapshot fetch bypassed the injected HTTP doer")
 	}
 	if irn.rawJSON != `{"enrolled":true}` {
 		t.Fatalf("irn.rawJSON = %q, want the stub payload", irn.rawJSON)
@@ -171,10 +161,9 @@ func TestIRNProfileIdentitySnapshotFetchUsesSharedProviderHTTPClient(t *testing.
 
 func TestOAuthCodeExchangeFailsStalledTokenEndpointByDeadline(t *testing.T) {
 	server := startStalledProviderServer(t)
-	swapSharedProviderHTTPClientWithTimeout(t, 50*time.Millisecond)
 
 	client := oauthClientConfig{clientID: "id", clientSecret: "secret", tokenURI: server.URL}
-	_, err := exchangeOAuthCodeWithRuntime(client, "http://127.0.0.1/callback", "code", "verifier", runtimeAdapters{now: currentTime})
+	_, err := exchangeOAuthCodeWithRuntime(client, "http://127.0.0.1/callback", "code", "verifier", runtimeAdapters{now: currentTime, httpDoer: shortTimeoutDoer()})
 	if err == nil {
 		t.Fatal("expected a stalled OAuth token exchange to fail by deadline, got success")
 	}
@@ -186,10 +175,9 @@ func TestOAuthCodeExchangeFailsStalledTokenEndpointByDeadline(t *testing.T) {
 
 func TestOAuthTokenRefreshFailsStalledTokenEndpointByDeadline(t *testing.T) {
 	server := startStalledProviderServer(t)
-	swapSharedProviderHTTPClientWithTimeout(t, 50*time.Millisecond)
 
 	client := oauthClientConfig{clientID: "id", clientSecret: "secret", tokenURI: server.URL}
-	_, err := refreshGoogleOAuthTokenWithRuntime(client, "refresh-token", nil, runtimeAdapters{now: currentTime})
+	_, err := refreshGoogleOAuthTokenWithRuntime(client, "refresh-token", nil, runtimeAdapters{now: currentTime, httpDoer: shortTimeoutDoer()})
 	if err == nil {
 		t.Fatal("expected a stalled OAuth token refresh to fail by deadline, got success")
 	}
@@ -201,9 +189,8 @@ func TestOAuthTokenRefreshFailsStalledTokenEndpointByDeadline(t *testing.T) {
 
 func TestRawProviderFetchFailsStalledProviderByDeadline(t *testing.T) {
 	server := startStalledProviderServer(t)
-	swapSharedProviderHTTPClientWithTimeout(t, 50*time.Millisecond)
 
-	_, err := fetchGoogleHealthRaw(rawProviderRequest{url: server.URL}, "test-access-token")
+	_, err := fetchGoogleHealthRaw(shortTimeoutDoer(), rawProviderRequest{url: server.URL}, "test-access-token")
 	if err == nil {
 		t.Fatal("expected a stalled raw Provider fetch to fail by deadline, got success")
 	}

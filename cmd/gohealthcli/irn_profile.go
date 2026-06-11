@@ -18,8 +18,12 @@ type googleIRNProfile struct {
 	rawJSON string
 }
 
-// fetchIRNProfile is the test seam.
-var fetchIRNProfile = fetchGoogleIRNProfile
+// fetchIRNProfile is the seam tests stub. Production binds the real
+// fetchGoogleIRNProfile over the production Provider GET module
+// (shared timeout client as the HTTP doer, #281).
+var fetchIRNProfile = func(accessToken string) (googleIRNProfile, error) {
+	return fetchGoogleIRNProfile(productionProviderGET(), accessToken)
+}
 
 type irnProfileResult struct {
 	Status             string `json:"status"`
@@ -172,9 +176,10 @@ func scopeListContains(scopes []string, want string) bool {
 // fetchGoogleIRNProfile is a thin call site over the shared Provider
 // GET module (provider_get.go, issue #280), which owns the transport
 // behavior: bearer auth, size limit, timeout, typed labeled status
-// errors, JSON validity, and retry/Retry-After.
-func fetchGoogleIRNProfile(accessToken string) (googleIRNProfile, error) {
-	body, err := fetchProviderJSON(googleHealthIRNProfileURL, "irnProfile", accessToken)
+// errors, JSON validity, and retry/Retry-After. The module value
+// carries the HTTP doer (#281).
+func fetchGoogleIRNProfile(get providerGET, accessToken string) (googleIRNProfile, error) {
+	body, err := fetchProviderJSON(get, googleHealthIRNProfileURL, "irnProfile", accessToken)
 	if err != nil {
 		return googleIRNProfile{}, err
 	}

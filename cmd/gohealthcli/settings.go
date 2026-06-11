@@ -19,9 +19,12 @@ type googleSettings struct {
 	rawJSON string
 }
 
-// fetchSettings is the seam tests stub. Production calls
-// fetchGoogleSettings which hits the real Google Health API.
-var fetchSettings = fetchGoogleSettings
+// fetchSettings is the seam tests stub. Production binds the real
+// fetchGoogleSettings over the production Provider GET module (shared
+// timeout client as the HTTP doer, #281).
+var fetchSettings = func(accessToken string) (googleSettings, error) {
+	return fetchGoogleSettings(productionProviderGET(), accessToken)
+}
 
 type settingsResult struct {
 	Status             string `json:"status"`
@@ -171,9 +174,10 @@ func settingsSetupWithRuntime(configPath, archivePath string, runtime runtimeAda
 // fetchGoogleSettings is a thin call site over the shared Provider GET
 // module (provider_get.go, issue #280), which owns the transport
 // behavior: bearer auth, size limit, timeout, typed labeled status
-// errors, JSON validity, and retry/Retry-After.
-func fetchGoogleSettings(accessToken string) (googleSettings, error) {
-	body, err := fetchProviderJSON(googleHealthSettingsURL, "settings", accessToken)
+// errors, JSON validity, and retry/Retry-After. The module value
+// carries the HTTP doer (#281).
+func fetchGoogleSettings(get providerGET, accessToken string) (googleSettings, error) {
+	body, err := fetchProviderJSON(get, googleHealthSettingsURL, "settings", accessToken)
 	if err != nil {
 		return googleSettings{}, err
 	}
