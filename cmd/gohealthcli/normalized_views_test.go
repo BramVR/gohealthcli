@@ -8,8 +8,8 @@ import (
 // TestNormalizedViewsRegistryViewReturnsSpec is the slice C tracer: the
 // Registry exposes a View(name) lookup that returns the spec used to
 // build the SQL view; downstream consumers (export writer, migrations,
-// future describe-schema) read from this surface instead of the raw
-// per-view slice in export.go.
+// describe-schema) read from this surface instead of the raw
+// definitions slice in normalized_views.go.
 func TestNormalizedViewsRegistryViewReturnsSpec(t *testing.T) {
 	registry := normalizedViewsRegistry()
 	spec, ok := registry.View("daily-steps")
