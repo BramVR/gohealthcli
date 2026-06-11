@@ -323,8 +323,40 @@ func TestCurrentConnectionAccessTokenMissingCategory(t *testing.T) {
 	if !isCurrentConnectionTokenMissing(errCurrentConnectionMissingRefreshToken) {
 		t.Fatal("missing refresh token error is not categorized as token_missing")
 	}
-	if !isCurrentConnectionTokenMissing(errors.New("Credential Store token material not found; run `gohealthcli connect` first")) {
-		t.Fatal("missing stored token material error is not categorized as token_missing")
+	if !isCurrentConnectionTokenMissing(errCredentialStoreTokenMaterialNotFound) {
+		t.Fatal("Credential Store not-found sentinel is not categorized as token_missing")
+	}
+	// Issue #272: classification is errors.Is on the Credential Store
+	// sentinel — an unrelated error that merely mentions the phrase in
+	// its text must NOT classify as token_missing.
+	if isCurrentConnectionTokenMissing(errors.New("wrapped elsewhere: token material not found")) {
+		t.Fatal("token_missing category must not match on error message text")
+	}
+}
+
+// TestFileCredentialStoreLoadReturnsTypedNotFoundSentinel pins the
+// issue #272 Credential Store seam: a missing store file and a missing
+// Connection key both surface the errCredentialStoreTokenMaterialNotFound
+// sentinel (so callers branch via errors.Is, not message text), with
+// the historical user-facing message preserved verbatim.
+func TestFileCredentialStoreLoadReturnsTypedNotFoundSentinel(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "tokens.json")
+	store := fileCredentialStore{path: storePath}
+
+	_, err := store.Load("googlehealth:111")
+	if !errors.Is(err, errCredentialStoreTokenMaterialNotFound) {
+		t.Fatalf("Load on missing store file = %v, want errCredentialStoreTokenMaterialNotFound", err)
+	}
+	if err.Error() != "Credential Store token material not found; run `gohealthcli connect` first" {
+		t.Fatalf("Load error message = %q, want the historical wording verbatim", err.Error())
+	}
+
+	if writeErr := os.WriteFile(storePath, []byte(`{"googlehealth:222":{}}`), 0o600); writeErr != nil {
+		t.Fatalf("seed store file: %v", writeErr)
+	}
+	_, err = store.Load("googlehealth:111")
+	if !errors.Is(err, errCredentialStoreTokenMaterialNotFound) {
+		t.Fatalf("Load on missing key = %v, want errCredentialStoreTokenMaterialNotFound", err)
 	}
 }
 

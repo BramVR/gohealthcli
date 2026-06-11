@@ -3708,6 +3708,14 @@ type credentialStore interface {
 	Load(key string) (map[string]any, error)
 }
 
+// errCredentialStoreTokenMaterialNotFound is the sentinel every
+// Credential Store backend returns when no token material exists for
+// the Connection key — missing store file, missing key, or an absent
+// OS-native secret. Callers (doctor's token_missing classification)
+// branch on it via errors.Is; matching on the message text is
+// forbidden (issue #272).
+var errCredentialStoreTokenMaterialNotFound = errors.New("Credential Store token material not found; run `gohealthcli connect` first")
+
 func newCredentialStoreWithRuntime(config credentialStoreConfig, runtime runtimeAdapters) (credentialStore, error) {
 	runtime = runtime.withDefaults()
 	switch config.kind {
@@ -3758,7 +3766,7 @@ func (store fileCredentialStore) Load(key string) (map[string]any, error) {
 	content, err := os.ReadFile(store.path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, errors.New("Credential Store token material not found; run `gohealthcli connect` first")
+			return nil, errCredentialStoreTokenMaterialNotFound
 		}
 		return nil, err
 	}
@@ -3768,7 +3776,7 @@ func (store fileCredentialStore) Load(key string) (map[string]any, error) {
 	}
 	raw, ok := existing[key]
 	if !ok {
-		return nil, errors.New("Credential Store token material not found; run `gohealthcli connect` first")
+		return nil, errCredentialStoreTokenMaterialNotFound
 	}
 	var tokenMaterial map[string]any
 	if err := json.Unmarshal(raw, &tokenMaterial); err != nil {
@@ -3835,7 +3843,7 @@ func runSecurityFindGenericPasswordCommand(service, key string) ([]byte, error) 
 	cmd := exec.Command("security", "find-generic-password", "-s", service, "-a", key, "-w")
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, errors.New("Credential Store token material not found; run `gohealthcli connect` first")
+		return nil, errCredentialStoreTokenMaterialNotFound
 	}
 	return []byte(strings.TrimSpace(string(output))), nil
 }
@@ -3850,7 +3858,7 @@ func runSecretToolLookupCommand(service, key string) ([]byte, error) {
 	cmd := exec.Command("secret-tool", "lookup", "service", service, "account", key)
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, errors.New("Credential Store token material not found; run `gohealthcli connect` first")
+		return nil, errCredentialStoreTokenMaterialNotFound
 	}
 	return []byte(strings.TrimSpace(string(output))), nil
 }
@@ -3957,7 +3965,7 @@ try {
 	cmd.Env = append(os.Environ(), "GOHEALTHCLI_CREDENTIAL_TARGET="+target)
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, errors.New("Credential Store token material not found; run `gohealthcli connect` first")
+		return nil, errCredentialStoreTokenMaterialNotFound
 	}
 	return []byte(strings.TrimSpace(string(output))), nil
 }

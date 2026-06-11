@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -206,5 +205,5 @@ func isCurrentConnectionIdentityMismatch(err error) bool {
 func isCurrentConnectionTokenMissing(err error) bool {
 	return errors.Is(err, errCurrentConnectionMissingAccessToken) ||
 		errors.Is(err, errCurrentConnectionMissingRefreshToken) ||
-		strings.Contains(err.Error(), "token material not found")
+		errors.Is(err, errCredentialStoreTokenMaterialNotFound)
 }
