@@ -391,3 +391,17 @@ func TestIRNProfileFetcherRetriesTransientFailures(t *testing.T) {
 		return profile.rawJSON, err
 	})
 }
+
+func TestIdentityFetcherKeepsLabeledErrorMessages(t *testing.T) {
+	assertFetcherKeepsLabeledErrorMessages(t, "identity", func(accessToken string) error {
+		_, err := fetchGoogleIdentity(accessToken)
+		return err
+	})
+}
+
+func TestIdentityFetcherRetriesTransientFailures(t *testing.T) {
+	assertFetcherRetriesTransient503(t, `{"healthUserId":"111111256096816351"}`, func(accessToken string) (string, error) {
+		identity, err := fetchGoogleIdentity(accessToken)
+		return identity.rawJSON, err
+	})
+}

@@ -307,6 +307,9 @@ func TestIdentityEmitsProviderUnreachable(t *testing.T) {
 			fetchIdentity = fetchGoogleIdentity
 			t.Cleanup(func() { fetchIdentity = originalFetchIdentity })
 			swapSharedProviderHTTPClient(t, tt.transport)
+			// The 503 case exhausts the shared Provider GET retry budget
+			// (#280); the stubbed seams keep the backoff sleeps virtual.
+			swapSharedProviderGETRetrySeams(t, &[]time.Duration{})
 
 			stdout := new(bytes.Buffer)
 			code := run([]string{"identity", "--config", configPath, "--db", archivePath, "--json"}, stdout, new(bytes.Buffer))
