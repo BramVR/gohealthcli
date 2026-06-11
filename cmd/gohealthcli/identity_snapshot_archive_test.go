@@ -517,25 +517,9 @@ func applyV6SchemaForLegacyTest(db *sql.DB) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, statement := range initialMigrationStatements() {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
 	applied := time.Date(2026, 5, 31, 21, 0, 0, 0, time.UTC).Format(time.RFC3339)
-	if _, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (1, 'initial_archive_schema', ?)`, applied); err != nil {
+	if err := applySchemaMigrationSteps(tx, 0, 6, applied); err != nil {
 		return err
-	}
-	for _, apply := range []func(*sql.Tx, string) error{
-		applyGoogleIdentityArchiveMigration,
-		applySourceFamilyArchiveMigration,
-		applyDailyStepsViewMigration,
-		applyFirstReleaseNormalizedViewsMigration,
-		applySyncCursorsMigration,
-	} {
-		if err := apply(tx, applied); err != nil {
-			return err
-		}
 	}
 	if _, err := tx.Exec(`PRAGMA user_version = 6`); err != nil {
 		return err
