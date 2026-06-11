@@ -103,6 +103,24 @@ func TestMigrateStampsPendingSchemaMigrationsWithInjectedClock(t *testing.T) {
 	assertSchemaMigrationStamps(t, archivePath, 2, "2026-06-11T13:30:00Z")
 }
 
+// TestMigrationStampsNormalizeInjectedClockToUTC pins the historical
+// stamp contract: applied_at is always stored in UTC, even when the
+// injected clock reports a zoned local time.
+func TestMigrationStampsNormalizeInjectedClockToUTC(t *testing.T) {
+	originalCurrentTime := currentTime
+	zoned := time.FixedZone("UTC+2", 2*60*60)
+	currentTime = func() time.Time { return time.Date(2026, 6, 11, 12, 0, 0, 0, zoned) }
+	t.Cleanup(func() { currentTime = originalCurrentTime })
+
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	if err := (healthArchiveLifecycle{path: archivePath}).Create(); err != nil {
+		t.Fatalf("create fresh Health Archive: %v", err)
+	}
+
+	assertSchemaMigrationStamps(t, archivePath, 1, "2026-06-11T10:00:00Z")
+}
+
 // assertSchemaMigrationStamps verifies every schema_migrations row from
 // fromVersion onward carries exactly the expected applied_at stamp.
 func assertSchemaMigrationStamps(t *testing.T, archivePath string, fromVersion int, wantAppliedAt string) {

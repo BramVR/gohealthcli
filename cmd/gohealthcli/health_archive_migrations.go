@@ -101,7 +101,7 @@ func applyMigrations(db *sql.DB) error {
 		return err
 	}
 	defer tx.Rollback()
-	if err := applySchemaMigrationSteps(tx, 0, currentSchemaVersion, currentTime().Format(time.RFC3339)); err != nil {
+	if err := applySchemaMigrationSteps(tx, 0, currentSchemaVersion, currentTime().UTC().Format(time.RFC3339)); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, currentSchemaVersion)); err != nil {
@@ -127,7 +127,7 @@ func applyPendingMigrations(db *sql.DB) error {
 			return err
 		}
 		defer tx.Rollback()
-		if err := applySchemaMigrationSteps(tx, userVersion, currentSchemaVersion, currentTime().Format(time.RFC3339)); err != nil {
+		if err := applySchemaMigrationSteps(tx, userVersion, currentSchemaVersion, currentTime().UTC().Format(time.RFC3339)); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, currentSchemaVersion)); err != nil {
