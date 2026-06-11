@@ -60,7 +60,7 @@ func TestStatusJSONReportsIdentitySnapshotsFreshnessBlock(t *testing.T) {
 		snapshots.Close()
 		t.Fatalf("Insert settings: %v", err)
 	}
-	if _, err := snapshots.Insert(connection, "paired-devices", `{"devices":[{"model":"Pixel Watch 2"},{"model":"Pixel 8"}]}`, "2026-06-08T00:00:00Z"); err != nil {
+	if _, err := snapshots.Insert(connection, "paired-devices", `{"pairedDevices":[{"deviceVersion":"Pixel Watch 2"},{"deviceVersion":"Pixel 8"}]}`, "2026-06-08T00:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert paired-devices: %v", err)
 	}
@@ -372,7 +372,7 @@ func TestStatusPlainReportsSnapshotFreshnessLines(t *testing.T) {
 		snapshots.Close()
 		t.Fatalf("read current Connection: %v", err)
 	}
-	if _, err := snapshots.Insert(connection, "paired-devices", `{"devices":[{"model":"Pixel Watch 4"}]}`, "2026-06-08T13:00:00Z"); err != nil {
+	if _, err := snapshots.Insert(connection, "paired-devices", `{"pairedDevices":[{"deviceVersion":"Google Pixel Watch 4"}]}`, "2026-06-08T13:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert: %v", err)
 	}
