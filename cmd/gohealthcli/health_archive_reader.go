@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -14,7 +13,6 @@ type healthArchiveReader interface {
 	Close() error
 	StatusSummary() (statusResult, error)
 	Query(statement string, encoder queryRowEncoder) (queryResult, error)
-	DailySteps() ([]dailyStepsExportRow, error)
 	ExportRows(spec exportDatasetSpec) ([]exportRow, error)
 }
 
@@ -160,35 +158,6 @@ func (archive *sqliteHealthArchiveReader) Query(statement string, encoder queryR
 	return result, nil
 }
 
-func (archive *sqliteHealthArchiveReader) DailySteps() ([]dailyStepsExportRow, error) {
-	rows, err := archive.ExportRows(exportDatasetSpecs["daily-steps"])
-	if err != nil {
-		return nil, err
-	}
-	result := make([]dailyStepsExportRow, 0, len(rows))
-	for _, row := range rows {
-		stepCount, err := strconv.ParseInt(row[3], 10, 64)
-		if err != nil {
-			return nil, err
-		}
-		sourceRecordCount, err := strconv.ParseInt(row[6], 10, 64)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, dailyStepsExportRow{
-			ProviderName:          row[0],
-			ConnectionID:          row[1],
-			CivilDate:             row[2],
-			StepCount:             stepCount,
-			SourceKind:            row[4],
-			SourceFamilyFilter:    row[5],
-			SourceRecordCount:     sourceRecordCount,
-			LatestSourceTimestamp: row[7],
-		})
-	}
-	return result, nil
-}
-
 func (archive *sqliteHealthArchiveReader) ExportRows(spec exportDatasetSpec) ([]exportRow, error) {
 	query := fmt.Sprintf("SELECT %s FROM %s ORDER BY %s", exportSelectFields(spec), spec.view, spec.orderBy)
 	rows, err := archive.db.Query(query)
@@ -268,15 +237,6 @@ func querySetup(archivePath, statement string, encoder queryRowEncoder) (queryRe
 	}
 	defer reader.Close()
 	return reader.Query(statement, encoder)
-}
-
-func dailyStepsExportRows(archivePath string) ([]dailyStepsExportRow, error) {
-	reader, err := openHealthArchiveReader(archivePath)
-	if err != nil {
-		return nil, err
-	}
-	defer reader.Close()
-	return reader.DailySteps()
 }
 
 func countArchiveRows(db *sql.DB, table string) (int, error) {

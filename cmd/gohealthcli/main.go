@@ -3541,10 +3541,6 @@ func parseGoogleHealthSessionDataPoint(connection archivedConnection, dataType s
 // executor) that still address it by name. It delegates to the
 // generic parseGoogleHealthRollup, which preserves byte-identical
 // output for the steps-daily shape (the #106 AC regression guard).
-func parseGoogleHealthStepsDailyRollup(connection archivedConnection, rawRollup json.RawMessage) (archivedRollup, error) {
-	return parseGoogleHealthRollup(connection, "steps", "dailyRollUp", rawRollup)
-}
-
 func compactJSONString(raw json.RawMessage) (string, error) {
 	var out bytes.Buffer
 	if err := json.Compact(&out, raw); err != nil {

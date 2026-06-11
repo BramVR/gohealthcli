@@ -4774,10 +4774,10 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 }
 
 func TestParseStepsDailyRollupRequiresCivilEndTime(t *testing.T) {
-	_, err := parseGoogleHealthStepsDailyRollup(archivedConnection{
+	_, err := parseGoogleHealthRollup(archivedConnection{
 		providerName: "googlehealth",
 		id:           "googlehealth:111111256096816351",
-	}, json.RawMessage(`{
+	}, "steps", "dailyRollUp", json.RawMessage(`{
 		"steps": {"countSum": "1234"},
 		"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}}
 	}`))

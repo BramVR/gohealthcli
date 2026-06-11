@@ -108,9 +108,11 @@ func TestGenericRollupParserRejectsUnknownDataType(t *testing.T) {
 }
 
 // TestStepsDailyRollupParserStillProducesByteIdenticalRow pins the
-// #106 AC: the steps-daily byte-identical guard. The legacy parser
-// and the generic parser must produce the same archivedRollup for the
-// same input.
+// #106 AC: the steps-daily byte-identical guard. The legacy
+// steps-only parser was deleted with the dead command-wrapper layer
+// (#270), so the guard pins the generic parser's output for the
+// steps-daily shape to the exact archivedRollup row the legacy parser
+// produced.
 func TestStepsDailyRollupParserStillProducesByteIdenticalRow(t *testing.T) {
 	conn := archivedConnection{
 		providerName: "googlehealth",
@@ -122,15 +124,20 @@ func TestStepsDailyRollupParserStillProducesByteIdenticalRow(t *testing.T) {
 		"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}
 	}`)
 
-	legacy, err := parseGoogleHealthStepsDailyRollup(conn, rawRollup)
-	if err != nil {
-		t.Fatalf("legacy parser: %v", err)
-	}
 	generic, err := parseGoogleHealthRollup(conn, "steps", "dailyRollUp", rawRollup)
 	if err != nil {
 		t.Fatalf("generic parser: %v", err)
 	}
-	if legacy != generic {
-		t.Errorf("generic parser drift:\n legacy=%#v\ngeneric=%#v", legacy, generic)
+	want := archivedRollup{
+		providerName:         "googlehealth",
+		connectionID:         "googlehealth:111111256096816351",
+		dataType:             "steps",
+		rollupKind:           "dailyRollUp",
+		civilDate:            "2026-01-01",
+		timezoneMetadataJSON: `{"civil_end_time":{"date":{"year":2026,"month":1,"day":2}},"civil_start_time":{"date":{"year":2026,"month":1,"day":1}}}`,
+		rawJSON:              `{"steps":{"countSum":"1234"},"civilStartTime":{"date":{"year":2026,"month":1,"day":1}},"civilEndTime":{"date":{"year":2026,"month":1,"day":2}}}`,
+	}
+	if generic != want {
+		t.Errorf("generic parser drift:\n   want=%#v\ngeneric=%#v", want, generic)
 	}
 }
