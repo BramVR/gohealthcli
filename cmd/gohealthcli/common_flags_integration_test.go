@@ -184,7 +184,7 @@ func TestMigratedSubcommandEntryPointsCallRegisterCommon(t *testing.T) {
 		{"profile", "main.go", "func runProfileWithRuntime("},
 		{"settings", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
 		{"devices", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
-		{"irn-profile", "irn_profile.go", "func runIRNProfileWithRuntime("},
+		{"irn-profile", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
 		{"status", "main.go", "func runStatus("},
 	}
 	// Per-subcommand legacy preamble lines that would re-appear if a
