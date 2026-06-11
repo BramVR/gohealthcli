@@ -70,7 +70,7 @@ func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
 		options.from = plan.from
 	}
 	connection := plan.connection
-	archive, err := healthArchiveWriterOpenerForTest(options.archivePath)
+	archive, err := runtime.openHealthArchiveWriter(options.archivePath)
 	if err != nil {
 		return syncRunFailure(syncResult{
 			DataTypes: plan.dataTypes,

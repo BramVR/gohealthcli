@@ -979,6 +979,7 @@ func TestStatusReportsFirstWriteErrorOnce(t *testing.T) {
 		outputMode{},
 		failingWriter{},
 		stderr,
+		runtimeAdapters{},
 	)
 
 	if code != 1 {

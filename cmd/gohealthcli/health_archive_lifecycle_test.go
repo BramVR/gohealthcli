@@ -70,13 +70,10 @@ func TestFreshHealthArchiveSchemaMatchesFullyMigratedLegacyArchive(t *testing.T)
 // clock into fresh Health Archive creation: every schema_migrations row
 // must carry the runtime clock's time, not a stray time.Now() reading.
 func TestCreateStampsSchemaMigrationsWithInjectedClock(t *testing.T) {
-	originalCurrentTime := currentTime
-	currentTime = func() time.Time { return time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
-
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
-	if err := (healthArchiveLifecycle{path: archivePath}).Create(); err != nil {
+	clock := func() time.Time { return time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC) }
+	if err := (healthArchiveLifecycle{path: archivePath, now: clock}).Create(); err != nil {
 		t.Fatalf("create fresh Health Archive: %v", err)
 	}
 
@@ -92,11 +89,8 @@ func TestMigrateStampsPendingSchemaMigrationsWithInjectedClock(t *testing.T) {
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
 	createLegacyV1Archive(t, archivePath)
 
-	originalCurrentTime := currentTime
-	currentTime = func() time.Time { return time.Date(2026, 6, 11, 13, 30, 0, 0, time.UTC) }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
-
-	if err := (healthArchiveLifecycle{path: archivePath}).Migrate(); err != nil {
+	clock := func() time.Time { return time.Date(2026, 6, 11, 13, 30, 0, 0, time.UTC) }
+	if err := (healthArchiveLifecycle{path: archivePath, now: clock}).Migrate(); err != nil {
 		t.Fatalf("migrate legacy v1 Health Archive: %v", err)
 	}
 
@@ -107,14 +101,12 @@ func TestMigrateStampsPendingSchemaMigrationsWithInjectedClock(t *testing.T) {
 // stamp contract: applied_at is always stored in UTC, even when the
 // injected clock reports a zoned local time.
 func TestMigrationStampsNormalizeInjectedClockToUTC(t *testing.T) {
-	originalCurrentTime := currentTime
 	zoned := time.FixedZone("UTC+2", 2*60*60)
-	currentTime = func() time.Time { return time.Date(2026, 6, 11, 12, 0, 0, 0, zoned) }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
+	clock := func() time.Time { return time.Date(2026, 6, 11, 12, 0, 0, 0, zoned) }
 
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
-	if err := (healthArchiveLifecycle{path: archivePath}).Create(); err != nil {
+	if err := (healthArchiveLifecycle{path: archivePath, now: clock}).Create(); err != nil {
 		t.Fatalf("create fresh Health Archive: %v", err)
 	}
 

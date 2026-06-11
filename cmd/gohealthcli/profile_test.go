@@ -23,13 +23,13 @@ import (
 func TestProfileCommandFailsFastWhenScopeMissing(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
 
@@ -57,16 +57,14 @@ func TestProfileCommandFailsFastWhenScopeMissing(t *testing.T) {
 	// the bare HTTP 403 PRD #142 documents only happens because the
 	// pre-check is absent, so guarding the seam is what proves the
 	// migration shut that path down.
-	originalFetchProfile := fetchProfile
-	fetchProfile = func(string) (googleProfile, error) {
+	testRuntime.fetchProfile = func(string) (googleProfile, error) {
 		t.Fatal("fetchProfile called despite missing scope")
 		return googleProfile{}, nil
 	}
-	t.Cleanup(func() { fetchProfile = originalFetchProfile })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code == 0 {
 		t.Fatalf("profile exit code = %d, want non-zero; stdout=%s", code, stdout.String())
 	}

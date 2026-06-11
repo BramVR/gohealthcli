@@ -14,13 +14,13 @@ import (
 func TestSearchableTextViewReturnsRowsFromAllFourSources(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
 
@@ -108,13 +108,13 @@ func TestSearchableTextViewReturnsRowsFromAllFourSources(t *testing.T) {
 func TestSearchableTextLIKENeedleAnswersAcrossKinds(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
 	snapshots, err := openIdentitySnapshotArchive(archivePath)

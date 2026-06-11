@@ -378,8 +378,8 @@ var commands = []commandDef{
 		// flag (so its own --db can win over the config-recorded path); the
 		// adapter sources it from CommonFlagValues, which the dispatch path
 		// populates from the FlagSet Visit pass.
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runStatus(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr)
+		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+			return runStatus(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr, runtime)
 		},
 	},
 	{

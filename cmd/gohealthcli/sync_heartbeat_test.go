@@ -16,16 +16,16 @@ import (
 func TestSyncWritesHeartbeatAfterEachPage(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	fixedSyncStatusClock(t, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	firstPage := `{
 		"dataPoints": [{
@@ -60,8 +60,7 @@ func TestSyncWritesHeartbeatAfterEachPage(t *testing.T) {
 	// exactly the moment a `sync --status` reader in another process
 	// would observe the in-flight row.
 	var midRun *probedSyncRunRow
-	originalFetchRawProvider := fetchRawProvider
-	fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
 		pageToken := mustURLQuery(t, request.url).Get("pageToken")
 		switch pageToken {
 		case "":
@@ -75,17 +74,16 @@ func TestSyncWritesHeartbeatAfterEachPage(t *testing.T) {
 			return nil, nil
 		}
 	}
-	t.Cleanup(func() { fetchRawProvider = originalFetchRawProvider })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--from", "2026-01-01",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}

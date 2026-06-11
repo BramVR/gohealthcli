@@ -30,15 +30,15 @@ func TestSyncStatusFencesAbandonedRunningRowsIdempotently(t *testing.T) {
 		},
 	})
 
-	fixedSyncStatusClock(t, time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
+	testRuntime := fixedSyncStatusClock(time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync", "--status",
 		"--config", configPath,
 		"--db", archivePath,
 		"--plain",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("sync --status exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -67,13 +67,13 @@ func TestSyncStatusFencesAbandonedRunningRowsIdempotently(t *testing.T) {
 	// Second call one minute later: idempotent — the row is no longer
 	// sync_running, so the fence touches zero rows and finished_at
 	// keeps the FIRST fence's timestamp.
-	fixedSyncStatusClock(t, time.Date(2026, 6, 10, 12, 1, 0, 0, time.UTC))
-	code = run([]string{
+	testRuntime = fixedSyncStatusClock(time.Date(2026, 6, 10, 12, 1, 0, 0, time.UTC))
+	code = runWithRuntime([]string{
 		"sync", "--status",
 		"--config", configPath,
 		"--db", archivePath,
 		"--plain",
-	}, new(bytes.Buffer), new(bytes.Buffer))
+	}, new(bytes.Buffer), new(bytes.Buffer), testRuntime)
 	if code != 0 {
 		t.Fatalf("second sync --status exit code = %d, want 0", code)
 	}
@@ -90,13 +90,13 @@ func TestSyncStatusFencesAbandonedRunningRowsIdempotently(t *testing.T) {
 func TestSyncCommandFencesAbandonedRunningRowsOnEntry(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	insertSyncStatusFixtureRuns(t, archivePath, []syncStatusFixtureRun{
@@ -107,8 +107,8 @@ func TestSyncCommandFencesAbandonedRunningRowsOnEntry(t *testing.T) {
 			lastProgressAt: stringPtr("2026-01-01T23:00:00Z"),
 		},
 	})
-	fixedSyncStatusClock(t, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
-	installStepSyncFetchFake(t, "connect-access-secret", map[string]string{
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
+	bindStepSyncFetchFake(t, &testRuntime, "connect-access-secret", map[string]string{
 		"": `{"dataPoints": [{
 			"name": "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a",
 			"dataSource": {"platform": "FITBIT"},
@@ -121,13 +121,13 @@ func TestSyncCommandFencesAbandonedRunningRowsOnEntry(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--config", configPath,
 		"--db", archivePath,
 		"--from", "2026-01-01",
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -160,15 +160,15 @@ func TestFenceLeavesLongRunningRowWithFreshHeartbeatAlone(t *testing.T) {
 			lastProgressAt: stringPtr("2026-06-10T11:59:50Z"),
 		},
 	})
-	fixedSyncStatusClock(t, time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
+	testRuntime := fixedSyncStatusClock(time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
 
 	stdout := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync", "--status",
 		"--config", configPath,
 		"--db", archivePath,
 		"--plain",
-	}, stdout, new(bytes.Buffer))
+	}, stdout, new(bytes.Buffer), testRuntime)
 	if code != 0 {
 		t.Fatalf("sync --status exit code = %d, want 0\nstdout: %s", code, stdout.String())
 	}
@@ -189,13 +189,13 @@ func TestFenceLeavesLongRunningRowWithFreshHeartbeatAlone(t *testing.T) {
 func TestFinalizeAfterFenceConvergesToTrueTerminalStatus(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	writer, err := openHealthArchiveWriter(archivePath)
@@ -289,13 +289,13 @@ func TestFinalizeAfterFenceConvergesToTrueTerminalStatus(t *testing.T) {
 func TestFenceNeverAdvancesTheSyncCursor(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	writer, err := openHealthArchiveWriter(archivePath)
@@ -356,16 +356,16 @@ func TestStatusCommandFencesAbandonedRunningRows(t *testing.T) {
 			// (or predates #236) — the fence falls back to started_at.
 		},
 	})
-	fixedSyncStatusClock(t, time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
+	testRuntime := fixedSyncStatusClock(time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"status",
 		"--config", configPath,
 		"--db", archivePath,
 		"--plain",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("status exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}

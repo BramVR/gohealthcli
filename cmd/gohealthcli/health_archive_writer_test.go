@@ -31,13 +31,13 @@ func TestHealthArchiveWriterRequiresCurrentConnection(t *testing.T) {
 func TestHealthArchiveWriterRecordsDataPointRevisionsRollupsAndSyncRun(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 
@@ -128,13 +128,13 @@ func TestHealthArchiveWriterRecordsDataPointRevisionsRollupsAndSyncRun(t *testin
 func TestSyncRunStartFinishRoundTripsDistinctCounts(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	archive, err := openHealthArchiveWriter(archivePath)
@@ -178,13 +178,13 @@ func TestSyncRunStartFinishRoundTripsDistinctCounts(t *testing.T) {
 func TestSyncRunHeartbeatRoundTripsDistinctCounts(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	archive, err := openHealthArchiveWriter(archivePath)
@@ -238,13 +238,13 @@ func TestSyncRunHeartbeatRoundTripsDistinctCounts(t *testing.T) {
 func TestHealthArchiveWriterStoreAttachmentWritesSidecarRow(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	archive, err := openHealthArchiveWriter(archivePath)
@@ -343,13 +343,13 @@ func TestHealthArchiveWriterStoreAttachmentErrorsWhenDataPointMissing(t *testing
 func TestFinalizeSyncRunRetriesOnBusyThenAdvancesCursor(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	archive, err := openHealthArchiveWriter(archivePath)
@@ -421,13 +421,13 @@ func TestFinalizeSyncRunRetriesOnBusyThenAdvancesCursor(t *testing.T) {
 func TestFinalizeSyncRunDoesNotAdvanceCursorOnFailedOutcome(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	archive, err := openHealthArchiveWriter(archivePath)

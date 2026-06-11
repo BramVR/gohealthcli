@@ -383,8 +383,7 @@ func TestSyncRunLifecycleConvertsBusyExhaustedToFailedWithRecoveryRow(t *testing
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 
 	busyExhausted := &errFinalizeSyncRunBusyExhausted{attempts: finalizeSyncRunRetryBudget, cause: errors.New("database is locked")}
-	t.Cleanup(func() { healthArchiveWriterOpenerForTest = openHealthArchiveWriter })
-	healthArchiveWriterOpenerForTest = func(path string) (healthArchiveWriter, error) {
+	testRuntime.openHealthArchiveWriter = func(path string) (healthArchiveWriter, error) {
 		inner, err := openHealthArchiveWriter(path)
 		if err != nil {
 			return nil, err
@@ -504,8 +503,7 @@ func TestSyncRunLifecycleRecoveryWriteAlsoRetriesOnBusy(t *testing.T) {
 
 	busyExhausted := &errFinalizeSyncRunBusyExhausted{attempts: finalizeSyncRunRetryBudget, cause: errors.New("database is locked")}
 	finishCalls := 0
-	t.Cleanup(func() { healthArchiveWriterOpenerForTest = openHealthArchiveWriter })
-	healthArchiveWriterOpenerForTest = func(path string) (healthArchiveWriter, error) {
+	testRuntime.openHealthArchiveWriter = func(path string) (healthArchiveWriter, error) {
 		inner, err := openHealthArchiveWriter(path)
 		if err != nil {
 			return nil, err
@@ -563,8 +561,7 @@ func TestSyncRunLifecycleRecoveryBudgetExhaustedReturnsTypedError(t *testing.T) 
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 
 	busyExhausted := &errFinalizeSyncRunBusyExhausted{attempts: finalizeSyncRunRetryBudget, cause: errors.New("database is locked")}
-	t.Cleanup(func() { healthArchiveWriterOpenerForTest = openHealthArchiveWriter })
-	healthArchiveWriterOpenerForTest = func(path string) (healthArchiveWriter, error) {
+	testRuntime.openHealthArchiveWriter = func(path string) (healthArchiveWriter, error) {
 		inner, err := openHealthArchiveWriter(path)
 		if err != nil {
 			return nil, err
@@ -621,8 +618,7 @@ func TestSyncRunLifecycleCanceledOutcomePreservedThroughRecovery(t *testing.T) {
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 
 	busyExhausted := &errFinalizeSyncRunBusyExhausted{attempts: finalizeSyncRunRetryBudget, cause: errors.New("database is locked")}
-	t.Cleanup(func() { healthArchiveWriterOpenerForTest = openHealthArchiveWriter })
-	healthArchiveWriterOpenerForTest = func(path string) (healthArchiveWriter, error) {
+	testRuntime.openHealthArchiveWriter = func(path string) (healthArchiveWriter, error) {
 		inner, err := openHealthArchiveWriter(path)
 		if err != nil {
 			return nil, err

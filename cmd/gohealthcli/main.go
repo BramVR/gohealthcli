@@ -410,35 +410,23 @@ type archivedRollup struct {
 	rawJSON              string
 }
 
-var runOAuthFlow = runBrowserOAuthFlow
-var refreshOAuthToken = refreshGoogleOAuthToken
-
-// fetchIdentity and fetchProfile bind the real fetchers over the
-// production Provider GET module (shared timeout client as the HTTP
-// doer, #281). They remain package-level seams the connect/doctor test
-// fixtures swap until the runtime adapters absorb them.
-var fetchIdentity = func(accessToken string) (googleIdentity, error) {
+// productionFetchIdentity and productionFetchProfile bind the real
+// fetchers over the production Provider GET module (shared timeout
+// client as the HTTP doer, #281). Plain functions, not package vars:
+// tests fake these dependencies through runtimeAdapters fields (#283).
+func productionFetchIdentity(accessToken string) (googleIdentity, error) {
 	return fetchGoogleIdentity(productionProviderGET(), accessToken)
 }
-var fetchProfile = func(accessToken string) (googleProfile, error) {
+
+func productionFetchProfile(accessToken string) (googleProfile, error) {
 	return fetchGoogleProfile(productionProviderGET(), accessToken)
 }
 
-// fetchRawProvider binds the real raw Provider fetch over the shared
-// timeout client. Like fetchIdentity/fetchProfile above, it remains a
-// package-level seam until the runtime adapters absorb it.
-var fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+// productionFetchRawProvider binds the real raw Provider fetch over the
+// shared timeout client.
+func productionFetchRawProvider(request rawProviderRequest, accessToken string) ([]byte, error) {
 	return fetchGoogleHealthRaw(providerHTTPClient, request, accessToken)
 }
-var currentTime = func() time.Time { return time.Now().UTC() }
-var currentOS = runtime.GOOS
-var runSecurityAddGenericPassword = runSecurityAddGenericPasswordCommand
-var runSecurityFindGenericPassword = runSecurityFindGenericPasswordCommand
-var runSecretToolStore = runSecretToolStoreCommand
-var runSecretToolLookup = runSecretToolLookupCommand
-var runWindowsCredentialWrite = runWindowsCredentialWriteCommand
-var runWindowsCredentialRead = runWindowsCredentialReadCommand
-var findExecutable = exec.LookPath
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -790,7 +778,7 @@ func runDoctorOnlineWithRuntime(configPath, archivePath string, mode outputMode,
 	return 0
 }
 
-func runStatus(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer) int {
+func runStatus(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("status", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -830,7 +818,7 @@ func runStatus(args []string, configPath, archivePath string, configPathExplicit
 		}
 		return 1
 	}
-	result, err := statusSetup(resolvedArchivePath)
+	result, err := statusSetup(resolvedArchivePath, runtime.withDefaults().now().UTC())
 	if err != nil {
 		if result.Status == "" {
 			result.Status = "status_failed"
@@ -2460,7 +2448,7 @@ func runBrowserOAuthFlowWithRuntime(client oauthClientConfig, scopes []string, n
 		runtime.openBrowser = openBrowser
 	}
 	if runtime.now == nil {
-		runtime.now = currentTime
+		runtime.now = productionNow
 	}
 	if noInput {
 		return oauthTokenResponse{}, errors.New("connect requires browser OAuth; rerun without --no-input")
@@ -2612,7 +2600,7 @@ func postOAuthForm(runtime runtimeAdapters, tokenURI string, values url.Values) 
 
 func exchangeOAuthCodeWithRuntime(client oauthClientConfig, redirectURI, code, verifier string, runtime runtimeAdapters) (oauthTokenResponse, error) {
 	if runtime.now == nil {
-		runtime.now = currentTime
+		runtime.now = productionNow
 	}
 	values := url.Values{}
 	values.Set("client_id", client.clientID)
@@ -2637,12 +2625,12 @@ func exchangeOAuthCodeWithRuntime(client oauthClientConfig, redirectURI, code, v
 }
 
 func refreshGoogleOAuthToken(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-	return refreshGoogleOAuthTokenWithRuntime(client, refreshToken, fallbackScopes, runtimeAdapters{now: currentTime})
+	return refreshGoogleOAuthTokenWithRuntime(client, refreshToken, fallbackScopes, runtimeAdapters{now: productionNow})
 }
 
 func refreshGoogleOAuthTokenWithRuntime(client oauthClientConfig, refreshToken string, fallbackScopes []string, runtime runtimeAdapters) (oauthTokenResponse, error) {
 	if runtime.now == nil {
-		runtime.now = currentTime
+		runtime.now = productionNow
 	}
 	values := url.Values{}
 	values.Set("client_id", client.clientID)

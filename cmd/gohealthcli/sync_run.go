@@ -4,11 +4,6 @@ type syncRunExecutor struct {
 	runtime runtimeAdapters
 }
 
-// healthArchiveWriterOpenerForTest allows tests to inject a wrapped writer
-// (for example, one that forces CommitSyncCursor to fail) without rewriting
-// the whole sync pipeline. Production always uses openHealthArchiveWriter.
-var healthArchiveWriterOpenerForTest = openHealthArchiveWriter
-
 // preflightFailureResult shapes the syncResult returned when the gate
 // rejects an invocation. Status is always sync_failed (never the empty
 // string, per the JSON wire-shape AC); SyncRunID is unset so the JSON

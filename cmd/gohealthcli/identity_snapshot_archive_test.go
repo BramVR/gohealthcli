@@ -49,13 +49,13 @@ func TestFreshArchiveHasIdentitySnapshotsTable(t *testing.T) {
 func TestIdentitySnapshotArchiveInsertAndLatestRoundTrip(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
 
@@ -95,13 +95,13 @@ func TestIdentitySnapshotArchiveInsertAndLatestRoundTrip(t *testing.T) {
 func TestIdentitySnapshotArchiveLatestFiltersByKind(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
 
@@ -159,31 +159,29 @@ func TestIdentitySnapshotArchiveLatestFiltersByKind(t *testing.T) {
 func TestProfileCommandWritesViaIdentitySnapshotArchive(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
 
 	// Run the profile command via the existing test surface — same path
 	// the real CLI uses end-to-end.
-	originalFetchProfile := fetchProfile
-	fetchProfile = func(string) (googleProfile, error) {
+	testRuntime.fetchProfile = func(string) (googleProfile, error) {
 		return googleProfile{
 			healthUserID: "111111256096816351",
 			resourceName: "users/111111256096816351/profile",
 			rawJSON:      `{"name":"users/111111256096816351/profile","profile":{"unit":"metric"}}`,
 		}, nil
 	}
-	t.Cleanup(func() { fetchProfile = originalFetchProfile })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("profile exit code = %d, stderr=%s, stdout=%s", code, stderr.String(), stdout.String())
 	}
@@ -271,13 +269,13 @@ func TestSettingsCommandArchivesSnapshotWithKindSettings(t *testing.T) {
 func TestCurrentSettingsViewProjectsLatestSnapshot(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
 
@@ -332,13 +330,13 @@ func TestCurrentSettingsViewProjectsLatestSnapshot(t *testing.T) {
 func TestIdentitySnapshotArchiveLatestUsesFetchedAtForRecency(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
 

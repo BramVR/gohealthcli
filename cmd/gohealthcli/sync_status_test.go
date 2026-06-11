@@ -100,13 +100,12 @@ func insertSyncStatusFixtureRuns(t *testing.T, archivePath string, runs []syncSt
 
 func stringPtr(value string) *string { return &value }
 
-// fixedSyncStatusClock pins currentTime for the duration of the test so
-// window filtering, durations, and heartbeat ages are deterministic.
-func fixedSyncStatusClock(t *testing.T, now time.Time) {
-	t.Helper()
-	originalCurrentTime := currentTime
-	currentTime = func() time.Time { return now }
-	t.Cleanup(func() { currentTime = originalCurrentTime })
+// fixedSyncStatusClock returns runtime adapters whose clock is pinned
+// so window filtering, durations, and heartbeat ages are deterministic.
+// Tests dispatch through runWithRuntime with the returned adapters
+// instead of mutating package state (#283).
+func fixedSyncStatusClock(now time.Time) runtimeAdapters {
+	return runtimeAdapters{now: func() time.Time { return now }}
 }
 
 // seedSyncStatusFixture inserts the canonical four-row fixture the
@@ -163,17 +162,17 @@ func seedSyncStatusFixture(t *testing.T, archivePath string) {
 func TestSyncStatusListsRecentRunsWithWindowExemptRunningRows(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	fixedSyncStatusClock(t, time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
+	testRuntime := fixedSyncStatusClock(time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
 	seedSyncStatusFixture(t, archivePath)
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--status",
 		"--config", configPath,
 		"--db", archivePath,
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("sync --status exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -201,18 +200,18 @@ func TestSyncStatusListsRecentRunsWithWindowExemptRunningRows(t *testing.T) {
 func TestSyncStatusJSONEmitsSharedEnvelope(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	fixedSyncStatusClock(t, time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
+	testRuntime := fixedSyncStatusClock(time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
 	seedSyncStatusFixture(t, archivePath)
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--status",
 		"--config", configPath,
 		"--db", archivePath,
 		"--json",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("sync --status --json exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -292,19 +291,19 @@ func jsonString(t *testing.T, value string) string {
 func TestSyncStatusWindowFlagWidensTheTerminalRowCutoff(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	fixedSyncStatusClock(t, time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
+	testRuntime := fixedSyncStatusClock(time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
 	seedSyncStatusFixture(t, archivePath)
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--status",
 		"--window", "4h",
 		"--config", configPath,
 		"--db", archivePath,
 		"--plain",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("sync --status --window 4h exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}
@@ -397,18 +396,18 @@ func TestSyncStatusRejectsSyncExecutionFlags(t *testing.T) {
 func TestSyncStatusPlainEmitsKeyValueLinesPerRun(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	fixedSyncStatusClock(t, time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
+	testRuntime := fixedSyncStatusClock(time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
 	seedSyncStatusFixture(t, archivePath)
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{
+	code := runWithRuntime([]string{
 		"sync",
 		"--status",
 		"--config", configPath,
 		"--db", archivePath,
 		"--plain",
-	}, stdout, stderr)
+	}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("sync --status --plain exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
 	}

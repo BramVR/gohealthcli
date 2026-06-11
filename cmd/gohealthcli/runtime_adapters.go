@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os/exec"
+	goruntime "runtime"
 	"time"
 )
 
@@ -10,16 +12,21 @@ type runtimeAdapters struct {
 	// (#271), tests bind a fake. Code paths that build requests receive
 	// this doer (directly or via providerGET()) instead of reading a
 	// package-level client.
-	httpDoer                       httpDoer
-	runOAuthFlow                   func(oauthClientConfig, []string, bool) (oauthTokenResponse, error)
-	refreshOAuthToken              func(oauthClientConfig, string, []string) (oauthTokenResponse, error)
-	openBrowser                    func(string) error
-	fetchIdentity                  func(string) (googleIdentity, error)
-	fetchProfile                   func(string) (googleProfile, error)
-	fetchPairedDevices             func(string) (googlePairedDevices, error)
-	fetchSettings                  func(string) (googleSettings, error)
-	fetchIRNProfile                func(string) (googleIRNProfile, error)
-	fetchRawProvider               func(rawProviderRequest, string) ([]byte, error)
+	httpDoer           httpDoer
+	runOAuthFlow       func(oauthClientConfig, []string, bool) (oauthTokenResponse, error)
+	refreshOAuthToken  func(oauthClientConfig, string, []string) (oauthTokenResponse, error)
+	openBrowser        func(string) error
+	fetchIdentity      func(string) (googleIdentity, error)
+	fetchProfile       func(string) (googleProfile, error)
+	fetchPairedDevices func(string) (googlePairedDevices, error)
+	fetchSettings      func(string) (googleSettings, error)
+	fetchIRNProfile    func(string) (googleIRNProfile, error)
+	fetchRawProvider   func(rawProviderRequest, string) ([]byte, error)
+	// openHealthArchiveWriter opens the Health Archive write handle the
+	// Sync Run path uses (gate connection lookup + lifecycle). Tests
+	// wrap it to inject failing writers; production binds the real
+	// opener.
+	openHealthArchiveWriter        func(string) (healthArchiveWriter, error)
 	now                            func() time.Time
 	currentOS                      string
 	findExecutable                 func(string) (string, error)
@@ -49,27 +56,35 @@ func productionFetchIRNProfile(accessToken string) (googleIRNProfile, error) {
 	return fetchGoogleIRNProfile(productionProviderGET(), accessToken)
 }
 
+// productionNow is the production clock: the current UTC time. It is a
+// plain function, not a package var — tests inject fixed clocks through
+// runtimeAdapters.now or the healthArchiveLifecycle.now field (#283).
+func productionNow() time.Time {
+	return time.Now().UTC()
+}
+
 func productionRuntimeAdapters() runtimeAdapters {
 	return runtimeAdapters{
 		httpDoer:                       providerHTTPClient,
-		runOAuthFlow:                   runOAuthFlow,
-		refreshOAuthToken:              refreshOAuthToken,
+		runOAuthFlow:                   runBrowserOAuthFlow,
+		refreshOAuthToken:              refreshGoogleOAuthToken,
 		openBrowser:                    openBrowser,
-		fetchIdentity:                  fetchIdentity,
-		fetchProfile:                   fetchProfile,
+		fetchIdentity:                  productionFetchIdentity,
+		fetchProfile:                   productionFetchProfile,
 		fetchPairedDevices:             productionFetchPairedDevices,
 		fetchSettings:                  productionFetchSettings,
 		fetchIRNProfile:                productionFetchIRNProfile,
-		fetchRawProvider:               fetchRawProvider,
-		now:                            currentTime,
-		currentOS:                      currentOS,
-		findExecutable:                 findExecutable,
-		runSecurityAddGenericPassword:  runSecurityAddGenericPassword,
-		runSecurityFindGenericPassword: runSecurityFindGenericPassword,
-		runSecretToolStore:             runSecretToolStore,
-		runSecretToolLookup:            runSecretToolLookup,
-		runWindowsCredentialWrite:      runWindowsCredentialWrite,
-		runWindowsCredentialRead:       runWindowsCredentialRead,
+		fetchRawProvider:               productionFetchRawProvider,
+		openHealthArchiveWriter:        openHealthArchiveWriter,
+		now:                            productionNow,
+		currentOS:                      goruntime.GOOS,
+		findExecutable:                 exec.LookPath,
+		runSecurityAddGenericPassword:  runSecurityAddGenericPasswordCommand,
+		runSecurityFindGenericPassword: runSecurityFindGenericPasswordCommand,
+		runSecretToolStore:             runSecretToolStoreCommand,
+		runSecretToolLookup:            runSecretToolLookupCommand,
+		runWindowsCredentialWrite:      runWindowsCredentialWriteCommand,
+		runWindowsCredentialRead:       runWindowsCredentialReadCommand,
 	}
 }
 
@@ -141,6 +156,9 @@ func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
 		adapters.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
 			return fetchGoogleHealthRaw(adapters.httpDoer, request, accessToken)
 		}
+	}
+	if adapters.openHealthArchiveWriter == nil {
+		adapters.openHealthArchiveWriter = openHealthArchiveWriter
 	}
 	if adapters.currentOS == "" {
 		adapters.currentOS = production.currentOS

@@ -37,11 +37,11 @@ func TestIdentitySnapshotCommandsReportUnavailableWithoutConnection(t *testing.T
 		t.Run(tc.command, func(t *testing.T) {
 			tempDir := t.TempDir()
 			configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-			installConnectFakes(t, fakeConnectConfig{failIfCalled: true})
+			testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{failIfCalled: true})
 
 			stdout := new(bytes.Buffer)
 			stderr := new(bytes.Buffer)
-			code := run([]string{tc.command, "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+			code := runWithRuntime([]string{tc.command, "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 			if code != 1 {
 				t.Fatalf("%s exit code = %d, want 1\nstdout: %s", tc.command, code, stdout.String())
 			}

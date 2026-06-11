@@ -268,12 +268,11 @@ func TestSyncRunLifecycleClosesSIGINTPreFirstDataTypeRace(t *testing.T) {
 // place, the lifecycle catches the now-closed channel and returns
 // sync_canceled with zero audit rows.
 //
-// The seam used here — healthArchiveWriterOpenerForTest — is already a
-// pre-existing test hook (see sync_run.go:10), called from
-// productionSyncPreflightContext.currentConnection during
-// gate.Validate. Wrapping it lets us deterministically slot a close()
-// into the validate-then-lifecycle handoff without introducing a new
-// production hook.
+// The seam used here — the runtime adapters' openHealthArchiveWriter —
+// is called from productionSyncPreflightContext.currentConnection
+// during gate.Validate. Wrapping it lets us deterministically slot a
+// close() into the validate-then-lifecycle handoff without introducing
+// a new production hook.
 func TestSyncOrchestratorCancelBetweenLoopGuardAndLifecycleWritesNoAuditRow(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -301,9 +300,8 @@ func TestSyncOrchestratorCancelBetweenLoopGuardAndLifecycleWritesNoAuditRow(t *t
 	// executor.Execute) and strictly BEFORE syncRunLifecycle.Run's
 	// pre-StartSyncRun cancel check fires (which is the first thing
 	// lifecycle.Run does). This is the exact race window slice 5 closes.
-	t.Cleanup(func() { healthArchiveWriterOpenerForTest = openHealthArchiveWriter })
 	opens := 0
-	healthArchiveWriterOpenerForTest = func(path string) (healthArchiveWriter, error) {
+	testRuntime.openHealthArchiveWriter = func(path string) (healthArchiveWriter, error) {
 		opens++
 		if opens == 1 {
 			close(cancelCh)

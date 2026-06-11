@@ -16,13 +16,13 @@ import (
 func TestDoctorJSONReportsAttachmentOrphans(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
 	store, err := openAttachmentStoreMode(archivePath, writeArchive)
@@ -65,7 +65,7 @@ func TestDoctorJSONReportsAttachmentOrphans(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"doctor", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"doctor", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("doctor exit code = %d, stderr=%s\nstdout=%s", code, stderr.String(), stdout.String())
 	}
@@ -107,13 +107,13 @@ func TestDoctorJSONReportsAttachmentOrphans(t *testing.T) {
 func TestDoctorPlainReportsAttachmentOrphanCounts(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d", code)
 	}
 	rootDir := attachmentRootDirForArchive(archivePath)
@@ -127,7 +127,7 @@ func TestDoctorPlainReportsAttachmentOrphanCounts(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"doctor", "--config", configPath, "--db", archivePath, "--plain"}, stdout, stderr)
+	code := runWithRuntime([]string{"doctor", "--config", configPath, "--db", archivePath, "--plain"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("doctor exit = %d, stderr=%s", code, stderr.String())
 	}

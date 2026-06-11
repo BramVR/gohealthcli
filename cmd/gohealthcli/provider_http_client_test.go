@@ -252,7 +252,7 @@ func TestOAuthCodeExchangeMapsNonSuccessStatus(t *testing.T) {
 	client := oauthClientConfig{clientID: "id", clientSecret: "secret", tokenURI: "https://oauth2.googleapis.com/token"}
 
 	_, err := exchangeOAuthCodeWithRuntime(client, "http://127.0.0.1/callback", "code", "verifier", runtimeAdapters{
-		now:      currentTime,
+		now:      productionNow,
 		httpDoer: providerDoer(transport),
 	})
 	if err == nil || err.Error() != "OAuth token exchange failed with HTTP 400" {
@@ -310,7 +310,7 @@ func TestOAuthTokenRefreshMapsNonSuccessStatus(t *testing.T) {
 	client := oauthClientConfig{clientID: "id", clientSecret: "secret", tokenURI: "https://oauth2.googleapis.com/token"}
 
 	_, err := refreshGoogleOAuthTokenWithRuntime(client, "stored-refresh-secret", nil, runtimeAdapters{
-		now:      currentTime,
+		now:      productionNow,
 		httpDoer: providerDoer(transport),
 	})
 	if err == nil || err.Error() != "OAuth token refresh failed with HTTP 401" {
@@ -322,7 +322,7 @@ func TestOAuthCodeExchangeFailsStalledTokenEndpointByDeadline(t *testing.T) {
 	server := startStalledProviderServer(t)
 
 	client := oauthClientConfig{clientID: "id", clientSecret: "secret", tokenURI: server.URL}
-	_, err := exchangeOAuthCodeWithRuntime(client, "http://127.0.0.1/callback", "code", "verifier", runtimeAdapters{now: currentTime, httpDoer: shortTimeoutDoer()})
+	_, err := exchangeOAuthCodeWithRuntime(client, "http://127.0.0.1/callback", "code", "verifier", runtimeAdapters{now: productionNow, httpDoer: shortTimeoutDoer()})
 	if err == nil {
 		t.Fatal("expected a stalled OAuth token exchange to fail by deadline, got success")
 	}
@@ -336,7 +336,7 @@ func TestOAuthTokenRefreshFailsStalledTokenEndpointByDeadline(t *testing.T) {
 	server := startStalledProviderServer(t)
 
 	client := oauthClientConfig{clientID: "id", clientSecret: "secret", tokenURI: server.URL}
-	_, err := refreshGoogleOAuthTokenWithRuntime(client, "refresh-token", nil, runtimeAdapters{now: currentTime, httpDoer: shortTimeoutDoer()})
+	_, err := refreshGoogleOAuthTokenWithRuntime(client, "refresh-token", nil, runtimeAdapters{now: productionNow, httpDoer: shortTimeoutDoer()})
 	if err == nil {
 		t.Fatal("expected a stalled OAuth token refresh to fail by deadline, got success")
 	}
