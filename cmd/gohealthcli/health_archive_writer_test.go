@@ -52,7 +52,14 @@ func TestHealthArchiveWriterRecordsDataPointRevisionsRollupsAndSyncRun(t *testin
 		t.Fatalf("CurrentConnection: %v", err)
 	}
 	startedAt := "2026-01-01T00:00:00Z"
-	syncRunID, err := archive.StartSyncRun(connection, []string{"steps"}, "2026-01-01", "2026-01-02", "list", "", startedAt)
+	syncRunID, err := archive.StartSyncRun(syncRunStart{
+		Connection:     connection,
+		DataTypes:      []string{"steps"},
+		From:           "2026-01-01",
+		To:             "2026-01-02",
+		EndpointFamily: "list",
+		StartedAt:      startedAt,
+	})
 	if err != nil {
 		t.Fatalf("StartSyncRun: %v", err)
 	}
@@ -96,13 +103,130 @@ func TestHealthArchiveWriterRecordsDataPointRevisionsRollupsAndSyncRun(t *testin
 		t.Fatalf("corrected UpsertRollup = (%q, %v), want updated", status, err)
 	}
 
-	if err := archive.FinishSyncRun(syncRunID, "sync_completed", 4, 2, 2, "2026-01-01T00:00:06Z", ""); err != nil {
+	if err := archive.FinishSyncRun(syncRunFinish{
+		SyncRunID:    syncRunID,
+		Status:       "sync_completed",
+		SeenCount:    4,
+		NewCount:     2,
+		UpdatedCount: 2,
+		FinishedAt:   "2026-01-01T00:00:06Z",
+	}); err != nil {
 		t.Fatalf("FinishSyncRun: %v", err)
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 1)
 	assertArchiveTableCount(t, archivePath, "data_point_revisions", 1)
 	assertArchiveTableCount(t, archivePath, "rollups", 1)
 	assertSyncRunForDataType(t, archivePath, syncRunID, "sync_completed", "steps", "list", 4, 2, 2, "")
+}
+
+// TestSyncRunStartFinishRoundTripsDistinctCounts pins the seen/new/
+// updated mapping through the Sync Run start/finish writer chain with
+// three DISTINCT values, so a count transposition introduced while the
+// chain converts to parameter structs (#277) cannot pass unnoticed —
+// the sibling round-trip test above finishes with 4/2/2, where a
+// new/updated swap is invisible.
+func TestSyncRunStartFinishRoundTripsDistinctCounts(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	archive, err := openHealthArchiveWriter(archivePath)
+	if err != nil {
+		t.Fatalf("open Health Archive writer: %v", err)
+	}
+	defer archive.Close()
+	connection, err := archive.CurrentConnection()
+	if err != nil {
+		t.Fatalf("CurrentConnection: %v", err)
+	}
+	syncRunID, err := archive.StartSyncRun(syncRunStart{
+		Connection:     connection,
+		DataTypes:      []string{"steps"},
+		From:           "2026-01-01",
+		To:             "2026-01-02",
+		EndpointFamily: "list",
+		StartedAt:      "2026-01-01T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("StartSyncRun: %v", err)
+	}
+	if err := archive.FinishSyncRun(syncRunFinish{
+		SyncRunID:    syncRunID,
+		Status:       "sync_completed",
+		SeenCount:    7,
+		NewCount:     3,
+		UpdatedCount: 2,
+		FinishedAt:   "2026-01-01T00:00:06Z",
+	}); err != nil {
+		t.Fatalf("FinishSyncRun: %v", err)
+	}
+	assertSyncRunForDataType(t, archivePath, syncRunID, "sync_completed", "steps", "list", 7, 3, 2, "")
+}
+
+// TestSyncRunHeartbeatRoundTripsDistinctCounts pins the same trio
+// through the advisory HeartbeatSyncRun write: each count must land in
+// its own sync_runs column while the row stays sync_running, so the
+// #277 struct conversion cannot transpose what a concurrent
+// `sync --status` poller reads mid-run.
+func TestSyncRunHeartbeatRoundTripsDistinctCounts(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	installConnectFakes(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+	archive, err := openHealthArchiveWriter(archivePath)
+	if err != nil {
+		t.Fatalf("open Health Archive writer: %v", err)
+	}
+	defer archive.Close()
+	connection, err := archive.CurrentConnection()
+	if err != nil {
+		t.Fatalf("CurrentConnection: %v", err)
+	}
+	syncRunID, err := archive.StartSyncRun(syncRunStart{
+		Connection:     connection,
+		DataTypes:      []string{"steps"},
+		From:           "2026-01-01",
+		To:             "2026-01-02",
+		EndpointFamily: "list",
+		StartedAt:      "2026-01-01T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("StartSyncRun: %v", err)
+	}
+	if err := archive.HeartbeatSyncRun(syncRunHeartbeat{
+		SyncRunID:    syncRunID,
+		SeenCount:    5,
+		NewCount:     2,
+		UpdatedCount: 1,
+		At:           "2026-01-01T00:00:03Z",
+	}); err != nil {
+		t.Fatalf("HeartbeatSyncRun: %v", err)
+	}
+	row := probeSyncRunRow(t, archivePath, syncRunID)
+	if row.status != "sync_running" {
+		t.Fatalf("status = %q, want sync_running", row.status)
+	}
+	if row.seenCount != 5 || row.newCount != 2 || row.updatedCount != 1 {
+		t.Fatalf("heartbeat counts = seen %d / new %d / updated %d, want 5 / 2 / 1",
+			row.seenCount, row.newCount, row.updatedCount)
+	}
+	if !row.lastProgressAt.Valid || row.lastProgressAt.String != "2026-01-01T00:00:03Z" {
+		t.Fatalf("last_progress_at = %v(%q), want 2026-01-01T00:00:03Z", row.lastProgressAt.Valid, row.lastProgressAt.String)
+	}
 }
 
 // TestHealthArchiveWriterStoreAttachmentWritesSidecarRow pins the
@@ -237,7 +361,14 @@ func TestFinalizeSyncRunRetriesOnBusyThenAdvancesCursor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	runID, err := archive.StartSyncRun(connection, []string{"steps"}, "2026-01-01", "2026-01-02", "list", "", "2026-01-01T00:00:00Z")
+	runID, err := archive.StartSyncRun(syncRunStart{
+		Connection:     connection,
+		DataTypes:      []string{"steps"},
+		From:           "2026-01-01",
+		To:             "2026-01-02",
+		EndpointFamily: "list",
+		StartedAt:      "2026-01-01T00:00:00Z",
+	})
 	if err != nil {
 		t.Fatalf("StartSyncRun: %v", err)
 	}
@@ -308,7 +439,14 @@ func TestFinalizeSyncRunDoesNotAdvanceCursorOnFailedOutcome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	runID, err := archive.StartSyncRun(connection, []string{"steps"}, "2026-01-01", "2026-01-02", "list", "", "2026-01-01T00:00:00Z")
+	runID, err := archive.StartSyncRun(syncRunStart{
+		Connection:     connection,
+		DataTypes:      []string{"steps"},
+		From:           "2026-01-01",
+		To:             "2026-01-02",
+		EndpointFamily: "list",
+		StartedAt:      "2026-01-01T00:00:00Z",
+	})
 	if err != nil {
 		t.Fatalf("StartSyncRun: %v", err)
 	}

@@ -87,7 +87,7 @@ func commitSyncCursor(db *sql.DB, key syncCursorKey, outcome syncRunOutcome, to,
 }
 
 // commitSyncCursorTx is the same write as commitSyncCursor but bound to
-// an open transaction so it can compose with finishSyncRunTx inside the
+// an open transaction so it can compose with finishSyncRun inside the
 // writer's FinalizeSyncRun atomic-commit path.
 func commitSyncCursorTx(tx *sql.Tx, key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error {
 	return commitSyncCursorExec(tx, key, outcome, to, advancedAt)
