@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -93,7 +94,7 @@ func scopeListContains(scopes []string, want string) bool {
 // errors, JSON validity, and retry/Retry-After. The module value
 // carries the HTTP doer (#281).
 func fetchGoogleIRNProfile(get providerGET, accessToken string) (googleIRNProfile, error) {
-	body, err := fetchProviderJSON(get, googleHealthIRNProfileURL, "irnProfile", accessToken)
+	body, err := fetchProviderJSON(context.Background(), get, googleHealthIRNProfileURL, "irnProfile", accessToken)
 	if err != nil {
 		return googleIRNProfile{}, err
 	}

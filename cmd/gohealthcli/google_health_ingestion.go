@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,11 +25,11 @@ type googleHealthIngestionArchive interface {
 }
 
 type googleHealthIngestionProvider interface {
-	// Fetch issues one request against the upstream provider. cancelCh,
-	// when closed, asks the implementation to short-circuit any in-flight
-	// retry backoff and surface errSyncCanceled at the next opportunity.
-	// nil disables cancellation.
-	Fetch(request rawProviderRequest, accessToken string, cancelCh <-chan struct{}) ([]byte, error)
+	// Fetch issues one request against the upstream provider. ctx scopes
+	// the HTTP request itself (#284): a SIGINT-canceled context aborts
+	// the in-flight call and short-circuits any retry backoff, surfacing
+	// errSyncCanceled. context.Background() disables cancellation.
+	Fetch(ctx context.Context, request rawProviderRequest, accessToken string) ([]byte, error)
 }
 
 type googleHealthIngestion struct {
@@ -64,12 +65,6 @@ type googleHealthIngestionRequest struct {
 	// requests in the same run keep using the refreshed token. nil
 	// preserves the historical behavior: the first 401 fails the run.
 	refreshAccessToken func() (string, error)
-	// cancelCh, when closed, asks pagination to stop cleanly between pages.
-	// Returns errSyncCanceled. The in-flight Fetch (if any) is not aborted —
-	// SIGINT during a sync stops at the next page boundary, not mid-HTTP.
-	// nil disables cancellation (used by single-type syncs without SIGINT
-	// instrumentation).
-	cancelCh <-chan struct{}
 	// progress, when non-nil, is invoked at the TOP of every page
 	// iteration — before the fetch — with the counts archived so far,
 	// so the caller can persist a heartbeat on the sync_runs row
@@ -95,26 +90,11 @@ func reportIngestionProgress(request googleHealthIngestionRequest, result *googl
 	request.progress(*result)
 }
 
-// errSyncCanceled is the sentinel returned by ingestion when the cancel
-// channel was closed between pages. sync_run.go translates it into the
-// syncRunOutcomeCanceled outcome, which leaves the Sync Cursor un-advanced
-// (ADR-0008).
+// errSyncCanceled is the sentinel returned by ingestion when the run's
+// context was canceled — between pages or mid-fetch (#284). sync_run.go
+// translates it into the syncRunOutcomeCanceled outcome, which leaves
+// the Sync Cursor un-advanced (ADR-0008).
 var errSyncCanceled = errors.New("Sync Run canceled")
-
-// ingestionCanceled is a non-blocking check for a closed cancel channel.
-// nil channel disables cancellation, matching the single-type CLI path
-// before SIGINT instrumentation was added.
-func ingestionCanceled(cancelCh <-chan struct{}) bool {
-	if cancelCh == nil {
-		return false
-	}
-	select {
-	case <-cancelCh:
-		return true
-	default:
-		return false
-	}
-}
 
 type googleHealthIngestionPlan struct {
 	endpointFamily string
@@ -157,8 +137,8 @@ type runtimeGoogleHealthIngestionProvider struct {
 	jitter  func(time.Duration) time.Duration
 }
 
-func (provider runtimeGoogleHealthIngestionProvider) Fetch(request rawProviderRequest, accessToken string, cancelCh <-chan struct{}) ([]byte, error) {
-	return fetchWithRetry(provider.runtime.fetchRawProvider, provider.sleeper, provider.jitter, request, accessToken, cancelCh)
+func (provider runtimeGoogleHealthIngestionProvider) Fetch(ctx context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	return fetchWithRetry(ctx, provider.runtime.fetchRawProvider, provider.sleeper, provider.jitter, request, accessToken)
 }
 
 // midRunRefreshIngestionProvider wraps the ingestion provider when the
@@ -177,18 +157,18 @@ type midRunRefreshIngestionProvider struct {
 	refreshedToken string
 }
 
-func (provider *midRunRefreshIngestionProvider) Fetch(request rawProviderRequest, accessToken string, cancelCh <-chan struct{}) ([]byte, error) {
+func (provider *midRunRefreshIngestionProvider) Fetch(ctx context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 	if provider.refreshedToken != "" {
 		accessToken = provider.refreshedToken
 	}
-	body, err := provider.inner.Fetch(request, accessToken, cancelCh)
+	body, err := provider.inner.Fetch(ctx, request, accessToken)
 	if err == nil || !isUnauthorizedHTTPError(err) {
 		return body, err
 	}
 	// A signal that landed while the failing request was in flight wins
 	// over the refresh: the next clean boundary is here, before spending
 	// a token refresh + retry the user no longer wants.
-	if ingestionCanceled(cancelCh) {
+	if ctx.Err() != nil {
 		return nil, errSyncCanceled
 	}
 	refreshed, refreshErr := provider.refresh()
@@ -196,7 +176,7 @@ func (provider *midRunRefreshIngestionProvider) Fetch(request rawProviderRequest
 		return nil, refreshErr
 	}
 	provider.refreshedToken = refreshed
-	return provider.inner.Fetch(request, refreshed, cancelCh)
+	return provider.inner.Fetch(ctx, request, refreshed)
 }
 
 func (ingestion googleHealthIngestion) Plan(request googleHealthIngestionRequest) (googleHealthIngestionPlan, error) {
@@ -228,7 +208,7 @@ func (ingestion googleHealthIngestion) Plan(request googleHealthIngestionRequest
 	return googleHealthIngestionPlan{endpointFamily: "list"}, nil
 }
 
-func (ingestion googleHealthIngestion) Execute(archive googleHealthIngestionArchive, request googleHealthIngestionRequest) (googleHealthIngestionResult, error) {
+func (ingestion googleHealthIngestion) Execute(ctx context.Context, archive googleHealthIngestionArchive, request googleHealthIngestionRequest) (googleHealthIngestionResult, error) {
 	plan, err := ingestion.Plan(request)
 	if err != nil {
 		return googleHealthIngestionResult{}, err
@@ -242,16 +222,16 @@ func (ingestion googleHealthIngestion) Execute(archive googleHealthIngestionArch
 	result := googleHealthIngestionResult{endpointFamily: plan.endpointFamily}
 	switch plan.endpointFamily {
 	case "dailyRollUp":
-		err = ingestion.executeDailyRollupPages(archive, request, &result)
+		err = ingestion.executeDailyRollupPages(ctx, archive, request, &result)
 	case "rollUp":
-		err = ingestion.executeWindowRollupPages(archive, request, plan.rollupSpec, &result)
+		err = ingestion.executeWindowRollupPages(ctx, archive, request, plan.rollupSpec, &result)
 	default:
-		err = ingestion.executeDataPointPages(archive, request, &result)
+		err = ingestion.executeDataPointPages(ctx, archive, request, &result)
 	}
 	return result, err
 }
 
-func (ingestion googleHealthIngestion) executeDailyRollupPages(archive googleHealthIngestionArchive, request googleHealthIngestionRequest, result *googleHealthIngestionResult) error {
+func (ingestion googleHealthIngestion) executeDailyRollupPages(ctx context.Context, archive googleHealthIngestionArchive, request googleHealthIngestionRequest, result *googleHealthIngestionResult) error {
 	windows, err := googleHealthDailyRollupDateWindows(request.from, request.to)
 	if err != nil {
 		return err
@@ -259,7 +239,7 @@ func (ingestion googleHealthIngestion) executeDailyRollupPages(archive googleHea
 	for _, window := range windows {
 		seenPageTokens := map[string]struct{}{}
 		for pageToken := ""; ; {
-			if ingestionCanceled(request.cancelCh) {
+			if ctx.Err() != nil {
 				return errSyncCanceled
 			}
 			reportIngestionProgress(request, result)
@@ -267,8 +247,11 @@ func (ingestion googleHealthIngestion) executeDailyRollupPages(archive googleHea
 			if err != nil {
 				return err
 			}
-			body, err := ingestion.provider.Fetch(rawRequest, request.accessToken, request.cancelCh)
+			body, err := ingestion.provider.Fetch(ctx, rawRequest, request.accessToken)
 			if err != nil {
+				if ctx.Err() != nil {
+					return errSyncCanceled
+				}
 				return normalizeProviderError(err)
 			}
 			page, err := parseGoogleHealthRollupList(body)
@@ -310,11 +293,11 @@ func (ingestion googleHealthIngestion) executeDailyRollupPages(archive googleHea
 // upstream takes an RFC3339 range and a windowSize Duration string,
 // returns rollupDataPoints with RFC3339 startTime/endTime, and does
 // not need the 90-day client-side window split that dailyRollUp does.
-func (ingestion googleHealthIngestion) executeWindowRollupPages(archive googleHealthIngestionArchive, request googleHealthIngestionRequest, spec syncRollupSpec, result *googleHealthIngestionResult) error {
+func (ingestion googleHealthIngestion) executeWindowRollupPages(ctx context.Context, archive googleHealthIngestionArchive, request googleHealthIngestionRequest, spec syncRollupSpec, result *googleHealthIngestionResult) error {
 	windowSize := fmt.Sprintf("%ds", int64(spec.windowSize.Seconds()))
 	seenPageTokens := map[string]struct{}{}
 	for pageToken := ""; ; {
-		if ingestionCanceled(request.cancelCh) {
+		if ctx.Err() != nil {
 			return errSyncCanceled
 		}
 		reportIngestionProgress(request, result)
@@ -322,8 +305,11 @@ func (ingestion googleHealthIngestion) executeWindowRollupPages(archive googleHe
 		if err != nil {
 			return err
 		}
-		body, err := ingestion.provider.Fetch(rawRequest, request.accessToken, request.cancelCh)
+		body, err := ingestion.provider.Fetch(ctx, rawRequest, request.accessToken)
 		if err != nil {
+			if ctx.Err() != nil {
+				return errSyncCanceled
+			}
 			return normalizeProviderError(err)
 		}
 		page, err := parseGoogleHealthRollupList(body)
@@ -359,10 +345,10 @@ func (ingestion googleHealthIngestion) executeWindowRollupPages(archive googleHe
 	return nil
 }
 
-func (ingestion googleHealthIngestion) executeDataPointPages(archive googleHealthIngestionArchive, request googleHealthIngestionRequest, result *googleHealthIngestionResult) error {
+func (ingestion googleHealthIngestion) executeDataPointPages(ctx context.Context, archive googleHealthIngestionArchive, request googleHealthIngestionRequest, result *googleHealthIngestionResult) error {
 	seenPageTokens := map[string]struct{}{}
 	for pageToken := ""; ; {
-		if ingestionCanceled(request.cancelCh) {
+		if ctx.Err() != nil {
 			return errSyncCanceled
 		}
 		reportIngestionProgress(request, result)
@@ -370,8 +356,11 @@ func (ingestion googleHealthIngestion) executeDataPointPages(archive googleHealt
 		if err != nil {
 			return err
 		}
-		body, err := ingestion.provider.Fetch(rawRequest, request.accessToken, request.cancelCh)
+		body, err := ingestion.provider.Fetch(ctx, rawRequest, request.accessToken)
 		if err != nil {
+			if ctx.Err() != nil {
+				return errSyncCanceled
+			}
 			return normalizeProviderError(err)
 		}
 		page, err := parseGoogleHealthDataPointList(body)
@@ -395,7 +384,7 @@ func (ingestion googleHealthIngestion) executeDataPointPages(archive googleHealt
 			case "updated":
 				result.dataPointsUpdated++
 			}
-			if err := ingestion.attachExerciseTcxIfAvailable(archive, request, point, now); err != nil {
+			if err := ingestion.attachExerciseTcxIfAvailable(ctx, archive, request, point, now); err != nil {
 				return err
 			}
 		}
@@ -462,7 +451,7 @@ func grantedScopesAuthoriseTcxExport(grantedScopes []string) bool {
 //
 // All other errors (5xx, transport failure, 401) are propagated so the
 // Sync Cursor stays put and the user can retry.
-func (ingestion googleHealthIngestion) attachExerciseTcxIfAvailable(archive googleHealthIngestionArchive, request googleHealthIngestionRequest, point archivedDataPoint, fetchedAt string) error {
+func (ingestion googleHealthIngestion) attachExerciseTcxIfAvailable(ctx context.Context, archive googleHealthIngestionArchive, request googleHealthIngestionRequest, point archivedDataPoint, fetchedAt string) error {
 	if request.dataType != "exercise" {
 		return nil
 	}
@@ -476,8 +465,11 @@ func (ingestion googleHealthIngestion) attachExerciseTcxIfAvailable(archive goog
 	if err != nil {
 		return err
 	}
-	body, err := ingestion.provider.Fetch(tcxRequest, request.accessToken, request.cancelCh)
+	body, err := ingestion.provider.Fetch(ctx, tcxRequest, request.accessToken)
 	if err != nil {
+		if ctx.Err() != nil {
+			return errSyncCanceled
+		}
 		var httpErr *googleHealthHTTPError
 		if errors.As(err, &httpErr) && (httpErr.StatusCode == http.StatusNotFound || httpErr.StatusCode == http.StatusForbidden) {
 			// 404: no TCX route for this exercise.

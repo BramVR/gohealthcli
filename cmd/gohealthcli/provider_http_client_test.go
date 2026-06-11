@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -349,7 +350,7 @@ func TestOAuthTokenRefreshFailsStalledTokenEndpointByDeadline(t *testing.T) {
 func TestRawProviderFetchFailsStalledProviderByDeadline(t *testing.T) {
 	server := startStalledProviderServer(t)
 
-	_, err := fetchGoogleHealthRaw(shortTimeoutDoer(), rawProviderRequest{url: server.URL}, "test-access-token")
+	_, err := fetchGoogleHealthRaw(context.Background(), shortTimeoutDoer(), rawProviderRequest{url: server.URL}, "test-access-token")
 	if err == nil {
 		t.Fatal("expected a stalled raw Provider fetch to fail by deadline, got success")
 	}

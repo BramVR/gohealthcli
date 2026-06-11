@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -108,7 +109,7 @@ var devicesSnapshotCommand = identitySnapshotCommandSpec[devicesResult, googlePa
 // status errors, JSON validity, and retry/Retry-After. The module
 // value carries the HTTP doer (#281).
 func fetchGooglePairedDevices(get providerGET, accessToken string) (googlePairedDevices, error) {
-	body, err := fetchProviderJSON(get, googleHealthPairedDevicesURL, "pairedDevices", accessToken)
+	body, err := fetchProviderJSON(context.Background(), get, googleHealthPairedDevicesURL, "pairedDevices", accessToken)
 	if err != nil {
 		return googlePairedDevices{}, err
 	}

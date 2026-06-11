@@ -1,24 +1,24 @@
 package main
 
 import (
+	"context"
 	"fmt"
 )
 
 // syncOrchestrator multiplexes one user-facing `sync` invocation into one
 // Sync Run per Data Type. Per-type failures stay isolated (a failed steps
-// run does not poison heart-rate), and a single SIGINT closes cancelCh,
-// which the in-flight executor catches between pagination pages and
-// finalises as sync_canceled. Subsequent Data Types are skipped on
-// cancellation so the user sees a clean stop rather than a poisoned chain.
+// run does not poison heart-rate), and a single SIGINT cancels the run's
+// context, which aborts the executor's in-flight Provider request (#284)
+// and finalises the run as sync_canceled. Subsequent Data Types are
+// skipped on cancellation so the user sees a clean stop rather than a
+// poisoned chain.
 type syncOrchestrator struct {
 	executor syncRunExecutor
-	cancelCh <-chan struct{}
 }
 
-func newSyncOrchestrator(runtime runtimeAdapters, cancelCh <-chan struct{}) syncOrchestrator {
+func newSyncOrchestrator(runtime runtimeAdapters) syncOrchestrator {
 	return syncOrchestrator{
 		executor: syncRunExecutor{runtime: runtime},
-		cancelCh: cancelCh,
 	}
 }
 
@@ -36,7 +36,7 @@ func newSyncOrchestrator(runtime runtimeAdapters, cancelCh <-chan struct{}) sync
 // progress (no Data Types requested, --all/--types conflict) returns
 // nil + a non-nil error instead. The CLI translates the empty case
 // into a sync_canceled result via fanOutStatus.
-func (orchestrator syncOrchestrator) Sync(options syncCommandOptions) ([]syncResult, error) {
+func (orchestrator syncOrchestrator) Sync(ctx context.Context, options syncCommandOptions) ([]syncResult, error) {
 	dataTypes, err := orchestrator.expandDataTypes(options)
 	if err != nil {
 		return nil, err
@@ -55,7 +55,7 @@ func (orchestrator syncOrchestrator) Sync(options syncCommandOptions) ([]syncRes
 	}
 	results := make([]syncResult, 0, len(dataTypes))
 	for _, dataType := range dataTypes {
-		if ingestionCanceled(orchestrator.cancelCh) {
+		if ctx.Err() != nil {
 			// Orchestrator received SIGINT between Data Types: a prior
 			// type either completed or had no time to start. Stop the
 			// loop cleanly rather than emitting skipped-result rows for
@@ -71,8 +71,8 @@ func (orchestrator syncOrchestrator) Sync(options syncCommandOptions) ([]syncRes
 			// results slice themselves.
 			break
 		}
-		perType := perTypeSyncOptions(options, dataType, orchestrator.cancelCh)
-		result, execErr := orchestrator.executor.Execute(perType)
+		perType := perTypeSyncOptions(options, dataType)
+		result, execErr := orchestrator.executor.Execute(ctx, perType)
 		if execErr != nil && result.Message == "" {
 			result.Message = execErr.Error()
 		}
@@ -87,11 +87,10 @@ func (orchestrator syncOrchestrator) Sync(options syncCommandOptions) ([]syncRes
 // alongside a single-element dataTypes slice would trigger the gate's
 // preflightRuleAllVsTypesConflict and reject every per-type call,
 // breaking `sync --all` end-to-end.
-func perTypeSyncOptions(options syncCommandOptions, dataType string, cancelCh <-chan struct{}) syncCommandOptions {
+func perTypeSyncOptions(options syncCommandOptions, dataType string) syncCommandOptions {
 	perType := options
 	perType.allTypes = false
 	perType.dataTypes = []string{dataType}
-	perType.cancelCh = cancelCh
 	return perType
 }
 

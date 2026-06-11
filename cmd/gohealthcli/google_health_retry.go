@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -21,23 +22,27 @@ const (
 
 // googleHealthRetryFetcher is the inner Fetch the middleware wraps.
 // Matches runtimeGoogleHealthIngestionProvider.Fetch's signature so the
-// middleware can sit in front of it without a new interface.
-type googleHealthRetryFetcher func(request rawProviderRequest, accessToken string) ([]byte, error)
+// middleware can sit in front of it without a new interface. ctx scopes
+// the underlying HTTP request, so a SIGINT-canceled context aborts the
+// in-flight call instead of waiting for it to return (#284).
+type googleHealthRetryFetcher func(ctx context.Context, request rawProviderRequest, accessToken string) ([]byte, error)
 
 // googleHealthRetrySleeper is the time-source seam tests inject. It
-// receives the cancel channel so the production implementation can
-// short-circuit a backoff when SIGINT closes it; tests typically inject
-// a no-op sleeper that records the requested duration.
-type googleHealthRetrySleeper func(d time.Duration, cancelCh <-chan struct{}) (canceled bool)
+// receives the run's context so the production implementation can
+// short-circuit a backoff when SIGINT cancels it; tests typically
+// inject a no-op sleeper that records the requested duration.
+type googleHealthRetrySleeper func(ctx context.Context, d time.Duration) (canceled bool)
 
 // fetchWithRetry retries 429 and 5xx responses with bounded exponential
 // backoff plus jitter. Non-transient failures (401, 403, 404, network
 // errors that are not a googleHealthHTTPError) surface immediately so
 // callers see real errors without a multi-second delay. The Retry-After
-// header on 429 is honored as the minimum next-attempt delay. A closed
-// cancelCh short-circuits an in-flight sleep and surfaces errSyncCanceled,
-// so SIGINT during a 30s backoff does not leave the user waiting.
-func fetchWithRetry(fetcher googleHealthRetryFetcher, sleeper googleHealthRetrySleeper, jitter func(time.Duration) time.Duration, request rawProviderRequest, accessToken string, cancelCh <-chan struct{}) ([]byte, error) {
+// header on 429 is honored as the minimum next-attempt delay. A
+// canceled ctx aborts the in-flight HTTP request and short-circuits an
+// in-flight backoff sleep, surfacing errSyncCanceled either way, so
+// SIGINT during a stalled fetch or a 30s backoff does not leave the
+// user waiting (#284).
+func fetchWithRetry(ctx context.Context, fetcher googleHealthRetryFetcher, sleeper googleHealthRetrySleeper, jitter func(time.Duration) time.Duration, request rawProviderRequest, accessToken string) ([]byte, error) {
 	if sleeper == nil {
 		sleeper = sleepWithCancel
 	}
@@ -48,9 +53,19 @@ func fetchWithRetry(fetcher googleHealthRetryFetcher, sleeper googleHealthRetryS
 	attempts := 0
 	for attempt := 0; attempt < googleHealthRetryMaxAttempts; attempt++ {
 		attempts++
-		body, err := fetcher(request, accessToken)
+		body, err := fetcher(ctx, request, accessToken)
 		if err == nil {
 			return body, nil
+		}
+		if ctx.Err() != nil {
+			// The fetch failed while the run's context was canceled —
+			// SIGINT aborted the in-flight request. Surface the
+			// cancellation sentinel rather than the transport's wrapping
+			// of context.Canceled, so the Sync Run finalizes as
+			// sync_canceled, not sync_failed. (A client-side timeout uses
+			// the doer's own deadline, leaves ctx.Err() nil, and still
+			// takes the failure path below.)
+			return nil, errSyncCanceled
 		}
 		lastErr = err
 		if !isRetryableHTTPError(err) {
@@ -60,7 +75,7 @@ func fetchWithRetry(fetcher googleHealthRetryFetcher, sleeper googleHealthRetryS
 			break
 		}
 		delay := backoffDelay(attempt, retryAfterFromError(err))
-		if canceled := sleeper(jitter(delay), cancelCh); canceled {
+		if canceled := sleeper(ctx, jitter(delay)); canceled {
 			return nil, errSyncCanceled
 		}
 	}
@@ -68,14 +83,11 @@ func fetchWithRetry(fetcher googleHealthRetryFetcher, sleeper googleHealthRetryS
 }
 
 // sleepWithCancel sleeps for d, but returns early (canceled=true) if
-// cancelCh closes first. Production wires this in so SIGINT honored
-// during a multi-second backoff. nil cancelCh degrades to a plain sleep.
-func sleepWithCancel(d time.Duration, cancelCh <-chan struct{}) bool {
+// ctx is canceled first. Production wires this in so SIGINT is honored
+// during a multi-second backoff. context.Background() degrades to a
+// plain sleep (its Done channel is nil, so only the timer arm fires).
+func sleepWithCancel(ctx context.Context, d time.Duration) bool {
 	if d <= 0 {
-		return false
-	}
-	if cancelCh == nil {
-		time.Sleep(d)
 		return false
 	}
 	timer := time.NewTimer(d)
@@ -83,7 +95,7 @@ func sleepWithCancel(d time.Duration, cancelCh <-chan struct{}) bool {
 	select {
 	case <-timer.C:
 		return false
-	case <-cancelCh:
+	case <-ctx.Done():
 		return true
 	}
 }

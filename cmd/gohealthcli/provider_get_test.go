@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -70,7 +71,7 @@ func providerGETWithRetrySeams(transport http.RoundTripper, record *[]time.Durat
 func TestProviderGETReturnsValidatedJSONWithBearerAuth(t *testing.T) {
 	transport := &stubProviderTransport{status: 200, body: `{"devices":[]}`}
 
-	body, err := fetchProviderJSON(providerGETWithDoer(transport), googleHealthPairedDevicesURL, "pairedDevices", "test-access-token")
+	body, err := fetchProviderJSON(context.Background(), providerGETWithDoer(transport), googleHealthPairedDevicesURL, "pairedDevices", "test-access-token")
 	if err != nil {
 		t.Fatalf("fetchProviderJSON: %v", err)
 	}
@@ -94,7 +95,7 @@ func TestProviderGETReturnsValidatedJSONWithBearerAuth(t *testing.T) {
 func TestProviderGETReturnsTypedStatusErrorCarryingLabel(t *testing.T) {
 	get := providerGETWithDoer(&stubProviderTransport{status: 404, body: `{"error":"not found"}`})
 
-	_, err := fetchProviderJSON(get, googleHealthSettingsURL, "settings", "test-access-token")
+	_, err := fetchProviderJSON(context.Background(), get, googleHealthSettingsURL, "settings", "test-access-token")
 	if err == nil {
 		t.Fatal("fetchProviderJSON returned nil error, want typed status error")
 	}
@@ -111,7 +112,7 @@ func TestProviderGETReturnsTypedStatusErrorCarryingLabel(t *testing.T) {
 func TestProviderGETRejectsInvalidJSONCarryingLabel(t *testing.T) {
 	get := providerGETWithDoer(&stubProviderTransport{status: 200, body: `{"truncated":`})
 
-	_, err := fetchProviderJSON(get, googleHealthIRNProfileURL, "irnProfile", "test-access-token")
+	_, err := fetchProviderJSON(context.Background(), get, googleHealthIRNProfileURL, "irnProfile", "test-access-token")
 	if err == nil {
 		t.Fatal("fetchProviderJSON returned nil error, want invalid-JSON rejection")
 	}
@@ -131,7 +132,7 @@ func TestProviderGETBoundsResponseBodySize(t *testing.T) {
 	oversized := `{"padding":"` + strings.Repeat("a", providerGETResponseLimit) + `"}`
 	get := providerGETWithDoer(&stubProviderTransport{status: 200, body: oversized})
 
-	_, err := fetchProviderJSON(get, googleHealthSettingsURL, "settings", "test-access-token")
+	_, err := fetchProviderJSON(context.Background(), get, googleHealthSettingsURL, "settings", "test-access-token")
 	if err == nil {
 		t.Fatal("fetchProviderJSON returned nil error, want truncated oversized body rejected")
 	}
@@ -153,7 +154,7 @@ func TestProviderGETRetriesTransient429HonoringRetryAfter(t *testing.T) {
 	var sleeps []time.Duration
 	get := providerGETWithRetrySeams(transport, &sleeps)
 
-	body, err := fetchProviderJSON(get, googleHealthProfileURL, "profile", "test-access-token")
+	body, err := fetchProviderJSON(context.Background(), get, googleHealthProfileURL, "profile", "test-access-token")
 	if err != nil {
 		t.Fatalf("fetchProviderJSON = %v, want success after two 429 retries", err)
 	}
@@ -179,7 +180,7 @@ func TestProviderGETRetriesTransient5xxWithBoundedBackoff(t *testing.T) {
 	var sleeps []time.Duration
 	get := providerGETWithRetrySeams(transport, &sleeps)
 
-	body, err := fetchProviderJSON(get, googleHealthIdentityURL, "identity", "test-access-token")
+	body, err := fetchProviderJSON(context.Background(), get, googleHealthIdentityURL, "identity", "test-access-token")
 	if err != nil {
 		t.Fatalf("fetchProviderJSON = %v, want success after transient 5xx retries", err)
 	}
@@ -209,7 +210,7 @@ func TestProviderGETExhaustsRetryBudgetKeepingLabelAndTypedChain(t *testing.T) {
 	var sleeps []time.Duration
 	get := providerGETWithRetrySeams(transport, &sleeps)
 
-	_, err := fetchProviderJSON(get, googleHealthIRNProfileURL, "irnProfile", "test-access-token")
+	_, err := fetchProviderJSON(context.Background(), get, googleHealthIRNProfileURL, "irnProfile", "test-access-token")
 	if err == nil {
 		t.Fatal("fetchProviderJSON returned nil error, want exhausted-retries failure")
 	}
@@ -244,7 +245,7 @@ func TestProviderGETDoesNotRetryUnauthorized(t *testing.T) {
 	var sleeps []time.Duration
 	get := providerGETWithRetrySeams(transport, &sleeps)
 
-	_, err := fetchProviderJSON(get, googleHealthIdentityURL, "identity", "expired-access-token")
+	_, err := fetchProviderJSON(context.Background(), get, googleHealthIdentityURL, "identity", "expired-access-token")
 	if err == nil {
 		t.Fatal("fetchProviderJSON returned nil error, want unauthorized failure")
 	}
@@ -272,7 +273,7 @@ func TestProviderGETDoesNotRetryNetworkFailure(t *testing.T) {
 	var sleeps []time.Duration
 	get := providerGETWithRetrySeams(countingFailingTransport{attempts: &attempts, err: errors.New("connect: connection refused")}, &sleeps)
 
-	_, err := fetchProviderJSON(get, googleHealthSettingsURL, "settings", "test-access-token")
+	_, err := fetchProviderJSON(context.Background(), get, googleHealthSettingsURL, "settings", "test-access-token")
 	if err == nil {
 		t.Fatal("fetchProviderJSON returned nil error, want network failure")
 	}

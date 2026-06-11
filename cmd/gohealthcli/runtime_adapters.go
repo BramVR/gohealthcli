@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"time"
 )
 
@@ -16,7 +17,7 @@ type runtimeAdapters struct {
 	openBrowser                    func(string) error
 	fetchIdentity                  func(string) (googleIdentity, error)
 	fetchProfile                   func(string) (googleProfile, error)
-	fetchRawProvider               func(rawProviderRequest, string) ([]byte, error)
+	fetchRawProvider               func(context.Context, rawProviderRequest, string) ([]byte, error)
 	now                            func() time.Time
 	currentOS                      string
 	findExecutable                 func(string) (string, error)
@@ -99,8 +100,8 @@ func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
 		}
 	}
 	if adapters.fetchRawProvider == nil {
-		adapters.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
-			return fetchGoogleHealthRaw(adapters.httpDoer, request, accessToken)
+		adapters.fetchRawProvider = func(ctx context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+			return fetchGoogleHealthRaw(ctx, adapters.httpDoer, request, accessToken)
 		}
 	}
 	if adapters.currentOS == "" {
