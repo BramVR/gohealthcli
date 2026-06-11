@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // These tests pin the EXACT output bytes of the result writer families
@@ -467,6 +468,494 @@ func TestDoctorReportsFirstWriteErrorOnce(t *testing.T) {
 		t.Fatalf("exit code = %d, want 1", code)
 	}
 	if got, want := stderr.String(), "doctor: write output: write failed\n"; got != want {
+		t.Fatalf("stderr = %q, want exactly %q", got, want)
+	}
+	if count := strings.Count(stderr.String(), "write output"); count != 1 {
+		t.Fatalf("write failure reported %d times, want once", count)
+	}
+}
+
+func syncWriterFixtureRich() syncResult {
+	return syncResult{
+		Status:            "sync_completed",
+		SyncRunID:         57,
+		ConnectionID:      "google_health:118236",
+		ProviderName:      "google_health",
+		DataTypes:         []string{"steps"},
+		From:              "2026-06-09",
+		ResumedFromCursor: true,
+		To:                "2026-06-10T00:00:00Z",
+		EndpointFamily:    "reconcile",
+		SourceFamily:      "wearable",
+		DataPointsSeen:    120,
+		DataPointsNew:     110,
+		DataPointsUpdated: 10,
+		RollupsSeen:       2,
+		RollupsNew:        1,
+		RollupsUpdated:    1,
+		Message:           "Sync Run completed",
+	}
+}
+
+func syncWriterFixtureMinimal() syncResult {
+	return syncResult{
+		Status:    "sync_failed",
+		DataTypes: []string{"steps"},
+		Message:   "provider unreachable",
+	}
+}
+
+const syncWriterRichJSON = `{
+  "status": "sync_completed",
+  "sync_run_id": 57,
+  "connection_id": "google_health:118236",
+  "provider_name": "google_health",
+  "data_types": [
+    "steps"
+  ],
+  "from": "2026-06-09",
+  "resumed_from_cursor": true,
+  "to": "2026-06-10T00:00:00Z",
+  "endpoint_family": "reconcile",
+  "source_family": "wearable",
+  "data_points_seen": 120,
+  "data_points_new": 110,
+  "data_points_updated": 10,
+  "rollups_seen": 2,
+  "rollups_new": 1,
+  "rollups_updated": 1,
+  "message": "Sync Run completed"
+}
+`
+
+const syncWriterRichPlain = `status: sync_completed
+sync_run_id: 57
+connection_id: google_health:118236
+provider_name: google_health
+data_types: steps
+from: 2026-06-09
+resumed_from_cursor: true
+to: 2026-06-10T00:00:00Z
+endpoint_family: reconcile
+source_family: wearable
+data_points_seen: 120
+data_points_new: 110
+data_points_updated: 10
+rollups_seen: 2
+rollups_new: 1
+rollups_updated: 1
+message: Sync Run completed
+`
+
+const syncWriterRichHuman = `Sync Run completed
+Sync Run: 57
+Connection: google_health:118236
+Data Types: steps
+Range: 2026-06-09 to 2026-06-10T00:00:00Z
+Resumed from Sync Cursor
+Source family: wearable
+Data Points: seen 120, new 110, updated 10
+Rollups: seen 2, new 1, updated 1
+Message: Sync Run completed
+`
+
+const syncWriterMinimalJSON = `{
+  "status": "sync_failed",
+  "data_types": [
+    "steps"
+  ],
+  "data_points_seen": 0,
+  "data_points_new": 0,
+  "data_points_updated": 0,
+  "rollups_seen": 0,
+  "rollups_new": 0,
+  "rollups_updated": 0,
+  "message": "provider unreachable"
+}
+`
+
+const syncWriterMinimalPlain = `status: sync_failed
+data_types: steps
+data_points_seen: 0
+data_points_new: 0
+data_points_updated: 0
+rollups_seen: 0
+rollups_new: 0
+rollups_updated: 0
+message: provider unreachable
+`
+
+const syncWriterMinimalHuman = `Sync Run failed
+Data Types: steps
+Data Points: seen 0, new 0, updated 0
+Rollups: seen 0, new 0, updated 0
+Message: provider unreachable
+`
+
+func TestSyncWriterEmitsByteIdenticalOutputAcrossModes(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		result syncResult
+		mode   outputMode
+		want   string
+	}{
+		{"rich json", syncWriterFixtureRich(), outputMode{json: true}, syncWriterRichJSON},
+		{"rich plain", syncWriterFixtureRich(), outputMode{plain: true}, syncWriterRichPlain},
+		{"rich human", syncWriterFixtureRich(), outputMode{}, syncWriterRichHuman},
+		{"minimal json", syncWriterFixtureMinimal(), outputMode{json: true}, syncWriterMinimalJSON},
+		{"minimal plain", syncWriterFixtureMinimal(), outputMode{plain: true}, syncWriterMinimalPlain},
+		{"minimal human", syncWriterFixtureMinimal(), outputMode{}, syncWriterMinimalHuman},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			buffer := new(bytes.Buffer)
+			if err := writeSyncResult(testCase.result, testCase.mode, buffer); err != nil {
+				t.Fatalf("writeSyncResult: %v", err)
+			}
+			if got := buffer.String(); got != testCase.want {
+				t.Fatalf("sync %s output drifted:\ngot:\n%q\nwant:\n%q", testCase.name, got, testCase.want)
+			}
+		})
+	}
+}
+
+func syncFanOutWriterFixture() []syncResult {
+	return []syncResult{
+		{
+			Status:            "sync_completed",
+			SyncRunID:         58,
+			DataTypes:         []string{"steps"},
+			DataPointsSeen:    120,
+			DataPointsNew:     110,
+			DataPointsUpdated: 10,
+			RollupsSeen:       2,
+			RollupsNew:        1,
+			RollupsUpdated:    1,
+			Message:           "Sync Run completed",
+		},
+		{
+			Status:    "sync_failed",
+			DataTypes: []string{"heart-rate"},
+			Message:   "Provider timeout after 30s",
+		},
+	}
+}
+
+const syncFanOutWriterJSON = `{
+  "status": "sync_failed",
+  "summary": {
+    "data_types": [
+      "steps",
+      "heart-rate"
+    ],
+    "from": "2026-06-09",
+    "to": "2026-06-10T00:00:00Z",
+    "data_points_seen": 120,
+    "data_points_new": 110,
+    "data_points_updated": 10,
+    "rollups_seen": 2,
+    "rollups_new": 1,
+    "rollups_updated": 1
+  },
+  "results": [
+    {
+      "status": "sync_completed",
+      "sync_run_id": 58,
+      "data_types": [
+        "steps"
+      ],
+      "data_points_seen": 120,
+      "data_points_new": 110,
+      "data_points_updated": 10,
+      "rollups_seen": 2,
+      "rollups_new": 1,
+      "rollups_updated": 1,
+      "message": "Sync Run completed"
+    },
+    {
+      "status": "sync_failed",
+      "data_types": [
+        "heart-rate"
+      ],
+      "data_points_seen": 0,
+      "data_points_new": 0,
+      "data_points_updated": 0,
+      "rollups_seen": 0,
+      "rollups_new": 0,
+      "rollups_updated": 0,
+      "message": "Provider timeout after 30s"
+    }
+  ],
+  "message": "Sync Run summary: 2 Data Types attempted, at least one failed"
+}
+`
+
+const syncFanOutWriterPlain = `status: sync_failed
+results.0.status: sync_completed
+results.0.data_type: steps
+results.0.sync_run_id: 58
+results.0.data_points_seen: 120
+results.0.data_points_new: 110
+results.0.data_points_updated: 10
+results.0.rollups_seen: 2
+results.0.rollups_new: 1
+results.0.rollups_updated: 1
+results.0.message: Sync Run completed
+results.1.status: sync_failed
+results.1.data_type: heart-rate
+results.1.data_points_seen: 0
+results.1.data_points_new: 0
+results.1.data_points_updated: 0
+results.1.rollups_seen: 0
+results.1.rollups_new: 0
+results.1.rollups_updated: 0
+results.1.message: Provider timeout after 30s
+totals.data_points_seen: 120
+totals.data_points_new: 110
+totals.data_points_updated: 10
+totals.rollups_seen: 2
+totals.rollups_new: 1
+totals.rollups_updated: 1
+message: Sync Run summary: 2 Data Types attempted, at least one failed
+`
+
+const syncFanOutWriterHuman = `Sync Run fan-out failed across 2 Data Types
+- steps: sync_completed — Data Points new=110 updated=10, Rollups new=1 updated=1
+- heart-rate: sync_failed — Data Points new=0 updated=0, Rollups new=0 updated=0
+Totals: Data Points seen=120 new=110 updated=10, Rollups seen=2 new=1 updated=1
+Sync Run summary: 2 Data Types attempted, at least one failed
+`
+
+func TestSyncFanOutWriterEmitsByteIdenticalOutputAcrossModes(t *testing.T) {
+	options := syncCommandOptions{from: "2026-06-09", to: "2026-06-10T00:00:00Z"}
+	for _, testCase := range []struct {
+		name string
+		mode outputMode
+		want string
+	}{
+		{"json", outputMode{json: true}, syncFanOutWriterJSON},
+		{"plain", outputMode{plain: true}, syncFanOutWriterPlain},
+		{"human", outputMode{}, syncFanOutWriterHuman},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			buffer := new(bytes.Buffer)
+			if err := writeSyncFanOutResult(syncFanOutWriterFixture(), options, testCase.mode, buffer); err != nil {
+				t.Fatalf("writeSyncFanOutResult: %v", err)
+			}
+			if got := buffer.String(); got != testCase.want {
+				t.Fatalf("sync fan-out %s output drifted:\ngot:\n%q\nwant:\n%q", testCase.name, got, testCase.want)
+			}
+		})
+	}
+}
+
+func syncStatusWriterFixtureRich() syncStatusResult {
+	return syncStatusResult{
+		Status:      "ok",
+		ArchivePath: "/home/bram/.local/share/gohealthcli/gohealthcli.sqlite",
+		Window:      "15m0s",
+		Runs: []syncStatusRun{
+			{
+				ID:              61,
+				DataTypes:       []string{"steps"},
+				Status:          "sync_completed",
+				SeenCount:       120,
+				NewCount:        110,
+				UpdatedCount:    10,
+				DurationSeconds: 69,
+				StartedAt:       "2026-06-10T08:59:02Z",
+				FinishedAt:      "2026-06-10T09:00:11Z",
+				LastProgressAt:  "2026-06-10T09:00:10Z",
+			},
+			{
+				ID:              62,
+				DataTypes:       []string{"heart-rate"},
+				Status:          "sync_running",
+				SeenCount:       40,
+				NewCount:        40,
+				UpdatedCount:    0,
+				DurationSeconds: 240,
+				StartedAt:       "2026-06-10T09:01:00Z",
+			},
+			{
+				ID:              63,
+				DataTypes:       []string{"sleep"},
+				Status:          "sync_failed",
+				DurationSeconds: 5,
+				StartedAt:       "2026-06-10T09:02:00Z",
+				FinishedAt:      "2026-06-10T09:02:05Z",
+				LastProgressAt:  "2026-06-10T09:02:04Z",
+				ErrorSummary:    "Provider timeout after 30s",
+			},
+		},
+		Message: "3 Sync Runs in the last 15m0s",
+	}
+}
+
+const syncStatusWriterRichJSON = `{
+  "status": "ok",
+  "archive_path": "/home/bram/.local/share/gohealthcli/gohealthcli.sqlite",
+  "window": "15m0s",
+  "runs": [
+    {
+      "id": 61,
+      "data_types": [
+        "steps"
+      ],
+      "status": "sync_completed",
+      "seen_count": 120,
+      "new_count": 110,
+      "updated_count": 10,
+      "duration_seconds": 69,
+      "started_at": "2026-06-10T08:59:02Z",
+      "finished_at": "2026-06-10T09:00:11Z",
+      "last_progress_at": "2026-06-10T09:00:10Z"
+    },
+    {
+      "id": 62,
+      "data_types": [
+        "heart-rate"
+      ],
+      "status": "sync_running",
+      "seen_count": 40,
+      "new_count": 40,
+      "updated_count": 0,
+      "duration_seconds": 240,
+      "started_at": "2026-06-10T09:01:00Z"
+    },
+    {
+      "id": 63,
+      "data_types": [
+        "sleep"
+      ],
+      "status": "sync_failed",
+      "seen_count": 0,
+      "new_count": 0,
+      "updated_count": 0,
+      "duration_seconds": 5,
+      "started_at": "2026-06-10T09:02:00Z",
+      "finished_at": "2026-06-10T09:02:05Z",
+      "last_progress_at": "2026-06-10T09:02:04Z",
+      "error_summary": "Provider timeout after 30s"
+    }
+  ],
+  "message": "3 Sync Runs in the last 15m0s"
+}
+`
+
+const syncStatusWriterRichPlain = `status: ok
+archive_path: /home/bram/.local/share/gohealthcli/gohealthcli.sqlite
+window: 15m0s
+sync_run.0.id: 61
+sync_run.0.data_types: steps
+sync_run.0.status: sync_completed
+sync_run.0.seen_count: 120
+sync_run.0.new_count: 110
+sync_run.0.updated_count: 10
+sync_run.0.duration_seconds: 69
+sync_run.0.started_at: 2026-06-10T08:59:02Z
+sync_run.0.finished_at: 2026-06-10T09:00:11Z
+sync_run.0.last_progress_at: 2026-06-10T09:00:10Z
+sync_run.1.id: 62
+sync_run.1.data_types: heart-rate
+sync_run.1.status: sync_running
+sync_run.1.seen_count: 40
+sync_run.1.new_count: 40
+sync_run.1.updated_count: 0
+sync_run.1.duration_seconds: 240
+sync_run.1.started_at: 2026-06-10T09:01:00Z
+sync_run.2.id: 63
+sync_run.2.data_types: sleep
+sync_run.2.status: sync_failed
+sync_run.2.seen_count: 0
+sync_run.2.new_count: 0
+sync_run.2.updated_count: 0
+sync_run.2.duration_seconds: 5
+sync_run.2.started_at: 2026-06-10T09:02:00Z
+sync_run.2.finished_at: 2026-06-10T09:02:05Z
+sync_run.2.last_progress_at: 2026-06-10T09:02:04Z
+sync_run.2.error_summary: Provider timeout after 30s
+message: 3 Sync Runs in the last 15m0s
+`
+
+const syncStatusWriterRichHuman = `Sync Run status
+Health Archive: /home/bram/.local/share/gohealthcli/gohealthcli.sqlite
+ID  DATA_TYPES  STATUS          SEEN  NEW  UPDATED  DURATION  LAST_PROGRESS  ERROR
+61  steps       sync_completed  120   110  10       1m9s      4m50s          -
+62  heart-rate  sync_running    40    40   0        4m0s      -              -
+63  sleep       sync_failed     0     0    0        5s        2m56s          Provider timeout after 30s
+Message: 3 Sync Runs in the last 15m0s
+`
+
+func TestSyncStatusWriterEmitsByteIdenticalOutputAcrossModes(t *testing.T) {
+	now := time.Date(2026, 6, 10, 9, 5, 0, 0, time.UTC)
+	minimal := syncStatusResult{
+		Status:      "sync_status_failed",
+		ArchivePath: "/a",
+		Window:      "15m0s",
+		Message:     "open archive: no such file",
+	}
+	for _, testCase := range []struct {
+		name   string
+		result syncStatusResult
+		mode   outputMode
+		want   string
+	}{
+		{"rich json", syncStatusWriterFixtureRich(), outputMode{json: true}, syncStatusWriterRichJSON},
+		{"rich plain", syncStatusWriterFixtureRich(), outputMode{plain: true}, syncStatusWriterRichPlain},
+		{"rich human", syncStatusWriterFixtureRich(), outputMode{}, syncStatusWriterRichHuman},
+		{"minimal json", minimal, outputMode{json: true}, "{\n  \"status\": \"sync_status_failed\",\n  \"archive_path\": \"/a\",\n  \"window\": \"15m0s\",\n  \"message\": \"open archive: no such file\"\n}\n"},
+		{"minimal plain", minimal, outputMode{plain: true}, "status: sync_status_failed\narchive_path: /a\nwindow: 15m0s\nmessage: open archive: no such file\n"},
+		{"minimal human", minimal, outputMode{}, "Sync Run status\nHealth Archive: /a\nMessage: open archive: no such file\n"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			buffer := new(bytes.Buffer)
+			if err := writeSyncStatusResult(testCase.result, testCase.mode, now, buffer); err != nil {
+				t.Fatalf("writeSyncStatusResult: %v", err)
+			}
+			if got := buffer.String(); got != testCase.want {
+				t.Fatalf("sync --status %s output drifted:\ngot:\n%q\nwant:\n%q", testCase.name, got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestSyncWritersSurfaceTheFirstWriteError pins that every sync-family
+// writer still returns the first write error to its caller (#274).
+func TestSyncWritersSurfaceTheFirstWriteError(t *testing.T) {
+	now := time.Date(2026, 6, 10, 9, 5, 0, 0, time.UTC)
+	options := syncCommandOptions{from: "2026-06-09", to: "2026-06-10T00:00:00Z"}
+	for _, mode := range []outputMode{{json: true}, {plain: true}, {}} {
+		if err := writeSyncResult(syncWriterFixtureRich(), mode, failingWriter{}); err == nil {
+			t.Fatalf("writeSyncResult mode %+v error = nil, want write failure", mode)
+		}
+		if err := writeSyncFanOutResult(syncFanOutWriterFixture(), options, mode, failingWriter{}); err == nil {
+			t.Fatalf("writeSyncFanOutResult mode %+v error = nil, want write failure", mode)
+		}
+		if err := writeSyncStatusResult(syncStatusWriterFixtureRich(), mode, now, failingWriter{}); err == nil {
+			t.Fatalf("writeSyncStatusResult mode %+v error = nil, want write failure", mode)
+		}
+	}
+}
+
+// TestSyncStatusReportsFirstWriteErrorOnce pins the sync --status side
+// of the write-output failure contract (#274) at the command level.
+func TestSyncStatusReportsFirstWriteErrorOnce(t *testing.T) {
+	stderr := new(bytes.Buffer)
+
+	code := runSyncWithRuntime(
+		[]string{"--status", "--db", filepath.Join(t.TempDir(), "missing.sqlite")},
+		defaultConfigPath(),
+		defaultArchivePath(),
+		outputMode{},
+		failingWriter{},
+		stderr,
+		productionRuntimeAdapters(),
+	)
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if got, want := stderr.String(), "sync: write output: write failed\n"; got != want {
 		t.Fatalf("stderr = %q, want exactly %q", got, want)
 	}
 	if count := strings.Count(stderr.String(), "write output"); count != 1 {

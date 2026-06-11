@@ -192,12 +192,7 @@ func runSyncStatusWithRuntime(common CommonFlagValues, windowValue string, mode 
 // success and failure paths so that contract cannot fork.
 func writeSyncStatusResultWithExit(result syncStatusResult, exitCode int, mode outputMode, now time.Time, stdout, stderr io.Writer) int {
 	if err := writeSyncStatusResult(result, mode, now, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "sync",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportWriteFailure("sync", err, mode, stdout, stderr)
 	}
 	return exitCode
 }
@@ -354,24 +349,28 @@ func writeSyncStatusResult(result syncStatusResult, mode outputMode, now time.Ti
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(result)
 	}
+	writer := newStickyWriter(stdout)
 	if mode.plain {
-		return writeSyncStatusPlain(result, stdout)
+		writeSyncStatusPlain(writer, result)
+	} else {
+		writeSyncStatusHuman(writer, result, now)
 	}
-	if _, err := fmt.Fprintln(stdout, "Sync Run status"); err != nil {
-		return err
-	}
+	return writer.Err()
+}
+
+func writeSyncStatusHuman(writer *stickyWriter, result syncStatusResult, now time.Time) {
+	writer.Println("Sync Run status")
 	if result.ArchivePath != "" {
-		if _, err := fmt.Fprintf(stdout, "Health Archive: %s\n", result.ArchivePath); err != nil {
-			return err
-		}
+		writer.Printf("Health Archive: %s\n", result.ArchivePath)
 	}
 	if len(result.Runs) != 0 {
-		table := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-		if _, err := fmt.Fprintln(table, "ID\tDATA_TYPES\tSTATUS\tSEEN\tNEW\tUPDATED\tDURATION\tLAST_PROGRESS\tERROR"); err != nil {
-			return err
-		}
+		// The tabwriter buffers rows and only touches the sticky writer
+		// on Flush, where any write error latches via the io.Writer
+		// face — Flush's return is the same error, already captured.
+		table := tabwriter.NewWriter(writer, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(table, "ID\tDATA_TYPES\tSTATUS\tSEEN\tNEW\tUPDATED\tDURATION\tLAST_PROGRESS\tERROR")
 		for _, run := range result.Runs {
-			if _, err := fmt.Fprintf(table, "%d\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n",
+			fmt.Fprintf(table, "%d\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n",
 				run.ID,
 				strings.Join(run.DataTypes, ","),
 				run.Status,
@@ -381,16 +380,11 @@ func writeSyncStatusResult(result syncStatusResult, mode outputMode, now time.Ti
 				(time.Duration(run.DurationSeconds) * time.Second).String(),
 				syncStatusTableCell(syncStatusLastProgressAge(run, now)),
 				syncStatusTableCell(run.ErrorSummary),
-			); err != nil {
-				return err
-			}
+			)
 		}
-		if err := table.Flush(); err != nil {
-			return err
-		}
+		_ = table.Flush()
 	}
-	_, err := fmt.Fprintf(stdout, "Message: %s\n", result.Message)
-	return err
+	writer.Printf("Message: %s\n", result.Message)
 }
 
 // syncStatusLastProgressAge renders the heartbeat recency ("5s",
@@ -422,62 +416,36 @@ func syncStatusTableCell(value string) string {
 	return value
 }
 
-func writeSyncStatusPlain(result syncStatusResult, stdout io.Writer) error {
-	if _, err := fmt.Fprintf(stdout, "status: %s\n", result.Status); err != nil {
-		return err
-	}
+func writeSyncStatusPlain(writer *stickyWriter, result syncStatusResult) {
+	writer.Printf("status: %s\n", result.Status)
 	if result.ArchivePath != "" {
-		if _, err := fmt.Fprintf(stdout, "archive_path: %s\n", result.ArchivePath); err != nil {
-			return err
-		}
+		writer.Printf("archive_path: %s\n", result.ArchivePath)
 	}
-	if _, err := fmt.Fprintf(stdout, "window: %s\n", result.Window); err != nil {
-		return err
-	}
+	writer.Printf("window: %s\n", result.Window)
 	for index, run := range result.Runs {
-		prefix := fmt.Sprintf("sync_run.%d.", index)
-		if _, err := fmt.Fprintf(stdout, "%sid: %d\n", prefix, run.ID); err != nil {
-			return err
-		}
-		if len(run.DataTypes) != 0 {
-			if _, err := fmt.Fprintf(stdout, "%sdata_types: %s\n", prefix, strings.Join(run.DataTypes, ",")); err != nil {
-				return err
-			}
-		}
-		if _, err := fmt.Fprintf(stdout, "%sstatus: %s\n", prefix, run.Status); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "%sseen_count: %d\n", prefix, run.SeenCount); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "%snew_count: %d\n", prefix, run.NewCount); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "%supdated_count: %d\n", prefix, run.UpdatedCount); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "%sduration_seconds: %d\n", prefix, run.DurationSeconds); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "%sstarted_at: %s\n", prefix, run.StartedAt); err != nil {
-			return err
-		}
-		if run.FinishedAt != "" {
-			if _, err := fmt.Fprintf(stdout, "%sfinished_at: %s\n", prefix, run.FinishedAt); err != nil {
-				return err
-			}
-		}
-		if run.LastProgressAt != "" {
-			if _, err := fmt.Fprintf(stdout, "%slast_progress_at: %s\n", prefix, run.LastProgressAt); err != nil {
-				return err
-			}
-		}
-		if run.ErrorSummary != "" {
-			if _, err := fmt.Fprintf(stdout, "%serror_summary: %s\n", prefix, run.ErrorSummary); err != nil {
-				return err
-			}
-		}
+		writeSyncStatusRunPlain(writer, fmt.Sprintf("sync_run.%d.", index), run)
 	}
-	_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
-	return err
+	writer.Printf("message: %s\n", result.Message)
+}
+
+func writeSyncStatusRunPlain(writer *stickyWriter, prefix string, run syncStatusRun) {
+	writer.Printf("%sid: %d\n", prefix, run.ID)
+	if len(run.DataTypes) != 0 {
+		writer.Printf("%sdata_types: %s\n", prefix, strings.Join(run.DataTypes, ","))
+	}
+	writer.Printf("%sstatus: %s\n", prefix, run.Status)
+	writer.Printf("%sseen_count: %d\n", prefix, run.SeenCount)
+	writer.Printf("%snew_count: %d\n", prefix, run.NewCount)
+	writer.Printf("%supdated_count: %d\n", prefix, run.UpdatedCount)
+	writer.Printf("%sduration_seconds: %d\n", prefix, run.DurationSeconds)
+	writer.Printf("%sstarted_at: %s\n", prefix, run.StartedAt)
+	if run.FinishedAt != "" {
+		writer.Printf("%sfinished_at: %s\n", prefix, run.FinishedAt)
+	}
+	if run.LastProgressAt != "" {
+		writer.Printf("%slast_progress_at: %s\n", prefix, run.LastProgressAt)
+	}
+	if run.ErrorSummary != "" {
+		writer.Printf("%serror_summary: %s\n", prefix, run.ErrorSummary)
+	}
 }
