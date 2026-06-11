@@ -7806,33 +7806,9 @@ func createLegacyArchive(t *testing.T, archivePath string, schemaVersion int) {
 	if err != nil {
 		t.Fatalf("begin legacy migration: %v", err)
 	}
-	for _, statement := range initialMigrationStatements() {
-		if _, err := tx.Exec(statement); err != nil {
-			_ = tx.Rollback()
-			t.Fatalf("apply legacy migration statement: %v", err)
-		}
-	}
-	if _, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (1, 'initial_archive_schema', ?)`, time.Date(2026, 5, 31, 21, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
+	if err := applySchemaMigrationSteps(tx, 0, schemaVersion, time.Date(2026, 5, 31, 21, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
 		_ = tx.Rollback()
-		t.Fatalf("record legacy migration: %v", err)
-	}
-	if schemaVersion >= 2 {
-		if err := applyGoogleIdentityArchiveMigration(tx, time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
-			_ = tx.Rollback()
-			t.Fatalf("apply legacy identity migration: %v", err)
-		}
-	}
-	if schemaVersion >= 3 {
-		if err := applySourceFamilyArchiveMigration(tx, time.Date(2026, 5, 31, 23, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
-			_ = tx.Rollback()
-			t.Fatalf("apply legacy source family migration: %v", err)
-		}
-	}
-	if schemaVersion >= 4 {
-		if err := applyDailyStepsViewMigration(tx, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
-			_ = tx.Rollback()
-			t.Fatalf("apply legacy daily steps view migration: %v", err)
-		}
+		t.Fatalf("apply legacy schema migrations through version %d: %v", schemaVersion, err)
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 		_ = tx.Rollback()
