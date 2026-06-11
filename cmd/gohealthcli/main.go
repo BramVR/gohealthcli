@@ -3536,11 +3536,6 @@ func parseGoogleHealthSessionDataPoint(connection archivedConnection, dataType s
 	}, nil
 }
 
-// parseGoogleHealthStepsDailyRollup is the legacy steps-only entry
-// point retained for callers (existing tests, the daily-rollup
-// executor) that still address it by name. It delegates to the
-// generic parseGoogleHealthRollup, which preserves byte-identical
-// output for the steps-daily shape (the #106 AC regression guard).
 func compactJSONString(raw json.RawMessage) (string, error) {
 	var out bytes.Buffer
 	if err := json.Compact(&out, raw); err != nil {
