@@ -225,9 +225,10 @@ func queryStatementKind(statement string) (string, error) {
 		}
 		rest = trimSQLSpaceAndComments(rest)
 		token, afterOption := consumeSQLToken(rest)
-		if token == "materialized" {
+		switch token {
+		case "materialized":
 			rest = afterOption
-		} else if token == "not" {
+		case "not":
 			token, rest = consumeSQLToken(afterOption)
 			if token != "materialized" {
 				return "", errors.New("query CTE is incomplete")
@@ -244,7 +245,12 @@ func queryStatementKind(statement string) (string, error) {
 		}
 		rest = trimSQLSpaceAndComments(rest)
 		if strings.HasPrefix(rest, ",") {
-			token, rest = consumeSQLToken(rest[1:])
+			// Consume the next CTE name and loop. The name itself is
+			// discarded: this assignment always hit the block-local `token`
+			// declared after the `as` check (shadowing the loop variable), so
+			// the loop-top empty check never saw it. Malformed input still
+			// errors via the `as` keyword check one iteration later.
+			_, rest = consumeSQLToken(rest[1:])
 			continue
 		}
 		token, _ = consumeSQLToken(rest)

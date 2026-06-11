@@ -1,0 +1,76 @@
+# golangci-lint configuration — the CI lint gate from issue #279 (PRD #269).
+#
+# Pinned version: v2.12.2. CI pins it in .github/workflows/ci.yml (the
+# golangci-lint-action `version` input); the Makefile `lint` target documents
+# the matching local install. Keep all three in sync when upgrading.
+#
+# Policy: enable only linters that lock in conventions the code already
+# follows, with one-line rationale each. Every exclusion below carries a
+# written justification; do not add exclusions without one.
+version: "2"
+
+linters:
+  # Curated set only — no implicit default group, so an upgrade cannot
+  # silently add new linters to the gate.
+  default: none
+  enable:
+    # bodyclose: every Provider HTTP response body must be closed, or
+    # connections leak across Sync Run pagination.
+    - bodyclose
+    # errcheck: returned errors are handled or explicitly acknowledged with
+    # `_ =`; silent drops are how partial archive writes go unnoticed.
+    - errcheck
+    # errorlint: the #272 typed-error translation layer depends on %w
+    # wrapping and errors.Is/As; plain %v or type assertions break it.
+    - errorlint
+    # noctx: outbound calls should carry a context so SIGINT can abort
+    # in-flight work — currently fully excluded below until #284 lands.
+    - noctx
+    # sqlclosecheck: sql.Rows/Stmt must be closed, or the SQLite pool
+    # exhausts its single writer connection.
+    - sqlclosecheck
+    # staticcheck: correctness analysis (SA*) plus the ST/QF subset below;
+    # caught a real variable-shadowing bug (query.go) at adoption.
+    - staticcheck
+  settings:
+    staticcheck:
+      checks:
+        - all
+        # The six suppressions below are golangci-lint's own defaults for
+        # staticcheck, kept explicit because `checks` is replace-not-merge.
+        - -ST1000 # package comments: single-package repo, not godoc-driven
+        - -ST1003 # identifier initialisms: repo uses domain-glossary casing
+        - -ST1016 # receiver-name consistency: not a convention here yet
+        - -ST1020 # exported-func comment format: not godoc-driven
+        - -ST1021 # exported-type comment format: not godoc-driven
+        - -ST1022 # exported-var comment format: not godoc-driven
+        # Project addition: error strings deliberately open with capitalized
+        # domain-glossary terms ("Provider", "Google Health", "Credential
+        # Store" — see CONTEXT.md) and surface verbatim in CLI output, so
+        # rewording them is a user-visible behavior change (91 sites at
+        # adoption).
+        - -ST1005
+  exclusions:
+    rules:
+      # Cleanup-path convention: `defer x.Close()` on read paths and
+      # fmt.Fprint* diagnostics to stderr never check the error — there is
+      # no recovery action. Durability never depends on these: archive
+      # writes commit via checked tx.Commit, and result output goes through
+      # the sticky-error writer (#274). This mirrors the errcheck default
+      # exclusion golangci-lint v1 shipped (EXC0001), narrowed to the two
+      # patterns this repo actually uses.
+      - linters:
+          - errcheck
+        text: 'Error return value of `(.*Close|fmt\.Fprint(f|ln)?)` is not checked'
+      # noctx is enabled but fully excluded until #284 threads
+      # context.Context through ingestion, HTTP, and the SQLite calls.
+      # DELETE THIS RULE as part of #284 — that is the entire migration.
+      - linters:
+          - noctx
+        path: .*
+
+issues:
+  # Never cap findings: the defaults (50 per linter, 3 duplicates) hid ~500
+  # of the 581 adoption-time findings during triage.
+  max-issues-per-linter: 0
+  max-same-issues: 0

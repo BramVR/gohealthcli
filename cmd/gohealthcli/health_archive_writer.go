@@ -385,7 +385,9 @@ func upsertDataPoint(db *sql.DB, point archivedDataPoint, now string) (string, e
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback()
+	// Rollback after a successful Commit returns sql.ErrTxDone; the error is
+	// deliberately ignored because this defer is only the abort path.
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec(`INSERT INTO data_point_revisions (
 		data_point_id,
 		previous_raw_json,

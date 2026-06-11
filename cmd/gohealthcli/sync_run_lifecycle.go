@@ -278,7 +278,7 @@ func (lifecycle syncRunLifecycle) finalize(archive healthArchiveWriter, result s
 	// clobbering the typed-error chain.
 	finalErr := fmt.Errorf("record %s Sync Run: %w", outcome, finalizeErr)
 	if cause != nil {
-		finalErr = fmt.Errorf("%w (after upstream cause: %v)", finalErr, cause)
+		finalErr = fmt.Errorf("%w (after upstream cause: %v)", finalErr, cause) //nolint:errorlint // deliberate non-wrapping %v, per the comment above
 	}
 	// Finding 5: preserve sync_canceled through the recovery write so
 	// the audit trail does not misrepresent a user cancellation as a

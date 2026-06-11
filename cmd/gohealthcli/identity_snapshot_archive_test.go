@@ -516,7 +516,7 @@ func applyV6SchemaForLegacyTest(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	applied := time.Date(2026, 5, 31, 21, 0, 0, 0, time.UTC).Format(time.RFC3339)
 	if err := applySchemaMigrationSteps(tx, 0, 6, applied); err != nil {
 		return err

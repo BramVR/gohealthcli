@@ -385,6 +385,30 @@ func TestQueryRejectsWriteAttemptsBeforeMigratingLegacyArchive(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+// TestQueryAcceptsMultipleSelectCTEs pins the comma path of the CTE
+// scanner: after each `name AS (...)`, the next CTE name is consumed and
+// the loop continues without re-checking the (out-of-scope) name token,
+// so a multi-CTE SELECT with no MATERIALIZED options must be accepted.
+func TestQueryAcceptsMultipleSelectCTEs(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"query",
+		"--config", configPath,
+		"--json",
+		"WITH first_kind AS (SELECT data_type FROM data_points), second_kind AS (SELECT data_type FROM first_kind) SELECT count(*) AS count FROM second_kind",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("query exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
 func TestQueryAcceptsSelectCTE(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)

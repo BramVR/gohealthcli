@@ -45,7 +45,7 @@ func TestSupportedEndpointsCatalogConsistencyForEveryDataType(t *testing.T) {
 			_, hasDailyRollup := entry.SupportedEndpoints[endpointFamilyDailyRollUp]
 
 			// Sync-supported types must have at least one of list/reconcile.
-			if syncDataPointDataTypeSupported(dataType) && !(hasList || hasReconcile) {
+			if syncDataPointDataTypeSupported(dataType) && !hasList && !hasReconcile {
 				t.Errorf("syncDataPointDataTypeSupported says yes but SupportedEndpoints has neither list nor reconcile")
 			}
 			// reconcileDataTypeSupported ↔ map has reconcile.
