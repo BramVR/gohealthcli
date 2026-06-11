@@ -20,10 +20,12 @@ import (
 // providerGETResponseLimit bounds how much of an Identity Snapshot
 // response body the module buffers — the historical 1 MiB cap every
 // fetcher carried. Identity-level payloads are small; a body this
-// large means a misbehaving Provider, and the truncated read fails the
-// JSON validity check below instead of exhausting memory. (The raw
-// Provider fetch keeps its own larger googleHealthRawResponseLimit —
-// raw pages legitimately reach megabytes.)
+// large means a misbehaving Provider. The bound is a memory guard:
+// a read truncated mid-document then typically fails the JSON
+// validity check below, though a truncation that happens to land on
+// a valid JSON boundary would pass it. (The raw Provider fetch keeps
+// its own larger googleHealthRawResponseLimit — raw pages
+// legitimately reach megabytes.)
 const providerGETResponseLimit = 1 << 20
 
 // providerGET is the shared Provider GET module. The zero value is the
