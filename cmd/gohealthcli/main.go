@@ -1744,7 +1744,10 @@ func persistDoctorOnlineRefreshedTokenWithRuntime(archive connectionTokenWriter,
 	}
 	if err := archive.UpdateConnectionTokenMetadata(connectionID, token, runtime.now()); err != nil {
 		if rollbackErr := store.Store(connectionID, previousTokenMaterial); rollbackErr != nil {
-			return fmt.Errorf("%w; rollback Credential Store token material: %v", err, rollbackErr)
+			// The secondary rollback error is deliberately %v, not %w: only
+			// the primary archive error may carry the typed-error chain
+			// callers branch on (#272 translation layer).
+			return fmt.Errorf("%w; rollback Credential Store token material: %v", err, rollbackErr) //nolint:errorlint // deliberate non-wrapping %v for the secondary error
 		}
 		return err
 	}

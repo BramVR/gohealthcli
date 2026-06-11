@@ -100,7 +100,9 @@ func applyMigrations(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	// Rollback after a successful Commit returns sql.ErrTxDone; the error is
+	// deliberately ignored because this defer is only the abort path.
+	defer func() { _ = tx.Rollback() }()
 	if err := applySchemaMigrationSteps(tx, 0, currentSchemaVersion, currentTime().UTC().Format(time.RFC3339)); err != nil {
 		return err
 	}
@@ -126,7 +128,9 @@ func applyPendingMigrations(db *sql.DB) error {
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback()
+		// Rollback after a successful Commit returns sql.ErrTxDone; the error is
+		// deliberately ignored because this defer is only the abort path.
+		defer func() { _ = tx.Rollback() }()
 		if err := applySchemaMigrationSteps(tx, userVersion, currentSchemaVersion, currentTime().UTC().Format(time.RFC3339)); err != nil {
 			return err
 		}
