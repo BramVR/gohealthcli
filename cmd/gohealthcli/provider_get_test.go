@@ -377,3 +377,17 @@ func TestSettingsFetcherRetriesTransientFailures(t *testing.T) {
 		return settings.rawJSON, err
 	})
 }
+
+func TestIRNProfileFetcherKeepsLabeledErrorMessages(t *testing.T) {
+	assertFetcherKeepsLabeledErrorMessages(t, "irnProfile", func(accessToken string) error {
+		_, err := fetchGoogleIRNProfile(accessToken)
+		return err
+	})
+}
+
+func TestIRNProfileFetcherRetriesTransientFailures(t *testing.T) {
+	assertFetcherRetriesTransient503(t, `{"irns":[]}`, func(accessToken string) (string, error) {
+		profile, err := fetchGoogleIRNProfile(accessToken)
+		return profile.rawJSON, err
+	})
+}
