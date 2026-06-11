@@ -516,7 +516,7 @@ func applyV6SchemaForLegacyTest(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	for _, statement := range initialMigrationStatements() {
 		if _, err := tx.Exec(statement); err != nil {
 			return err

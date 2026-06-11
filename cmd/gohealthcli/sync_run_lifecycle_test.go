@@ -696,11 +696,11 @@ func TestConcurrentSyncRunsForceSQLiteBusyContention(t *testing.T) {
 		// to hold the WAL write lock. Use a known-safe statement that
 		// touches no rows but engages the write path.
 		if _, errExec := holderTx.Exec(`UPDATE connections SET id = id`); errExec != nil {
-			holderTx.Rollback()
+			_ = holderTx.Rollback()
 			t.Skipf("could not engage write lock on competing tx: %v", errExec)
 		}
 	}
-	defer holderTx.Rollback()
+	defer func() { _ = holderTx.Rollback() }()
 
 	// Open a second writer handle, also with a short busy_timeout, and
 	// attempt a write inside a fresh tx. It must observe SQLITE_BUSY.
@@ -716,7 +716,7 @@ func TestConcurrentSyncRunsForceSQLiteBusyContention(t *testing.T) {
 		t.Fatalf("begin writer tx: %v", err)
 	}
 	_, busyErr := contendingTx.Exec(`UPDATE connections SET id = id`)
-	contendingTx.Rollback()
+	_ = contendingTx.Rollback()
 
 	if busyErr == nil {
 		t.Skip("could not provoke SQLITE_BUSY on this platform; serialization absorbed it")

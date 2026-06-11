@@ -228,15 +228,18 @@ func (store *attachmentStore) Walk(fn func(attachmentOrphan) error) error {
 	knownPaths := map[string]struct{}{}
 
 	// Row-side: read every attachment row, check the sidecar exists.
+	// The deferred Close (instead of per-return manual closes) is safe to
+	// hold through the file-side walk below: that walk is pure filesystem
+	// and never touches store.db, so no connection-pool contention.
 	rows, err := store.db.Query(`SELECT data_point_id, sha256, path_relative FROM data_point_attachments`)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var dataPointID int64
 		var sha, pathRelative string
 		if err := rows.Scan(&dataPointID, &sha, &pathRelative); err != nil {
-			rows.Close()
 			return err
 		}
 		abs, containErr := resolveContainedPath(store.rootDir, pathRelative)
@@ -251,7 +254,6 @@ func (store *attachmentStore) Walk(fn func(attachmentOrphan) error) error {
 				PathRelative: pathRelative,
 				DataPointID:  dataPointID,
 			}); cbErr != nil {
-				rows.Close()
 				return cbErr
 			}
 			continue
@@ -265,12 +267,10 @@ func (store *attachmentStore) Walk(fn func(attachmentOrphan) error) error {
 				PathRelative: pathRelative,
 				DataPointID:  dataPointID,
 			}); cbErr != nil {
-				rows.Close()
 				return cbErr
 			}
 		}
 	}
-	rows.Close()
 	if err := rows.Err(); err != nil {
 		return err
 	}

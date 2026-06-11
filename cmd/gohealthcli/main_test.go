@@ -34,7 +34,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "create temp dir: %v\n", err)
 		os.Exit(1)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	testBinaryPath = filepath.Join(dir, "gohealthcli")
 	build := exec.Command("go", "build", "-o", testBinaryPath, ".")
@@ -758,7 +758,7 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin transaction: %v", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var txForeignKeys int
 	if err := tx.QueryRow(`PRAGMA foreign_keys`).Scan(&txForeignKeys); err != nil {
@@ -6947,7 +6947,8 @@ func runCommandInDirWithEnv(t *testing.T, dir string, env []string, args ...stri
 	if err == nil {
 		return 0, stdout, stderr
 	}
-	if exitErr, ok := err.(*exec.ExitError); ok {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
 		return exitErr.ExitCode(), stdout, stderr
 	}
 	t.Fatalf("run command: %v\nstderr: %s", err, stderr.String())

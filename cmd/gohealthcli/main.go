@@ -1745,7 +1745,10 @@ func persistDoctorOnlineRefreshedTokenWithRuntime(archive connectionTokenWriter,
 	}
 	if err := archive.UpdateConnectionTokenMetadata(connectionID, token, runtime.now()); err != nil {
 		if rollbackErr := store.Store(connectionID, previousTokenMaterial); rollbackErr != nil {
-			return fmt.Errorf("%w; rollback Credential Store token material: %v", err, rollbackErr)
+			// The secondary rollback error is deliberately %v, not %w: only
+			// the primary archive error may carry the typed-error chain
+			// callers branch on (#272 translation layer).
+			return fmt.Errorf("%w; rollback Credential Store token material: %v", err, rollbackErr) //nolint:errorlint // deliberate non-wrapping %v for the secondary error
 		}
 		return err
 	}
@@ -4160,7 +4163,9 @@ func applyMigrations(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	// Rollback after a successful Commit returns sql.ErrTxDone; the error is
+	// deliberately ignored because this defer is only the abort path.
+	defer func() { _ = tx.Rollback() }()
 
 	for _, statement := range initialMigrationStatements() {
 		if _, err := tx.Exec(statement); err != nil {
@@ -4259,7 +4264,9 @@ func applyPendingMigrations(db *sql.DB) error {
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback()
+		// Rollback after a successful Commit returns sql.ErrTxDone; the
+		// error is deliberately ignored: this defer is only the abort path.
+		defer func() { _ = tx.Rollback() }()
 		now := time.Now().UTC().Format(time.RFC3339)
 		if userVersion == 1 {
 			if err := applyGoogleIdentityArchiveMigration(tx, now); err != nil {
