@@ -423,6 +423,7 @@ var fetchIdentity = func(accessToken string) (googleIdentity, error) {
 var fetchProfile = func(accessToken string) (googleProfile, error) {
 	return fetchGoogleProfile(productionProviderGET(), accessToken)
 }
+
 // fetchRawProvider binds the real raw Provider fetch over the shared
 // timeout client. Like fetchIdentity/fetchProfile above, it remains a
 // package-level seam until the runtime adapters absorb it.
