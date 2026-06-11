@@ -2,8 +2,11 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -431,4 +434,63 @@ func TestDescribeSchemaJSONTableColumnsUnchanged(t *testing.T) {
 		t.Errorf("real table BLOB column rewritten: got type=%q, want BLOB",
 			probe.payloadCol.Type)
 	}
+}
+
+// listSchemaViews enumerates the public (non-sqlite_*) views in
+// sqlite_master. Test-only: the live catalog path reads views through
+// the Normalized Views Registry, so this raw enumeration exists solely
+// for the drift guard below.
+func listSchemaViews(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`SELECT name FROM sqlite_master
+		WHERE type = 'view'
+			AND name NOT LIKE 'sqlite_%'
+		ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
+// assertNoSchemaDrift returns a non-nil error if any view in
+// sqlite_master lacks a Normalized Views Registry catalog entry. It is
+// the CI drift guard's helper and lives in the test file because no
+// binary code path calls it — the guard compares the live schema to
+// the registry the binary actually serves.
+func assertNoSchemaDrift(archivePath string) error {
+	db, err := openArchiveReadOnly(archivePath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	views, err := listSchemaViews(db)
+	if err != nil {
+		return err
+	}
+	registry := normalizedViewsRegistry()
+	registered := map[string]bool{}
+	for _, name := range registry.Catalog() {
+		if spec, ok := registry.View(name); ok {
+			registered[spec.view] = true
+		}
+	}
+	var orphans []string
+	for _, view := range views {
+		if !registered[view] {
+			orphans = append(orphans, view)
+		}
+	}
+	if len(orphans) > 0 {
+		sort.Strings(orphans)
+		return fmt.Errorf("describe-schema drift: %d view(s) in sqlite_master have no catalog entry: %v", len(orphans), orphans)
+	}
+	return nil
 }
