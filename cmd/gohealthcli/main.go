@@ -999,10 +999,6 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 	return 0
 }
 
-func runConnect(args []string, configPath, archivePath string, globalNoInput bool, mode outputMode, stdout, stderr io.Writer) int {
-	return runConnectWithRuntime(args, configPath, archivePath, globalNoInput, mode, stdout, stderr, productionRuntimeAdapters())
-}
-
 func runConnectWithRuntime(args []string, configPath, archivePath string, globalNoInput bool, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("connect", flag.ContinueOnError)
 	flags.SetOutput(stderr)

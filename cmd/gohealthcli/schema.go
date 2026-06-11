@@ -18,17 +18,13 @@ type schemaDocument struct {
 	Commands []commandDef `json:"commands"`
 }
 
-func runSchema(args []string, stdout, stderr io.Writer) int {
-	return runSchemaWithRegistry(args, commands, stdout, stderr)
-}
-
-// runSchemaWithRegistry is the seam runSchema's adapter uses. Splitting
-// the package-level `commands` lookup out of runSchema removes the
-// initialisation cycle that arose when slice 6 added a `commands` entry
-// whose Run adapter referenced runSchema — Go's var-init checker sees
-// the cycle even though closures defer the actual call. Taking the
-// registry as a parameter keeps the data and the adapter in lockstep
-// without the cycle.
+// runSchemaWithRegistry is the runner behind the hidden `schema`
+// subcommand; the registry entry's Run adapter (wired in commands.go's
+// init()) binds it to the package-level `commands` slice. Taking the
+// registry as a parameter avoids the var-init cycle that a direct
+// reference to `commands` would create — Go's var-init checker sees
+// the cycle even though closures defer the actual call — and keeps the
+// data and the adapter in lockstep.
 func runSchemaWithRegistry(args []string, registry []commandDef, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("schema", flag.ContinueOnError)
 	flags.SetOutput(stderr)

@@ -87,7 +87,7 @@ func TestRunSyncPreflightFailuresDoNotWriteAuditRow(t *testing.T) {
 			stderr := new(bytes.Buffer)
 			code := runSyncWithRuntime(tc.args, configPath, archivePath, outputMode{}, stdout, stderr, testRuntime)
 			if code == 0 {
-				t.Fatalf("runSync exit = 0, want non-zero (preflight rule must reject)\nstdout: %s\nstderr: %s", stdout.String(), stderr.String())
+				t.Fatalf("runSyncWithRuntime exit = 0, want non-zero (preflight rule must reject)\nstdout: %s\nstderr: %s", stdout.String(), stderr.String())
 			}
 
 			// AC #5: JSON envelope on preflight failure has
