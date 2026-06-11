@@ -2,10 +2,40 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 )
+
+// TestRuntimeAdaptersBindSharedTimeoutClientAsHTTPDoer pins the #281
+// adapter shape: the production runtime adapters carry the one shared
+// Provider HTTP client (#271, providerHTTPTimeout) as their HTTP doer,
+// and withDefaults fills a nil doer with that same client — so every
+// Provider request routed through the adapters seam keeps its deadline
+// and no code path falls back to the process-wide default client.
+func TestRuntimeAdaptersBindSharedTimeoutClientAsHTTPDoer(t *testing.T) {
+	production := productionRuntimeAdapters()
+	client, ok := production.httpDoer.(*http.Client)
+	if !ok {
+		t.Fatalf("production httpDoer = %T, want the shared *http.Client", production.httpDoer)
+	}
+	if client != providerHTTPClient {
+		t.Fatal("production httpDoer is not the shared Provider HTTP client")
+	}
+	if client.Timeout != providerHTTPTimeout {
+		t.Fatalf("production doer timeout = %v, want providerHTTPTimeout %v", client.Timeout, providerHTTPTimeout)
+	}
+
+	defaulted := runtimeAdapters{}.withDefaults()
+	if defaulted.httpDoer == nil {
+		t.Fatal("withDefaults left httpDoer nil")
+	}
+	defaultedClient, ok := defaulted.httpDoer.(*http.Client)
+	if !ok || defaultedClient != providerHTTPClient {
+		t.Fatalf("defaulted httpDoer = %#v, want the shared Provider HTTP client", defaulted.httpDoer)
+	}
+}
 
 func TestConnectSetupUsesRuntimeAdapter(t *testing.T) {
 	tempDir := t.TempDir()

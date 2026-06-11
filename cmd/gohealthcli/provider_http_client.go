@@ -16,12 +16,21 @@ import (
 // the run can report instead of a fenced-while-alive run.
 const providerHTTPTimeout = 60 * time.Second
 
+// httpDoer is the HTTP transport seam on the runtime adapters (#281):
+// exactly (*http.Client).Do, so the production adapter binds the shared
+// timeout client below directly and tests inject a fake doer (an
+// http.Client over a stub RoundTripper) without touching any global.
+type httpDoer interface {
+	Do(request *http.Request) (*http.Response, error)
+}
+
 // providerHTTPClient is the one shared HTTP client for every Provider
 // request: Identity Snapshot fetchers, Google identity and profile
 // fetchers, OAuth token exchange and refresh, and raw Provider fetch.
 // Production code must not use http.DefaultClient — it carries no
-// timeout. Tests may swap this variable to inject a stub transport
-// until the HTTP doer joins the runtime adapters seam (#281).
+// timeout. This value is wiring only: it is bound as the production
+// HTTP doer (runtime adapters, productionProviderGET) and is never
+// reassigned; request paths receive a doer instead of reading it.
 var providerHTTPClient = newProviderHTTPClient(providerHTTPTimeout)
 
 func newProviderHTTPClient(timeout time.Duration) *http.Client {

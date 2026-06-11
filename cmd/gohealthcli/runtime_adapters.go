@@ -5,6 +5,12 @@ import (
 )
 
 type runtimeAdapters struct {
+	// httpDoer is the transport seam every Provider HTTP request rides
+	// (#281): the production adapter binds the shared timeout client
+	// (#271), tests bind a fake. Code paths that build requests receive
+	// this doer (directly or via providerGET()) instead of reading a
+	// package-level client.
+	httpDoer                       httpDoer
 	runOAuthFlow                   func(oauthClientConfig, []string, bool) (oauthTokenResponse, error)
 	refreshOAuthToken              func(oauthClientConfig, string, []string) (oauthTokenResponse, error)
 	openBrowser                    func(string) error
@@ -24,6 +30,7 @@ type runtimeAdapters struct {
 
 func productionRuntimeAdapters() runtimeAdapters {
 	return runtimeAdapters{
+		httpDoer:                       providerHTTPClient,
 		runOAuthFlow:                   runOAuthFlow,
 		refreshOAuthToken:              refreshOAuthToken,
 		openBrowser:                    openBrowser,
@@ -44,6 +51,11 @@ func productionRuntimeAdapters() runtimeAdapters {
 
 func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
 	production := productionRuntimeAdapters()
+	// The doer resolves first: the closures bound below capture the
+	// adapters value and must see the injected (or defaulted) doer.
+	if adapters.httpDoer == nil {
+		adapters.httpDoer = production.httpDoer
+	}
 	if adapters.openBrowser == nil {
 		adapters.openBrowser = production.openBrowser
 	}
