@@ -1566,9 +1566,26 @@ func identitySetupWithRuntime(configPath, archivePath string, runtime runtimeAda
 		GoogleHealthUserID: connection.googleHealthUserID,
 		LegacyFitbitUserID: connection.legacyFitbitUserID,
 	}
+	// Issue #273 parity decision: identity wires WithAutoRefresh for
+	// file-based OAuth Connections exactly like its devices/settings/
+	// irn-profile/profile siblings — the archive handle
+	// openHealthArchiveConnectionAPI returned already satisfies
+	// connectionTokenWriter — so an expired access token refreshes and
+	// persists transparently instead of failing with "run `gohealthcli
+	// connect` again" when every sibling would have recovered. The
+	// historical nil scope request becomes the catalog's getIdentity
+	// entry (the same one `raw endpoint getIdentity` already consumes),
+	// with the errCurrentConnectionScopeMissing sentinel mapped to the
+	// sibling-shaped "identity_scope_missing" status.
 	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{configPath, archivePath}, runtime)
-	accessToken, err := connectionAccess.AccessToken(nil)
+	if config.oauthClient.kind == "file" {
+		connectionAccess = connectionAccess.WithAutoRefresh(config.oauthClient, archive)
+	}
+	accessToken, err := connectionAccess.AccessToken(googleHealthIdentityEndpointScopes["getIdentity"])
 	if err != nil {
+		if errors.Is(err, errCurrentConnectionScopeMissing) {
+			result.Status = "identity_scope_missing"
+		}
 		return result, err
 	}
 	identity, err := connectionAccess.FetchVerifiedIdentity(accessToken)
