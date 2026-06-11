@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -38,12 +39,12 @@ type syncRunLifecycle struct {
 // surface a Go error" signal and is independent of Status (a sync
 // can fail and still return nil error if the failure was already
 // captured in result.Message + result.Status).
-func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
+func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 	runtime := lifecycle.runtime.withDefaults()
 	options := lifecycle.options
 	plan := lifecycle.plan
 	// PRD #141 slice 5: close the SIGINT-pre-first-Data-Type race. The
-	// orchestrator's per-Data-Type loop checks cancelCh at the top of
+	// orchestrator's per-Data-Type loop checks the context at the top of
 	// the loop, but a signal that lands between that check and this
 	// entry still races against StartSyncRun. Catching it here — before
 	// StartSyncRun writes the audit row — keeps the no-audit-row
@@ -52,7 +53,7 @@ func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
 	// of the sync_runs audit trail. A Sync Run canceled before it could
 	// start writes zero sync_runs rows and surfaces a fully-populated
 	// sync_canceled envelope (Status is never the empty string, AC #4).
-	if ingestionCanceled(options.cancelCh) {
+	if ctx.Err() != nil {
 		return syncResultFromOutcome(syncRunOutcomeCanceled, syncResult{
 			DataTypes: plan.dataTypes,
 			From:      plan.from,
@@ -132,7 +133,6 @@ func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
 		rollup:        options.rollup,
 		sourceFamily:  options.sourceFamily,
 		grantedScopes: grantedScopes,
-		cancelCh:      options.cancelCh,
 	}
 	ingestionPlan, err := ingestion.Plan(ingestionRequest)
 	if err != nil {
@@ -203,7 +203,7 @@ func (lifecycle syncRunLifecycle) Run() (syncResult, error) {
 		})
 	}
 	ingestionRequest.refreshAccessToken = connectionAccess.MidRunTokenRefresher()
-	ingestionResult, err := ingestion.Execute(archive, ingestionRequest)
+	ingestionResult, err := ingestion.Execute(ctx, archive, ingestionRequest)
 	applyGoogleHealthIngestionCounts(&result, ingestionResult)
 	if err != nil {
 		if errors.Is(err, errSyncCanceled) {

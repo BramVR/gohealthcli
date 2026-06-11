@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -30,7 +31,7 @@ func TestGoogleHealthIngestionHourlyHeartRateRollup(t *testing.T) {
 	})
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	result, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
 		dataType: "heart-rate",
 		rollup:   "hourly",
 		from:     "2026-01-01T00:00:00Z",
@@ -80,7 +81,7 @@ func TestGoogleHealthIngestionWeeklyStepsRollup(t *testing.T) {
 	})
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	result, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
 		dataType: "steps",
 		rollup:   "weekly",
 		from:     "2026-01-01T00:00:00Z",
@@ -116,7 +117,7 @@ func TestGoogleHealthIngestionWindowCustomRollup(t *testing.T) {
 	})
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	result, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
 		dataType: "steps",
 		rollup:   "window=6h",
 		from:     "2026-01-01T00:00:00Z",

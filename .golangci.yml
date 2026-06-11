@@ -24,7 +24,9 @@ linters:
     # wrapping and errors.Is/As; plain %v or type assertions break it.
     - errorlint
     # noctx: outbound calls should carry a context so SIGINT can abort
-    # in-flight work — currently fully excluded below until #284 lands.
+    # in-flight work. Enforced for net/http since #284 threaded
+    # context.Context through every Provider HTTP request; the remaining
+    # database/sql and os/exec categories are excluded below.
     - noctx
     # sqlclosecheck: sql.Rows/Stmt must be closed, or the SQLite pool
     # exhausts its single writer connection.
@@ -62,12 +64,20 @@ linters:
       - linters:
           - errcheck
         text: 'Error return value of `(.*Close|fmt\.Fprint(f|ln)?)` is not checked'
-      # noctx is enabled but fully excluded until #284 threads
-      # context.Context through ingestion, HTTP, and the SQLite calls.
-      # DELETE THIS RULE as part of #284 — that is the entire migration.
+      # noctx, narrowed (#284): every net/http request now carries a
+      # context (http.NewRequestWithContext throughout — the Provider
+      # GET module, the raw fetch, and the OAuth form POST), so the
+      # historical blanket exclusion is gone and net/http findings gate
+      # CI. The two categories still excluded are outside #284's scope
+      # (Provider HTTP cancellation): database/sql calls against the
+      # local SQLite archive and os/exec subprocess invocations, none of
+      # which has a cancellation path today. Follow-up tracked under
+      # PRD #269 as the noctx-completion slice: thread context through
+      # the SQLite call sites and exec invocations (or record a
+      # permanent justification), then delete this rule.
       - linters:
           - noctx
-        path: .*
+        text: '(database/sql|os/exec)'
 
 issues:
   # Never cap findings: the defaults (50 per linter, 3 duplicates) hid ~500

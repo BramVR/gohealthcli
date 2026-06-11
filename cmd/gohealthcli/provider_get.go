@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -50,9 +51,11 @@ func productionProviderGET() providerGET {
 
 // fetchProviderJSON is the module's entry point: one Provider GET
 // against url through the given module value, labeled per fetch for
-// error messages.
-func fetchProviderJSON(get providerGET, url, label, accessToken string) ([]byte, error) {
-	return get.fetchJSON(url, label, accessToken)
+// error messages. ctx scopes the HTTP request and the retry backoff
+// sleeps (#284); callers without cancellation instrumentation pass
+// context.Background().
+func fetchProviderJSON(ctx context.Context, get providerGET, url, label, accessToken string) ([]byte, error) {
+	return get.fetchJSON(ctx, url, label, accessToken)
 }
 
 // fetchJSON wraps the single-attempt GET in the same bounded
@@ -60,19 +63,18 @@ func fetchProviderJSON(get providerGET, url, label, accessToken string) ([]byte,
 // (google_health_retry.go): up to googleHealthRetryMaxAttempts
 // attempts for 429/5xx with exponential backoff capped at
 // googleHealthRetryMaxDelay, Retry-After as the sleep floor, and
-// immediate surfacing of non-transient failures. Identity Snapshot
-// commands carry no cancel channel today, so the sleep is plain
-// (context-based cancellation is #284's slice).
-func (get providerGET) fetchJSON(url, label, accessToken string) ([]byte, error) {
-	fetcher := func(_ rawProviderRequest, token string) ([]byte, error) {
-		return get.fetchOnce(url, label, token)
+// immediate surfacing of non-transient failures. A canceled ctx aborts
+// the in-flight request and short-circuits backoff sleeps (#284).
+func (get providerGET) fetchJSON(ctx context.Context, url, label, accessToken string) ([]byte, error) {
+	fetcher := func(ctx context.Context, _ rawProviderRequest, token string) ([]byte, error) {
+		return get.fetchOnce(ctx, url, label, token)
 	}
-	return fetchWithRetry(fetcher, get.sleeper, get.jitter, rawProviderRequest{url: url}, accessToken, nil)
+	return fetchWithRetry(ctx, fetcher, get.sleeper, get.jitter, rawProviderRequest{url: url}, accessToken)
 }
 
 // fetchOnce is the single GET attempt the retry middleware wraps.
-func (get providerGET) fetchOnce(url, label, accessToken string) ([]byte, error) {
-	request, err := http.NewRequest(http.MethodGet, url, nil)
+func (get providerGET) fetchOnce(ctx context.Context, url, label, accessToken string) ([]byte, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}

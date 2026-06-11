@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -47,7 +48,7 @@ func TestGoogleHealthIngestionStoresTcxAttachmentForExercise(t *testing.T) {
 	provider.pages["users/me/dataTypes/exercise/dataPoints/run-1:exportExerciseTcx"] = string(envelope)
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	_, err = ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+	_, err = ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
 		dataType:      "exercise",
 		from:          "2026-01-01",
 		to:            "2026-01-02",
@@ -112,7 +113,7 @@ func TestGoogleHealthIngestionStoresRawTcxWhenResponseIsNotJsonEnvelope(t *testi
 	provider.pages["users/me/dataTypes/exercise/dataPoints/raw-xml:exportExerciseTcx"] = rawXML
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	_, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
 		dataType:      "exercise",
 		from:          "2026-01-01",
 		to:            "2026-01-02",
@@ -157,7 +158,7 @@ func TestGoogleHealthIngestionStoresVerbatimWhenJsonShapeUnexpected(t *testing.T
 	provider.pages["users/me/dataTypes/exercise/dataPoints/unexpected:exportExerciseTcx"] = unexpectedJSON
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	_, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
 		dataType:      "exercise",
 		from:          "2026-01-01",
 		to:            "2026-01-02",
@@ -200,7 +201,7 @@ func TestGoogleHealthIngestionSkipsTcxWhenEnvelopeTcxDataEmpty(t *testing.T) {
 	})
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	_, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
 		dataType:      "exercise",
 		from:          "2026-01-01",
 		to:            "2026-01-02",
@@ -240,7 +241,7 @@ func TestGoogleHealthIngestionSkipsTcxWhenUpstream404(t *testing.T) {
 	}
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	result, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
 		dataType:      "exercise",
 		from:          "2026-01-01",
 		to:            "2026-01-02",
@@ -285,7 +286,7 @@ func TestGoogleHealthIngestionSkipsTcxWhenUpstream403(t *testing.T) {
 	}
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	result, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
 		dataType:      "exercise",
 		from:          "2026-01-01",
 		to:            "2026-01-02",
@@ -338,7 +339,7 @@ func TestGoogleHealthIngestionSkipsTcxWhenUpstreamEmpty(t *testing.T) {
 	})
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	_, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
 		dataType:      "exercise",
 		from:          "2026-01-01",
 		to:            "2026-01-02",
@@ -378,7 +379,7 @@ func TestGoogleHealthIngestionSurfacesTcxNon404Errors(t *testing.T) {
 	}
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	_, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
 		dataType:      "exercise",
 		from:          "2026-01-01",
 		to:            "2026-01-02",
@@ -422,7 +423,7 @@ func TestGoogleHealthIngestionSkipsTcxWhenLocationScopeNotGranted(t *testing.T) 
 	provider.pages["users/me/dataTypes/exercise/dataPoints/run-1:exportExerciseTcx"] = `<?xml version="1.0"?>`
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	result, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
 		dataType: "exercise",
 		from:     "2026-01-01",
 		to:       "2026-01-02",
@@ -467,7 +468,7 @@ func TestGoogleHealthIngestionDoesNotCallTcxForNonExerciseDataTypes(t *testing.T
 	})
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	_, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
 		dataType: "steps",
 		from:     "2026-01-01",
 		to:       "2026-01-02T00:00:00Z",

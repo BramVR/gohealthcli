@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -36,7 +37,7 @@ func TestSyncRunExecutorArchivesDataPointList(t *testing.T) {
 		}`,
 	})
 
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -93,7 +94,7 @@ func TestSyncRunExecutorArchivesDataPointReconcileForSourceFamily(t *testing.T) 
 		}`,
 	})
 
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:   configPath,
 		archivePath:  archivePath,
 		dataTypes:    []string{"steps"},
@@ -143,7 +144,7 @@ func TestSyncRunExecutorArchivesDailyRollups(t *testing.T) {
 		}`,
 	})
 
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -202,7 +203,7 @@ func TestSyncRunExecutorWiresNormalizedFromIntoHourlyRollup(t *testing.T) {
 		}`,
 	})
 
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"heart-rate"},
@@ -247,7 +248,7 @@ func TestSyncRunExecutorRecordsFailedListRunForRepeatedPageToken(t *testing.T) {
 		"same-token": `{"dataPoints":[],"nextPageToken":"same-token"}`,
 	})
 
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -295,7 +296,7 @@ func TestSyncRunExecutorRecordsPartialCountsWhenLaterPageFails(t *testing.T) {
 		"bad-page": `{`,
 	})
 
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -377,7 +378,7 @@ func TestSyncRunExecutorRefreshesAccessTokenMidRunAndPersists(t *testing.T) {
 		}`
 	}
 	var fetches []string
-	testRuntime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		pageToken := mustURLQuery(t, request.url).Get("pageToken")
 		fetches = append(fetches, pageToken+":"+accessToken)
 		switch {
@@ -394,7 +395,7 @@ func TestSyncRunExecutorRefreshesAccessTokenMidRunAndPersists(t *testing.T) {
 		}
 	}
 
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -476,7 +477,7 @@ func TestSyncRunExecutorAutoRefreshesExpiredAccessTokenAndPersists(t *testing.T)
 		"": `{"dataPoints":[]}`,
 	})
 
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},

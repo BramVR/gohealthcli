@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"strings"
@@ -62,7 +63,7 @@ func TestSyncRunLifecycleStatusEnumOnEveryReachableReturn(t *testing.T) {
 			t.Fatalf("connect setup: %v", err)
 		}
 		runtime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
-		result, err := (syncRunExecutor{runtime: runtime}).Execute(syncCommandOptions{
+		result, err := (syncRunExecutor{runtime: runtime}).Execute(context.Background(), syncCommandOptions{
 			configPath:  configPath,
 			archivePath: archivePath,
 			dataTypes:   []string{"steps"},
@@ -94,7 +95,7 @@ func TestSyncRunLifecycleStatusEnumOnEveryReachableReturn(t *testing.T) {
 		runtime, _ = withStepSyncFetchFake(t, runtime, "connect-access-secret", map[string]string{
 			"": `{"dataPoints":[]}`,
 		})
-		result, err := (syncRunExecutor{runtime: runtime}).Execute(syncCommandOptions{
+		result, err := (syncRunExecutor{runtime: runtime}).Execute(context.Background(), syncCommandOptions{
 			configPath:  configPath,
 			archivePath: archivePath,
 			dataTypes:   []string{"steps"},
@@ -269,7 +270,7 @@ func TestConcurrentSyncRunsLeaveNoSyncRunningRows(t *testing.T) {
 		})
 		runtime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 		runtime, _ = withStepSyncFetchFake(t, runtime, accessToken, pages)
-		return (syncRunExecutor{runtime: runtime}).Execute(syncCommandOptions{
+		return (syncRunExecutor{runtime: runtime}).Execute(context.Background(), syncCommandOptions{
 			configPath:  configPath,
 			archivePath: archivePath,
 			dataTypes:   []string{dataType},
@@ -395,7 +396,7 @@ func TestSyncRunLifecycleConvertsBusyExhaustedToFailedWithRecoveryRow(t *testing
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 		"": `{"dataPoints":[]}`,
 	})
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -521,7 +522,7 @@ func TestSyncRunLifecycleRecoveryWriteAlsoRetriesOnBusy(t *testing.T) {
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 		"": `{"dataPoints":[]}`,
 	})
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -579,7 +580,7 @@ func TestSyncRunLifecycleRecoveryBudgetExhaustedReturnsTypedError(t *testing.T) 
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 		"": `{"dataPoints":[]}`,
 	})
-	_, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	_, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -633,38 +634,34 @@ func TestSyncRunLifecycleCanceledOutcomePreservedThroughRecovery(t *testing.T) {
 	// Drive ingestion to surface errSyncCanceled so the lifecycle calls
 	// finalize with syncRunOutcomeCanceled. PRD #141 slice 5 adds a
 	// pre-StartSyncRun cancel check at the top of syncRunLifecycle.Run,
-	// so a pre-closed cancelCh now short-circuits before any audit row
+	// so a pre-canceled context now short-circuits before any audit row
 	// is written — that path is the no-audit-row branch, not the
 	// canceled-after-StartSyncRun branch this test exercises. To land
-	// in finalize with the canceled outcome we close cancelCh inside
-	// the fetch fake after StartSyncRun has run; the page loop's next
-	// top-of-iteration check then observes the closed channel and
+	// in finalize with the canceled outcome we cancel the run context
+	// inside the fetch fake after StartSyncRun has run; the page loop's
+	// next top-of-iteration check then observes the canceled context and
 	// returns errSyncCanceled, sending the lifecycle into finalize
 	// with syncRunOutcomeCanceled.
-	cancelCh := make(chan struct{})
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 		"":       `{"dataPoints":[],"nextPageToken":"page-2"}`,
 		"page-2": `{"dataPoints":[]}`,
 	})
 	wrappedFetch := testRuntime.fetchRawProvider
-	testRuntime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
-		body, err := wrappedFetch(request, accessToken)
-		// Close the channel after page 1 returns — the next iteration's
+	testRuntime.fetchRawProvider = func(ctx context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+		body, err := wrappedFetch(ctx, request, accessToken)
+		// Cancel after page 1 returns — the next iteration's
 		// top-of-loop check observes it and returns errSyncCanceled.
-		select {
-		case <-cancelCh:
-		default:
-			close(cancelCh)
-		}
+		cancelRun()
 		return body, err
 	}
-	result, _ := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, _ := (syncRunExecutor{runtime: testRuntime}).Execute(runCtx, syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
 		from:        "2026-01-01",
 		to:          "2026-01-02T00:00:00Z",
-		cancelCh:    cancelCh,
 	})
 	// Envelope must say sync_canceled, NOT sync_failed.
 	if result.Status != "sync_canceled" {

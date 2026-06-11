@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -63,7 +64,7 @@ func TestRawEndpointGetProfileAutoRefreshesExpiredAccessToken(t *testing.T) {
 
 	const providerBody = `{"name":"users/me/profile","displayName":"Rotated User"}`
 	rawCalls := 0
-	testRuntime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		rawCalls++
 		if request.url != googleHealthProfileURL {
 			t.Fatalf("raw URL = %q, want profile URL", request.url)
