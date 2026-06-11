@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -71,7 +72,7 @@ func TestProviderGETReturnsValidatedJSONWithBearerAuth(t *testing.T) {
 	t.Parallel()
 	transport := &stubProviderTransport{status: 200, body: `{"devices":[]}`}
 
-	body, err := fetchProviderJSON(providerGETWithDoer(transport), googleHealthPairedDevicesURL, "pairedDevices", "test-access-token")
+	body, err := fetchProviderJSON(context.Background(), providerGETWithDoer(transport), googleHealthPairedDevicesURL, "pairedDevices", "test-access-token")
 	if err != nil {
 		t.Fatalf("fetchProviderJSON: %v", err)
 	}
@@ -92,11 +93,33 @@ func TestProviderGETReturnsValidatedJSONWithBearerAuth(t *testing.T) {
 	}
 }
 
+// TestProviderGETScopesRequestToCallerContext pins #284 on the shared
+// Provider GET module: the HTTP request handed to the doer must carry
+// the caller's context (http.NewRequestWithContext), so canceling the
+// caller aborts the in-flight Identity Snapshot fetch at the transport.
+// Asserting on request.Context() values rather than the doer returning
+// keeps the pin independent of transport internals.
+func TestProviderGETScopesRequestToCallerContext(t *testing.T) {
+	transport := &stubProviderTransport{status: 200, body: `{}`}
+	type ctxKey struct{}
+	ctx := context.WithValue(context.Background(), ctxKey{}, "marker")
+
+	if _, err := fetchProviderJSON(ctx, providerGETWithDoer(transport), googleHealthSettingsURL, "settings", "test-access-token"); err != nil {
+		t.Fatalf("fetchProviderJSON: %v", err)
+	}
+	if transport.request == nil {
+		t.Fatal("Provider GET never reached the doer")
+	}
+	if got := transport.request.Context().Value(ctxKey{}); got != "marker" {
+		t.Fatalf("request context value = %v, want the caller's context threaded onto the request", got)
+	}
+}
+
 func TestProviderGETReturnsTypedStatusErrorCarryingLabel(t *testing.T) {
 	t.Parallel()
 	get := providerGETWithDoer(&stubProviderTransport{status: 404, body: `{"error":"not found"}`})
 
-	_, err := fetchProviderJSON(get, googleHealthSettingsURL, "settings", "test-access-token")
+	_, err := fetchProviderJSON(context.Background(), get, googleHealthSettingsURL, "settings", "test-access-token")
 	if err == nil {
 		t.Fatal("fetchProviderJSON returned nil error, want typed status error")
 	}
@@ -114,7 +137,7 @@ func TestProviderGETRejectsInvalidJSONCarryingLabel(t *testing.T) {
 	t.Parallel()
 	get := providerGETWithDoer(&stubProviderTransport{status: 200, body: `{"truncated":`})
 
-	_, err := fetchProviderJSON(get, googleHealthIRNProfileURL, "irnProfile", "test-access-token")
+	_, err := fetchProviderJSON(context.Background(), get, googleHealthIRNProfileURL, "irnProfile", "test-access-token")
 	if err == nil {
 		t.Fatal("fetchProviderJSON returned nil error, want invalid-JSON rejection")
 	}
@@ -135,7 +158,7 @@ func TestProviderGETBoundsResponseBodySize(t *testing.T) {
 	oversized := `{"padding":"` + strings.Repeat("a", providerGETResponseLimit) + `"}`
 	get := providerGETWithDoer(&stubProviderTransport{status: 200, body: oversized})
 
-	_, err := fetchProviderJSON(get, googleHealthSettingsURL, "settings", "test-access-token")
+	_, err := fetchProviderJSON(context.Background(), get, googleHealthSettingsURL, "settings", "test-access-token")
 	if err == nil {
 		t.Fatal("fetchProviderJSON returned nil error, want truncated oversized body rejected")
 	}
@@ -158,7 +181,7 @@ func TestProviderGETRetriesTransient429HonoringRetryAfter(t *testing.T) {
 	var sleeps []time.Duration
 	get := providerGETWithRetrySeams(transport, &sleeps)
 
-	body, err := fetchProviderJSON(get, googleHealthProfileURL, "profile", "test-access-token")
+	body, err := fetchProviderJSON(context.Background(), get, googleHealthProfileURL, "profile", "test-access-token")
 	if err != nil {
 		t.Fatalf("fetchProviderJSON = %v, want success after two 429 retries", err)
 	}
@@ -185,7 +208,7 @@ func TestProviderGETRetriesTransient5xxWithBoundedBackoff(t *testing.T) {
 	var sleeps []time.Duration
 	get := providerGETWithRetrySeams(transport, &sleeps)
 
-	body, err := fetchProviderJSON(get, googleHealthIdentityURL, "identity", "test-access-token")
+	body, err := fetchProviderJSON(context.Background(), get, googleHealthIdentityURL, "identity", "test-access-token")
 	if err != nil {
 		t.Fatalf("fetchProviderJSON = %v, want success after transient 5xx retries", err)
 	}
@@ -216,7 +239,7 @@ func TestProviderGETExhaustsRetryBudgetKeepingLabelAndTypedChain(t *testing.T) {
 	var sleeps []time.Duration
 	get := providerGETWithRetrySeams(transport, &sleeps)
 
-	_, err := fetchProviderJSON(get, googleHealthIRNProfileURL, "irnProfile", "test-access-token")
+	_, err := fetchProviderJSON(context.Background(), get, googleHealthIRNProfileURL, "irnProfile", "test-access-token")
 	if err == nil {
 		t.Fatal("fetchProviderJSON returned nil error, want exhausted-retries failure")
 	}
@@ -252,7 +275,7 @@ func TestProviderGETDoesNotRetryUnauthorized(t *testing.T) {
 	var sleeps []time.Duration
 	get := providerGETWithRetrySeams(transport, &sleeps)
 
-	_, err := fetchProviderJSON(get, googleHealthIdentityURL, "identity", "expired-access-token")
+	_, err := fetchProviderJSON(context.Background(), get, googleHealthIdentityURL, "identity", "expired-access-token")
 	if err == nil {
 		t.Fatal("fetchProviderJSON returned nil error, want unauthorized failure")
 	}
@@ -281,7 +304,7 @@ func TestProviderGETDoesNotRetryNetworkFailure(t *testing.T) {
 	var sleeps []time.Duration
 	get := providerGETWithRetrySeams(countingFailingTransport{attempts: &attempts, err: errors.New("connect: connection refused")}, &sleeps)
 
-	_, err := fetchProviderJSON(get, googleHealthSettingsURL, "settings", "test-access-token")
+	_, err := fetchProviderJSON(context.Background(), get, googleHealthSettingsURL, "settings", "test-access-token")
 	if err == nil {
 		t.Fatal("fetchProviderJSON returned nil error, want network failure")
 	}

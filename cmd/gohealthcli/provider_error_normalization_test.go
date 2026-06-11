@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -164,7 +165,7 @@ func TestSyncIngestionNormalizesTypedUnauthorizedPreservingChain(t *testing.T) {
 	})
 	ingestion := midRunRefreshTestIngestion(t, provider)
 
-	_, err := ingestion.Execute(archive, googleHealthIngestionRequest{
+	_, err := ingestion.Execute(context.Background(), archive, googleHealthIngestionRequest{
 		connection:  archivedConnection{id: "googlehealth:111"},
 		dataType:    "steps",
 		from:        "2026-01-01T00:00:00Z",
@@ -358,8 +359,8 @@ func TestRawEmitsProviderUnreachableFailureStatus(t *testing.T) {
 			configPath, archivePath, testRuntime := connectedProviderFixture(t)
 			// Rebind the raw Provider seam over the real single-shot
 			// fetcher with the stub transport as its doer (#281).
-			testRuntime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
-				return fetchGoogleHealthRaw(providerDoer(tt.transport), request, accessToken)
+			testRuntime.fetchRawProvider = func(ctx context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+				return fetchGoogleHealthRaw(ctx, providerDoer(tt.transport), request, accessToken)
 			}
 
 			stdout := new(bytes.Buffer)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -42,7 +43,7 @@ func TestGoogleHealthIngestionArchivesDataPointListFromProviderPages(t *testing.
 	})
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	result, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
 		dataType: "steps",
 		from:     "2026-01-01",
 		to:       "2026-01-02T00:00:00Z",
@@ -87,7 +88,7 @@ func TestGoogleHealthIngestionChoosesReconcileFromSourceFamily(t *testing.T) {
 	})
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	result, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
 		dataType:     "steps",
 		sourceFamily: "wearable",
 		from:         "2026-01-01",
@@ -125,7 +126,7 @@ func TestGoogleHealthIngestionArchivesDailyRollups(t *testing.T) {
 	})
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	result, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
 		dataType: "steps",
 		rollup:   "daily",
 		from:     "2026-01-01",
@@ -159,7 +160,7 @@ func TestGoogleHealthIngestionRejectsRepeatedPageToken(t *testing.T) {
 	provider.pages["same-token"] = `{"dataPoints":[],"nextPageToken":"same-token"}`
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	_, err := ingestion.Execute(archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
+	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
 		dataType: "steps",
 		from:     "2026-01-01",
 		to:       "2026-01-02T00:00:00Z",
@@ -239,7 +240,7 @@ func newFakeGoogleHealthIngestionProvider(t *testing.T, wantAccessToken string, 
 	return &fakeGoogleHealthIngestionProvider{t: t, wantAccessToken: wantAccessToken, pages: pages}
 }
 
-func (provider *fakeGoogleHealthIngestionProvider) Fetch(request rawProviderRequest, accessToken string, _ <-chan struct{}) ([]byte, error) {
+func (provider *fakeGoogleHealthIngestionProvider) Fetch(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 	provider.t.Helper()
 	if accessToken != provider.wantAccessToken {
 		provider.t.Fatalf("access token = %q, want fixture token", accessToken)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -78,7 +79,7 @@ func TestWithDefaultsRoutesNilFetchersThroughInjectedDoer(t *testing.T) {
 
 	rawTransport := &stubProviderTransport{status: 200, body: `{"raw":true}`}
 	adapters = runtimeAdapters{httpDoer: providerDoer(rawTransport)}.withDefaults()
-	body, err := adapters.fetchRawProvider(rawProviderRequest{url: googleHealthIdentityURL}, "test-access-token")
+	body, err := adapters.fetchRawProvider(context.Background(), rawProviderRequest{url: googleHealthIdentityURL}, "test-access-token")
 	if err != nil {
 		t.Fatalf("fetchRawProvider through injected doer: %v", err)
 	}

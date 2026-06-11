@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -202,7 +203,7 @@ func TestSyncRunExecutorResumesFromSyncCursorWhenFromOmitted(t *testing.T) {
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 		"": `{"dataPoints":[]}`,
 	})
-	first, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	first, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -217,7 +218,7 @@ func TestSyncRunExecutorResumesFromSyncCursorWhenFromOmitted(t *testing.T) {
 	testRuntime, secondRequests := withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 		"": `{"dataPoints":[]}`,
 	})
-	second, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	second, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -252,7 +253,7 @@ func TestSyncRunExecutorErrorsClearlyWhenCursorMissingAndNoFrom(t *testing.T) {
 	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -283,7 +284,7 @@ func TestSyncRunExecutorDoesNotCreateCursorWhenFirstRunFails(t *testing.T) {
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 		"": `{`, // unparseable response forces the first sync to fail
 	})
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -345,7 +346,7 @@ func TestSyncRunExecutorRoundTripsCursorThroughExactToString(t *testing.T) {
 			testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 				"": `{"dataPoints":[]}`,
 			})
-			first, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+			first, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 				configPath:  configPath,
 				archivePath: archivePath,
 				dataTypes:   []string{"steps"},
@@ -359,7 +360,7 @@ func TestSyncRunExecutorRoundTripsCursorThroughExactToString(t *testing.T) {
 			testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 				"": `{"dataPoints":[]}`,
 			})
-			second, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+			second, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 				configPath:  configPath,
 				archivePath: archivePath,
 				dataTypes:   []string{"steps"},
@@ -676,7 +677,7 @@ func TestSyncRunSurfacesFailureWhenFinalizeFails(t *testing.T) {
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 		"": `{"dataPoints":[]}`,
 	})
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -741,7 +742,7 @@ func TestSyncRunExecutorPreservesCursorOnFailedRun(t *testing.T) {
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 		"": `{"dataPoints":[]}`,
 	})
-	if _, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	if _, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -768,7 +769,7 @@ func TestSyncRunExecutorPreservesCursorOnFailedRun(t *testing.T) {
 		}`,
 		"bad-page": `{`,
 	})
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},

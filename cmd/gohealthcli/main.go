@@ -275,10 +275,6 @@ type syncCommandOptions struct {
 	to           string
 	rollup       string
 	sourceFamily string
-	// cancelCh, when closed, asks the Sync Run to stop cleanly between
-	// pagination pages. Closed by the orchestrator's SIGINT handler. nil
-	// disables cancellation (legacy single-type entry point).
-	cancelCh <-chan struct{}
 }
 
 type oauthClientSource struct {
@@ -423,9 +419,10 @@ func productionFetchProfile(accessToken string) (googleProfile, error) {
 }
 
 // productionFetchRawProvider binds the real raw Provider fetch over the
-// shared timeout client.
-func productionFetchRawProvider(request rawProviderRequest, accessToken string) ([]byte, error) {
-	return fetchGoogleHealthRaw(providerHTTPClient, request, accessToken)
+// shared timeout client. ctx scopes the HTTP request so a canceled Sync
+// Run aborts the in-flight call (#284).
+func productionFetchRawProvider(ctx context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	return fetchGoogleHealthRaw(ctx, providerHTTPClient, request, accessToken)
 }
 
 func main() {
@@ -1188,12 +1185,11 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 		rollup:       *syncRollup,
 		sourceFamily: *syncSourceFamily,
 	}
-	cancelCh, stopSignalHandler := installSyncCancelChannel()
+	ctx, stopSignalHandler := installSyncCancelContext()
 	defer stopSignalHandler()
-	options.cancelCh = cancelCh
 
-	orchestrator := newSyncOrchestrator(runtime, cancelCh)
-	results, err := orchestrator.Sync(options)
+	orchestrator := newSyncOrchestrator(runtime)
+	results, err := orchestrator.Sync(ctx, options)
 	if err != nil {
 		// Preflight rejections from the orchestrator (gate-routed) surface
 		// here. status is always sync_failed (never the empty string),
@@ -1249,15 +1245,16 @@ func runSyncWithRuntime(args []string, configPath, archivePath string, mode outp
 	return 0
 }
 
-// installSyncCancelChannel wires a SIGINT handler whose cancellation is
-// delivered via the returned read-only channel. The channel closes when
-// SIGINT fires or when the returned stop function is called (whichever
-// is first); the stop function is idempotent and races cleanly with an
-// in-flight signal. Tests construct the channel directly and pass nil
-// as the runtime stop.
-func installSyncCancelChannel() (<-chan struct{}, func()) {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	return ctx.Done(), stop
+// installSyncCancelContext wires a SIGINT handler whose cancellation is
+// delivered via the returned context. The context cancels when SIGINT
+// fires or when the returned stop function is called (whichever is
+// first); the stop function is idempotent and races cleanly with an
+// in-flight signal. Because the context scopes every Provider HTTP
+// request in the run (#284), SIGINT aborts the in-flight call rather
+// than waiting for the next page boundary. Tests construct a
+// context.WithCancel directly instead.
+func installSyncCancelContext() (context.Context, func()) {
+	return signal.NotifyContext(context.Background(), os.Interrupt)
 }
 
 func runRawWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
@@ -1664,7 +1661,10 @@ func rawSetupWithRuntime(configPath, archivePath string, request rawProviderRequ
 	if err != nil {
 		return nil, err
 	}
-	body, err := runtime.fetchRawProvider(request, accessToken)
+	// raw is an interactive exploration command with no SIGINT
+	// instrumentation; Background keeps the request context-scoped (the
+	// shared timeout client still bounds it) without wiring a handler.
+	body, err := runtime.fetchRawProvider(context.Background(), request, accessToken)
 	if err != nil {
 		return nil, normalizeProviderError(err)
 	}
@@ -2501,7 +2501,11 @@ func listenForOAuthRedirect(redirectURIs []string) (net.Listener, string, error)
 		redirectPath = parsed.EscapedPath()
 		break
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	// Background-scoped (#284): the loopback redirect listener for the
+	// interactive OAuth flow has no cancellation instrumentation — the
+	// flow is bounded by the user closing the browser or the process
+	// exiting, not by a context.
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, "", err
 	}
@@ -2589,13 +2593,19 @@ func waitForOAuthCode(listener net.Listener, wantState string) (string, error) {
 // runtime's HTTP doer, mirroring (*http.Client).PostForm. A nil doer
 // (callers that only set now, mirroring the nil-now fallback above)
 // falls back to the shared timeout client — never the process-wide
-// default client, which carries no deadline (#281).
+// default client, which carries no deadline (#281). The request is
+// Background-scoped (#284): OAuth token exchange/refresh runs from the
+// interactive connect flow and the mid-run refresh hook, neither of
+// which carries SIGINT instrumentation, and the doer's timeout still
+// bounds the call. Threading the Sync Run context through the refresh
+// hook would change its func() shape and is out of #284's
+// in-place-conversion scope.
 func postOAuthForm(runtime runtimeAdapters, tokenURI string, values url.Values) (*http.Response, error) {
 	doer := runtime.httpDoer
 	if doer == nil {
 		doer = providerHTTPClient
 	}
-	request, err := http.NewRequest(http.MethodPost, tokenURI, strings.NewReader(values.Encode()))
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost, tokenURI, strings.NewReader(values.Encode()))
 	if err != nil {
 		return nil, err
 	}
@@ -2757,7 +2767,7 @@ func parseOAuthRefreshTokenResponse(body []byte, now time.Time, fallbackRefreshT
 // carries the HTTP doer (#281). Identity-shape validation stays in
 // parseGoogleIdentity.
 func fetchGoogleIdentity(get providerGET, accessToken string) (googleIdentity, error) {
-	body, err := fetchProviderJSON(get, googleHealthIdentityURL, "identity", accessToken)
+	body, err := fetchProviderJSON(context.Background(), get, googleHealthIdentityURL, "identity", accessToken)
 	if err != nil {
 		return googleIdentity{}, err
 	}
@@ -2771,7 +2781,7 @@ func fetchGoogleIdentity(get providerGET, accessToken string) (googleIdentity, e
 // carries the HTTP doer (#281). Profile-shape validation stays in
 // parseGoogleProfile.
 func fetchGoogleProfile(get providerGET, accessToken string) (googleProfile, error) {
-	body, err := fetchProviderJSON(get, googleHealthProfileURL, "profile", accessToken)
+	body, err := fetchProviderJSON(context.Background(), get, googleHealthProfileURL, "profile", accessToken)
 	if err != nil {
 		return googleProfile{}, err
 	}
@@ -2956,8 +2966,9 @@ func googleHealthFilterValue(field, value string) (string, error) {
 // fetchGoogleHealthRaw is the single-attempt raw Provider fetch. The
 // HTTP doer is injected (#281): production binds the shared timeout
 // client via the fetchRawProvider seam and the runtime adapters; tests
-// bind a fake doer to exercise this body directly.
-func fetchGoogleHealthRaw(doer httpDoer, request rawProviderRequest, accessToken string) ([]byte, error) {
+// bind a fake doer to exercise this body directly. The request is
+// scoped to ctx (#284), so canceling it aborts the in-flight call.
+func fetchGoogleHealthRaw(ctx context.Context, doer httpDoer, request rawProviderRequest, accessToken string) ([]byte, error) {
 	method := request.method
 	if method == "" {
 		method = http.MethodGet
@@ -2966,7 +2977,7 @@ func fetchGoogleHealthRaw(doer httpDoer, request rawProviderRequest, accessToken
 	if len(request.body) != 0 {
 		requestBody = bytes.NewReader(request.body)
 	}
-	httpRequest, err := http.NewRequest(method, request.url, requestBody)
+	httpRequest, err := http.NewRequestWithContext(ctx, method, request.url, requestBody)
 	if err != nil {
 		return nil, err
 	}

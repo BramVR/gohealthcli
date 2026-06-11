@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -78,7 +79,7 @@ var settingsSnapshotCommand = identitySnapshotCommandSpec[settingsResult, google
 // errors, JSON validity, and retry/Retry-After. The module value
 // carries the HTTP doer (#281).
 func fetchGoogleSettings(get providerGET, accessToken string) (googleSettings, error) {
-	body, err := fetchProviderJSON(get, googleHealthSettingsURL, "settings", accessToken)
+	body, err := fetchProviderJSON(context.Background(), get, googleHealthSettingsURL, "settings", accessToken)
 	if err != nil {
 		return googleSettings{}, err
 	}

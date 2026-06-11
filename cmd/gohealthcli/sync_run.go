@@ -1,5 +1,7 @@
 package main
 
+import "context"
+
 type syncRunExecutor struct {
 	runtime runtimeAdapters
 }
@@ -30,14 +32,14 @@ func preflightFailureResult(options syncCommandOptions, err error) syncResult {
 // that invariant. After Validate, the post-preflight path lives in
 // syncRunLifecycle.Run (PRD #141 slice 4 AC #1): this method is a thin
 // caller composing the gate and the lifecycle.
-func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
+func (executor syncRunExecutor) Execute(ctx context.Context, options syncCommandOptions) (syncResult, error) {
 	runtime := executor.runtime.withDefaults()
 	gate := syncPreflightGate{ctx: productionSyncPreflightContext(options, runtime)}
 	plan, err := gate.Validate(options)
 	if err != nil {
 		return preflightFailureResult(options, err), err
 	}
-	return syncRunLifecycle{options: options, plan: plan, runtime: runtime}.Run()
+	return syncRunLifecycle{options: options, plan: plan, runtime: runtime}.Run(ctx)
 }
 
 func applyGoogleHealthIngestionCounts(result *syncResult, ingestionResult googleHealthIngestionResult) {

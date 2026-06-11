@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -13,7 +14,7 @@ import (
 // without growing the shared fixture provider.
 type funcIngestionProvider func(request rawProviderRequest, accessToken string) ([]byte, error)
 
-func (fetch funcIngestionProvider) Fetch(request rawProviderRequest, accessToken string, _ <-chan struct{}) ([]byte, error) {
+func (fetch funcIngestionProvider) Fetch(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 	return fetch(request, accessToken)
 }
 
@@ -92,7 +93,7 @@ func TestGoogleHealthIngestionRefreshesAccessTokenMidRunOn401(t *testing.T) {
 		return "fresh-access", nil
 	}
 
-	result, err := ingestion.Execute(archive, request)
+	result, err := ingestion.Execute(context.Background(), archive, request)
 	if err != nil {
 		t.Fatalf("ingest Data Points across token expiry: %v", err)
 	}
@@ -131,7 +132,7 @@ func TestGoogleHealthIngestionFailsWhenRefreshedTokenStillUnauthorized(t *testin
 		return "fresh-access", nil
 	}
 
-	_, err := ingestion.Execute(archive, request)
+	_, err := ingestion.Execute(context.Background(), archive, request)
 	if err == nil || !strings.Contains(err.Error(), "Google Health rejected stored Connection token") {
 		t.Fatalf("ingest error = %v, want rejected-token failure", err)
 	}
@@ -162,7 +163,7 @@ func TestGoogleHealthIngestionSurfacesMidRunRefreshFailure(t *testing.T) {
 		return "", refreshErr
 	}
 
-	_, err := ingestion.Execute(archive, request)
+	_, err := ingestion.Execute(context.Background(), archive, request)
 	if !errors.Is(err, refreshErr) {
 		t.Fatalf("ingest error = %v, want the refresh failure", err)
 	}
@@ -172,21 +173,22 @@ func TestGoogleHealthIngestionSurfacesMidRunRefreshFailure(t *testing.T) {
 }
 
 // TestGoogleHealthIngestionDoesNotRefreshAfter401WhenCanceled pins the
-// cancellation contract on the refresh path: when SIGINT closes the
-// cancel channel while the 401-failing request is in flight, the next
+// cancellation contract on the refresh path: when SIGINT cancels the
+// run's context while the 401-failing request is in flight, the next
 // boundary is BEFORE the token refresh — ingestion must surface
 // errSyncCanceled instead of spending a refresh + retry the user no
 // longer wants.
 func TestGoogleHealthIngestionDoesNotRefreshAfter401WhenCanceled(t *testing.T) {
 	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}
-	cancelCh := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	canceled := false
 	provider := funcIngestionProvider(func(request rawProviderRequest, accessToken string) ([]byte, error) {
 		// Simulate the signal landing while the failing request is in
-		// flight: close the channel, then surface the 401.
+		// flight: cancel the context, then surface the 401.
 		if !canceled {
-			close(cancelCh)
+			cancel()
 			canceled = true
 		}
 		return nil, &googleHealthHTTPError{StatusCode: 401}
@@ -197,14 +199,13 @@ func TestGoogleHealthIngestionDoesNotRefreshAfter401WhenCanceled(t *testing.T) {
 		from:     "2026-01-01",
 		to:       "2026-01-02T00:00:00Z",
 	})
-	request.cancelCh = cancelCh
 	refreshCalls := 0
 	request.refreshAccessToken = func() (string, error) {
 		refreshCalls++
 		return "fresh-access", nil
 	}
 
-	_, err := ingestion.Execute(archive, request)
+	_, err := ingestion.Execute(ctx, archive, request)
 	if !errors.Is(err, errSyncCanceled) {
 		t.Fatalf("ingest error = %v, want errSyncCanceled", err)
 	}
@@ -228,7 +229,7 @@ func TestGoogleHealthIngestionWithoutRefreshHookSurfaces401(t *testing.T) {
 		to:       "2026-01-02T00:00:00Z",
 	})
 
-	_, err := ingestion.Execute(archive, request)
+	_, err := ingestion.Execute(context.Background(), archive, request)
 	if err == nil || !strings.Contains(err.Error(), "Google Health rejected stored Connection token") {
 		t.Fatalf("ingest error = %v, want rejected-token failure", err)
 	}
@@ -266,7 +267,7 @@ func TestGoogleHealthIngestionRefreshesAccessTokenMidRunForRollups(t *testing.T)
 		return "fresh-access", nil
 	}
 
-	result, err := ingestion.Execute(archive, request)
+	result, err := ingestion.Execute(context.Background(), archive, request)
 	if err != nil {
 		t.Fatalf("ingest daily Rollups across token expiry: %v", err)
 	}

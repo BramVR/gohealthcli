@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"testing"
 	"time"
 )
@@ -61,7 +62,7 @@ func TestSyncWritesHeartbeatAfterEachPage(t *testing.T) {
 	// exactly the moment a `sync --status` reader in another process
 	// would observe the in-flight row.
 	var midRun *probedSyncRunRow
-	testRuntime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		pageToken := mustURLQuery(t, request.url).Get("pageToken")
 		switch pageToken {
 		case "":

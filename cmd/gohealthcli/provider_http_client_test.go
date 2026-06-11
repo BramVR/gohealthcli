@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -362,7 +363,7 @@ func TestRawProviderFetchFailsStalledProviderByDeadline(t *testing.T) {
 	t.Parallel()
 	server := startStalledProviderServer(t)
 
-	_, err := fetchGoogleHealthRaw(shortTimeoutDoer(), rawProviderRequest{url: server.URL}, "test-access-token")
+	_, err := fetchGoogleHealthRaw(context.Background(), shortTimeoutDoer(), rawProviderRequest{url: server.URL}, "test-access-token")
 	if err == nil {
 		t.Fatal("expected a stalled raw Provider fetch to fail by deadline, got success")
 	}
@@ -377,7 +378,11 @@ func TestProviderHTTPClientFailsStalledRequestByDeadline(t *testing.T) {
 	server := startStalledProviderServer(t)
 
 	client := newProviderHTTPClient(50 * time.Millisecond)
-	response, err := client.Get(server.URL)
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	response, err := client.Do(request)
 	if err == nil {
 		response.Body.Close()
 		t.Fatal("expected a stalled Provider request to fail by deadline, got a response")

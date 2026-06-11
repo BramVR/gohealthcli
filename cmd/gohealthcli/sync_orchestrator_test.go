@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"net/url"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -16,7 +19,7 @@ import (
 func installMultiTypeSyncFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, perType map[string]string) (runtimeAdapters, *[]rawProviderRequest) {
 	t.Helper()
 	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("multi-type sync access token = %q, want stored token", accessToken)
 		}
@@ -50,8 +53,8 @@ func TestSyncOrchestratorFansOutOnePerDataType(t *testing.T) {
 		"heart-rate": `{"dataPoints":[]}`,
 	})
 
-	orchestrator := newSyncOrchestrator(testRuntime, nil)
-	results, err := orchestrator.Sync(syncCommandOptions{
+	orchestrator := newSyncOrchestrator(testRuntime)
+	results, err := orchestrator.Sync(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps", "heart-rate"},
@@ -98,8 +101,8 @@ func TestSyncOrchestratorIsolatesPerTypeFailures(t *testing.T) {
 		"heart-rate": `{"dataPoints":[]}`,
 	})
 
-	orchestrator := newSyncOrchestrator(testRuntime, nil)
-	results, err := orchestrator.Sync(syncCommandOptions{
+	orchestrator := newSyncOrchestrator(testRuntime)
+	results, err := orchestrator.Sync(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps", "heart-rate"},
@@ -136,21 +139,22 @@ func TestSyncOrchestratorRespectsCancellationBetweenDataTypes(t *testing.T) {
 	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 
-	cancelCh := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	stepsCalled := false
-	testRuntime.fetchRawProvider = func(request rawProviderRequest, _ string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, _ string) ([]byte, error) {
 		if request.dataType == "steps" {
 			stepsCalled = true
-			// Close the channel after the first Data Type finishes its single page.
-			close(cancelCh)
+			// Cancel after the first Data Type finishes its single page.
+			cancel()
 			return []byte(`{"dataPoints":[]}`), nil
 		}
 		t.Fatalf("orchestrator continued past cancellation: hit dataType %q", request.dataType)
 		return nil, nil
 	}
 
-	orchestrator := newSyncOrchestrator(testRuntime, cancelCh)
-	results, err := orchestrator.Sync(syncCommandOptions{
+	orchestrator := newSyncOrchestrator(testRuntime)
+	results, err := orchestrator.Sync(ctx, syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps", "heart-rate"},
@@ -193,13 +197,13 @@ func TestSyncOrchestratorRespectsCancellationBetweenDataTypes(t *testing.T) {
 }
 
 // TestSyncRunLifecycleClosesSIGINTPreFirstDataTypeRace pins PRD #141
-// slice 5 AC #1: a cancelCh that is already closed when the
+// slice 5 AC #1: a run context that is already canceled when the
 // post-preflight lifecycle is entered must NOT write a sync_runs audit
-// row. Pre-slice-5, the lifecycle plumbed cancelCh into the ingestion
-// page loop but called StartSyncRun before any cancel check, so a
-// SIGINT that landed between the orchestrator's loop-top guard and the
-// first lifecycle.Run call still booked an audit row marked
-// sync_canceled. Slice 5 closes that window by checking cancelCh at
+// row. Pre-slice-5, the lifecycle plumbed the cancel signal into the
+// ingestion page loop but called StartSyncRun before any cancel check,
+// so a SIGINT that landed between the orchestrator's loop-top guard and
+// the first lifecycle.Run call still booked an audit row marked
+// sync_canceled. Slice 5 closes that window by checking for cancel at
 // the top of syncRunLifecycle.Run, so the doc-claimed no-audit-row
 // branch is genuinely reachable. This test exercises the seam
 // directly via syncRunExecutor.Execute (the layer the orchestrator
@@ -219,28 +223,27 @@ func TestSyncRunLifecycleClosesSIGINTPreFirstDataTypeRace(t *testing.T) {
 		t.Fatalf("connect setup: %v", err)
 	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
-	testRuntime.fetchRawProvider = func(request rawProviderRequest, _ string) ([]byte, error) {
-		t.Fatalf("upstream Fetch invoked despite pre-closed cancelCh; lifecycle must short-circuit before any work")
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, _ string) ([]byte, error) {
+		t.Fatalf("upstream Fetch invoked despite pre-canceled context; lifecycle must short-circuit before any work")
 		return nil, nil
 	}
 
-	cancelCh := make(chan struct{})
-	close(cancelCh)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(ctx, syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
 		from:        "2026-01-01",
 		to:          "2026-01-02T00:00:00Z",
-		cancelCh:    cancelCh,
 	})
 	// The lifecycle surfaces errSyncCanceled for consistency with the
 	// mid-pagination cancel path (the orchestrator already swallows it
 	// into the result slice). What matters for AC #1 is the structural
 	// shape: status, no SyncRunID, no audit row.
 	if err != nil && !errors.Is(err, errSyncCanceled) {
-		t.Fatalf("Execute with pre-closed cancelCh: %v, want nil or errSyncCanceled", err)
+		t.Fatalf("Execute with pre-canceled context: %v, want nil or errSyncCanceled", err)
 	}
 	if result.Status != "sync_canceled" {
 		t.Fatalf("Status = %q, want sync_canceled (pre-first-Run cancel must surface as canceled, never the empty string)", result.Status)
@@ -254,23 +257,22 @@ func TestSyncRunLifecycleClosesSIGINTPreFirstDataTypeRace(t *testing.T) {
 // TestSyncOrchestratorCancelBetweenLoopGuardAndLifecycleWritesNoAuditRow
 // pins PRD #141 slice 5 at the exact race window the slice closes: a
 // SIGINT that lands AFTER orchestrator.Sync's loop-top guard observes
-// cancelCh open BUT BEFORE syncRunLifecycle.Run reaches its
+// the context as live BUT BEFORE syncRunLifecycle.Run reaches its
 // pre-StartSyncRun cancel check.
 //
 // Why a different shape than the lifecycle-level test:
-// pre-closing cancelCh before orchestrator.Sync runs would be caught by
-// the orchestrator's loop-top guard at sync_orchestrator.go:58 on the
-// first iteration and break out before any executor call — that
-// scenario passes pre-fix and post-fix identically, so it does not
-// exercise the race window the slice actually closes. To exercise that
-// window we close cancelCh DURING gate.Validate (specifically, inside
-// the gate's currentConnection() lookup, which runs after the
-// orchestrator's loop-top guard observed the channel as open and before
-// lifecycle.Run gets a chance to check it). Without slice 5's check at
-// syncRunLifecycle.Run's first line, this sequence would proceed
-// straight to StartSyncRun and book a sync_runs row; with slice 5 in
-// place, the lifecycle catches the now-closed channel and returns
-// sync_canceled with zero audit rows.
+// pre-canceling the context before orchestrator.Sync runs would be
+// caught by the orchestrator's loop-top guard on the first iteration
+// and break out before any executor call — that scenario passes pre-fix
+// and post-fix identically, so it does not exercise the race window the
+// slice actually closes. To exercise that window we cancel DURING
+// gate.Validate (specifically, inside the gate's currentConnection()
+// lookup, which runs after the orchestrator's loop-top guard observed a
+// live context and before lifecycle.Run gets a chance to check it).
+// Without slice 5's check at syncRunLifecycle.Run's first line, this
+// sequence would proceed straight to StartSyncRun and book a sync_runs
+// row; with slice 5 in place, the lifecycle catches the now-canceled
+// context and returns sync_canceled with zero audit rows.
 //
 // The seam used here — the runtime adapters' openHealthArchiveWriter —
 // is called from productionSyncPreflightContext.currentConnection
@@ -291,17 +293,18 @@ func TestSyncOrchestratorCancelBetweenLoopGuardAndLifecycleWritesNoAuditRow(t *t
 		t.Fatalf("connect setup: %v", err)
 	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
-	testRuntime.fetchRawProvider = func(request rawProviderRequest, _ string) ([]byte, error) {
-		t.Fatalf("orchestrator reached upstream Fetch despite cancelCh closed during gate.Validate")
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, _ string) ([]byte, error) {
+		t.Fatalf("orchestrator reached upstream Fetch despite context canceled during gate.Validate")
 		return nil, nil
 	}
 
-	cancelCh := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// Wrap the archive opener so that the FIRST open (which happens
-	// inside gate.Validate's currentConnection lookup) closes cancelCh.
-	// That places the close strictly AFTER the orchestrator's loop-top
-	// guard observed an open channel (the guard runs before
+	// inside gate.Validate's currentConnection lookup) cancels the run
+	// context. That places the cancel strictly AFTER the orchestrator's
+	// loop-top guard observed a live context (the guard runs before
 	// executor.Execute) and strictly BEFORE syncRunLifecycle.Run's
 	// pre-StartSyncRun cancel check fires (which is the first thing
 	// lifecycle.Run does). This is the exact race window slice 5 closes.
@@ -309,19 +312,18 @@ func TestSyncOrchestratorCancelBetweenLoopGuardAndLifecycleWritesNoAuditRow(t *t
 	testRuntime.openHealthArchiveWriter = func(path string) (healthArchiveWriter, error) {
 		opens++
 		if opens == 1 {
-			close(cancelCh)
+			cancel()
 		}
 		return openHealthArchiveWriter(path)
 	}
 
-	orchestrator := newSyncOrchestrator(testRuntime, cancelCh)
-	results, err := orchestrator.Sync(syncCommandOptions{
+	orchestrator := newSyncOrchestrator(testRuntime)
+	results, err := orchestrator.Sync(ctx, syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps", "heart-rate"},
 		from:        "2026-01-01",
 		to:          "2026-01-02T00:00:00Z",
-		cancelCh:    cancelCh,
 	})
 	if err != nil {
 		t.Fatalf("orchestrator.Sync: %v", err)
@@ -338,7 +340,7 @@ func TestSyncOrchestratorCancelBetweenLoopGuardAndLifecycleWritesNoAuditRow(t *t
 		}
 	}
 	// AC #1: no sync_runs audit row may exist — lifecycle.Run must
-	// short-circuit before StartSyncRun on the cancelCh it observes at
+	// short-circuit before StartSyncRun on the context it observes at
 	// entry.
 	assertArchiveTableCount(t, archivePath, "sync_runs", 0)
 }
@@ -358,15 +360,16 @@ func TestSyncOrchestratorCancelsActiveDataTypeMidPagination(t *testing.T) {
 	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 
-	cancelCh := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	pageCount := 0
-	testRuntime.fetchRawProvider = func(request rawProviderRequest, _ string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, _ string) ([]byte, error) {
 		pageCount++
 		if pageCount == 1 {
 			// First page succeeds with one Data Point and signals more pages.
-			// Close cancel before returning so the executor's between-pages
+			// Cancel before returning so the executor's between-pages
 			// check at the top of the next iteration observes it.
-			close(cancelCh)
+			cancel()
 			return []byte(`{
 				"dataPoints": [{
 					"name": "users/me/dataTypes/steps/dataPoints/cancel-test",
@@ -380,8 +383,8 @@ func TestSyncOrchestratorCancelsActiveDataTypeMidPagination(t *testing.T) {
 		return nil, errors.New("unreachable")
 	}
 
-	orchestrator := newSyncOrchestrator(testRuntime, cancelCh)
-	results, err := orchestrator.Sync(syncCommandOptions{
+	orchestrator := newSyncOrchestrator(testRuntime)
+	results, err := orchestrator.Sync(ctx, syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -416,6 +419,102 @@ func TestSyncOrchestratorCancelsActiveDataTypeMidPagination(t *testing.T) {
 	}
 }
 
+// TestSyncRunExecutorCancelMidFetchFinalizesCanceledAndKeepsCursor is
+// the #284 end-to-end pin at the executor seam: the cancel fires while
+// the Provider fetch is IN FLIGHT (the fake blocks until the run
+// context cancels — there is no next page boundary to save us). The
+// run must return promptly, finalize as sync_canceled in both the
+// envelope and the persisted sync_runs row, and leave the Sync Cursor
+// un-advanced (ADR-0008).
+func TestSyncRunExecutorCancelMidFetchFinalizesCanceledAndKeepsCursor(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
+		t.Fatalf("connect setup: %v", err)
+	}
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fetchEntered := make(chan struct{})
+	var enterOnce sync.Once
+	testRuntime.fetchRawProvider = func(ctx context.Context, request rawProviderRequest, _ string) ([]byte, error) {
+		enterOnce.Do(func() { close(fetchEntered) })
+		// Simulate a stalled upstream: the request only returns when the
+		// run context aborts it, exactly like net/http with a
+		// context-scoped request.
+		<-ctx.Done()
+		return nil, &url.Error{Op: "Get", URL: request.url, Err: ctx.Err()}
+	}
+
+	type executeOutcome struct {
+		result syncResult
+		err    error
+	}
+	done := make(chan executeOutcome, 1)
+	go func() {
+		result, err := (syncRunExecutor{runtime: testRuntime}).Execute(ctx, syncCommandOptions{
+			configPath:  configPath,
+			archivePath: archivePath,
+			dataTypes:   []string{"steps"},
+			from:        "2026-01-01",
+			to:          "2026-01-02T00:00:00Z",
+		})
+		done <- executeOutcome{result: result, err: err}
+	}()
+
+	select {
+	case <-fetchEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Provider fetch never started")
+	}
+	cancel()
+
+	var outcome executeOutcome
+	select {
+	case outcome = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Execute did not return within 2s of cancel; the in-flight fetch was not aborted")
+	}
+	if !errors.Is(outcome.err, errSyncCanceled) {
+		t.Fatalf("Execute err = %v, want errSyncCanceled", outcome.err)
+	}
+	if outcome.result.Status != "sync_canceled" {
+		t.Fatalf("Status = %q, want sync_canceled", outcome.result.Status)
+	}
+	if outcome.result.SyncRunID == 0 {
+		t.Fatal("SyncRunID = 0, want a persisted audit row (cancel landed mid-run, after StartSyncRun)")
+	}
+
+	// The persisted audit row must agree with the envelope, and the
+	// canceled run must not have advanced any cursor (ADR-0008).
+	db, err := openArchiveReadOnly(archivePath)
+	if err != nil {
+		t.Fatalf("reopen archive: %v", err)
+	}
+	defer db.Close()
+	var persistedStatus string
+	if err := db.QueryRow(`SELECT status FROM sync_runs WHERE id = ?`, outcome.result.SyncRunID).Scan(&persistedStatus); err != nil {
+		t.Fatalf("scan sync_runs status: %v", err)
+	}
+	if persistedStatus != "sync_canceled" {
+		t.Fatalf("persisted sync_runs.status = %q, want sync_canceled", persistedStatus)
+	}
+	var cursorCount int
+	if err := db.QueryRow(`SELECT count(*) FROM sync_cursors`).Scan(&cursorCount); err != nil {
+		t.Fatalf("scan sync_cursors count: %v", err)
+	}
+	if cursorCount != 0 {
+		t.Fatalf("sync_cursors rows = %d, want 0 (canceled run must not advance any cursor)", cursorCount)
+	}
+}
+
 func TestSyncOrchestratorRejectsAllAndTypesTogether(t *testing.T) {
 	t.Parallel()
 	tempDir := t.TempDir()
@@ -423,7 +522,7 @@ func TestSyncOrchestratorRejectsAllAndTypesTogether(t *testing.T) {
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{accessToken: "x"})
 	_ = testRuntime
 
-	_, err := newSyncOrchestrator(testRuntime, nil).Sync(syncCommandOptions{
+	_, err := newSyncOrchestrator(testRuntime).Sync(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		allTypes:    true,
@@ -436,15 +535,15 @@ func TestSyncOrchestratorRejectsAllAndTypesTogether(t *testing.T) {
 	}
 }
 
-func TestInstallSyncCancelChannelClosesOnSIGINT(t *testing.T) {
+func TestInstallSyncCancelContextCancelsOnSIGINT(t *testing.T) {
 	// NOT t.Parallel(): this test SIGINTs the whole test process
 	// (syscall.Kill(Getpid())). Any concurrently-running test that has
 	// a signal.NotifyContext installed — every `sync` / `raw` dispatch
 	// — would observe the signal and flake as sync_canceled.
 	if runtime.GOOS == "windows" {
-		t.Skip("syscall.Kill(SIGINT) is POSIX-only; the cancel-channel install path itself is exercised by TestInstallSyncCancelChannelClosesOnStop on every platform")
+		t.Skip("syscall.Kill(SIGINT) is POSIX-only; the cancel-context install path itself is exercised by TestInstallSyncCancelContextCancelsOnStop on every platform")
 	}
-	cancelCh, stop := installSyncCancelChannel()
+	ctx, stop := installSyncCancelContext()
 	defer stop()
 
 	if err := syscall.Kill(syscall.Getpid(), syscall.SIGINT); err != nil {
@@ -452,23 +551,23 @@ func TestInstallSyncCancelChannelClosesOnSIGINT(t *testing.T) {
 	}
 
 	select {
-	case <-cancelCh:
-		// expected — signal handler closed the channel
+	case <-ctx.Done():
+		// expected — signal handler canceled the context
 	case <-time.After(2 * time.Second):
-		t.Fatal("cancelCh did not close within 2s after SIGINT")
+		t.Fatal("context did not cancel within 2s after SIGINT")
 	}
 }
 
-func TestInstallSyncCancelChannelClosesOnStop(t *testing.T) {
+func TestInstallSyncCancelContextCancelsOnStop(t *testing.T) {
 	t.Parallel()
-	cancelCh, stop := installSyncCancelChannel()
+	ctx, stop := installSyncCancelContext()
 	stop()
 
 	select {
-	case <-cancelCh:
+	case <-ctx.Done():
 		// expected — stop cancels the underlying context
 	case <-time.After(2 * time.Second):
-		t.Fatal("cancelCh did not close within 2s after stop()")
+		t.Fatal("context did not cancel within 2s after stop()")
 	}
 	// stop is idempotent — calling it again must not panic.
 	stop()
@@ -482,22 +581,18 @@ func TestInstallSyncCancelChannelClosesOnStop(t *testing.T) {
 // preflightRuleAllVsTypesConflict, completely breaking --all.
 func TestPerTypeSyncOptionsClearsAllTypes(t *testing.T) {
 	t.Parallel()
-	cancel := make(chan struct{})
 	options := syncCommandOptions{
 		allTypes:  true,
 		dataTypes: []string{"steps", "heart-rate"},
 		from:      "2026-01-01",
 		to:        "2026-01-02T00:00:00Z",
 	}
-	perType := perTypeSyncOptions(options, "steps", cancel)
+	perType := perTypeSyncOptions(options, "steps")
 	if perType.allTypes {
 		t.Errorf("perType.allTypes = true, want false (gate rejects allTypes alongside dataTypes)")
 	}
 	if len(perType.dataTypes) != 1 || perType.dataTypes[0] != "steps" {
 		t.Errorf("perType.dataTypes = %v, want [\"steps\"]", perType.dataTypes)
-	}
-	if perType.cancelCh != cancel {
-		t.Error("perType.cancelCh not wired from orchestrator")
 	}
 	if perType.from != options.from || perType.to != options.to {
 		t.Errorf("perType drops --from/--to: from=%q to=%q", perType.from, perType.to)
@@ -565,7 +660,7 @@ func TestFanOutMessageFailedReportsAttempted(t *testing.T) {
 
 func TestSyncOrchestratorAllExpandsToSyncableDefaultDataTypes(t *testing.T) {
 	t.Parallel()
-	orchestrator := newSyncOrchestrator(runtimeAdapters{}, nil)
+	orchestrator := newSyncOrchestrator(runtimeAdapters{})
 	got, err := orchestrator.expandDataTypes(syncCommandOptions{allTypes: true})
 	if err != nil {
 		t.Fatalf("expandDataTypes(--all): %v", err)

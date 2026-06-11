@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -3092,7 +3093,7 @@ func TestStatusReportsHealthArchiveCountsAndSyncRunsReadOnly(t *testing.T) {
 		t.Fatal("status should not call Provider profile")
 		return googleProfile{}, nil
 	}
-	testRuntime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		t.Fatal("status should not call Provider raw endpoints")
 		return nil, nil
 	}
@@ -5049,7 +5050,7 @@ func TestSyncProviderFailureRecordsFailedRun(t *testing.T) {
 	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	testRuntime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != "connect-access-secret" {
 			t.Fatalf("sync access token = %q, want stored token", accessToken)
 		}
@@ -5106,7 +5107,7 @@ func TestSyncRefusesDifferentProviderIdentityBeforeArchiving(t *testing.T) {
 		legacyFitbitUserID: "DIFFERENT",
 		rawJSON:            `{"healthUserId":"222222222222222222","legacyUserId":"DIFFERENT"}`,
 	})
-	testRuntime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		t.Fatal("sync provider fetch should not run after identity mismatch")
 		return nil, nil
 	}
@@ -5224,7 +5225,7 @@ func TestSyncFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	setConnectionTokenScopes(t, archivePath, []string{googleHealthProfileReadonlyScope})
-	testRuntime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		t.Fatal("sync provider fetch should not run with missing scope")
 		return nil, nil
 	}
@@ -5266,7 +5267,7 @@ func TestSyncSampleDataTypeFailsBeforeProviderWhenHealthMetricsScopeMissing(t *t
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	setConnectionTokenScopes(t, archivePath, []string{googleHealthProfileReadonlyScope, googleHealthActivityReadonlyScope})
-	testRuntime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		t.Fatal("sync provider fetch should not run with missing health metrics scope")
 		return nil, nil
 	}
@@ -5445,7 +5446,7 @@ func TestRawProviderErrorDoesNotLeakToken(t *testing.T) {
 	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	testRuntime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != "connect-access-secret" {
 			t.Fatalf("raw access token = %q, want stored token", accessToken)
 		}
@@ -5507,7 +5508,7 @@ func TestRawDataTypeFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update token scopes: %v", err)
 	}
-	testRuntime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		t.Fatal("raw provider fetch should not run with missing scope")
 		return nil, nil
 	}
@@ -6212,7 +6213,7 @@ func TestFetchGoogleHealthRawUsesBearerAndHidesErrorBody(t *testing.T) {
 		}, nil
 	})}
 
-	_, err := fetchGoogleHealthRaw(doer, rawProviderRequest{endpointName: "getIdentity", url: googleHealthIdentityURL}, "access-secret-value")
+	_, err := fetchGoogleHealthRaw(context.Background(), doer, rawProviderRequest{endpointName: "getIdentity", url: googleHealthIdentityURL}, "access-secret-value")
 	if err == nil {
 		t.Fatal("fetch raw error = nil, want HTTP failure")
 	}
@@ -7211,7 +7212,7 @@ func bindProfileFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToke
 func bindRawFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, response func(rawProviderRequest) []byte) {
 	t.Helper()
 
-	runtime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("raw access token = %q, want stored token", accessToken)
 		}
@@ -7231,7 +7232,7 @@ func withStepSyncFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToke
 	t.Helper()
 
 	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("sync access token = %q, want stored token", accessToken)
 		}
@@ -7261,7 +7262,7 @@ func withStepReconcileFetchFake(t *testing.T, runtime runtimeAdapters, wantAcces
 	t.Helper()
 
 	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("reconcile sync access token = %q, want stored token", accessToken)
 		}
@@ -7293,7 +7294,7 @@ func bindDataPointReconcileFetchFake(t *testing.T, runtime *runtimeAdapters, wan
 	t.Helper()
 
 	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("reconcile sync access token = %q, want stored token", accessToken)
 		}
@@ -7334,7 +7335,7 @@ func withStepDailyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAcc
 	t.Helper()
 
 	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("rollup sync access token = %q, want stored token", accessToken)
 		}
@@ -7408,7 +7409,7 @@ func withHeartRateHourlyRollupFetchFake(t *testing.T, runtime runtimeAdapters, w
 	t.Helper()
 
 	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("rollup sync access token = %q, want stored token", accessToken)
 		}
@@ -7456,7 +7457,7 @@ func bindDataPointSyncFetchFake(t *testing.T, runtime *runtimeAdapters, wantAcce
 	t.Helper()
 
 	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("sync access token = %q, want stored token", accessToken)
 		}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os/exec"
 	goruntime "runtime"
 	"time"
@@ -21,7 +22,7 @@ type runtimeAdapters struct {
 	fetchPairedDevices func(string) (googlePairedDevices, error)
 	fetchSettings      func(string) (googleSettings, error)
 	fetchIRNProfile    func(string) (googleIRNProfile, error)
-	fetchRawProvider   func(rawProviderRequest, string) ([]byte, error)
+	fetchRawProvider   func(context.Context, rawProviderRequest, string) ([]byte, error)
 	// openHealthArchiveWriter opens the Health Archive write handle the
 	// Sync Run path uses (gate connection lookup + lifecycle). Tests
 	// wrap it to inject failing writers; production binds the real
@@ -165,8 +166,8 @@ func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
 		}
 	}
 	if adapters.fetchRawProvider == nil {
-		adapters.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
-			return fetchGoogleHealthRaw(adapters.httpDoer, request, accessToken)
+		adapters.fetchRawProvider = func(ctx context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+			return fetchGoogleHealthRaw(ctx, adapters.httpDoer, request, accessToken)
 		}
 	}
 	if adapters.openHealthArchiveWriter == nil {
