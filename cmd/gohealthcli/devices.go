@@ -161,6 +161,12 @@ func devicesSetupWithRuntime(configPath, archivePath string, runtime runtimeAdap
 	}
 	devices, err := fetchPairedDevices(accessToken)
 	if err != nil {
+		// Provider outage (non-auth HTTP failure or network error) gets
+		// its own documented JSON failure status so automation can tell
+		// it apart from local misconfiguration (issue #272).
+		if isProviderUnreachableError(err) {
+			result.Status = "provider_unreachable"
+		}
 		return result, currentConnectionProviderError(err)
 	}
 	result.Devices = parsePairedDeviceSummaries(devices.rawJSON)
