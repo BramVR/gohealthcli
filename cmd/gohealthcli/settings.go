@@ -148,7 +148,13 @@ func settingsSetupWithRuntime(configPath, archivePath string, runtime runtimeAda
 	}
 	settings, err := fetchSettings(accessToken)
 	if err != nil {
-		return result, currentConnectionProviderError(err)
+		// Provider outage (non-auth HTTP failure or network error) gets
+		// its own documented JSON failure status so automation can tell
+		// it apart from local misconfiguration (issue #272).
+		if isProviderUnreachableError(err) {
+			result.Status = "provider_unreachable"
+		}
+		return result, normalizeProviderError(err)
 	}
 	fetchedAt := runtime.now().UTC().Format(time.RFC3339)
 	snapshotID, err := writeIdentitySnapshotHandoff(archive, archivePath, connection, "settings", settings.rawJSON, fetchedAt)
@@ -180,7 +186,10 @@ func fetchGoogleSettings(accessToken string) (googleSettings, error) {
 		return googleSettings{}, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return googleSettings{}, fmt.Errorf("Google Health settings request failed with HTTP %d", response.StatusCode)
+		// Typed so the translation layer can branch on the status code
+		// via errors.As instead of message text (issue #272). The
+		// endpoint label keeps the historical message verbatim.
+		return googleSettings{}, &googleHealthHTTPError{StatusCode: response.StatusCode, endpoint: "settings"}
 	}
 	if !json.Valid(body) {
 		return googleSettings{}, errors.New("Google Health settings response is not valid JSON")

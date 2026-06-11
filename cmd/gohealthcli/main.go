@@ -1397,7 +1397,15 @@ func runRawWithRuntime(args []string, configPath, archivePath string, mode outpu
 	}
 	body, err := rawSetupWithRuntime(options.configPath, options.archivePath, request, runtime)
 	if err != nil {
-		return ReportFailure(FailureReport{Command: "raw", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
+		// Provider outage (non-auth HTTP failure or network error) maps
+		// to the documented provider_unreachable failure status so JSON
+		// consumers can tell it apart from local misconfiguration
+		// (issue #272); everything else stays operation_failed.
+		status := StatusOperationFailed
+		if isProviderUnreachableError(err) {
+			status = StatusProviderUnreachable
+		}
+		return ReportFailure(FailureReport{Command: "raw", Status: status, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	if _, err := stdout.Write(body); err != nil {
 		return ReportFailure(FailureReport{
@@ -1567,6 +1575,11 @@ func identitySetupWithRuntime(configPath, archivePath string, runtime runtimeAda
 	if err != nil {
 		if isCurrentConnectionIdentityMismatch(err) {
 			result.Status = "identity_mismatch"
+		} else if isProviderUnreachableError(err) {
+			// Provider outage (non-auth HTTP failure or network error)
+			// gets its own documented JSON failure status so automation
+			// can tell it apart from local misconfiguration (issue #272).
+			result.Status = "provider_unreachable"
 		}
 		return result, err
 	}
@@ -1638,7 +1651,13 @@ func profileSetupWithRuntime(configPath, archivePath string, runtime runtimeAdap
 	}
 	profile, err := runtime.fetchProfile(accessToken)
 	if err != nil {
-		return result, currentConnectionProviderError(err)
+		// Provider outage (non-auth HTTP failure or network error) gets
+		// its own documented JSON failure status so automation can tell
+		// it apart from local misconfiguration (issue #272).
+		if isProviderUnreachableError(err) {
+			result.Status = "provider_unreachable"
+		}
+		return result, normalizeProviderError(err)
 	}
 	profileHealthUserID := profile.healthUserID
 	if profileHealthUserID == "" {
@@ -1646,6 +1665,8 @@ func profileSetupWithRuntime(configPath, archivePath string, runtime runtimeAdap
 		if err != nil {
 			if isCurrentConnectionIdentityMismatch(err) {
 				result.Status = "profile_mismatch"
+			} else if isProviderUnreachableError(err) {
+				result.Status = "provider_unreachable"
 			}
 			return result, err
 		}
@@ -1849,7 +1870,7 @@ func rawSetupWithRuntime(configPath, archivePath string, request rawProviderRequ
 	}
 	body, err := runtime.fetchRawProvider(request, accessToken)
 	if err != nil {
-		return nil, currentConnectionProviderError(err)
+		return nil, normalizeProviderError(err)
 	}
 	return body, nil
 }
@@ -2932,7 +2953,10 @@ func fetchGoogleIdentity(accessToken string) (googleIdentity, error) {
 		return googleIdentity{}, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return googleIdentity{}, fmt.Errorf("Google Health identity request failed with HTTP %d", response.StatusCode)
+		// Typed so the translation layer can branch on the status code
+		// via errors.As instead of message text (issue #272). The
+		// endpoint label keeps the historical message verbatim.
+		return googleIdentity{}, &googleHealthHTTPError{StatusCode: response.StatusCode, endpoint: "identity"}
 	}
 	return parseGoogleIdentity(body)
 }
@@ -2954,7 +2978,10 @@ func fetchGoogleProfile(accessToken string) (googleProfile, error) {
 		return googleProfile{}, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return googleProfile{}, fmt.Errorf("Google Health profile request failed with HTTP %d", response.StatusCode)
+		// Typed so the translation layer can branch on the status code
+		// via errors.As instead of message text (issue #272). The
+		// endpoint label keeps the historical message verbatim.
+		return googleProfile{}, &googleHealthHTTPError{StatusCode: response.StatusCode, endpoint: "profile"}
 	}
 	return parseGoogleProfile(body)
 }
@@ -3177,11 +3204,20 @@ func fetchGoogleHealthRaw(request rawProviderRequest, accessToken string) ([]byt
 // googleHealthHTTPError carries the upstream status code plus an optional
 // Retry-After hint. The ingestion retry middleware uses these to decide
 // whether to retry transient failures (429, 5xx) and how long to wait
-// before doing so. Other callers can still read the error string.
+// before doing so; the Provider error translation layer
+// (provider_error_normalization.go) reads StatusCode via errors.As to
+// detect auth rejections and provider_unreachable failures without
+// matching on message text (issue #272). Other callers can still read
+// the error string.
 type googleHealthHTTPError struct {
 	StatusCode int
 	RetryAfter time.Duration
 	Body       []byte
+	// endpoint labels which Provider request failed ("identity",
+	// "pairedDevices", ...) so each fetcher keeps its historical
+	// user-facing message verbatim. Empty means the raw Provider fetch
+	// path, whose message predates the label.
+	endpoint string
 }
 
 func (err *googleHealthHTTPError) Error() string {
@@ -3189,7 +3225,11 @@ func (err *googleHealthHTTPError) Error() string {
 	// bearer token in some error responses (covered by
 	// TestFetchGoogleHealthRawUsesBearerAndHidesErrorBody). Callers that
 	// need the body can read err.Body directly.
-	return fmt.Sprintf("Google Health raw request failed with HTTP %d", err.StatusCode)
+	label := err.endpoint
+	if label == "" {
+		label = "raw"
+	}
+	return fmt.Sprintf("Google Health %s request failed with HTTP %d", label, err.StatusCode)
 }
 
 // parseRetryAfter parses the Retry-After header. RFC 7231 allows either
@@ -3695,6 +3735,14 @@ type credentialStore interface {
 	Load(key string) (map[string]any, error)
 }
 
+// errCredentialStoreTokenMaterialNotFound is the sentinel every
+// Credential Store backend returns when no token material exists for
+// the Connection key — missing store file, missing key, or an absent
+// OS-native secret. Callers (doctor's token_missing classification)
+// branch on it via errors.Is; matching on the message text is
+// forbidden (issue #272).
+var errCredentialStoreTokenMaterialNotFound = errors.New("Credential Store token material not found; run `gohealthcli connect` first")
+
 func newCredentialStoreWithRuntime(config credentialStoreConfig, runtime runtimeAdapters) (credentialStore, error) {
 	runtime = runtime.withDefaults()
 	switch config.kind {
@@ -3745,7 +3793,7 @@ func (store fileCredentialStore) Load(key string) (map[string]any, error) {
 	content, err := os.ReadFile(store.path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, errors.New("Credential Store token material not found; run `gohealthcli connect` first")
+			return nil, errCredentialStoreTokenMaterialNotFound
 		}
 		return nil, err
 	}
@@ -3755,7 +3803,7 @@ func (store fileCredentialStore) Load(key string) (map[string]any, error) {
 	}
 	raw, ok := existing[key]
 	if !ok {
-		return nil, errors.New("Credential Store token material not found; run `gohealthcli connect` first")
+		return nil, errCredentialStoreTokenMaterialNotFound
 	}
 	var tokenMaterial map[string]any
 	if err := json.Unmarshal(raw, &tokenMaterial); err != nil {
@@ -3822,7 +3870,7 @@ func runSecurityFindGenericPasswordCommand(service, key string) ([]byte, error) 
 	cmd := exec.Command("security", "find-generic-password", "-s", service, "-a", key, "-w")
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, errors.New("Credential Store token material not found; run `gohealthcli connect` first")
+		return nil, errCredentialStoreTokenMaterialNotFound
 	}
 	return []byte(strings.TrimSpace(string(output))), nil
 }
@@ -3837,7 +3885,7 @@ func runSecretToolLookupCommand(service, key string) ([]byte, error) {
 	cmd := exec.Command("secret-tool", "lookup", "service", service, "account", key)
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, errors.New("Credential Store token material not found; run `gohealthcli connect` first")
+		return nil, errCredentialStoreTokenMaterialNotFound
 	}
 	return []byte(strings.TrimSpace(string(output))), nil
 }
@@ -3944,7 +3992,7 @@ try {
 	cmd.Env = append(os.Environ(), "GOHEALTHCLI_CREDENTIAL_TARGET="+target)
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, errors.New("Credential Store token material not found; run `gohealthcli connect` first")
+		return nil, errCredentialStoreTokenMaterialNotFound
 	}
 	return []byte(strings.TrimSpace(string(output))), nil
 }

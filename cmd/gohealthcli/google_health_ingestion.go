@@ -199,14 +199,6 @@ func (provider *midRunRefreshIngestionProvider) Fetch(request rawProviderRequest
 	return provider.inner.Fetch(request, refreshed, cancelCh)
 }
 
-// isUnauthorizedHTTPError reports whether err is an upstream HTTP 401.
-// 401 is the only status that means "access token no longer valid";
-// 403 is a scope/authorization problem a fresh token cannot fix.
-func isUnauthorizedHTTPError(err error) bool {
-	var httpErr *googleHealthHTTPError
-	return errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusUnauthorized
-}
-
 func (ingestion googleHealthIngestion) Plan(request googleHealthIngestionRequest) (googleHealthIngestionPlan, error) {
 	entry, ok := googleHealthDataTypes.Lookup(request.dataType)
 	if !ok {
@@ -277,7 +269,7 @@ func (ingestion googleHealthIngestion) executeDailyRollupPages(archive googleHea
 			}
 			body, err := ingestion.provider.Fetch(rawRequest, request.accessToken, request.cancelCh)
 			if err != nil {
-				return syncProviderRequestError(err)
+				return normalizeProviderError(err)
 			}
 			page, err := parseGoogleHealthRollupList(body)
 			if err != nil {
@@ -332,7 +324,7 @@ func (ingestion googleHealthIngestion) executeWindowRollupPages(archive googleHe
 		}
 		body, err := ingestion.provider.Fetch(rawRequest, request.accessToken, request.cancelCh)
 		if err != nil {
-			return syncProviderRequestError(err)
+			return normalizeProviderError(err)
 		}
 		page, err := parseGoogleHealthRollupList(body)
 		if err != nil {
@@ -380,7 +372,7 @@ func (ingestion googleHealthIngestion) executeDataPointPages(archive googleHealt
 		}
 		body, err := ingestion.provider.Fetch(rawRequest, request.accessToken, request.cancelCh)
 		if err != nil {
-			return syncProviderRequestError(err)
+			return normalizeProviderError(err)
 		}
 		page, err := parseGoogleHealthDataPointList(body)
 		if err != nil {
@@ -494,7 +486,7 @@ func (ingestion googleHealthIngestion) attachExerciseTcxIfAvailable(archive goog
 			// archived; the missing sidecar should not fail the sync.
 			return nil
 		}
-		return syncProviderRequestError(err)
+		return normalizeProviderError(err)
 	}
 	if len(body) == 0 {
 		return nil
@@ -755,13 +747,6 @@ func buildGoogleHealthDataTypeReconcileRawRequest(dataType, from, to, sourceFami
 		requiredScopes:     googleHealthScopesForDataType(dataType),
 		sourceFamilyFilter: sourceFamily,
 	}, nil
-}
-
-func syncProviderRequestError(err error) error {
-	if strings.Contains(err.Error(), "HTTP 401") {
-		return errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again")
-	}
-	return err
 }
 
 // buildGoogleHealthExportExerciseTcxRawRequest constructs the GET

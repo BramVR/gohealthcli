@@ -161,7 +161,13 @@ func devicesSetupWithRuntime(configPath, archivePath string, runtime runtimeAdap
 	}
 	devices, err := fetchPairedDevices(accessToken)
 	if err != nil {
-		return result, currentConnectionProviderError(err)
+		// Provider outage (non-auth HTTP failure or network error) gets
+		// its own documented JSON failure status so automation can tell
+		// it apart from local misconfiguration (issue #272).
+		if isProviderUnreachableError(err) {
+			result.Status = "provider_unreachable"
+		}
+		return result, normalizeProviderError(err)
 	}
 	result.Devices = parsePairedDeviceSummaries(devices.rawJSON)
 	result.DeviceCount = len(result.Devices)
@@ -195,7 +201,10 @@ func fetchGooglePairedDevices(accessToken string) (googlePairedDevices, error) {
 		return googlePairedDevices{}, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return googlePairedDevices{}, fmt.Errorf("Google Health pairedDevices request failed with HTTP %d", response.StatusCode)
+		// Typed so the translation layer can branch on the status code
+		// via errors.As instead of message text (issue #272). The
+		// endpoint label keeps the historical message verbatim.
+		return googlePairedDevices{}, &googleHealthHTTPError{StatusCode: response.StatusCode, endpoint: "pairedDevices"}
 	}
 	if !json.Valid(body) {
 		return googlePairedDevices{}, errors.New("Google Health pairedDevices response is not valid JSON")
