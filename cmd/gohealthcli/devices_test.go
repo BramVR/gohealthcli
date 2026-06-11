@@ -131,9 +131,9 @@ func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 		archive.Close()
 		t.Fatalf("read current Connection: %v", err)
 	}
-	payload := `{"devices":[
-		{"deviceType":"WATCH","model":"Pixel Watch 2","manufacturer":"Google","batteryPercentage":76,"lastSyncTime":"2026-06-08T13:00:00Z","features":["HR","GPS"]},
-		{"deviceType":"PHONE","model":"Pixel 8","manufacturer":"Google","batteryPercentage":42,"lastSyncTime":"2026-06-08T12:30:00Z","features":["STEPS"]}
+	payload := `{"pairedDevices":[
+		{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"TRACKER","batteryStatus":"Medium","batteryLevel":50,"deviceVersion":"Google Pixel Watch 4"},
+		{"name":"users/111111256096816351/pairedDevices/1122334455","deviceType":"SCALE","batteryStatus":"High","deviceVersion":"Withings Body+"}
 	]}`
 	if _, err := archive.Insert(connection, "paired-devices", payload, "2026-06-08T13:00:00Z"); err != nil {
 		archive.Close()
@@ -146,19 +146,19 @@ func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 		t.Fatalf("open archive: %v", err)
 	}
 	defer db.Close()
-	rows, err := db.Query(`SELECT device_type, model, manufacturer, battery_percentage, last_sync_time FROM paired_devices ORDER BY model`)
+	rows, err := db.Query(`SELECT name, device_type, device_version, battery_status, battery_level FROM paired_devices ORDER BY device_version`)
 	if err != nil {
 		t.Fatalf("query paired_devices: %v", err)
 	}
 	defer rows.Close()
 	type devRow struct {
-		typ, model, manufacturer, lastSync string
-		battery                            sql.NullInt64
+		name, typ, version, batteryStatus string
+		batteryLevel                      sql.NullInt64
 	}
 	var got []devRow
 	for rows.Next() {
 		var row devRow
-		if err := rows.Scan(&row.typ, &row.model, &row.manufacturer, &row.battery, &row.lastSync); err != nil {
+		if err := rows.Scan(&row.name, &row.typ, &row.version, &row.batteryStatus, &row.batteryLevel); err != nil {
 			t.Fatalf("scan: %v", err)
 		}
 		got = append(got, row)
@@ -166,17 +166,27 @@ func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("rows = %d, want 2", len(got))
 	}
-	if got[0].model != "Pixel 8" || got[1].model != "Pixel Watch 2" {
-		t.Fatalf("models = (%q, %q), want (Pixel 8, Pixel Watch 2)", got[0].model, got[1].model)
+	if got[0].version != "Google Pixel Watch 4" || got[1].version != "Withings Body+" {
+		t.Fatalf("device_versions = (%q, %q), want (Google Pixel Watch 4, Withings Body+)", got[0].version, got[1].version)
 	}
-	if got[1].battery.Int64 != 76 {
-		t.Fatalf("Pixel Watch 2 battery = %d, want 76", got[1].battery.Int64)
+	if got[0].name != "users/111111256096816351/pairedDevices/2978855095" {
+		t.Fatalf("name = %q, want the upstream resource name", got[0].name)
+	}
+	if !got[0].batteryLevel.Valid || got[0].batteryLevel.Int64 != 50 {
+		t.Fatalf("Pixel Watch 4 battery_level = %v, want 50", got[0].batteryLevel)
+	}
+	if got[1].batteryLevel.Valid {
+		t.Fatalf("Withings Body+ battery_level = %d, want NULL when upstream has none", got[1].batteryLevel.Int64)
+	}
+	if got[1].batteryStatus != "High" {
+		t.Fatalf("Withings Body+ battery_status = %q, want High", got[1].batteryStatus)
 	}
 }
 
 // TestPairedDevicesViewHandlesEmptyDeviceList pins the edge case where
 // the latest paired-devices snapshot has no devices: the view returns
-// zero rows, not an error.
+// zero rows, not an error. Covers both an explicit empty list and a
+// bare {} payload (the key is omitted upstream when nothing is paired).
 func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -199,9 +209,11 @@ func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
 		archive.Close()
 		t.Fatalf("read current Connection: %v", err)
 	}
-	if _, err := archive.Insert(connection, "paired-devices", `{"devices":[]}`, "2026-06-08T13:00:00Z"); err != nil {
-		archive.Close()
-		t.Fatalf("Insert: %v", err)
+	for _, payload := range []string{`{"pairedDevices":[]}`, `{}`} {
+		if _, err := archive.Insert(connection, "paired-devices", payload, "2026-06-08T13:00:00Z"); err != nil {
+			archive.Close()
+			t.Fatalf("Insert %s: %v", payload, err)
+		}
 	}
 	archive.Close()
 

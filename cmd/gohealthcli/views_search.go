@@ -24,9 +24,7 @@ var searchableTextViewSpec = exportDatasetSpec{
 	FROM identity_snapshots
 	WHERE snapshot_kind = 'profile'
 )
-SELECT 'device' AS kind, model AS text, 'paired_devices' AS ref_table, connection_id AS ref_id FROM paired_devices WHERE model != ''
-UNION ALL
-SELECT 'device' AS kind, manufacturer AS text, 'paired_devices' AS ref_table, connection_id AS ref_id FROM paired_devices WHERE manufacturer != ''
+SELECT 'device' AS kind, device_version AS text, 'paired_devices' AS ref_table, connection_id AS ref_id FROM paired_devices WHERE device_version != ''
 UNION ALL
 SELECT 'data_source' AS kind, json_extract(data_source_json, '$.applicationName') AS text, 'data_points' AS ref_table, CAST(id AS TEXT) AS ref_id FROM data_points WHERE IFNULL(json_extract(data_source_json, '$.applicationName'), '') != ''
 UNION ALL

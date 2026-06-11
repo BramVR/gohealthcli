@@ -34,9 +34,9 @@ func TestSearchableTextViewReturnsRowsFromAllFourSources(t *testing.T) {
 		snapshots.Close()
 		t.Fatalf("read current Connection: %v", err)
 	}
-	if _, err := snapshots.Insert(connection, "paired-devices", `{"devices":[
-		{"deviceType":"WATCH","model":"Pixel Watch 2","manufacturer":"Google"},
-		{"deviceType":"TRACKER","model":"Fitbit Charge 5","manufacturer":"Fitbit"}
+	if _, err := snapshots.Insert(connection, "paired-devices", `{"pairedDevices":[
+		{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"WATCH","deviceVersion":"Pixel Watch 2"},
+		{"name":"users/111111256096816351/pairedDevices/1122334455","deviceType":"TRACKER","deviceVersion":"Fitbit Charge 5"}
 	]}`, "2026-06-08T00:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert paired-devices: %v", err)
@@ -86,7 +86,8 @@ func TestSearchableTextViewReturnsRowsFromAllFourSources(t *testing.T) {
 			t.Errorf("kind=%q produced 0 rows; want at least one", kind)
 		}
 	}
-	// Sanity-check: the device kind must contain at least one of the seeded models.
+	// Sanity-check: the device kind must contain at least one of the
+	// seeded device versions.
 	deviceText := strings.Join(seen["device"], " | ")
 	if !strings.Contains(deviceText, "Pixel Watch 2") {
 		t.Errorf("device rows missing 'Pixel Watch 2'; got %q", deviceText)
@@ -125,8 +126,8 @@ func TestSearchableTextLIKENeedleAnswersAcrossKinds(t *testing.T) {
 		snapshots.Close()
 		t.Fatalf("read current Connection: %v", err)
 	}
-	// "Pixel" appears in both a paired device model and a data source's device display name.
-	if _, err := snapshots.Insert(connection, "paired-devices", `{"devices":[{"deviceType":"WATCH","model":"Pixel Watch 2","manufacturer":"Google"}]}`, "2026-06-08T00:00:00Z"); err != nil {
+	// "Pixel" appears in both a paired device version and a data source's device display name.
+	if _, err := snapshots.Insert(connection, "paired-devices", `{"pairedDevices":[{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"WATCH","deviceVersion":"Pixel Watch 2"}]}`, "2026-06-08T00:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert paired-devices: %v", err)
 	}

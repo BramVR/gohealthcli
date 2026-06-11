@@ -15,7 +15,7 @@ import (
 // currentSchemaVersion is the schema version a fully migrated Health
 // Archive reports via PRAGMA user_version. It must equal the version of
 // the last row in schemaMigrationTable.
-const currentSchemaVersion = 22
+const currentSchemaVersion = 23
 
 // schemaMigration is one Health Archive schema step: the version it
 // migrates an archive *to*, the schema_migrations history name recorded
@@ -90,6 +90,22 @@ func schemaMigrationTable() []schemaMigration {
 		// heartbeats, and the stale-run fence falls back to started_at
 		// for them.
 		{version: 22, name: "add_sync_run_heartbeat", apply: statementsStep(syncRunHeartbeatMigrationStatements)},
+		// Version 23 drops the migration-9 paired_devices view and the
+		// searchable_text view that selects its columns, recreating both
+		// from the registry's current specs. Live verification against a
+		// real archive (#298) showed users.pairedDevices.list wraps the
+		// device list in a pairedDevices key with name / deviceType /
+		// batteryStatus / batteryLevel / deviceVersion per device; the
+		// original #98 view read $.devices and model / manufacturer /
+		// batteryPercentage paths the upstream never emits, so both views
+		// always returned zero device rows. Same follow-up shape as
+		// version 12's exercise_splits fix.
+		{version: 23, name: "fix_paired_devices_real_shape", apply: func(tx *sql.Tx) error {
+			if err := recreateRegistryViewStep("paired-devices", "paired_devices")(tx); err != nil {
+				return err
+			}
+			return recreateRegistryViewStep("searchable-text", "searchable_text")(tx)
+		}},
 	}
 }
 

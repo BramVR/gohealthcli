@@ -49,10 +49,16 @@ var pairedDevicesViewSpec = exportDatasetSpec{
 	// kind='paired-devices' Identity Snapshot via json_each. One
 	// row per device with the contracted columns; new fields land
 	// as additional json_extract projections, no re-sync needed.
+	// Columns follow the real users.pairedDevices.list shape
+	// verified against a live archive on 2026-06-11 (#298): the
+	// list lives under $.pairedDevices and each device carries
+	// name / deviceType / batteryStatus / batteryLevel /
+	// deviceVersion — not the $.devices + model/manufacturer shape
+	// #98 assumed. Schema migration 23 recreates the view.
 	name:             "paired-devices",
 	view:             "paired_devices",
 	migrationVersion: 9,
-	orderBy:          "connection_id, model",
+	orderBy:          "connection_id, device_version",
 	viewSQL: `WITH latest AS (
 			SELECT
 				provider_name,
@@ -69,23 +75,21 @@ var pairedDevicesViewSpec = exportDatasetSpec{
 		SELECT
 			latest_only.provider_name,
 			latest_only.connection_id,
+			IFNULL(json_extract(device.value, '$.name'), '') AS name,
 			IFNULL(json_extract(device.value, '$.deviceType'), '') AS device_type,
-			IFNULL(json_extract(device.value, '$.model'), '') AS model,
-			IFNULL(json_extract(device.value, '$.manufacturer'), '') AS manufacturer,
-			json_extract(device.value, '$.batteryPercentage') AS battery_percentage,
-			IFNULL(json_extract(device.value, '$.lastSyncTime'), '') AS last_sync_time,
-			IFNULL(json_extract(device.value, '$.features'), '[]') AS features,
+			IFNULL(json_extract(device.value, '$.deviceVersion'), '') AS device_version,
+			IFNULL(json_extract(device.value, '$.batteryStatus'), '') AS battery_status,
+			json_extract(device.value, '$.batteryLevel') AS battery_level,
 			latest_only.fetched_at
-		FROM latest_only, json_each(latest_only.raw_json, '$.devices') AS device`,
+		FROM latest_only, json_each(latest_only.raw_json, '$.pairedDevices') AS device`,
 	fields: []exportFieldSpec{
 		{name: "provider_name"},
 		{name: "connection_id"},
+		{name: "name"},
 		{name: "device_type"},
-		{name: "model"},
-		{name: "manufacturer"},
-		{name: "battery_percentage"},
-		{name: "last_sync_time"},
-		{name: "features"},
+		{name: "device_version"},
+		{name: "battery_status"},
+		{name: "battery_level"},
 		{name: "fetched_at"},
 	},
 }
