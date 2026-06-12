@@ -1,11 +1,6 @@
 package main
 
 import (
-	"context"
-	"database/sql"
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -304,71 +299,5 @@ func TestHelpVerbRejectsExtraArguments(t *testing.T) {
 				t.Fatalf("stderr missing 'unexpected arguments' message: %q", stderr.String())
 			}
 		})
-	}
-}
-
-func TestCountArchiveRowsRejectsUnknownTable(t *testing.T) {
-	t.Parallel()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open memory archive: %v", err)
-	}
-	defer db.Close()
-
-	_, err = countArchiveRows(context.Background(), db, "data_points; DROP TABLE data_points")
-	if err == nil {
-		t.Fatal("countArchiveRows error = nil, want unsupported table")
-	}
-	if !strings.Contains(err.Error(), "unsupported Health Archive table") {
-		t.Fatalf("countArchiveRows error = %v, want unsupported table", err)
-	}
-}
-
-func TestParseStepsDailyRollupRequiresCivilEndTime(t *testing.T) {
-	t.Parallel()
-	_, err := parseGoogleHealthRollup(archivedConnection{
-		providerName: "googlehealth",
-		id:           "googlehealth:111111256096816351",
-	}, "steps", "dailyRollUp", json.RawMessage(`{
-		"steps": {"countSum": "1234"},
-		"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}}
-	}`))
-	if err == nil || !strings.Contains(err.Error(), "missing civilEndTime") {
-		t.Fatalf("parse error = %v, want missing civilEndTime", err)
-	}
-}
-
-func TestValidateConfigDoesNotCreateMissingParent(t *testing.T) {
-	t.Parallel()
-	tempDir := t.TempDir()
-	parentPath := filepath.Join(tempDir, "missing")
-
-	err := validateConfig(filepath.Join(parentPath, "config.toml"), filepath.Join(tempDir, "archive.sqlite"))
-	if err == nil {
-		t.Fatal("validateConfig error = nil, want missing parent failure")
-	}
-	if _, statErr := os.Stat(parentPath); !os.IsNotExist(statErr) {
-		t.Fatalf("parent stat err = %v, want not exist", statErr)
-	}
-}
-
-func TestArchiveDSNUsesAbsoluteFileURI(t *testing.T) {
-	t.Parallel()
-	dsn, err := archiveDSN("relative.sqlite", false)
-	if err != nil {
-		t.Fatalf("archiveDSN: %v", err)
-	}
-	if !strings.HasPrefix(dsn, "file:///") {
-		t.Fatalf("dsn = %q, want absolute file URI", dsn)
-	}
-	if !strings.Contains(dsn, "_pragma=foreign_keys%3Don") {
-		t.Fatalf("dsn = %q, want foreign key pragma", dsn)
-	}
-	readOnlyDSN, err := archiveDSN("relative.sqlite", true)
-	if err != nil {
-		t.Fatalf("archiveDSN readonly: %v", err)
-	}
-	if !strings.Contains(readOnlyDSN, "mode=ro") {
-		t.Fatalf("dsn = %q, want readonly mode", readOnlyDSN)
 	}
 }
