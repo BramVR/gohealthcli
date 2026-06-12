@@ -459,9 +459,7 @@ func TestDoctorReportsFirstWriteErrorOnce(t *testing.T) {
 
 	code := runDoctorWithRuntime(
 		[]string{"--config", filepath.Join(tempDir, "config.toml"), "--db", filepath.Join(tempDir, "missing.sqlite")},
-		defaultConfigPath(),
-		defaultArchivePath(),
-		outputMode{},
+		CommonFlagValues{ConfigPath: defaultConfigPath(), ArchivePath: defaultArchivePath()},
 		failingWriter{},
 		stderr,
 		productionRuntimeAdapters(),
@@ -952,9 +950,7 @@ func TestSyncStatusReportsFirstWriteErrorOnce(t *testing.T) {
 
 	code := runSyncWithRuntime(
 		[]string{"--status", "--db", filepath.Join(t.TempDir(), "missing.sqlite")},
-		defaultConfigPath(),
-		defaultArchivePath(),
-		outputMode{},
+		CommonFlagValues{ConfigPath: defaultConfigPath(), ArchivePath: defaultArchivePath()},
 		failingWriter{},
 		stderr,
 		productionRuntimeAdapters(),
@@ -981,11 +977,7 @@ func TestStatusReportsFirstWriteErrorOnce(t *testing.T) {
 
 	code := runStatus(
 		[]string{"--db", filepath.Join(t.TempDir(), "missing.sqlite")},
-		defaultConfigPath(),
-		defaultArchivePath(),
-		false,
-		false,
-		outputMode{},
+		CommonFlagValues{ConfigPath: defaultConfigPath(), ArchivePath: defaultArchivePath()},
 		failingWriter{},
 		stderr,
 		runtimeAdapters{},

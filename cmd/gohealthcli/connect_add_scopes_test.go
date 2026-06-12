@@ -90,7 +90,7 @@ func TestConnectHelpAddScopesUsageListsEveryAcceptedKeyword(t *testing.T) {
 	t.Parallel()
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := runConnectWithRuntime([]string{"--help"}, "config.json", "archive.db", false, outputMode{}, stdout, stderr, runtimeAdapters{})
+	code := runConnectWithRuntime([]string{"--help"}, CommonFlagValues{ConfigPath: "config.json", ArchivePath: "archive.db"}, stdout, stderr, runtimeAdapters{})
 	if code != 0 {
 		t.Fatalf("connect --help exit = %d, want 0 (stderr=%s)", code, stderr.String())
 	}
@@ -205,7 +205,7 @@ func TestConnectAddScopesIsCommunicatedToOAuthFlow(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := runConnectWithRuntime([]string{"--config", configPath, "--db", archivePath, "--add-scopes", "irn", "--json"}, configPath, archivePath, true, outputMode{json: true}, stdout, stderr, runtime)
+	code := runConnectWithRuntime([]string{"--config", configPath, "--db", archivePath, "--add-scopes", "irn", "--json"}, CommonFlagValues{ConfigPath: configPath, ArchivePath: archivePath, NoInput: true, JSONOutput: true}, stdout, stderr, runtime)
 	if code != 0 {
 		t.Fatalf("connect exit = %d, stderr=%s, stdout=%s", code, stderr.String(), stdout.String())
 	}

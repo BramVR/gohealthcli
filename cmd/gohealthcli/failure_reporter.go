@@ -142,3 +142,5 @@ func failureExitCode(status FailureStatus) int {
 	}
 	return 1
 }
+
+const setupMissingExitCode = 2

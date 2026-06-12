@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -162,4 +163,78 @@ func TestSuggestExcludesHiddenCommands(t *testing.T) {
 			t.Fatalf("Suggest(\"shcema\") returned hidden command 'schema': %v", got)
 		}
 	}
+}
+
+// TestDispatchCarriesGlobalSlotFlagsIntoRunners pins the flag-passing
+// contract between runWithRuntime's dispatch and the per-command runners
+// across the issue #285 signature change (runners accept CommonFlagValues
+// directly instead of exploded positional parameters). Flags placed at
+// the GLOBAL slot (before the subcommand) must reach the runner:
+//
+//   - --db carries both the path and the ArchivePathExplicit bit, so the
+//     read-side resolver opens the explicit archive without a config;
+//   - --json carries the output mode for commands that honour it;
+//   - export deliberately DROPS the global-slot --json / --plain: its
+//     registry adapter never forwarded the output mode (the synonyms are
+//     scoped to export's own flag slot), so `--json export` must keep
+//     emitting the --format default (CSV), byte-identical to the run
+//     without --json.
+func TestDispatchCarriesGlobalSlotFlagsIntoRunners(t *testing.T) {
+	tempDir := t.TempDir()
+	// Steer the default config/archive paths away from the developer's
+	// real home so the explicit --db is the only way the runs below can
+	// succeed (mirrors read_archive_path_resolver_smoke_test.go).
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tempDir, "missing-config-xdg"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(tempDir, "missing-data-xdg"))
+
+	archivePath := filepath.Join(tempDir, "scratch", "scratch.sqlite")
+	if err := createArchive(archivePath); err != nil {
+		t.Fatalf("create scratch archive: %v", err)
+	}
+
+	runOK := func(t *testing.T, args ...string) string {
+		t.Helper()
+		stdout := new(bytes.Buffer)
+		stderr := new(bytes.Buffer)
+		if code := run(args, stdout, stderr); code != 0 {
+			t.Fatalf("%v exit code = %d, want 0\nstdout: %s\nstderr: %s",
+				args, code, stdout.String(), stderr.String())
+		}
+		return stdout.String()
+	}
+
+	t.Run("status sees global --db and --json", func(t *testing.T) {
+		out := runOK(t, "--db", archivePath, "--json", "status")
+		if !strings.HasPrefix(strings.TrimSpace(out), "{") {
+			t.Fatalf("global --json did not reach status; stdout: %s", out)
+		}
+		if !strings.Contains(out, archivePath) {
+			t.Fatalf("global --db did not reach status; stdout: %s", out)
+		}
+	})
+
+	t.Run("query sees global --db and --json", func(t *testing.T) {
+		out := runOK(t, "--db", archivePath, "--json", "query", "SELECT 1 AS one")
+		if !strings.HasPrefix(strings.TrimSpace(out), "{") || !strings.Contains(out, `"one"`) {
+			t.Fatalf("global --db/--json did not reach query; stdout: %s", out)
+		}
+	})
+
+	t.Run("describe-schema sees global --db", func(t *testing.T) {
+		out := runOK(t, "--db", archivePath, "describe-schema")
+		if !strings.HasPrefix(strings.TrimSpace(out), "{") {
+			t.Fatalf("global --db did not reach describe-schema; stdout: %s", out)
+		}
+	})
+
+	t.Run("export sees global --db but drops global --json", func(t *testing.T) {
+		plainRun := runOK(t, "--db", archivePath, "export", "--stdout", "daily-steps")
+		jsonRun := runOK(t, "--db", archivePath, "--json", "export", "--stdout", "daily-steps")
+		if !strings.Contains(plainRun, ",") {
+			t.Fatalf("export CSV header missing; stdout: %s", plainRun)
+		}
+		if jsonRun != plainRun {
+			t.Fatalf("global --json changed export output; without: %q with: %q", plainRun, jsonRun)
+		}
+	})
 }

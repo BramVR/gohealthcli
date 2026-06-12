@@ -9,8 +9,8 @@ import (
 // googleHealthIdentityEndpointScopes is the declarative scope catalog
 // keyed by Google Health identity-endpoint identifier. Each entry
 // pins the OAuth scope URL(s) the upstream call requires, so the
-// per-command scope literals (devices.go, settings.go, profile setup
-// in main.go) and the `raw` endpoint dispatcher can converge on one
+// per-command scope literals (devices.go, settings.go, profile.go)
+// and the `raw` endpoint dispatcher can converge on one
 // source of truth — adding a new endpoint or revising a scope is a
 // one-row change here.
 //

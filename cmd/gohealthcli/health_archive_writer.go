@@ -629,3 +629,10 @@ func findExistingDataPointByQuery(ctx context.Context, db *sql.DB, query string,
 	}
 	return matches[0].id, matches[0].rawJSON, true, nil
 }
+
+func nullString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}

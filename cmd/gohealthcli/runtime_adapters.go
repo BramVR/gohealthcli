@@ -199,3 +199,22 @@ func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
 	}
 	return adapters
 }
+
+// productionFetchIdentity and productionFetchProfile bind the real
+// fetchers over the production Provider GET module (shared timeout
+// client as the HTTP doer, #281). Plain functions, not package vars:
+// tests fake these dependencies through runtimeAdapters fields (#283).
+func productionFetchIdentity(accessToken string) (googleIdentity, error) {
+	return fetchGoogleIdentity(productionProviderGET(), accessToken)
+}
+
+func productionFetchProfile(accessToken string) (googleProfile, error) {
+	return fetchGoogleProfile(productionProviderGET(), accessToken)
+}
+
+// productionFetchRawProvider binds the real raw Provider fetch over the
+// shared timeout client. ctx scopes the HTTP request so a canceled Sync
+// Run aborts the in-flight call (#284).
+func productionFetchRawProvider(ctx context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	return fetchGoogleHealthRaw(ctx, providerHTTPClient, request, accessToken)
+}

@@ -141,7 +141,7 @@ var exportCommonFlagUsageOverrides = map[string]string{
 	"no-input": "accepted for uniformity; export does no prompting",
 }
 
-func runExport(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+func runExport(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("export", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -161,11 +161,16 @@ func runExport(args []string, configPath, archivePath string, configPathExplicit
 	// hand-typed copy.
 	commonSpec := AllCommonFlagsSpec()
 	commonSpec.UsageOverrides = exportCommonFlagUsageOverrides
+	// The global-slot --json / --plain / --no-input are deliberately NOT
+	// seeded from globals: export's --json / --plain are --format synonyms
+	// scoped to export's own flag slot, and the registry adapter never
+	// forwarded the global output mode (pinned by
+	// TestDispatchCarriesGlobalSlotFlagsIntoRunners).
 	common := RegisterCommon(flags, commonSpec, CommonFlagValues{
-		ConfigPath:          configPath,
-		ArchivePath:         archivePath,
-		ArchivePathExplicit: archivePathExplicit,
-		ConfigPathExplicit:  configPathExplicit,
+		ConfigPath:          globals.ConfigPath,
+		ArchivePath:         globals.ArchivePath,
+		ArchivePathExplicit: globals.ArchivePathExplicit,
+		ConfigPathExplicit:  globals.ConfigPathExplicit,
 	})
 	exportFormat := flags.String("format", "csv", "export format: csv or jsonl (synonyms: --json → jsonl, --plain → csv)")
 	exportOutputPath := flags.String("output", "", "write export to path")

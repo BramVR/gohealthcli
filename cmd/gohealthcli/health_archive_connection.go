@@ -238,3 +238,11 @@ func inspectConnectionTokenMetadata(ctx context.Context, db *sql.DB) (int, strin
 	}
 	return count, "metadata_present", nil
 }
+
+type archivedConnection struct {
+	id                 string
+	providerName       string
+	googleHealthUserID string
+	legacyFitbitUserID string
+	tokenMetadataJSON  string
+}

@@ -86,7 +86,7 @@ func TestRunSyncPreflightFailuresDoNotWriteAuditRow(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			stdout := new(bytes.Buffer)
 			stderr := new(bytes.Buffer)
-			code := runSyncWithRuntime(tc.args, configPath, archivePath, outputMode{}, stdout, stderr, testRuntime)
+			code := runSyncWithRuntime(tc.args, CommonFlagValues{ConfigPath: configPath, ArchivePath: archivePath}, stdout, stderr, testRuntime)
 			if code == 0 {
 				t.Fatalf("runSyncWithRuntime exit = 0, want non-zero (preflight rule must reject)\nstdout: %s\nstderr: %s", stdout.String(), stderr.String())
 			}

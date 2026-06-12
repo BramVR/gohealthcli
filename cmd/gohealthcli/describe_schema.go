@@ -32,7 +32,7 @@ var describeSchemaCommonFlagUsageOverrides = map[string]string{
 	"no-input": "accepted for uniformity; describe-schema does no prompting",
 }
 
-func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+func runDescribeSchemaWithRuntime(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("describe-schema", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -56,12 +56,12 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 	spec := AllCommonFlagsSpec()
 	spec.UsageOverrides = describeSchemaCommonFlagUsageOverrides
 	common := RegisterCommon(flags, spec, CommonFlagValues{
-		ConfigPath:          configPath,
-		ArchivePath:         archivePath,
-		JSONOutput:          mode.json,
-		PlainOutput:         mode.plain,
-		ArchivePathExplicit: archivePathExplicit,
-		ConfigPathExplicit:  configPathExplicit,
+		ConfigPath:          globals.ConfigPath,
+		ArchivePath:         globals.ArchivePath,
+		JSONOutput:          globals.JSONOutput,
+		PlainOutput:         globals.PlainOutput,
+		ArchivePathExplicit: globals.ArchivePathExplicit,
+		ConfigPathExplicit:  globals.ConfigPathExplicit,
 	})
 	// --sql is a describe-schema-specific override that wins over the JSON
 	// catalog default. We register it AFTER RegisterCommon so the Common
@@ -78,7 +78,7 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 	// honours the global outputMode so the unified failure contract
 	// (slice 7, #178) applies uniformly: `--json describe-schema bogus`
 	// gets the JSON envelope on stdout like every other subcommand.
-	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
+	mode := commonOutputMode(*common)
 	if flags.NArg() != 0 {
 		return ReportFailure(FailureReport{
 			Command: "describe-schema",

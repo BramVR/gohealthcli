@@ -179,18 +179,18 @@ func TestMigratedSubcommandEntryPointsCallRegisterCommon(t *testing.T) {
 		file    string
 		funcSig string
 	}{
-		{"init", "main.go", "func runInit("},
-		{"doctor", "main.go", "func runDoctorWithRuntime("},
-		{"connect", "main.go", "func runConnectWithRuntime("},
-		{"sync", "main.go", "func runSyncWithRuntime("},
-		{"raw", "main.go", "func runRawWithRuntime("},
+		{"init", "init.go", "func runInit("},
+		{"doctor", "doctor.go", "func runDoctorWithRuntime("},
+		{"connect", "connect.go", "func runConnectWithRuntime("},
+		{"sync", "sync.go", "func runSyncWithRuntime("},
+		{"raw", "raw.go", "func runRawWithRuntime("},
 		{"query", "query.go", "func runQuery("},
 		{"identity", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
 		{"profile", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
 		{"settings", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
 		{"devices", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
 		{"irn-profile", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
-		{"status", "main.go", "func runStatus("},
+		{"status", "status.go", "func runStatus("},
 	}
 	// Per-subcommand legacy preamble lines that would re-appear if a
 	// migration was reverted. Each match in the corresponding function
