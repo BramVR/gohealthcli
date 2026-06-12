@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -67,11 +69,11 @@ func TestIdentitySnapshotArchiveInsertAndLatestRoundTrip(t *testing.T) {
 	}
 	defer archive.Close()
 
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		t.Fatalf("read current Connection: %v", err)
 	}
-	if _, err := archive.Insert(connection, "settings", `{"unit":"metric"}`, "2026-06-01T00:00:00Z"); err != nil {
+	if _, err := archive.Insert(context.Background(), connection, "settings", `{"unit":"metric"}`, "2026-06-01T00:00:00Z"); err != nil {
 		t.Fatalf("Insert: %v", err)
 	}
 
@@ -113,7 +115,7 @@ func TestIdentitySnapshotArchiveLatestFiltersByKind(t *testing.T) {
 		t.Fatalf("open archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		t.Fatalf("read current Connection: %v", err)
 	}
@@ -129,7 +131,7 @@ func TestIdentitySnapshotArchiveLatestFiltersByKind(t *testing.T) {
 		{"settings", `{"unit":"metric"}`, "2026-06-01T00:00:00Z"},
 		{"settings", `{"unit":"metric","timezone":"UTC"}`, "2026-06-10T00:00:00Z"},
 	} {
-		if _, err := archive.Insert(connection, row.kind, row.raw, row.at); err != nil {
+		if _, err := archive.Insert(context.Background(), connection, row.kind, row.raw, row.at); err != nil {
 			t.Fatalf("Insert(%s): %v", row.kind, err)
 		}
 	}
@@ -195,7 +197,7 @@ func TestProfileCommandWritesViaIdentitySnapshotArchive(t *testing.T) {
 		t.Fatalf("open identity snapshot archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		t.Fatalf("read current Connection: %v", err)
 	}
@@ -251,7 +253,7 @@ func TestSettingsCommandArchivesSnapshotWithKindSettings(t *testing.T) {
 		t.Fatalf("open identity snapshot archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		t.Fatalf("read current Connection: %v", err)
 	}
@@ -289,16 +291,16 @@ func TestCurrentSettingsViewProjectsLatestSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		archive.Close()
 		t.Fatalf("read current Connection: %v", err)
 	}
 	// Two settings snapshots: only the newest (id=2) should surface.
-	if _, err := archive.Insert(connection, "settings", `{"measurementSystem":"IMPERIAL","timezone":"America/New_York"}`, "2026-05-01T00:00:00Z"); err != nil {
+	if _, err := archive.Insert(context.Background(), connection, "settings", `{"measurementSystem":"IMPERIAL","timezone":"America/New_York"}`, "2026-05-01T00:00:00Z"); err != nil {
 		t.Fatalf("insert old settings: %v", err)
 	}
-	if _, err := archive.Insert(connection, "settings", `{"measurementSystem":"METRIC","timezone":"Europe/Brussels"}`, "2026-06-08T00:00:00Z"); err != nil {
+	if _, err := archive.Insert(context.Background(), connection, "settings", `{"measurementSystem":"METRIC","timezone":"Europe/Brussels"}`, "2026-06-08T00:00:00Z"); err != nil {
 		t.Fatalf("insert new settings: %v", err)
 	}
 	archive.Close()
@@ -309,7 +311,7 @@ func TestCurrentSettingsViewProjectsLatestSnapshot(t *testing.T) {
 	}
 	defer db.Close()
 	var measurementSystem, timezone, fetchedAt string
-	err = db.QueryRow(`SELECT measurement_system, timezone, fetched_at FROM current_settings WHERE connection_id = ?`, connection.id).
+	err = db.QueryRowContext(context.Background(), `SELECT measurement_system, timezone, fetched_at FROM current_settings WHERE connection_id = ?`, connection.id).
 		Scan(&measurementSystem, &timezone, &fetchedAt)
 	if err != nil {
 		t.Fatalf("query current_settings: %v", err)
@@ -351,19 +353,19 @@ func TestIdentitySnapshotArchiveLatestUsesFetchedAtForRecency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		archive.Close()
 		t.Fatalf("read current Connection: %v", err)
 	}
 
 	// id=1, fetched_at=2026-06-08 (the actually-newest)
-	if _, err := archive.Insert(connection, "settings", `{"measurementSystem":"NEWEST-FETCH"}`, "2026-06-08T00:00:00Z"); err != nil {
+	if _, err := archive.Insert(context.Background(), connection, "settings", `{"measurementSystem":"NEWEST-FETCH"}`, "2026-06-08T00:00:00Z"); err != nil {
 		archive.Close()
 		t.Fatalf("Insert newer: %v", err)
 	}
 	// id=2, fetched_at=2026-05-01 (older, even though inserted later)
-	if _, err := archive.Insert(connection, "settings", `{"measurementSystem":"OLDER-FETCH"}`, "2026-05-01T00:00:00Z"); err != nil {
+	if _, err := archive.Insert(context.Background(), connection, "settings", `{"measurementSystem":"OLDER-FETCH"}`, "2026-05-01T00:00:00Z"); err != nil {
 		archive.Close()
 		t.Fatalf("Insert older: %v", err)
 	}
@@ -375,7 +377,7 @@ func TestIdentitySnapshotArchiveLatestUsesFetchedAtForRecency(t *testing.T) {
 	}
 	defer db.Close()
 	var measurementSystem, fetchedAt string
-	err = db.QueryRow(`SELECT measurement_system, fetched_at FROM current_settings WHERE connection_id = ?`, connection.id).
+	err = db.QueryRowContext(context.Background(), `SELECT measurement_system, fetched_at FROM current_settings WHERE connection_id = ?`, connection.id).
 		Scan(&measurementSystem, &fetchedAt)
 	if err != nil {
 		t.Fatalf("query current_settings: %v", err)
@@ -401,7 +403,7 @@ func TestV6ArchiveMigratesProfileSnapshotsWithKindDefault(t *testing.T) {
 	archivePath := filepath.Join(tempDir, "legacy.sqlite")
 	createLegacyV6ArchiveWithProfileSnapshot(t, archivePath, "conn_v6", `{"profile":"snapshot"}`, "2026-06-01T00:00:00Z")
 
-	if err := migrateArchiveIfNeeded(archivePath); err != nil {
+	if err := migrateArchiveIfNeeded(context.Background(), archivePath); err != nil {
 		t.Fatalf("migrate legacy v6 archive to current schema version: %v", err)
 	}
 
@@ -412,7 +414,7 @@ func TestV6ArchiveMigratesProfileSnapshotsWithKindDefault(t *testing.T) {
 	defer db.Close()
 
 	var version int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+	if err := db.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
 	if version != currentSchemaVersion {
@@ -423,7 +425,7 @@ func TestV6ArchiveMigratesProfileSnapshotsWithKindDefault(t *testing.T) {
 	}
 
 	var kind, rawJSON, fetchedAt string
-	err = db.QueryRow(`SELECT snapshot_kind, raw_json, fetched_at FROM identity_snapshots WHERE id = 1`).Scan(&kind, &rawJSON, &fetchedAt)
+	err = db.QueryRowContext(context.Background(), `SELECT snapshot_kind, raw_json, fetched_at FROM identity_snapshots WHERE id = 1`).Scan(&kind, &rawJSON, &fetchedAt)
 	if err != nil {
 		t.Fatalf("read migrated row: %v", err)
 	}
@@ -455,7 +457,7 @@ type identitySnapshotRow struct {
 func latestIdentitySnapshotRow(t *testing.T, db *sql.DB, connectionID, kind string) (identitySnapshotRow, bool) {
 	t.Helper()
 	var row identitySnapshotRow
-	err := db.QueryRow(`SELECT snapshot_kind, raw_json, fetched_at
+	err := db.QueryRowContext(context.Background(), `SELECT snapshot_kind, raw_json, fetched_at
 		FROM identity_snapshots
 		WHERE connection_id = ? AND snapshot_kind = ?
 		ORDER BY fetched_at DESC, id DESC
@@ -472,7 +474,7 @@ func latestIdentitySnapshotRow(t *testing.T, db *sql.DB, connectionID, kind stri
 func archiveTableExists(t *testing.T, db *sql.DB, name string) bool {
 	t.Helper()
 	var got string
-	err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&got)
+	err := db.QueryRowContext(context.Background(), `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&got)
 	if err == sql.ErrNoRows {
 		return false
 	}
@@ -500,11 +502,11 @@ func createLegacyV6ArchiveWithProfileSnapshot(t *testing.T, archivePath, connect
 	if err := applyV6SchemaForLegacyTest(db); err != nil {
 		t.Fatalf("apply legacy v6 schema: %v", err)
 	}
-	if _, err := db.Exec(`INSERT INTO connections (id, provider_name, google_health_user_id, token_metadata_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO connections (id, provider_name, google_health_user_id, token_metadata_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		connectionID, "googlehealth", "user-123", "{}", fetchedAt, fetchedAt); err != nil {
 		t.Fatalf("seed connection: %v", err)
 	}
-	if _, err := db.Exec(`INSERT INTO profile_snapshots (provider_name, connection_id, raw_json, fetched_at) VALUES (?, ?, ?, ?)`,
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO profile_snapshots (provider_name, connection_id, raw_json, fetched_at) VALUES (?, ?, ?, ?)`,
 		"googlehealth", connectionID, rawJSON, fetchedAt); err != nil {
 		t.Fatalf("seed profile_snapshot: %v", err)
 	}
@@ -516,16 +518,16 @@ func createLegacyV6ArchiveWithProfileSnapshot(t *testing.T, archivePath, connect
 }
 
 func applyV6SchemaForLegacyTest(db *sql.DB) error {
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	applied := time.Date(2026, 5, 31, 21, 0, 0, 0, time.UTC).Format(time.RFC3339)
-	if err := applySchemaMigrationSteps(tx, 0, 6, applied); err != nil {
+	if err := applySchemaMigrationSteps(context.Background(), tx, 0, 6, applied); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 6`); err != nil {
+	if _, err := tx.ExecContext(context.Background(), `PRAGMA user_version = 6`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -533,7 +535,7 @@ func applyV6SchemaForLegacyTest(db *sql.DB) error {
 
 func archiveColumnExists(t *testing.T, db *sql.DB, table, column string) bool {
 	t.Helper()
-	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	rows, err := db.QueryContext(context.Background(), `SELECT name FROM pragma_table_info(?)`, table)
 	if err != nil {
 		t.Fatalf("pragma_table_info(%s): %v", table, err)
 	}
@@ -551,4 +553,42 @@ func archiveColumnExists(t *testing.T, db *sql.DB, table, column string) bool {
 		t.Fatalf("rows.Err: %v", err)
 	}
 	return false
+}
+
+// TestIdentitySnapshotArchiveInsertHonorsCanceledContext pins the
+// noctx-completion slice (#305): Insert rides the caller's context, so
+// a canceled context aborts the snapshot write instead of appending a
+// row behind the caller's back.
+func TestIdentitySnapshotArchiveInsertHonorsCanceledContext(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
+		t.Fatalf("connect exit code = %d", code)
+	}
+
+	archive, err := openIdentitySnapshotArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open identity snapshot archive: %v", err)
+	}
+	defer archive.Close()
+	connection, err := readCurrentConnection(context.Background(), archive.db)
+	if err != nil {
+		t.Fatalf("read current Connection: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := archive.Insert(ctx, connection, "settings", `{"unit":"metric"}`, "2026-06-01T00:00:00Z"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Insert with canceled context = %v, want context.Canceled", err)
+	}
+	if _, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "settings"); found {
+		t.Fatal("snapshot row present after canceled Insert, want none")
+	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -26,7 +27,7 @@ type identitySnapshotArchive struct {
 // the archive. Centralizing the close-then-open dance here keeps the
 // double-close cognitive load off the profile/settings/devices/irn
 // command paths.
-func writeIdentitySnapshotHandoff(connectionArchive healthArchiveConnectionAPI, archivePath string, connection archivedConnection, kind, rawJSON, fetchedAt string) (int64, error) {
+func writeIdentitySnapshotHandoff(ctx context.Context, connectionArchive healthArchiveConnectionAPI, archivePath string, connection archivedConnection, kind, rawJSON, fetchedAt string) (int64, error) {
 	if err := connectionArchive.Close(); err != nil {
 		return 0, fmt.Errorf("close Connection API before identity snapshot handoff: %w", err)
 	}
@@ -35,11 +36,11 @@ func writeIdentitySnapshotHandoff(connectionArchive healthArchiveConnectionAPI, 
 		return 0, err
 	}
 	defer snapshots.Close()
-	return snapshots.Insert(connection, kind, rawJSON, fetchedAt)
+	return snapshots.Insert(ctx, connection, kind, rawJSON, fetchedAt)
 }
 
 func openIdentitySnapshotArchive(archivePath string) (*identitySnapshotArchive, error) {
-	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(writeArchive)
+	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(context.Background(), writeArchive)
 	if err != nil {
 		return nil, err
 	}
@@ -54,11 +55,11 @@ func (archive *identitySnapshotArchive) Close() error {
 // (CONTEXT.md term: profile | settings | paired-devices | irn-profile);
 // the archive only enforces non-empty so an invalid CLI surface can't
 // silently produce kind-empty rows.
-func (archive *identitySnapshotArchive) Insert(connection archivedConnection, kind, rawJSON, fetchedAt string) (int64, error) {
+func (archive *identitySnapshotArchive) Insert(ctx context.Context, connection archivedConnection, kind, rawJSON, fetchedAt string) (int64, error) {
 	if kind == "" {
 		return 0, errors.New("identity snapshot kind must not be empty")
 	}
-	result, err := archive.db.Exec(`INSERT INTO identity_snapshots (
+	result, err := archive.db.ExecContext(ctx, `INSERT INTO identity_snapshots (
 		provider_name,
 		connection_id,
 		snapshot_kind,

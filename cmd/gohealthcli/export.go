@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -271,7 +272,10 @@ func runExport(args []string, configPath, archivePath string, configPathExplicit
 	if err != nil {
 		return ReportFailure(FailureReport{Command: "export", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
-	rows, err := exportRows(resolvedArchivePath, spec)
+	// context.Background(): export is a synchronous read command with no
+	// cancellation path today; the context keeps the archive reads on the
+	// Context API (#305) without changing behavior.
+	rows, err := exportRows(context.Background(), resolvedArchivePath, spec)
 	if err != nil {
 		return ReportFailure(FailureReport{Command: "export", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
@@ -534,11 +538,11 @@ func exportFieldNames(spec exportDatasetSpec) []string {
 	return fields
 }
 
-func exportRows(archivePath string, spec exportDatasetSpec) ([]exportRow, error) {
+func exportRows(ctx context.Context, archivePath string, spec exportDatasetSpec) ([]exportRow, error) {
 	reader, err := openHealthArchiveReader(archivePath)
 	if err != nil {
 		return nil, err
 	}
 	defer reader.Close()
-	return reader.ExportRows(spec)
+	return reader.ExportRows(ctx, spec)
 }

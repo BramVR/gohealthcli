@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -82,7 +83,10 @@ func runQuery(args []string, configPath, archivePath string, configPathExplicit,
 		return 1
 	}
 	encoder := selectQueryRowEncoder(mode, rawText)
-	result, err := querySetup(resolvedArchivePath, flags.Arg(0), encoder)
+	// context.Background(): query is a synchronous read command with no
+	// cancellation path today; the context keeps the archive reads on the
+	// Context API (#305) without changing behavior.
+	result, err := querySetup(context.Background(), resolvedArchivePath, flags.Arg(0), encoder)
 	if err != nil {
 		result.Status = "query_failed"
 		result.Message = err.Error()

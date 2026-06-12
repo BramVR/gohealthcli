@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -30,19 +31,19 @@ func TestSearchableTextViewReturnsRowsFromAllFourSources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open snapshot archive: %v", err)
 	}
-	connection, err := readCurrentConnection(snapshots.db)
+	connection, err := readCurrentConnection(context.Background(), snapshots.db)
 	if err != nil {
 		snapshots.Close()
 		t.Fatalf("read current Connection: %v", err)
 	}
-	if _, err := snapshots.Insert(connection, "paired-devices", `{"pairedDevices":[
+	if _, err := snapshots.Insert(context.Background(), connection, "paired-devices", `{"pairedDevices":[
 		{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"WATCH","deviceVersion":"Pixel Watch 2"},
 		{"name":"users/111111256096816351/pairedDevices/1122334455","deviceType":"TRACKER","deviceVersion":"Fitbit Charge 5"}
 	]}`, "2026-06-08T00:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert paired-devices: %v", err)
 	}
-	if _, err := snapshots.Insert(connection, "profile", `{"firstName":"Bram","lastName":"Van Rompuy"}`, "2026-06-08T00:00:00Z"); err != nil {
+	if _, err := snapshots.Insert(context.Background(), connection, "profile", `{"firstName":"Bram","lastName":"Van Rompuy"}`, "2026-06-08T00:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert profile: %v", err)
 	}
@@ -69,7 +70,7 @@ func TestSearchableTextViewReturnsRowsFromAllFourSources(t *testing.T) {
 	}
 	defer db.Close()
 
-	rows, err := db.Query(`SELECT kind, text FROM searchable_text ORDER BY kind, text`)
+	rows, err := db.QueryContext(context.Background(), `SELECT kind, text FROM searchable_text ORDER BY kind, text`)
 	if err != nil {
 		t.Fatalf("query searchable_text: %v", err)
 	}
@@ -123,13 +124,13 @@ func TestSearchableTextLIKENeedleAnswersAcrossKinds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open snapshots: %v", err)
 	}
-	connection, err := readCurrentConnection(snapshots.db)
+	connection, err := readCurrentConnection(context.Background(), snapshots.db)
 	if err != nil {
 		snapshots.Close()
 		t.Fatalf("read current Connection: %v", err)
 	}
 	// "Pixel" appears in both a paired device version and a data source's device display name.
-	if _, err := snapshots.Insert(connection, "paired-devices", `{"pairedDevices":[{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"WATCH","deviceVersion":"Pixel Watch 2"}]}`, "2026-06-08T00:00:00Z"); err != nil {
+	if _, err := snapshots.Insert(context.Background(), connection, "paired-devices", `{"pairedDevices":[{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"WATCH","deviceVersion":"Pixel Watch 2"}]}`, "2026-06-08T00:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert paired-devices: %v", err)
 	}
@@ -152,7 +153,7 @@ func TestSearchableTextLIKENeedleAnswersAcrossKinds(t *testing.T) {
 		t.Fatalf("open archive: %v", err)
 	}
 	defer db.Close()
-	rows, err := db.Query(`SELECT DISTINCT kind FROM searchable_text WHERE text LIKE '%Pixel%' ORDER BY kind`)
+	rows, err := db.QueryContext(context.Background(), `SELECT DISTINCT kind FROM searchable_text WHERE text LIKE '%Pixel%' ORDER BY kind`)
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}

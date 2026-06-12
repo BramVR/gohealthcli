@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 )
@@ -36,7 +37,7 @@ func TestSleepStagesViewExplodesEachStage(t *testing.T) {
 	}
 	defer db.Close()
 
-	rows, err := db.Query(`SELECT sleep_stage, duration_seconds, start_time_utc, end_time_utc, civil_date, upstream_resource_name FROM sleep_stages ORDER BY start_time_utc`)
+	rows, err := db.QueryContext(context.Background(), `SELECT sleep_stage, duration_seconds, start_time_utc, end_time_utc, civil_date, upstream_resource_name FROM sleep_stages ORDER BY start_time_utc`)
 	if err != nil {
 		t.Fatalf("query sleep_stages: %v", err)
 	}
@@ -105,7 +106,7 @@ func TestExerciseSplitsViewExplodesEachSplit(t *testing.T) {
 	}
 	defer db.Close()
 
-	rows, err := db.Query(`SELECT split_type, distance_meters, start_time_utc, end_time_utc, civil_date, upstream_resource_name FROM exercise_splits ORDER BY start_time_utc`)
+	rows, err := db.QueryContext(context.Background(), `SELECT split_type, distance_meters, start_time_utc, end_time_utc, civil_date, upstream_resource_name FROM exercise_splits ORDER BY start_time_utc`)
 	if err != nil {
 		t.Fatalf("query exercise_splits: %v", err)
 	}
@@ -154,7 +155,7 @@ func TestSleepStagesViewHandlesSessionWithoutStages(t *testing.T) {
 	}
 	defer db.Close()
 	var count int
-	if err := db.QueryRow(`SELECT count(*) FROM sleep_stages`).Scan(&count); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT count(*) FROM sleep_stages`).Scan(&count); err != nil {
 		t.Fatalf("query sleep_stages: %v", err)
 	}
 	if count != 0 {

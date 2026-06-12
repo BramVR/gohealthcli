@@ -333,21 +333,21 @@ func TestConcurrentSyncRunsLeaveNoSyncRunningRows(t *testing.T) {
 	}
 	defer db.Close()
 	var runningCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sync_runs WHERE status = 'sync_running'`).Scan(&runningCount); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM sync_runs WHERE status = 'sync_running'`).Scan(&runningCount); err != nil {
 		t.Fatalf("count sync_running rows: %v", err)
 	}
 	if runningCount != 0 {
 		t.Errorf("sync_running rows after concurrent invocations = %d, want 0", runningCount)
 	}
 	var totalCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sync_runs`).Scan(&totalCount); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM sync_runs`).Scan(&totalCount); err != nil {
 		t.Fatalf("count sync_runs rows: %v", err)
 	}
 	if totalCount < 2 {
 		t.Errorf("sync_runs total rows = %d, want at least 2 (one per invocation)", totalCount)
 	}
 	// Every row must carry a terminal status.
-	rows, err := db.Query(`SELECT id, status FROM sync_runs`)
+	rows, err := db.QueryContext(context.Background(), `SELECT id, status FROM sync_runs`)
 	if err != nil {
 		t.Fatalf("query sync_runs: %v", err)
 	}
@@ -437,11 +437,11 @@ func TestSyncRunLifecycleConvertsBusyExhaustedToFailedWithRecoveryRow(t *testing
 		t.Fatalf("reopen archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := archive.CurrentConnection(context.Background())
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	if _, found, err := archive.ResolveSyncCursor(syncCursorKey{
+	if _, found, err := archive.ResolveSyncCursor(context.Background(), syncCursorKey{
 		connectionID: connection.id,
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,
@@ -695,7 +695,7 @@ func TestSyncRunLifecycleCanceledOutcomePreservedThroughRecovery(t *testing.T) {
 	}
 	defer db.Close()
 	var persistedStatus string
-	if err := db.QueryRow(`SELECT status FROM sync_runs WHERE id = ?`, result.SyncRunID).Scan(&persistedStatus); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT status FROM sync_runs WHERE id = ?`, result.SyncRunID).Scan(&persistedStatus); err != nil {
 		t.Fatalf("scan sync_runs status: %v", err)
 	}
 	if persistedStatus != "sync_canceled" {
@@ -736,15 +736,15 @@ func TestConcurrentSyncRunsForceSQLiteBusyContention(t *testing.T) {
 	}
 	defer competingDB.Close()
 	competingDB.SetMaxOpenConns(1)
-	holderTx, err := competingDB.Begin()
+	holderTx, err := competingDB.BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("begin competing tx: %v", err)
 	}
-	if _, err := holderTx.Exec(`BEGIN IMMEDIATE`); err != nil {
+	if _, err := holderTx.ExecContext(context.Background(), `BEGIN IMMEDIATE`); err != nil {
 		// modernc.org sqlite already promoted via Begin; force a write
 		// to hold the WAL write lock. Use a known-safe statement that
 		// touches no rows but engages the write path.
-		if _, errExec := holderTx.Exec(`UPDATE connections SET id = id`); errExec != nil {
+		if _, errExec := holderTx.ExecContext(context.Background(), `UPDATE connections SET id = id`); errExec != nil {
 			_ = holderTx.Rollback()
 			t.Skipf("could not engage write lock on competing tx: %v", errExec)
 		}
@@ -760,11 +760,11 @@ func TestConcurrentSyncRunsForceSQLiteBusyContention(t *testing.T) {
 	defer writerHandle.Close()
 	writerHandle.SetMaxOpenConns(1)
 
-	contendingTx, err := writerHandle.Begin()
+	contendingTx, err := writerHandle.BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("begin writer tx: %v", err)
 	}
-	_, busyErr := contendingTx.Exec(`UPDATE connections SET id = id`)
+	_, busyErr := contendingTx.ExecContext(context.Background(), `UPDATE connections SET id = id`)
 	_ = contendingTx.Rollback()
 
 	if busyErr == nil {
@@ -792,11 +792,11 @@ type fakeFinishRetryWriter struct {
 	finishCallsObserved *int
 }
 
-func (writer *fakeFinishRetryWriter) FinalizeSyncRun(finalize syncRunFinalize) error {
+func (writer *fakeFinishRetryWriter) FinalizeSyncRun(ctx context.Context, finalize syncRunFinalize) error {
 	return writer.finalizeErr
 }
 
-func (writer *fakeFinishRetryWriter) FinishSyncRun(finish syncRunFinish) error {
+func (writer *fakeFinishRetryWriter) FinishSyncRun(ctx context.Context, finish syncRunFinish) error {
 	writer.finishCallCounter++
 	if writer.finishCallsObserved != nil {
 		*writer.finishCallsObserved = writer.finishCallCounter
@@ -804,5 +804,5 @@ func (writer *fakeFinishRetryWriter) FinishSyncRun(finish syncRunFinish) error {
 	if writer.finishCallCounter <= writer.finishBusyAttempts {
 		return errors.New("database is locked")
 	}
-	return writer.healthArchiveWriter.FinishSyncRun(finish)
+	return writer.healthArchiveWriter.FinishSyncRun(context.Background(), finish)
 }

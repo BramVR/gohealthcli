@@ -190,7 +190,7 @@ type fakeIngestionAttachment struct {
 	fetchedAt string
 }
 
-func (archive *fakeGoogleHealthIngestionArchive) UpsertDataPoint(point archivedDataPoint, now string) (string, error) {
+func (archive *fakeGoogleHealthIngestionArchive) UpsertDataPoint(ctx context.Context, point archivedDataPoint, now string) (string, error) {
 	archive.dataPoints = append(archive.dataPoints, point)
 	if len(archive.dataPointStatuses) == 0 {
 		return "new", nil
@@ -200,7 +200,7 @@ func (archive *fakeGoogleHealthIngestionArchive) UpsertDataPoint(point archivedD
 	return status, nil
 }
 
-func (archive *fakeGoogleHealthIngestionArchive) UpsertRollup(rollup archivedRollup, now string) (string, error) {
+func (archive *fakeGoogleHealthIngestionArchive) UpsertRollup(ctx context.Context, rollup archivedRollup, now string) (string, error) {
 	archive.rollups = append(archive.rollups, rollup)
 	if len(archive.rollupStatuses) == 0 {
 		return "new", nil
@@ -213,7 +213,7 @@ func (archive *fakeGoogleHealthIngestionArchive) UpsertRollup(rollup archivedRol
 // StoreAttachment records the call so TCX-ingestion tests can assert
 // the wiring: which Data Point the bytes attach to, what kind, the
 // payload, and the fetchedAt stamp.
-func (archive *fakeGoogleHealthIngestionArchive) StoreAttachment(point archivedDataPoint, kind string, payload []byte, fetchedAt string) error {
+func (archive *fakeGoogleHealthIngestionArchive) StoreAttachment(ctx context.Context, point archivedDataPoint, kind string, payload []byte, fetchedAt string) error {
 	archive.attachments = append(archive.attachments, fakeIngestionAttachment{
 		point:     point,
 		kind:      kind,

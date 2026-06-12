@@ -34,7 +34,7 @@ func preflightFailureResult(options syncCommandOptions, err error) syncResult {
 // caller composing the gate and the lifecycle.
 func (executor syncRunExecutor) Execute(ctx context.Context, options syncCommandOptions) (syncResult, error) {
 	runtime := executor.runtime.withDefaults()
-	gate := syncPreflightGate{ctx: productionSyncPreflightContext(options, runtime)}
+	gate := syncPreflightGate{ctx: productionSyncPreflightContext(ctx, options, runtime)}
 	plan, err := gate.Validate(options)
 	if err != nil {
 		return preflightFailureResult(options, err), err

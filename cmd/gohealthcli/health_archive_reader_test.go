@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+)
 
 func TestHealthArchiveReaderSummarizesQueriesAndExportsReadOnly(t *testing.T) {
 	t.Parallel()
@@ -14,7 +18,7 @@ func TestHealthArchiveReaderSummarizesQueriesAndExportsReadOnly(t *testing.T) {
 	}
 	defer reader.Close()
 
-	status, err := reader.StatusSummary()
+	status, err := reader.StatusSummary(context.Background())
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
@@ -32,7 +36,7 @@ func TestHealthArchiveReaderSummarizesQueriesAndExportsReadOnly(t *testing.T) {
 	}
 
 	encoder := newPlainModeEncoder()
-	query, err := reader.Query(`SELECT count(*) AS data_point_count FROM data_points`, encoder)
+	query, err := reader.Query(context.Background(), `SELECT count(*) AS data_point_count FROM data_points`, encoder)
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
@@ -43,11 +47,11 @@ func TestHealthArchiveReaderSummarizesQueriesAndExportsReadOnly(t *testing.T) {
 		t.Fatalf("query row value = %T(%v), want int64(3)", query.Rows[0][0], query.Rows[0][0])
 	}
 
-	if _, err := reader.Query(`DELETE FROM data_points`, encoder); err == nil {
+	if _, err := reader.Query(context.Background(), `DELETE FROM data_points`, encoder); err == nil {
 		t.Fatal("mutating query error = nil, want rejected")
 	}
 
-	rows, err := reader.ExportRows(exportDatasetSpecs["daily-steps"])
+	rows, err := reader.ExportRows(context.Background(), exportDatasetSpecs["daily-steps"])
 	if err != nil {
 		t.Fatalf("daily steps rows: %v", err)
 	}
@@ -55,4 +59,34 @@ func TestHealthArchiveReaderSummarizesQueriesAndExportsReadOnly(t *testing.T) {
 		t.Fatalf("daily steps row count = %d, want 3: %+v", len(rows), rows)
 	}
 	assertDailyStepsRow(t, rows[0], "2026-01-01", 512, "dataPoints", "", 1)
+}
+
+// TestHealthArchiveReaderHonorsCanceledContext pins the noctx-completion
+// slice (#305) at the reader interface: StatusSummary, Query, and
+// ExportRows ride the caller's context, so a canceled context aborts
+// the SQLite work instead of running the summary/query to completion.
+func TestHealthArchiveReaderHonorsCanceledContext(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	reader, err := openHealthArchiveReader(archivePath)
+	if err != nil {
+		t.Fatalf("open reader: %v", err)
+	}
+	defer reader.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := reader.StatusSummary(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("StatusSummary with canceled context = %v, want context.Canceled", err)
+	}
+	if _, err := reader.Query(ctx, `SELECT count(*) FROM data_points`, newPlainModeEncoder()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Query with canceled context = %v, want context.Canceled", err)
+	}
+	if _, err := reader.ExportRows(ctx, exportDatasetSpecs["daily-steps"]); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ExportRows with canceled context = %v, want context.Canceled", err)
+	}
 }

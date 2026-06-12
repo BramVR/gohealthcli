@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"flag"
@@ -61,7 +62,7 @@ var syncRunFenceErrorSummary = fmt.Sprintf("abandoned (no heartbeat for %dm)", s
 // the fenced process is somehow still alive, its eventual
 // FinalizeSyncRun UPDATE is unconditional on id and simply overwrites
 // the fence — the row converges to its true terminal status.
-func fenceAbandonedSyncRuns(db *sql.DB, now time.Time) (int64, error) {
+func fenceAbandonedSyncRuns(ctx context.Context, db *sql.DB, now time.Time) (int64, error) {
 	cutoff := now.Add(-syncRunFenceStaleAfter).UTC().Format(time.RFC3339)
 	var fenced int64
 	// The UPDATE runs under the same SQLITE_BUSY retry budget the
@@ -69,7 +70,7 @@ func fenceAbandonedSyncRuns(db *sql.DB, now time.Time) (int64, error) {
 	// process may be mid-sync, so brief lock contention is the
 	// expected case, not the exception.
 	err := retryFinalizeSyncRunOnBusy(finalizeSyncRunRetryBudget, func() error {
-		result, err := db.Exec(`UPDATE sync_runs SET
+		result, err := db.ExecContext(ctx, `UPDATE sync_runs SET
 			status = 'sync_failed',
 			error_summary = ?,
 			finished_at = ?
@@ -96,13 +97,13 @@ func fenceAbandonedSyncRuns(db *sql.DB, now time.Time) (int64, error) {
 // `sync` write path). Opening through the lifecycle runs pending
 // migrations first, so the fence can rely on last_progress_at
 // existing.
-func fenceAbandonedSyncRunsAtPath(archivePath string, now time.Time) (int64, error) {
-	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(writeArchive)
+func fenceAbandonedSyncRunsAtPath(ctx context.Context, archivePath string, now time.Time) (int64, error) {
+	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(ctx, writeArchive)
 	if err != nil {
 		return 0, err
 	}
 	defer handle.Close()
-	return fenceAbandonedSyncRuns(handle.db, now)
+	return fenceAbandonedSyncRuns(ctx, handle.db, now)
 }
 
 type syncStatusRun struct {
@@ -178,7 +179,10 @@ func runSyncStatusWithRuntime(common CommonFlagValues, windowValue string, mode 
 			Message:     err.Error(),
 		}, 1, mode, now, stdout, stderr)
 	}
-	result, err := syncStatusSetup(resolvedArchivePath, now, window)
+	// context.Background(): `sync --status` is a synchronous read view
+	// with no cancellation path today; the context keeps the SQLite
+	// calls on the Context API (#305) without changing behavior.
+	result, err := syncStatusSetup(context.Background(), resolvedArchivePath, now, window)
 	if err != nil {
 		result.Message = err.Error()
 		return writeSyncStatusResultWithExit(result, 1, mode, now, stdout, stderr)
@@ -214,7 +218,7 @@ func parseSyncStatusWindow(windowValue string) (time.Duration, error) {
 	return window, nil
 }
 
-func syncStatusSetup(archivePath string, now time.Time, window time.Duration) (syncStatusResult, error) {
+func syncStatusSetup(ctx context.Context, archivePath string, now time.Time, window time.Duration) (syncStatusResult, error) {
 	result := syncStatusResult{
 		Status:      "sync_status_failed",
 		ArchivePath: archivePath,
@@ -227,13 +231,13 @@ func syncStatusSetup(archivePath string, now time.Time, window time.Duration) (s
 	// read-only media and never fails because a fence write lost its
 	// SQLITE_BUSY retry budget — the worst case is one stale corpse
 	// row that the next entry point fences.
-	_, _ = fenceAbandonedSyncRunsAtPath(archivePath, now)
-	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(readOnlyArchive)
+	_, _ = fenceAbandonedSyncRunsAtPath(ctx, archivePath, now)
+	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(ctx, readOnlyArchive)
 	if err != nil {
 		return result, err
 	}
 	defer handle.Close()
-	runs, err := readSyncStatusRuns(handle.db, now, window)
+	runs, err := readSyncStatusRuns(ctx, handle.db, now, window)
 	if err != nil {
 		return result, err
 	}
@@ -261,9 +265,9 @@ func syncStatusMessage(runCount int, window time.Duration) string {
 // RFC3339-UTC timestamps compare correctly as strings, so the cutoff
 // is computed in Go — keeping `now` injectable for tests — rather
 // than via SQLite datetime().
-func readSyncStatusRuns(db *sql.DB, now time.Time, window time.Duration) ([]syncStatusRun, error) {
+func readSyncStatusRuns(ctx context.Context, db *sql.DB, now time.Time, window time.Duration) ([]syncStatusRun, error) {
 	cutoff := now.Add(-window).Format(time.RFC3339)
-	rows, err := db.Query(`SELECT
+	rows, err := db.QueryContext(ctx, `SELECT
 		id,
 		data_types_requested,
 		status,

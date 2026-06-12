@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -34,13 +35,13 @@ func TestHealthArchiveConnectionAPIManagesConnectionIdentityMetadataAndProfileSn
 	}
 	connectionID := "googlehealth:" + identity.healthUserID
 
-	if err := archive.EnsureSameGoogleIdentity(identity.healthUserID); err != nil {
+	if err := archive.EnsureSameGoogleIdentity(context.Background(), identity.healthUserID); err != nil {
 		t.Fatalf("ensure empty identity: %v", err)
 	}
-	if err := archive.UpsertConnection(connectionID, identity, token, now); err != nil {
+	if err := archive.UpsertConnection(context.Background(), connectionID, identity, token, now); err != nil {
 		t.Fatalf("upsert connection: %v", err)
 	}
-	if err := archive.EnsureSameGoogleIdentity("222222222222222222"); err == nil {
+	if err := archive.EnsureSameGoogleIdentity(context.Background(), "222222222222222222"); err == nil {
 		t.Fatal("ensure different identity error = nil, want refusal")
 	}
 
@@ -68,7 +69,7 @@ func TestHealthArchiveConnectionAPIManagesConnectionIdentityMetadataAndProfileSn
 		legacyFitbitUserID: "Z9Y8X7",
 		rawJSON:            `{"healthUserId":"111111256096816351","legacyUserId":"Z9Y8X7","refreshed":true}`,
 	}
-	if err := archive.RefreshConnectionIdentity(connection, refreshed, now.Add(time.Minute)); err != nil {
+	if err := archive.RefreshConnectionIdentity(context.Background(), connection, refreshed, now.Add(time.Minute)); err != nil {
 		t.Fatalf("refresh identity: %v", err)
 	}
 	connection, err = archive.CurrentConnection()

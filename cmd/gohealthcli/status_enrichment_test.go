@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -49,20 +50,20 @@ func TestStatusJSONReportsIdentitySnapshotsFreshnessBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	connection, err := readCurrentConnection(snapshots.db)
+	connection, err := readCurrentConnection(context.Background(), snapshots.db)
 	if err != nil {
 		snapshots.Close()
 		t.Fatalf("read current Connection: %v", err)
 	}
-	if _, err := snapshots.Insert(connection, "profile", `{"name":"users/me/profile"}`, "2026-06-01T00:00:00Z"); err != nil {
+	if _, err := snapshots.Insert(context.Background(), connection, "profile", `{"name":"users/me/profile"}`, "2026-06-01T00:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert profile: %v", err)
 	}
-	if _, err := snapshots.Insert(connection, "settings", `{"unit":"metric"}`, "2026-06-05T00:00:00Z"); err != nil {
+	if _, err := snapshots.Insert(context.Background(), connection, "settings", `{"unit":"metric"}`, "2026-06-05T00:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert settings: %v", err)
 	}
-	if _, err := snapshots.Insert(connection, "paired-devices", `{"pairedDevices":[{"deviceVersion":"Pixel Watch 2"},{"deviceVersion":"Pixel 8"}]}`, "2026-06-08T00:00:00Z"); err != nil {
+	if _, err := snapshots.Insert(context.Background(), connection, "paired-devices", `{"pairedDevices":[{"deviceVersion":"Pixel Watch 2"},{"deviceVersion":"Pixel 8"}]}`, "2026-06-08T00:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert paired-devices: %v", err)
 	}
@@ -336,7 +337,7 @@ func insertTier2DataPoint(t *testing.T, archivePath, dataType, resourceID string
 		t.Fatalf("open archive: %v", err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(`INSERT INTO data_points (
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO data_points (
 		provider_name,
 		connection_id,
 		data_type,
@@ -374,12 +375,12 @@ func TestStatusPlainReportsSnapshotFreshnessLines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	connection, err := readCurrentConnection(snapshots.db)
+	connection, err := readCurrentConnection(context.Background(), snapshots.db)
 	if err != nil {
 		snapshots.Close()
 		t.Fatalf("read current Connection: %v", err)
 	}
-	if _, err := snapshots.Insert(connection, "paired-devices", `{"pairedDevices":[{"deviceVersion":"Google Pixel Watch 4"}]}`, "2026-06-08T13:00:00Z"); err != nil {
+	if _, err := snapshots.Insert(context.Background(), connection, "paired-devices", `{"pairedDevices":[{"deviceVersion":"Google Pixel Watch 4"}]}`, "2026-06-08T13:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert: %v", err)
 	}

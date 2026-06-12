@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -305,7 +306,7 @@ func validatePreflightRangeOrder(from, to string) error {
 // the executor used to call inspectIdentityConfig + openHealthArchiveWriter;
 // the gate exposes that as one closure so call sites do not duplicate
 // the open-then-close dance.
-func productionSyncPreflightContext(options syncCommandOptions, runtime runtimeAdapters) syncPreflightContext {
+func productionSyncPreflightContext(ctx context.Context, options syncCommandOptions, runtime runtimeAdapters) syncPreflightContext {
 	return syncPreflightContext{
 		now:                   runtime.now,
 		dataTypeSupported:     syncDataPointDataTypeSupported,
@@ -324,7 +325,13 @@ func productionSyncPreflightContext(options syncCommandOptions, runtime runtimeA
 				return archivedConnection{}, err
 			}
 			defer archive.Close()
-			return archive.CurrentConnection()
+			// WithoutCancel: the gate's connection lookup is a fast local
+			// read, not a cancellation point — the lifecycle entry check
+			// owns the pre-start SIGINT contract (no-audit-row +
+			// sync_canceled envelope, PRD #141 slice 5). Aborting this
+			// read on a canceled context would misreport a pre-start
+			// cancel as a preflight sync_failed (#305).
+			return archive.CurrentConnection(context.WithoutCancel(ctx))
 		},
 		rollupCatalogValidator: validateSyncRollupAgainstDataType,
 	}

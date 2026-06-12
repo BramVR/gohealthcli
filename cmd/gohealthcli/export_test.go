@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -362,7 +363,7 @@ func TestDailyStepsNormalizedViewPrefersRollupsAndAggregatesDataPoints(t *testin
 	insertExportStepDataPointWithSourceFamily(t, archivePath, "users/me/dataTypes/steps/dataPoints/wearable", "2026-01-01T08:00:00Z", "2026-01-01T08:15:00Z", `{"steps":{"count":"256"}}`, "wearable")
 	insertExportStepDataPointWithSourceFamily(t, archivePath, "users/me/dataTypes/steps/dataPoints/wearable-rollup-day", "2026-01-04T08:00:00Z", "2026-01-04T08:15:00Z", `{"steps":{"count":"384"}}`, "wearable")
 
-	rows, err := exportRows(archivePath, exportDatasetSpecs["daily-steps"])
+	rows, err := exportRows(context.Background(), archivePath, exportDatasetSpecs["daily-steps"])
 	if err != nil {
 		t.Fatalf("daily steps rows: %v", err)
 	}
@@ -935,7 +936,7 @@ func insertExportDataPoint(t *testing.T, archivePath string, point exportDataPoi
 		t.Fatalf("open archive: %v", err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(`INSERT INTO data_points (
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO data_points (
 		provider_name,
 		connection_id,
 		data_type,

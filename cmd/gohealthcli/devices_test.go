@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"strings"
@@ -126,7 +127,7 @@ func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		archive.Close()
 		t.Fatalf("read current Connection: %v", err)
@@ -135,7 +136,7 @@ func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 		{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"TRACKER","batteryStatus":"Medium","batteryLevel":50,"deviceVersion":"Google Pixel Watch 4"},
 		{"name":"users/111111256096816351/pairedDevices/1122334455","deviceType":"SCALE","batteryStatus":"High","deviceVersion":"Withings Body+"}
 	]}`
-	if _, err := archive.Insert(connection, "paired-devices", payload, "2026-06-08T13:00:00Z"); err != nil {
+	if _, err := archive.Insert(context.Background(), connection, "paired-devices", payload, "2026-06-08T13:00:00Z"); err != nil {
 		archive.Close()
 		t.Fatalf("Insert: %v", err)
 	}
@@ -146,7 +147,7 @@ func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 		t.Fatalf("open archive: %v", err)
 	}
 	defer db.Close()
-	rows, err := db.Query(`SELECT name, device_type, device_version, battery_status, battery_level FROM paired_devices ORDER BY device_version`)
+	rows, err := db.QueryContext(context.Background(), `SELECT name, device_type, device_version, battery_status, battery_level FROM paired_devices ORDER BY device_version`)
 	if err != nil {
 		t.Fatalf("query paired_devices: %v", err)
 	}
@@ -205,13 +206,13 @@ func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		archive.Close()
 		t.Fatalf("read current Connection: %v", err)
 	}
 	for _, payload := range []string{`{"pairedDevices":[]}`, `{}`} {
-		if _, err := archive.Insert(connection, "paired-devices", payload, "2026-06-08T13:00:00Z"); err != nil {
+		if _, err := archive.Insert(context.Background(), connection, "paired-devices", payload, "2026-06-08T13:00:00Z"); err != nil {
 			archive.Close()
 			t.Fatalf("Insert %s: %v", payload, err)
 		}
@@ -224,7 +225,7 @@ func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
 	}
 	defer db.Close()
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM paired_devices`).Scan(&count); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM paired_devices`).Scan(&count); err != nil {
 		t.Fatalf("query paired_devices: %v", err)
 	}
 	if count != 0 {
@@ -272,7 +273,7 @@ func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
 		t.Fatalf("open identity snapshot archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		t.Fatalf("read current Connection: %v", err)
 	}
@@ -475,7 +476,7 @@ func TestDevicesCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	}
 	defer db.Close()
 	var snapshotCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM identity_snapshots WHERE snapshot_kind = 'paired-devices'`).Scan(&snapshotCount); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM identity_snapshots WHERE snapshot_kind = 'paired-devices'`).Scan(&snapshotCount); err != nil {
 		t.Fatalf("count paired-devices snapshots: %v", err)
 	}
 	if snapshotCount != 1 {

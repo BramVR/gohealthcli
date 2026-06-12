@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -45,7 +46,7 @@ func attachmentRootDirForArchive(archivePath string) string {
 // populated report otherwise. The slices inside the report are
 // initialised to empty so JSON encoding is `[]` not `null` when only
 // one orphan kind is present. Pure reporting — never mutates state.
-func collectAttachmentOrphans(archivePath string) (*doctorAttachmentReport, error) {
+func collectAttachmentOrphans(ctx context.Context, archivePath string) (*doctorAttachmentReport, error) {
 	store, err := openAttachmentStoreReadOnly(archivePath)
 	if err != nil {
 		return nil, err
@@ -55,7 +56,7 @@ func collectAttachmentOrphans(archivePath string) (*doctorAttachmentReport, erro
 		OrphanRows:  []doctorOrphanRow{},
 		OrphanFiles: []doctorOrphanFile{},
 	}
-	if err := store.Walk(func(o attachmentOrphan) error {
+	if err := store.Walk(ctx, func(o attachmentOrphan) error {
 		switch o.Kind {
 		case attachmentOrphanRowMissingFile:
 			report.OrphanRows = append(report.OrphanRows, doctorOrphanRow{
@@ -105,7 +106,7 @@ func openAttachmentStoreReadOnly(archivePath string) (*attachmentStore, error) {
 }
 
 func openAttachmentStoreMode(archivePath string, mode healthArchiveOpenMode) (*attachmentStore, error) {
-	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(mode)
+	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(context.Background(), mode)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +128,7 @@ func (store *attachmentStore) Close() error {
 // inserts a row in data_point_attachments. Idempotent: if a row with
 // the same (data_point_id, sha256) already exists, the existing row +
 // file are returned unchanged.
-func (store *attachmentStore) Store(dataPointID int64, kind string, payload []byte, fetchedAt string) (attachmentRecord, error) {
+func (store *attachmentStore) Store(ctx context.Context, dataPointID int64, kind string, payload []byte, fetchedAt string) (attachmentRecord, error) {
 	if kind == "" {
 		return attachmentRecord{}, errors.New("attachment kind must not be empty")
 	}
@@ -141,7 +142,7 @@ func (store *attachmentStore) Store(dataPointID int64, kind string, payload []by
 	pathRelative := path.Join(kind, hashHex[:2], hashHex+ext)
 	absolutePath := filepath.Join(store.rootDir, filepath.FromSlash(pathRelative))
 
-	if existing, found, err := store.findExisting(dataPointID, hashHex); err != nil {
+	if existing, found, err := store.findExisting(ctx, dataPointID, hashHex); err != nil {
 		return attachmentRecord{}, err
 	} else if found {
 		existing.AbsolutePath = filepath.Join(store.rootDir, filepath.FromSlash(existing.PathRelative))
@@ -161,7 +162,7 @@ func (store *attachmentStore) Store(dataPointID int64, kind string, payload []by
 		return attachmentRecord{}, err
 	}
 
-	result, err := store.db.Exec(`INSERT INTO data_point_attachments (
+	result, err := store.db.ExecContext(ctx, `INSERT INTO data_point_attachments (
 		data_point_id, kind, sha256, path_relative, byte_size, fetched_at
 	) VALUES (?, ?, ?, ?, ?, ?)`,
 		dataPointID, kind, hashHex, pathRelative, int64(len(payload)), fetchedAt)
@@ -184,9 +185,9 @@ func (store *attachmentStore) Store(dataPointID int64, kind string, payload []by
 	}, nil
 }
 
-func (store *attachmentStore) findExisting(dataPointID int64, hashHex string) (attachmentRecord, bool, error) {
+func (store *attachmentStore) findExisting(ctx context.Context, dataPointID int64, hashHex string) (attachmentRecord, bool, error) {
 	var record attachmentRecord
-	err := store.db.QueryRow(`SELECT id, data_point_id, kind, sha256, path_relative, byte_size, fetched_at
+	err := store.db.QueryRowContext(ctx, `SELECT id, data_point_id, kind, sha256, path_relative, byte_size, fetched_at
 		FROM data_point_attachments
 		WHERE data_point_id = ? AND sha256 = ? LIMIT 1`, dataPointID, hashHex).Scan(
 		&record.ID, &record.DataPointID, &record.Kind, &record.SHA256,
@@ -224,14 +225,14 @@ type attachmentOrphan struct {
 // whose sidecar file is missing, and sidecar files whose row is
 // missing. v1 does not prune; the seam exists so doctor (#108) can
 // surface diagnostics without re-deriving the path layout.
-func (store *attachmentStore) Walk(fn func(attachmentOrphan) error) error {
+func (store *attachmentStore) Walk(ctx context.Context, fn func(attachmentOrphan) error) error {
 	knownPaths := map[string]struct{}{}
 
 	// Row-side: read every attachment row, check the sidecar exists.
 	// The deferred Close (instead of per-return manual closes) is safe to
 	// hold through the file-side walk below: that walk is pure filesystem
 	// and never touches store.db, so no connection-pool contention.
-	rows, err := store.db.Query(`SELECT data_point_id, sha256, path_relative FROM data_point_attachments`)
+	rows, err := store.db.QueryContext(ctx, `SELECT data_point_id, sha256, path_relative FROM data_point_attachments`)
 	if err != nil {
 		return err
 	}

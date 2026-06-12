@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -56,7 +57,7 @@ func TestDocsCommandsRegenIsStable(t *testing.T) {
 		}
 	})
 
-	regen := exec.Command("make", "docs-commands")
+	regen := exec.CommandContext(context.Background(), "make", "docs-commands")
 	regen.Dir = repoRoot
 	if out, err := regen.CombinedOutput(); err != nil {
 		t.Fatalf("`make docs-commands` failed: %v\n%s", err, out)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 )
@@ -38,7 +39,7 @@ func TestBodyFatSamplesViewProjectsPercentage(t *testing.T) {
 	}
 	defer db.Close()
 
-	row := db.QueryRow(`SELECT sample_time_utc, percentage, civil_date, upstream_resource_name FROM body_fat_samples`)
+	row := db.QueryRowContext(context.Background(), `SELECT sample_time_utc, percentage, civil_date, upstream_resource_name FROM body_fat_samples`)
 	var sampleTime, percentage, civilDate, resource string
 	if err := row.Scan(&sampleTime, &percentage, &civilDate, &resource); err != nil {
 		t.Fatalf("scan body_fat_samples: %v", err)
@@ -83,7 +84,7 @@ func TestBloodGlucoseSamplesViewProjectsLevel(t *testing.T) {
 	}
 	defer db.Close()
 
-	row := db.QueryRow(`SELECT sample_time_utc, milligrams_per_deciliter, civil_date FROM blood_glucose_samples`)
+	row := db.QueryRowContext(context.Background(), `SELECT sample_time_utc, milligrams_per_deciliter, civil_date FROM blood_glucose_samples`)
 	var sampleTime, mgdl, civilDate string
 	if err := row.Scan(&sampleTime, &mgdl, &civilDate); err != nil {
 		t.Fatalf("scan blood_glucose_samples: %v", err)
@@ -125,7 +126,7 @@ func TestCoreBodyTemperatureSamplesViewProjectsCelsius(t *testing.T) {
 	}
 	defer db.Close()
 
-	row := db.QueryRow(`SELECT sample_time_utc, celsius, civil_date FROM core_body_temperature_samples`)
+	row := db.QueryRowContext(context.Background(), `SELECT sample_time_utc, celsius, civil_date FROM core_body_temperature_samples`)
 	var sampleTime, celsius, civilDate string
 	if err := row.Scan(&sampleTime, &celsius, &civilDate); err != nil {
 		t.Fatalf("scan core_body_temperature_samples: %v", err)
@@ -167,7 +168,7 @@ func TestHeightSamplesViewProjectsMeters(t *testing.T) {
 	}
 	defer db.Close()
 
-	row := db.QueryRow(`SELECT sample_time_utc, height_meters, civil_date FROM height_samples`)
+	row := db.QueryRowContext(context.Background(), `SELECT sample_time_utc, height_meters, civil_date FROM height_samples`)
 	var sampleTime, heightMeters, civilDate string
 	if err := row.Scan(&sampleTime, &heightMeters, &civilDate); err != nil {
 		t.Fatalf("scan height_samples: %v", err)
@@ -224,7 +225,7 @@ func TestCurrentHeightViewReturnsLatestSample(t *testing.T) {
 	}
 	defer db.Close()
 
-	rows, err := db.Query(`SELECT sample_time_utc, height_meters FROM current_height`)
+	rows, err := db.QueryContext(context.Background(), `SELECT sample_time_utc, height_meters FROM current_height`)
 	if err != nil {
 		t.Fatalf("query current_height: %v", err)
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -57,9 +58,9 @@ func rollupKindForSync(rollup string) syncCursorRollupKind {
 // as TEXT NOT NULL and commitSyncCursor rejects empty values, so the
 // returned string is non-empty whenever the boolean is true; the boolean
 // is the canonical "no prior successful Sync Run" signal.
-func resolveSyncCursor(db *sql.DB, key syncCursorKey) (string, bool, error) {
+func resolveSyncCursor(ctx context.Context, db *sql.DB, key syncCursorKey) (string, bool, error) {
 	var cursorTime string
-	err := db.QueryRow(`SELECT cursor_time FROM sync_cursors
+	err := db.QueryRowContext(ctx, `SELECT cursor_time FROM sync_cursors
 		WHERE connection_id = ?
 			AND data_type = ?
 			AND source_family_filter = ?
@@ -82,25 +83,25 @@ func resolveSyncCursor(db *sql.DB, key syncCursorKey) (string, bool, error) {
 // the cursor data lives: only sync_completed advances cursor_time.
 // sync_failed and sync_canceled are accepted so callers can route every
 // terminal outcome through one path, but they no-op on storage.
-func commitSyncCursor(db *sql.DB, key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error {
-	return commitSyncCursorExec(db, key, outcome, to, advancedAt)
+func commitSyncCursor(ctx context.Context, db *sql.DB, key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error {
+	return commitSyncCursorExec(ctx, db, key, outcome, to, advancedAt)
 }
 
 // commitSyncCursorTx is the same write as commitSyncCursor but bound to
 // an open transaction so it can compose with finishSyncRun inside the
 // writer's FinalizeSyncRun atomic-commit path.
-func commitSyncCursorTx(tx *sql.Tx, key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error {
-	return commitSyncCursorExec(tx, key, outcome, to, advancedAt)
+func commitSyncCursorTx(ctx context.Context, tx *sql.Tx, key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error {
+	return commitSyncCursorExec(ctx, tx, key, outcome, to, advancedAt)
 }
 
-func commitSyncCursorExec(executor sqlExecutor, key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error {
+func commitSyncCursorExec(ctx context.Context, executor sqlExecutor, key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error {
 	if !outcome.AdvancesCursor() {
 		return nil
 	}
 	if to == "" {
 		return errors.New("sync cursor commit requires a non-empty cursor time")
 	}
-	_, err := executor.Exec(`INSERT INTO sync_cursors (
+	_, err := executor.ExecContext(ctx, `INSERT INTO sync_cursors (
 		connection_id,
 		data_type,
 		source_family_filter,
