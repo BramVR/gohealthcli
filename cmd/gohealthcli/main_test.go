@@ -6247,7 +6247,7 @@ func TestOSNativeCredentialStoreDoesNotSendTokenAsArgument(t *testing.T) {
 	var gotService string
 	var gotKey string
 	var gotContent []byte
-	testRuntime.runSecurityAddGenericPassword = func(service, key string, content []byte) error {
+	testRuntime.runSecurityAddGenericPassword = func(_ context.Context, service, key string, content []byte) error {
 		gotService = service
 		gotKey = key
 		gotContent = append([]byte(nil), content...)
@@ -6287,7 +6287,7 @@ func TestSecurityCredentialStoreFeedsPromptWithoutTokenArgument(t *testing.T) {
 	t.Setenv("PATH", tempDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	content := []byte(`{"access_token":"access-secret-value"}`)
-	if err := runSecurityAddGenericPasswordCommand("gohealthcli", "googlehealth:111", content); err != nil {
+	if err := runSecurityAddGenericPasswordCommand(context.Background(), "gohealthcli", "googlehealth:111", content); err != nil {
 		t.Fatalf("security command: %v", err)
 	}
 
@@ -6320,7 +6320,7 @@ func TestLinuxOSNativeCredentialStoreUsesSecretToolContent(t *testing.T) {
 	var gotService string
 	var gotKey string
 	var gotContent []byte
-	testRuntime.runSecretToolStore = func(service, key string, content []byte) error {
+	testRuntime.runSecretToolStore = func(_ context.Context, service, key string, content []byte) error {
 		gotService = service
 		gotKey = key
 		gotContent = append([]byte(nil), content...)
@@ -6350,7 +6350,7 @@ func TestWindowsOSNativeCredentialStoreUsesCredentialManagerContent(t *testing.T
 	var gotService string
 	var gotKey string
 	var gotContent []byte
-	testRuntime.runWindowsCredentialWrite = func(service, key string, content []byte) error {
+	testRuntime.runWindowsCredentialWrite = func(_ context.Context, service, key string, content []byte) error {
 		gotService = service
 		gotKey = key
 		gotContent = append([]byte(nil), content...)

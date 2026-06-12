@@ -2485,7 +2485,11 @@ func runBrowserOAuthFlowWithRuntime(client oauthClientConfig, scopes []string, n
 	if err != nil {
 		return oauthTokenResponse{}, err
 	}
-	if err := runtime.openBrowser(authURL); err != nil {
+	// context.Background(): the browser-OAuth flow is interactive and
+	// blocks on the user's redirect with no cancellation path today (its
+	// token POST rides context.Background() the same way, #284); the
+	// context keeps the subprocess spawn on the Context API (#305).
+	if err := runtime.openBrowser(context.Background(), authURL); err != nil {
 		return oauthTokenResponse{}, fmt.Errorf("open browser: %w", err)
 	}
 	code, err := waitForOAuthCode(listener, state)
@@ -3464,14 +3468,14 @@ func pkceChallenge(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-func openBrowser(target string) error {
+func openBrowser(ctx context.Context, target string) error {
 	switch runtime.GOOS {
 	case "darwin":
-		return exec.Command("open", target).Start()
+		return exec.CommandContext(ctx, "open", target).Start()
 	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", target).Start()
+		return exec.CommandContext(ctx, "rundll32", "url.dll,FileProtocolHandler", target).Start()
 	default:
-		return exec.Command("xdg-open", target).Start()
+		return exec.CommandContext(ctx, "xdg-open", target).Start()
 	}
 }
 
@@ -3568,13 +3572,18 @@ func (store osNativeCredentialStore) Store(key string, tokenMaterial map[string]
 		return err
 	}
 	runtime := store.runtime.withDefaults()
+	// context.Background(): Credential Store access is a synchronous
+	// local subprocess with no cancellation path today; the context
+	// keeps the exec invocations on the Context API (#305). A future
+	// producer threads through the runtime adapters seam.
+	ctx := context.Background()
 	switch runtime.currentOS {
 	case "darwin":
-		return runtime.runSecurityAddGenericPassword(store.service, key, content)
+		return runtime.runSecurityAddGenericPassword(ctx, store.service, key, content)
 	case "linux":
-		return runtime.runSecretToolStore(store.service, key, content)
+		return runtime.runSecretToolStore(ctx, store.service, key, content)
 	case "windows":
-		return runtime.runWindowsCredentialWrite(store.service, key, content)
+		return runtime.runWindowsCredentialWrite(ctx, store.service, key, content)
 	default:
 		return errors.New("OS-native Credential Store is not available on this platform; configure credential_store type \"file\"")
 	}
@@ -3584,13 +3593,15 @@ func (store osNativeCredentialStore) Load(key string) (map[string]any, error) {
 	var content []byte
 	var err error
 	runtime := store.runtime.withDefaults()
+	// context.Background(): same rationale as Store above (#305).
+	ctx := context.Background()
 	switch runtime.currentOS {
 	case "darwin":
-		content, err = runtime.runSecurityFindGenericPassword(store.service, key)
+		content, err = runtime.runSecurityFindGenericPassword(ctx, store.service, key)
 	case "linux":
-		content, err = runtime.runSecretToolLookup(store.service, key)
+		content, err = runtime.runSecretToolLookup(ctx, store.service, key)
 	case "windows":
-		content, err = runtime.runWindowsCredentialRead(store.service, key)
+		content, err = runtime.runWindowsCredentialRead(ctx, store.service, key)
 	default:
 		return nil, errors.New("OS-native Credential Store is not available on this platform; configure credential_store type \"file\"")
 	}
@@ -3604,15 +3615,15 @@ func (store osNativeCredentialStore) Load(key string) (map[string]any, error) {
 	return tokenMaterial, nil
 }
 
-func runSecurityAddGenericPasswordCommand(service, key string, content []byte) error {
-	cmd := exec.Command("security", "add-generic-password", "-U", "-s", service, "-a", key, "-w")
+func runSecurityAddGenericPasswordCommand(ctx context.Context, service, key string, content []byte) error {
+	cmd := exec.CommandContext(ctx, "security", "add-generic-password", "-U", "-s", service, "-a", key, "-w")
 	password := string(content)
 	cmd.Stdin = strings.NewReader(password + "\n" + password + "\n")
 	return cmd.Run()
 }
 
-func runSecurityFindGenericPasswordCommand(service, key string) ([]byte, error) {
-	cmd := exec.Command("security", "find-generic-password", "-s", service, "-a", key, "-w")
+func runSecurityFindGenericPasswordCommand(ctx context.Context, service, key string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "security", "find-generic-password", "-s", service, "-a", key, "-w")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, errCredentialStoreTokenMaterialNotFound
@@ -3620,14 +3631,14 @@ func runSecurityFindGenericPasswordCommand(service, key string) ([]byte, error) 
 	return []byte(strings.TrimSpace(string(output))), nil
 }
 
-func runSecretToolStoreCommand(service, key string, content []byte) error {
-	cmd := exec.Command("secret-tool", "store", "--label", service, "service", service, "account", key)
+func runSecretToolStoreCommand(ctx context.Context, service, key string, content []byte) error {
+	cmd := exec.CommandContext(ctx, "secret-tool", "store", "--label", service, "service", service, "account", key)
 	cmd.Stdin = strings.NewReader(string(content))
 	return cmd.Run()
 }
 
-func runSecretToolLookupCommand(service, key string) ([]byte, error) {
-	cmd := exec.Command("secret-tool", "lookup", "service", service, "account", key)
+func runSecretToolLookupCommand(ctx context.Context, service, key string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "secret-tool", "lookup", "service", service, "account", key)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, errCredentialStoreTokenMaterialNotFound
@@ -3635,7 +3646,7 @@ func runSecretToolLookupCommand(service, key string) ([]byte, error) {
 	return []byte(strings.TrimSpace(string(output))), nil
 }
 
-func runWindowsCredentialWriteCommand(service, key string, content []byte) error {
+func runWindowsCredentialWriteCommand(ctx context.Context, service, key string, content []byte) error {
 	target := service + ":" + key
 	script := `
 $secret = [Console]::In.ReadToEnd()
@@ -3681,13 +3692,13 @@ try {
   [Runtime.InteropServices.Marshal]::FreeHGlobal($blob)
 }
 `
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
 	cmd.Env = append(os.Environ(), "GOHEALTHCLI_CREDENTIAL_TARGET="+target, "GOHEALTHCLI_CREDENTIAL_ACCOUNT="+key)
 	cmd.Stdin = strings.NewReader(string(content))
 	return cmd.Run()
 }
 
-func runWindowsCredentialReadCommand(service, key string) ([]byte, error) {
+func runWindowsCredentialReadCommand(ctx context.Context, service, key string) ([]byte, error) {
 	target := service + ":" + key
 	script := `
 $code = @"
@@ -3733,7 +3744,7 @@ try {
   [NativeCredential]::CredFree($credentialPtr)
 }
 `
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
 	cmd.Env = append(os.Environ(), "GOHEALTHCLI_CREDENTIAL_TARGET="+target)
 	output, err := cmd.Output()
 	if err != nil {

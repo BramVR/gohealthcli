@@ -16,7 +16,7 @@ type runtimeAdapters struct {
 	httpDoer           httpDoer
 	runOAuthFlow       func(oauthClientConfig, []string, bool) (oauthTokenResponse, error)
 	refreshOAuthToken  func(oauthClientConfig, string, []string) (oauthTokenResponse, error)
-	openBrowser        func(string) error
+	openBrowser        func(context.Context, string) error
 	fetchIdentity      func(string) (googleIdentity, error)
 	fetchProfile       func(string) (googleProfile, error)
 	fetchPairedDevices func(string) (googlePairedDevices, error)
@@ -35,12 +35,12 @@ type runtimeAdapters struct {
 	sleep                          func(time.Duration)
 	currentOS                      string
 	findExecutable                 func(string) (string, error)
-	runSecurityAddGenericPassword  func(string, string, []byte) error
-	runSecurityFindGenericPassword func(string, string) ([]byte, error)
-	runSecretToolStore             func(string, string, []byte) error
-	runSecretToolLookup            func(string, string) ([]byte, error)
-	runWindowsCredentialWrite      func(string, string, []byte) error
-	runWindowsCredentialRead       func(string, string) ([]byte, error)
+	runSecurityAddGenericPassword  func(context.Context, string, string, []byte) error
+	runSecurityFindGenericPassword func(context.Context, string, string) ([]byte, error)
+	runSecretToolStore             func(context.Context, string, string, []byte) error
+	runSecretToolLookup            func(context.Context, string, string) ([]byte, error)
+	runWindowsCredentialWrite      func(context.Context, string, string, []byte) error
+	runWindowsCredentialRead       func(context.Context, string, string) ([]byte, error)
 	// observeSubcommandFlagSet is the issue #76 schema-drift test hook
 	// (see flagSetObserver in common_flags.go). Production leaves it
 	// nil — notifySubcommandFlagSetObserver treats nil as a no-op.
