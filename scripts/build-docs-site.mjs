@@ -21,7 +21,7 @@ const productTagline = "Your Google Health, archived locally.";
 const productDescription =
   "A local-first, read-only CLI that archives personal health and fitness data from the Google Health API into a queryable SQLite Health Archive on your own machine.";
 const brewInstall = "brew install BramVR/tap/gohealthcli";
-const brewAvailable = false;
+const brewAvailable = true;
 const goInstall = "go install github.com/BramVR/gohealthcli/cmd/gohealthcli@latest";
 
 // Each pill on the landing page links to its description on data-types.html
@@ -279,9 +279,7 @@ function docsSourceUrl() {
 }
 
 function docsInstallHint() {
-  // Prefer the working install command. The Homebrew line is the planned
-  // surface, but until the tap ships the go-install path is what readers and
-  // AI agents should run.
+  // Prefer the packaged install path once the tap is published.
   if (brewAvailable && typeof brewInstall !== "undefined") return brewInstall;
   if (typeof goInstall !== "undefined") return goInstall;
   if (typeof brewInstall !== "undefined") return brewInstall;

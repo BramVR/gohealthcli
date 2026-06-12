@@ -152,7 +152,14 @@ block does not match a fresh regeneration; the companion
 
 ## Install
 
-From source:
+With Homebrew:
+
+```bash
+brew install BramVR/tap/gohealthcli
+gohealthcli --version
+```
+
+With Go:
 
 ```bash
 go install github.com/BramVR/gohealthcli/cmd/gohealthcli@latest
@@ -430,17 +437,16 @@ reachability checks.
   they are joined to the attachments root.
 - Keep the SQLite archive, token files, and exported CSV/JSONL files private.
 
-## Roadmap
+## Release
 
-In-flight work, tracked as open pull requests:
+Tagged releases publish GitHub Release archives and update the Homebrew tap.
+Install with:
 
-- Homebrew tap install (`brew install BramVR/tap/gohealthcli`) backed by
-  GoReleaser release automation —
-  [#235](https://github.com/BramVR/gohealthcli/pull/235). Until it merges,
-  `go install` is the supported install path.
+```bash
+brew install BramVR/tap/gohealthcli
+```
 
-It lands with its own README and reference-page updates, so this section
-shrinks as it merges.
+Release operators: see [docs/release.md](./docs/release.md).
 
 ## Docs
 
