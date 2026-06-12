@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -35,8 +36,14 @@ func (transport *stubProviderTransport) RoundTrip(request *http.Request) (*http.
 // production timeout — a fake HTTP doer tests inject through the
 // runtime adapters seam or the Provider GET module value, instead of
 // reassigning any package-level client (#281).
-func providerDoer(transport http.RoundTripper) httpDoer {
-	return &http.Client{Timeout: providerHTTPTimeout, Transport: transport}
+func providerDoer(transport http.RoundTripper) googlehealth.Doer {
+	return &http.Client{Timeout: googlehealth.HTTPTimeout, Transport: transport}
+}
+
+// providerGETWithDoer is the Provider GET module with the given fake
+// transport injected as its HTTP doer.
+func providerGETWithDoer(transport http.RoundTripper) googlehealth.GET {
+	return googlehealth.NewGET(providerDoer(transport))
 }
 
 // startStalledProviderServer returns a Provider stand-in that stalls
@@ -63,23 +70,23 @@ func startStalledProviderServer(t *testing.T) *httptest.Server {
 // shortTimeoutDoer is a real Provider HTTP client with a shrunken
 // deadline, injected as the doer so stalled-request behavior is
 // observable without waiting out the production timeout.
-func shortTimeoutDoer() httpDoer {
-	return newProviderHTTPClient(50 * time.Millisecond)
+func shortTimeoutDoer() googlehealth.Doer {
+	return &http.Client{Timeout: 50 * time.Millisecond}
 }
 
 func TestSharedProviderHTTPClientCarriesDocumentedTimeout(t *testing.T) {
 	t.Parallel()
-	if providerHTTPTimeout <= 0 {
-		t.Fatalf("providerHTTPTimeout = %v, want a positive deadline", providerHTTPTimeout)
+	if googlehealth.HTTPTimeout <= 0 {
+		t.Fatalf("googlehealth.HTTPTimeout = %v, want a positive deadline", googlehealth.HTTPTimeout)
 	}
-	if providerHTTPClient.Timeout != providerHTTPTimeout {
-		t.Fatalf("shared Provider HTTP client timeout = %v, want the documented providerHTTPTimeout %v", providerHTTPClient.Timeout, providerHTTPTimeout)
+	if googlehealth.HTTPClient.Timeout != googlehealth.HTTPTimeout {
+		t.Fatalf("shared Provider HTTP client timeout = %v, want the documented googlehealth.HTTPTimeout %v", googlehealth.HTTPClient.Timeout, googlehealth.HTTPTimeout)
 	}
 	// The timeout exists so a stalled request fails before the
 	// abandoned-run fence can fence a Sync Run whose process is
 	// still alive; it must therefore sit inside the fence window.
-	if providerHTTPTimeout >= syncRunFenceStaleAfter {
-		t.Fatalf("providerHTTPTimeout %v must stay inside the abandoned-run fence window %v", providerHTTPTimeout, syncRunFenceStaleAfter)
+	if googlehealth.HTTPTimeout >= syncRunFenceStaleAfter {
+		t.Fatalf("googlehealth.HTTPTimeout %v must stay inside the abandoned-run fence window %v", googlehealth.HTTPTimeout, syncRunFenceStaleAfter)
 	}
 }
 
@@ -363,7 +370,7 @@ func TestRawProviderFetchFailsStalledProviderByDeadline(t *testing.T) {
 	t.Parallel()
 	server := startStalledProviderServer(t)
 
-	_, err := fetchGoogleHealthRaw(context.Background(), shortTimeoutDoer(), rawProviderRequest{url: server.URL}, "test-access-token")
+	_, err := googlehealth.FetchRaw(context.Background(), shortTimeoutDoer(), googlehealth.RawRequest{URL: server.URL}, "test-access-token")
 	if err == nil {
 		t.Fatal("expected a stalled raw Provider fetch to fail by deadline, got success")
 	}
@@ -377,7 +384,7 @@ func TestProviderHTTPClientFailsStalledRequestByDeadline(t *testing.T) {
 	t.Parallel()
 	server := startStalledProviderServer(t)
 
-	client := newProviderHTTPClient(50 * time.Millisecond)
+	client := &http.Client{Timeout: 50 * time.Millisecond}
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
 	if err != nil {
 		t.Fatalf("build request: %v", err)

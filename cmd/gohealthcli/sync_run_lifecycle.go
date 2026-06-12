@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"math/rand"
 	"strings"
 	"time"
@@ -58,8 +59,8 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 			DataTypes: plan.dataTypes,
 			From:      plan.from,
 			To:        plan.to,
-			Message:   errSyncCanceled.Error(),
-		}), errSyncCanceled
+			Message:   googlehealth.ErrSyncCanceled.Error(),
+		}), googlehealth.ErrSyncCanceled
 	}
 	if len(plan.dataTypes) != 1 {
 		return syncRunFailure(syncResult{DataTypes: plan.dataTypes},
@@ -117,7 +118,7 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 		resumedFromCursor = true
 	}
 	ingestion := newGoogleHealthIngestionWithRuntime(runtime)
-	_, grantedScopes, err := connectionTokenExpiryAndScopes(connection.tokenMetadataJSON)
+	_, grantedScopes, err := connectionTokenExpiryAndScopes(connection.TokenMetadataJSON)
 	if err != nil {
 		return syncRunFailure(syncResult{
 			DataTypes: options.dataTypes,
@@ -125,14 +126,14 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 			To:        options.to,
 		}, err)
 	}
-	ingestionRequest := googleHealthIngestionRequest{
-		connection:    connection,
-		dataType:      dataType,
-		from:          options.from,
-		to:            options.to,
-		rollup:        options.rollup,
-		sourceFamily:  options.sourceFamily,
-		grantedScopes: grantedScopes,
+	ingestionRequest := googlehealth.IngestionRequest{
+		Connection:    connection,
+		DataType:      dataType,
+		From:          options.from,
+		To:            options.to,
+		Rollup:        options.rollup,
+		SourceFamily:  options.sourceFamily,
+		GrantedScopes: grantedScopes,
 	}
 	ingestionPlan, err := ingestion.Plan(ingestionRequest)
 	if err != nil {
@@ -143,12 +144,12 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 		}, err)
 	}
 	result := syncResult{
-		ConnectionID:      connection.id,
-		ProviderName:      connection.providerName,
+		ConnectionID:      connection.ID,
+		ProviderName:      connection.ProviderName,
 		DataTypes:         options.dataTypes,
 		From:              options.from,
 		To:                options.to,
-		EndpointFamily:    ingestionPlan.endpointFamily,
+		EndpointFamily:    ingestionPlan.EndpointFamily,
 		SourceFamily:      options.sourceFamily,
 		ResumedFromCursor: resumedFromCursor,
 	}
@@ -169,8 +170,8 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 		// SIGINT that lands mid-INSERT surfaces as the canceled outcome
 		// (#305), matching every other cancellation boundary.
 		if ctx.Err() != nil {
-			result.Message = errSyncCanceled.Error()
-			return syncResultFromOutcome(syncRunOutcomeCanceled, result), errSyncCanceled
+			result.Message = googlehealth.ErrSyncCanceled.Error()
+			return syncResultFromOutcome(syncRunOutcomeCanceled, result), googlehealth.ErrSyncCanceled
 		}
 		return syncRunFailure(result, err)
 	}
@@ -179,14 +180,14 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 	if config.oauthClient.kind == "file" {
 		connectionAccess = connectionAccess.WithAutoRefresh(config.oauthClient, archive)
 	}
-	accessToken, err := connectionAccess.AccessToken(googleHealthScopesForDataType(dataType))
+	accessToken, err := connectionAccess.AccessToken(googlehealth.ScopesForDataType(dataType))
 	if err != nil {
 		return lifecycle.finalize(ctx, archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeFailed, err)
 	}
 	if _, err := connectionAccess.FetchVerifiedIdentity(accessToken); err != nil {
 		return lifecycle.finalize(ctx, archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeFailed, err)
 	}
-	ingestionRequest.accessToken = accessToken
+	ingestionRequest.AccessToken = accessToken
 	// Per-page heartbeat (#236): before every page fetch the counts so
 	// far plus last_progress_at land on the sync_running row, so a
 	// concurrent `sync --status` poller sees live progress instead of
@@ -196,7 +197,7 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 	// Totals go through the same applyGoogleHealthIngestionCounts +
 	// syncResultTotalCounts pair the finalize uses, so the advisory and
 	// authoritative counts cannot drift when a new count family is added.
-	ingestionRequest.progress = func(counts googleHealthIngestionResult) {
+	ingestionRequest.Progress = func(counts googlehealth.IngestionResult) {
 		var snapshot syncResult
 		applyGoogleHealthIngestionCounts(&snapshot, counts)
 		seen, newCount, updated := syncResultTotalCounts(snapshot)
@@ -208,11 +209,11 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 			At:           runtime.now().UTC().Format(time.RFC3339),
 		})
 	}
-	ingestionRequest.refreshAccessToken = connectionAccess.MidRunTokenRefresher()
+	ingestionRequest.RefreshAccessToken = connectionAccess.MidRunTokenRefresher()
 	ingestionResult, err := ingestion.Execute(ctx, archive, ingestionRequest)
 	applyGoogleHealthIngestionCounts(&result, ingestionResult)
 	if err != nil {
-		if errors.Is(err, errSyncCanceled) {
+		if errors.Is(err, googlehealth.ErrSyncCanceled) {
 			return lifecycle.finalize(ctx, archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeCanceled, err)
 		}
 		return lifecycle.finalize(ctx, archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeFailed, err)

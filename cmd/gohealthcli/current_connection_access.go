@@ -4,16 +4,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"strings"
 	"time"
 )
 
+// The Provider auth-rejection sentinel moved to
+// googlehealth.ErrUnauthorized with the Provider error translation
+// layer (#287): the package that detects the 401 owns the sentinel,
+// and main keeps matching the category via errors.Is.
 var (
-	errCurrentConnectionIdentityMismatch     = errors.New("Provider returned a different Google Identity; use a new archive path")
-	errCurrentConnectionProviderUnauthorized = errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again")
-	errCurrentConnectionMissingAccessToken   = errors.New("Credential Store token material is missing access token; run `gohealthcli connect` again")
-	errCurrentConnectionMissingRefreshToken  = errors.New("Credential Store token material is missing refresh token; run `gohealthcli connect` again")
-	errCurrentConnectionTokenExpired         = errors.New("Connection token has expired; run `gohealthcli connect` again")
+	errCurrentConnectionIdentityMismatch    = errors.New("Provider returned a different Google Identity; use a new archive path")
+	errCurrentConnectionMissingAccessToken  = errors.New("Credential Store token material is missing access token; run `gohealthcli connect` again")
+	errCurrentConnectionMissingRefreshToken = errors.New("Credential Store token material is missing refresh token; run `gohealthcli connect` again")
+	errCurrentConnectionTokenExpired        = errors.New("Connection token has expired; run `gohealthcli connect` again")
 	// errCurrentConnectionScopeMissing is the sentinel callers switch
 	// on when the stored Connection's granted scopes do not cover the
 	// scopes required for an upstream call. The wrapping error still
@@ -29,7 +34,7 @@ var (
 
 type currentConnectionAccess struct {
 	credentialStore credentialStoreConfig
-	connection      archivedConnection
+	connection      archived.Connection
 	protectedPaths  []string
 	runtime         runtimeAdapters
 	// autoRefresh, when set, lets AccessToken transparently refresh and
@@ -60,7 +65,7 @@ type doctorOnlineTokenCheck struct {
 	previousTokenMaterial map[string]any
 }
 
-func newCurrentConnectionAccessWithRuntime(credentialStore credentialStoreConfig, connection archivedConnection, protectedPaths []string, runtime runtimeAdapters) currentConnectionAccess {
+func newCurrentConnectionAccessWithRuntime(credentialStore credentialStoreConfig, connection archived.Connection, protectedPaths []string, runtime runtimeAdapters) currentConnectionAccess {
 	return currentConnectionAccess{
 		credentialStore: credentialStore,
 		connection:      connection,
@@ -75,16 +80,16 @@ func (access currentConnectionAccess) WithAutoRefresh(oauthClient oauthClientSou
 }
 
 func (access currentConnectionAccess) AccessToken(requiredScopes []string) (string, error) {
-	if err := requireUsableConnectionAccessToken(access.connection.tokenMetadataJSON, access.runtime.now()); err != nil {
+	if err := requireUsableConnectionAccessToken(access.connection.TokenMetadataJSON, access.runtime.now()); err != nil {
 		if access.autoRefresh == nil || !errors.Is(err, errCurrentConnectionTokenExpired) {
 			return "", err
 		}
-		if err := requireConnectionScopes(access.connection.tokenMetadataJSON, requiredScopes); err != nil {
+		if err := requireConnectionScopes(access.connection.TokenMetadataJSON, requiredScopes); err != nil {
 			return "", err
 		}
 		return access.refreshAndPersistAccessToken()
 	}
-	if err := requireConnectionScopes(access.connection.tokenMetadataJSON, requiredScopes); err != nil {
+	if err := requireConnectionScopes(access.connection.TokenMetadataJSON, requiredScopes); err != nil {
 		return "", err
 	}
 	tokenMaterial, err := access.loadTokenMaterial()
@@ -105,7 +110,7 @@ func (access currentConnectionAccess) refreshAndPersistAccessToken() (string, er
 	if err := persistDoctorOnlineRefreshedTokenWithRuntime(
 		access.autoRefresh.archive,
 		access.credentialStore,
-		access.connection.id,
+		access.connection.ID,
 		*check.refreshedToken,
 		check.previousTokenMaterial,
 		access.runtime,
@@ -118,7 +123,7 @@ func (access currentConnectionAccess) refreshAndPersistAccessToken() (string, er
 // MidRunTokenRefresher exposes the refresh-and-persist hook to callers
 // whose access token can outlive its ~1h validity while they hold it —
 // today that is sync ingestion, whose pagination loops can run longer
-// than one access token (googleHealthIngestionRequest.refreshAccessToken).
+// than one access token (googlehealth.IngestionRequest.refreshAccessToken).
 // Returns nil when auto-refresh was not opted into via WithAutoRefresh,
 // so callers can assign the result unconditionally and keep the
 // fail-on-401 behavior for Connections that cannot refresh.
@@ -136,7 +141,7 @@ func wrapAutoRefreshFailure(err error) error {
 func (access currentConnectionAccess) FetchVerifiedIdentity(accessToken string) (googleIdentity, error) {
 	identity, err := access.runtime.fetchIdentity(accessToken)
 	if err != nil {
-		return googleIdentity{}, normalizeProviderError(err)
+		return googleIdentity{}, googlehealth.NormalizeError(err)
 	}
 	if err := access.RequireMatchingHealthUserID(identity.healthUserID); err != nil {
 		return googleIdentity{}, err
@@ -145,7 +150,7 @@ func (access currentConnectionAccess) FetchVerifiedIdentity(accessToken string) 
 }
 
 func (access currentConnectionAccess) RequireMatchingHealthUserID(healthUserID string) error {
-	if healthUserID != access.connection.googleHealthUserID {
+	if healthUserID != access.connection.GoogleHealthUserID {
 		return errCurrentConnectionIdentityMismatch
 	}
 	return nil
@@ -163,7 +168,7 @@ func (access currentConnectionAccess) RefreshableAccessToken(oauthClient oauthCl
 	if !ok || refreshToken == "" {
 		return doctorOnlineTokenCheck{}, errCurrentConnectionMissingRefreshToken
 	}
-	_, scopes, err := connectionTokenExpiryAndScopes(access.connection.tokenMetadataJSON)
+	_, scopes, err := connectionTokenExpiryAndScopes(access.connection.TokenMetadataJSON)
 	if err != nil {
 		return doctorOnlineTokenCheck{}, err
 	}
@@ -189,7 +194,7 @@ func (access currentConnectionAccess) loadTokenMaterial() (map[string]any, error
 	if err != nil {
 		return nil, err
 	}
-	return store.Load(access.connection.id)
+	return store.Load(access.connection.ID)
 }
 
 func accessTokenFromTokenMaterial(tokenMaterial map[string]any) (string, error) {

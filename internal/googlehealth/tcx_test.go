@@ -1,4 +1,4 @@
-package main
+package googlehealth
 
 import (
 	"net/http"
@@ -27,19 +27,19 @@ func TestBuildGoogleHealthExportExerciseTcxRawRequest(t *testing.T) {
 	// byte-for-byte the segment-escaped concatenation.
 	wantURL := googleHealthBaseURL + "/users/" + url.PathEscape("me") +
 		"/dataTypes/exercise/dataPoints/" + url.PathEscape("12345") + ":exportExerciseTcx"
-	if request.url != wantURL {
-		t.Fatalf("url = %q, want %q", request.url, wantURL)
+	if request.URL != wantURL {
+		t.Fatalf("url = %q, want %q", request.URL, wantURL)
 	}
-	if request.method != http.MethodGet {
-		t.Fatalf("method = %q, want GET", request.method)
+	if request.Method != http.MethodGet {
+		t.Fatalf("method = %q, want GET", request.Method)
 	}
-	if request.endpointName != "dataTypes.exercise.exportExerciseTcx" {
-		t.Fatalf("endpointName = %q, want dataTypes.exercise.exportExerciseTcx", request.endpointName)
+	if request.EndpointName != "dataTypes.exercise.exportExerciseTcx" {
+		t.Fatalf("endpointName = %q, want dataTypes.exercise.exportExerciseTcx", request.EndpointName)
 	}
-	if request.dataType != "exercise" {
-		t.Fatalf("dataType = %q, want exercise", request.dataType)
+	if request.DataType != "exercise" {
+		t.Fatalf("dataType = %q, want exercise", request.DataType)
 	}
-	if len(request.requiredScopes) == 0 {
+	if len(request.RequiredScopes) == 0 {
 		t.Fatalf("requiredScopes empty; want activity readonly scope")
 	}
 }
@@ -71,21 +71,21 @@ func TestBuildGoogleHealthExportExerciseTcxRawRequestEscapesFreeSegments(t *test
 				// Rejecting the name outright is an acceptable hardening.
 				return
 			}
-			parsed, parseErr := url.Parse(request.url)
+			parsed, parseErr := url.Parse(request.URL)
 			if parseErr != nil {
-				t.Fatalf("url.Parse(%q): %v", request.url, parseErr)
+				t.Fatalf("url.Parse(%q): %v", request.URL, parseErr)
 			}
 			if parsed.Host != "health.googleapis.com" {
-				t.Fatalf("host = %q, want health.googleapis.com (URL %q)", parsed.Host, request.url)
+				t.Fatalf("host = %q, want health.googleapis.com (URL %q)", parsed.Host, request.URL)
 			}
 			if parsed.RawQuery != "" {
-				t.Fatalf("RawQuery = %q, want empty (URL %q)", parsed.RawQuery, request.url)
+				t.Fatalf("RawQuery = %q, want empty (URL %q)", parsed.RawQuery, request.URL)
 			}
 			if parsed.Fragment != "" {
-				t.Fatalf("Fragment = %q, want empty (URL %q)", parsed.Fragment, request.url)
+				t.Fatalf("Fragment = %q, want empty (URL %q)", parsed.Fragment, request.URL)
 			}
 			if !strings.HasSuffix(parsed.EscapedPath(), ":exportExerciseTcx") {
-				t.Fatalf("escaped path %q does not end with :exportExerciseTcx (URL %q)", parsed.EscapedPath(), request.url)
+				t.Fatalf("escaped path %q does not end with :exportExerciseTcx (URL %q)", parsed.EscapedPath(), request.URL)
 			}
 			// The decoded path round-trips back to the exact resource name,
 			// proving the free segments were escaped (not dropped/mangled).

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"io"
 	"strings"
 )
@@ -99,7 +100,7 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		pageToken:   *rawPageToken,
 		target:      target,
 	}
-	request, err := buildGoogleHealthRawRequest(options.target, options.from, options.to, options.pageSize, options.pageToken)
+	request, err := googlehealth.BuildRawRequest(options.target, options.from, options.to, options.pageSize, options.pageToken)
 	if err != nil {
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
@@ -110,7 +111,7 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		// consumers can tell it apart from local misconfiguration
 		// (issue #272); everything else stays operation_failed.
 		status := StatusOperationFailed
-		if isProviderUnreachableError(err) {
+		if googlehealth.IsUnreachableError(err) {
 			status = StatusProviderUnreachable
 		}
 		return ReportFailure(FailureReport{Command: "raw", Status: status, Message: err.Error(), Mode: mode}, stdout, stderr)
@@ -181,7 +182,7 @@ func partitionRawFlagArgs(fs *flag.FlagSet, args []string) ([]string, []string) 
 	return out, positionals
 }
 
-func rawSetupWithRuntime(configPath, archivePath string, request rawProviderRequest, runtime runtimeAdapters) ([]byte, error) {
+func rawSetupWithRuntime(configPath, archivePath string, request googlehealth.RawRequest, runtime runtimeAdapters) ([]byte, error) {
 	runtime = runtime.withDefaults()
 	config, err := inspectIdentityConfig(configPath, archivePath)
 	if err != nil {
@@ -210,7 +211,7 @@ func rawSetupWithRuntime(configPath, archivePath string, request rawProviderRequ
 	if config.oauthClient.kind == "file" {
 		connectionAccess = connectionAccess.WithAutoRefresh(config.oauthClient, archive)
 	}
-	accessToken, err := connectionAccess.AccessToken(request.requiredScopes)
+	accessToken, err := connectionAccess.AccessToken(request.RequiredScopes)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +220,7 @@ func rawSetupWithRuntime(configPath, archivePath string, request rawProviderRequ
 	// shared timeout client still bounds it) without wiring a handler.
 	body, err := runtime.fetchRawProvider(context.Background(), request, accessToken)
 	if err != nil {
-		return nil, normalizeProviderError(err)
+		return nil, googlehealth.NormalizeError(err)
 	}
 	return body, nil
 }

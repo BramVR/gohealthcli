@@ -1,4 +1,4 @@
-package main
+package googlehealth
 
 import "fmt"
 
@@ -89,7 +89,7 @@ func listReconcileWithRollupEndpoints(filterField, rollupValueType string, windo
 var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTypeCatalogEntry{
 	{
 		DataType:          "steps",
-		RequiredScopes:    []string{googleHealthActivityReadonlyScope},
+		RequiredScopes:    []string{ScopeActivityReadonly},
 		Parser:            "interval",
 		JSONField:         "steps",
 		RecordKind:        "interval",
@@ -103,7 +103,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:          "heart-rate",
-		RequiredScopes:    []string{googleHealthHealthMetricsReadonlyScope},
+		RequiredScopes:    []string{ScopeHealthMetricsReadonly},
 		Parser:            "sample",
 		JSONField:         "heartRate",
 		RecordKind:        "sample",
@@ -116,7 +116,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:             "daily-resting-heart-rate",
-		RequiredScopes:       []string{googleHealthHealthMetricsReadonlyScope},
+		RequiredScopes:       []string{ScopeHealthMetricsReadonly},
 		Parser:               "daily",
 		JSONField:            "dailyRestingHeartRate",
 		RecordKind:           "daily",
@@ -126,7 +126,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:           "heart-rate-variability",
-		RequiredScopes:     []string{googleHealthHealthMetricsReadonlyScope},
+		RequiredScopes:     []string{ScopeHealthMetricsReadonly},
 		Parser:             "sample",
 		JSONField:          "heartRateVariability",
 		RecordKind:         "sample",
@@ -135,7 +135,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:             "daily-heart-rate-variability",
-		RequiredScopes:       []string{googleHealthHealthMetricsReadonlyScope},
+		RequiredScopes:       []string{ScopeHealthMetricsReadonly},
 		Parser:               "daily",
 		JSONField:            "dailyHeartRateVariability",
 		RecordKind:           "daily",
@@ -145,7 +145,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:           "oxygen-saturation",
-		RequiredScopes:     []string{googleHealthHealthMetricsReadonlyScope},
+		RequiredScopes:     []string{ScopeHealthMetricsReadonly},
 		Parser:             "sample",
 		JSONField:          "oxygenSaturation",
 		RecordKind:         "sample",
@@ -154,7 +154,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:             "daily-oxygen-saturation",
-		RequiredScopes:       []string{googleHealthHealthMetricsReadonlyScope},
+		RequiredScopes:       []string{ScopeHealthMetricsReadonly},
 		Parser:               "daily",
 		JSONField:            "dailyOxygenSaturation",
 		RecordKind:           "daily",
@@ -164,7 +164,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:             "daily-respiratory-rate",
-		RequiredScopes:       []string{googleHealthHealthMetricsReadonlyScope},
+		RequiredScopes:       []string{ScopeHealthMetricsReadonly},
 		Parser:               "daily",
 		JSONField:            "dailyRespiratoryRate",
 		RecordKind:           "daily",
@@ -174,7 +174,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:             "sleep",
-		RequiredScopes:       []string{googleHealthSleepReadonlyScope},
+		RequiredScopes:       []string{ScopeSleepReadonly},
 		Parser:               "session",
 		JSONField:            "sleep",
 		RecordKind:           "session",
@@ -184,7 +184,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:             "exercise",
-		RequiredScopes:       []string{googleHealthActivityReadonlyScope},
+		RequiredScopes:       []string{ScopeActivityReadonly},
 		Parser:               "session",
 		JSONField:            "exercise",
 		RecordKind:           "session",
@@ -194,7 +194,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:           "distance",
-		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		RequiredScopes:     []string{ScopeActivityReadonly},
 		Parser:             "interval",
 		JSONField:          "distance",
 		RecordKind:         "interval",
@@ -203,14 +203,14 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:          "total-calories",
-		RequiredScopes:    []string{googleHealthActivityReadonlyScope},
+		RequiredScopes:    []string{ScopeActivityReadonly},
 		DefaultConfigType: true,
 		// total-calories has no parser shape yet — reserved Tier 1 entry.
 		// SupportedEndpoints stays nil; sync would error 'not supported'.
 	},
 	{
 		DataType:           "weight",
-		RequiredScopes:     []string{googleHealthHealthMetricsReadonlyScope},
+		RequiredScopes:     []string{ScopeHealthMetricsReadonly},
 		Parser:             "sample",
 		JSONField:          "weight",
 		RecordKind:         "sample",
@@ -228,7 +228,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		// flag once the upstream endpoint shape is confirmed and the
 		// floors sync runs cleanly end-to-end.
 		DataType:       "floors",
-		RequiredScopes: []string{googleHealthActivityReadonlyScope},
+		RequiredScopes: []string{ScopeActivityReadonly},
 		Parser:         "interval",
 		JSONField:      "floors",
 		RecordKind:     "interval",
@@ -246,7 +246,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	// flips DefaultConfigType once the response shape is confirmed.
 	{
 		DataType:           "active-energy-burned",
-		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		RequiredScopes:     []string{ScopeActivityReadonly},
 		Parser:             "interval",
 		JSONField:          "activeEnergyBurned",
 		RecordKind:         "interval",
@@ -254,7 +254,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:           "active-minutes",
-		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		RequiredScopes:     []string{ScopeActivityReadonly},
 		Parser:             "interval",
 		JSONField:          "activeMinutes",
 		RecordKind:         "interval",
@@ -262,7 +262,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:           "active-zone-minutes",
-		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		RequiredScopes:     []string{ScopeActivityReadonly},
 		Parser:             "interval",
 		JSONField:          "activeZoneMinutes",
 		RecordKind:         "interval",
@@ -270,7 +270,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:           "altitude",
-		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		RequiredScopes:     []string{ScopeActivityReadonly},
 		Parser:             "interval",
 		JSONField:          "altitude",
 		RecordKind:         "interval",
@@ -278,7 +278,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:           "sedentary-period",
-		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		RequiredScopes:     []string{ScopeActivityReadonly},
 		Parser:             "interval",
 		JSONField:          "sedentaryPeriod",
 		RecordKind:         "interval",
@@ -289,7 +289,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		// the assumed filter field; deferred until the upstream shape
 		// is confirmed. Catalog row stays for future debugging.
 		DataType:           "calories-in-heart-rate-zone",
-		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		RequiredScopes:     []string{ScopeActivityReadonly},
 		Parser:             "interval",
 		JSONField:          "caloriesInHeartRateZone",
 		RecordKind:         "interval",
@@ -297,7 +297,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:           "time-in-heart-rate-zone",
-		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		RequiredScopes:     []string{ScopeActivityReadonly},
 		Parser:             "interval",
 		JSONField:          "timeInHeartRateZone",
 		RecordKind:         "interval",
@@ -305,7 +305,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:           "activity-level",
-		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		RequiredScopes:     []string{ScopeActivityReadonly},
 		Parser:             "interval",
 		JSONField:          "activityLevel",
 		RecordKind:         "interval",
@@ -313,7 +313,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:           "vo2-max",
-		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		RequiredScopes:     []string{ScopeActivityReadonly},
 		Parser:             "sample",
 		JSONField:          "vo2Max",
 		RecordKind:         "sample",
@@ -321,7 +321,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:           "run-vo2-max",
-		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		RequiredScopes:     []string{ScopeActivityReadonly},
 		Parser:             "sample",
 		JSONField:          "runVo2Max",
 		RecordKind:         "sample",
@@ -329,7 +329,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:           "swim-lengths-data",
-		RequiredScopes:     []string{googleHealthActivityReadonlyScope},
+		RequiredScopes:     []string{ScopeActivityReadonly},
 		Parser:             "interval",
 		JSONField:          "swimLengthsData",
 		RecordKind:         "interval",
@@ -342,7 +342,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	// shape is confirmed across multiple weeks of real data.
 	{
 		DataType:           "body-fat",
-		RequiredScopes:     []string{googleHealthHealthMetricsReadonlyScope},
+		RequiredScopes:     []string{ScopeHealthMetricsReadonly},
 		Parser:             "sample",
 		JSONField:          "bodyFat",
 		RecordKind:         "sample",
@@ -350,7 +350,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:           "blood-glucose",
-		RequiredScopes:     []string{googleHealthHealthMetricsReadonlyScope},
+		RequiredScopes:     []string{ScopeHealthMetricsReadonly},
 		Parser:             "sample",
 		JSONField:          "bloodGlucose",
 		RecordKind:         "sample",
@@ -358,7 +358,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:           "core-body-temperature",
-		RequiredScopes:     []string{googleHealthHealthMetricsReadonlyScope},
+		RequiredScopes:     []string{ScopeHealthMetricsReadonly},
 		Parser:             "sample",
 		JSONField:          "coreBodyTemperature",
 		RecordKind:         "sample",
@@ -366,7 +366,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:           "height",
-		RequiredScopes:     []string{googleHealthHealthMetricsReadonlyScope},
+		RequiredScopes:     []string{ScopeHealthMetricsReadonly},
 		Parser:             "sample",
 		JSONField:          "height",
 		RecordKind:         "sample",
@@ -380,7 +380,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	// multiple weeks of real data.
 	{
 		DataType:             "daily-vo2-max",
-		RequiredScopes:       []string{googleHealthActivityReadonlyScope},
+		RequiredScopes:       []string{ScopeActivityReadonly},
 		Parser:               "daily",
 		JSONField:            "dailyVo2Max",
 		RecordKind:           "daily",
@@ -389,7 +389,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:             "daily-heart-rate-zones",
-		RequiredScopes:       []string{googleHealthHealthMetricsReadonlyScope},
+		RequiredScopes:       []string{ScopeHealthMetricsReadonly},
 		Parser:               "daily",
 		JSONField:            "dailyHeartRateZones",
 		RecordKind:           "daily",
@@ -398,7 +398,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:             "daily-sleep-temperature-derivations",
-		RequiredScopes:       []string{googleHealthSleepReadonlyScope},
+		RequiredScopes:       []string{ScopeSleepReadonly},
 		Parser:               "daily",
 		JSONField:            "dailySleepTemperatureDerivations",
 		RecordKind:           "daily",
@@ -407,7 +407,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:           "respiratory-rate-sleep-summary",
-		RequiredScopes:     []string{googleHealthSleepReadonlyScope},
+		RequiredScopes:     []string{ScopeSleepReadonly},
 		Parser:             "sample",
 		JSONField:          "respiratoryRateSleepSummary",
 		RecordKind:         "sample",
@@ -417,7 +417,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		// hydration-log lives under the nutrition.readonly scope.
 		// Session-shaped: the user logs a volume over a civil window.
 		DataType:             "hydration-log",
-		RequiredScopes:       []string{googleHealthNutritionReadonlyScope},
+		RequiredScopes:       []string{ScopeNutritionReadonly},
 		Parser:               "session",
 		JSONField:            "hydrationLog",
 		RecordKind:           "session",
@@ -432,7 +432,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	// DefaultConfigType for these.
 	{
 		DataType:             "electrocardiogram",
-		RequiredScopes:       []string{googleHealthEcgReadonlyScope},
+		RequiredScopes:       []string{ScopeEcgReadonly},
 		Parser:               "session",
 		JSONField:            "electrocardiogram",
 		RecordKind:           "session",
@@ -441,7 +441,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:             "irregular-rhythm-notification",
-		RequiredScopes:       []string{googleHealthIrnReadonlyScope},
+		RequiredScopes:       []string{ScopeIrnReadonly},
 		Parser:               "session",
 		JSONField:            "irregularRhythmNotification",
 		RecordKind:           "session",
@@ -451,6 +451,23 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 })
 
 var defaultDataTypes = googleHealthDataTypes.DefaultDataTypes()
+
+// DefaultDataTypes returns the ordered Data Types whose catalog entry
+// is flagged DefaultConfigType — the set `init` writes into a fresh
+// config and `sync --all` fans out over. The returned slice is shared
+// package state; callers treat it as read-only (the sync preflight
+// gate deliberately avoids copying it on every Validate call).
+func DefaultDataTypes() []string {
+	return defaultDataTypes
+}
+
+// IsDefaultConfigDataType reports whether dataType is a catalog entry
+// flagged DefaultConfigType — the predicate config validation applies
+// to each default_data_types entry.
+func IsDefaultConfigDataType(dataType string) bool {
+	entry, ok := googleHealthDataTypes.Lookup(dataType)
+	return ok && entry.DefaultConfigType
+}
 
 const googleHealthWearableSourceFamilyFilterName = "users/me/dataSourceFamilies/google-wearables"
 
@@ -491,7 +508,7 @@ func (catalog googleHealthDataTypeCatalog) DefaultDataTypes() []string {
 	return dataTypes
 }
 
-func googleHealthScopesForDataType(dataType string) []string {
+func ScopesForDataType(dataType string) []string {
 	entry, ok := googleHealthDataTypes.Lookup(dataType)
 	if !ok {
 		return nil
@@ -557,10 +574,10 @@ func googleHealthDailyDataPointJSONField(dataType string) string {
 	return ""
 }
 
-// syncDataPointDataTypeSupported returns true if the catalog has at
+// SupportsSyncDataPoints returns true if the catalog has at
 // least one list/reconcile endpoint for the Data Type. Replaces the
 // previous parallel-boolean field SupportsSyncDataPoint.
-func syncDataPointDataTypeSupported(dataType string) bool {
+func SupportsSyncDataPoints(dataType string) bool {
 	entry, ok := googleHealthDataTypes.Lookup(dataType)
 	if !ok {
 		return false
@@ -579,7 +596,7 @@ func reconcileDataTypeSupported(dataType string) bool {
 	return hasReconcile
 }
 
-func googleHealthSourceFamilyFilterName(dataType, sourceFamily string) (string, error) {
+func SourceFamilyFilterName(dataType, sourceFamily string) (string, error) {
 	if !reconcileDataTypeSupported(dataType) {
 		return "", fmt.Errorf("sync --source-family is not supported for Data Type %s", dataType)
 	}
@@ -600,7 +617,7 @@ func dailyRollupDataTypeSupported(dataType string) bool {
 	return hasDaily
 }
 
-func syncDataPointUsesDateRange(dataType string) bool {
+func UsesDateRangeDefault(dataType string) bool {
 	entry, ok := googleHealthDataTypes.Lookup(dataType)
 	return ok && entry.UsesDateRangeDefault
 }

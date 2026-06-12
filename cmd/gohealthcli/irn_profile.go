@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"io"
 )
-
-const googleHealthIRNProfileURL = "https://health.googleapis.com/v4/users/me/irnProfile"
 
 // googleIRNProfile is the raw response from users.getIrnProfile. Slice
 // C will project this through current_irn_profile.
@@ -48,11 +48,11 @@ var irnProfileSnapshotCommand = identitySnapshotCommandSpec[irnProfileResult, go
 	statusUnavailable:  "irn_profile_unavailable",
 	statusScopeMissing: "irn_profile_scope_missing",
 	scopeEndpointKey:   "getIrnProfile",
-	seedResult: func(connection archivedConnection) irnProfileResult {
+	seedResult: func(connection archived.Connection) irnProfileResult {
 		return irnProfileResult{
-			ConnectionID:       connection.id,
-			ProviderName:       connection.providerName,
-			GoogleHealthUserID: connection.googleHealthUserID,
+			ConnectionID:       connection.ID,
+			ProviderName:       connection.ProviderName,
+			GoogleHealthUserID: connection.GoogleHealthUserID,
 		}
 	},
 	status:       func(result *irnProfileResult) string { return result.Status },
@@ -82,12 +82,12 @@ func scopeListContains(scopes []string, want string) bool {
 }
 
 // fetchGoogleIRNProfile is a thin call site over the shared Provider
-// GET module (provider_get.go, issue #280), which owns the transport
+// GET module (internal/googlehealth, issue #280), which owns the transport
 // behavior: bearer auth, size limit, timeout, typed labeled status
 // errors, JSON validity, and retry/Retry-After. The module value
 // carries the HTTP doer (#281).
-func fetchGoogleIRNProfile(get providerGET, accessToken string) (googleIRNProfile, error) {
-	body, err := fetchProviderJSON(context.Background(), get, googleHealthIRNProfileURL, "irnProfile", accessToken)
+func fetchGoogleIRNProfile(get googlehealth.GET, accessToken string) (googleIRNProfile, error) {
+	body, err := get.FetchJSON(context.Background(), googlehealth.IRNProfileURL, "irnProfile", accessToken)
 	if err != nil {
 		return googleIRNProfile{}, err
 	}

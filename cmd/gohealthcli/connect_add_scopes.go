@@ -2,53 +2,10 @@ package main
 
 import (
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"sort"
 	"strings"
 )
-
-// googleHealthIdentityEndpointScopes is the declarative scope catalog
-// keyed by Google Health identity-endpoint identifier. Each entry
-// pins the OAuth scope URL(s) the upstream call requires, so the
-// per-command scope literals (devices.go, settings.go, profile.go)
-// and the `raw` endpoint dispatcher can converge on one
-// source of truth — adding a new endpoint or revising a scope is a
-// one-row change here.
-//
-// Values track Google's per-method documentation: getProfile and
-// getIdentity require `profile.readonly`, getSettings and pairedDevices
-// require `settings.readonly` (PRD #142 slice 2 / #176 confirmed
-// empirically — `profile.readonly` alone returns HTTP 403 for those
-// two), and getIrnProfile requires the IRN scope. References:
-//   - https://developers.google.com/health/api/reference/rest/v4/users/getProfile
-//   - https://developers.google.com/health/api/reference/rest/v4/users/getSettings
-//   - https://developers.google.com/health/api/reference/rest/v4/users.pairedDevices/list
-//   - https://developers.google.com/health/api/reference/rest/v4/users/getIrnProfile
-//   - https://developers.google.com/health/api/reference/rest/v4/users/getIdentity
-//
-// TestGoogleHealthIdentityEndpointScopesCatalog pins the per-endpoint
-// values so any future revision is a one-row change here plus a
-// matching test-value flip.
-var googleHealthIdentityEndpointScopes = map[string][]string{
-	"getProfile":    {googleHealthProfileReadonlyScope},
-	"getSettings":   {googleHealthSettingsReadonlyScope},
-	"pairedDevices": {googleHealthSettingsReadonlyScope},
-	"getIrnProfile": {googleHealthIrnReadonlyScope},
-	"getIdentity":   {googleHealthProfileReadonlyScope},
-}
-
-// googleHealthIdentityEndpointURLs pairs each catalog entry with its
-// upstream Google Health URL constant, so `raw endpoint <name>` can
-// dispatch through a single lookup without re-listing the endpoint
-// names. The URL constants live next to their owning introspection
-// command (settings.go, devices.go, irn_profile.go) — this map only
-// references them.
-var googleHealthIdentityEndpointURLs = map[string]string{
-	"getIdentity":   googleHealthIdentityURL,
-	"getProfile":    googleHealthProfileURL,
-	"getSettings":   googleHealthSettingsURL,
-	"pairedDevices": googleHealthPairedDevicesURL,
-	"getIrnProfile": googleHealthIRNProfileURL,
-}
 
 // connectAddScopeKeywords maps the user-facing `--add-scopes` keyword
 // to the actual Google Health API scope URL. PRD #93 §"Tier 2 Data
@@ -67,11 +24,11 @@ var googleHealthIdentityEndpointURLs = map[string]string{
 // `googleHealth*ReadonlyScope` constants so the URL string lives in
 // exactly one place.
 var connectAddScopeKeywords = map[string]string{
-	"irn":       googleHealthIrnReadonlyScope,
-	"ecg":       googleHealthEcgReadonlyScope,
-	"nutrition": googleHealthNutritionReadonlyScope,
-	"tcx":       googleHealthLocationReadonlyScope,
-	"settings":  googleHealthSettingsReadonlyScope,
+	"irn":       googlehealth.ScopeIrnReadonly,
+	"ecg":       googlehealth.ScopeEcgReadonly,
+	"nutrition": googlehealth.ScopeNutritionReadonly,
+	"tcx":       googlehealth.ScopeLocationReadonly,
+	"settings":  googlehealth.ScopeSettingsReadonly,
 }
 
 // expandConnectAddScopes turns the CLI-side keyword list into the

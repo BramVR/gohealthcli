@@ -1,4 +1,4 @@
-package main
+package googlehealth
 
 import (
 	"context"
@@ -9,18 +9,18 @@ import (
 )
 
 // funcIngestionProvider adapts a bare function to the
-// googleHealthIngestionProvider interface so mid-run-refresh tests can
+// ingestionProvider interface so mid-run-refresh tests can
 // script per-call behavior (different bodies/errors per access token)
 // without growing the shared fixture provider.
-type funcIngestionProvider func(request rawProviderRequest, accessToken string) ([]byte, error)
+type funcIngestionProvider func(request RawRequest, accessToken string) ([]byte, error)
 
-func (fetch funcIngestionProvider) Fetch(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+func (fetch funcIngestionProvider) Fetch(_ context.Context, request RawRequest, accessToken string) ([]byte, error) {
 	return fetch(request, accessToken)
 }
 
-func midRunRefreshTestIngestion(t *testing.T, provider googleHealthIngestionProvider) googleHealthIngestion {
+func midRunRefreshTestIngestion(t *testing.T, provider ingestionProvider) Ingestion {
 	t.Helper()
-	return googleHealthIngestion{
+	return Ingestion{
 		provider: provider,
 		now:      func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) },
 	}
@@ -59,8 +59,8 @@ func TestGoogleHealthIngestionRefreshesAccessTokenMidRunOn401(t *testing.T) {
 		"page-3": `{"dataPoints":[]}`,
 	}
 	var fetches []string
-	provider := funcIngestionProvider(func(request rawProviderRequest, accessToken string) ([]byte, error) {
-		pageToken := mustURLQuery(t, request.url).Get("pageToken")
+	provider := funcIngestionProvider(func(request RawRequest, accessToken string) ([]byte, error) {
+		pageToken := mustURLQuery(t, request.URL).Get("pageToken")
 		fetches = append(fetches, pageToken+":"+accessToken)
 		switch accessToken {
 		case "stale-access":
@@ -68,7 +68,7 @@ func TestGoogleHealthIngestionRefreshesAccessTokenMidRunOn401(t *testing.T) {
 				return []byte(pages[""]), nil
 			}
 			// The token expired between page 1 and page 2.
-			return nil, &googleHealthHTTPError{StatusCode: 401}
+			return nil, &HTTPError{StatusCode: 401}
 		case "fresh-access":
 			body, ok := pages[pageToken]
 			if !ok {
@@ -81,14 +81,14 @@ func TestGoogleHealthIngestionRefreshesAccessTokenMidRunOn401(t *testing.T) {
 		}
 	})
 	ingestion := midRunRefreshTestIngestion(t, provider)
-	request := fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "steps",
-		from:     "2026-01-01",
-		to:       "2026-01-02T00:00:00Z",
+	request := fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		From:     "2026-01-01",
+		To:       "2026-01-02T00:00:00Z",
 	})
-	request.accessToken = "stale-access"
+	request.AccessToken = "stale-access"
 	refreshCalls := 0
-	request.refreshAccessToken = func() (string, error) {
+	request.RefreshAccessToken = func() (string, error) {
 		refreshCalls++
 		return "fresh-access", nil
 	}
@@ -101,8 +101,8 @@ func TestGoogleHealthIngestionRefreshesAccessTokenMidRunOn401(t *testing.T) {
 	if refreshCalls != 1 {
 		t.Fatalf("refresh calls = %d, want 1", refreshCalls)
 	}
-	if result.dataPointsSeen != 2 || result.dataPointsNew != 2 {
-		t.Fatalf("Data Point counts = (%d, %d), want (2, 2)", result.dataPointsSeen, result.dataPointsNew)
+	if result.DataPointsSeen != 2 || result.DataPointsNew != 2 {
+		t.Fatalf("Data Point counts = (%d, %d), want (2, 2)", result.DataPointsSeen, result.DataPointsNew)
 	}
 	// Page 2 is fetched twice (401 then retry); pages after the refresh
 	// must keep using the refreshed token without re-fetching page 1.
@@ -116,18 +116,18 @@ func TestGoogleHealthIngestionFailsWhenRefreshedTokenStillUnauthorized(t *testin
 	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}
 	fetchCalls := 0
-	provider := funcIngestionProvider(func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	provider := funcIngestionProvider(func(request RawRequest, accessToken string) ([]byte, error) {
 		fetchCalls++
-		return nil, &googleHealthHTTPError{StatusCode: 401}
+		return nil, &HTTPError{StatusCode: 401}
 	})
 	ingestion := midRunRefreshTestIngestion(t, provider)
-	request := fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "steps",
-		from:     "2026-01-01",
-		to:       "2026-01-02T00:00:00Z",
+	request := fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		From:     "2026-01-01",
+		To:       "2026-01-02T00:00:00Z",
 	})
 	refreshCalls := 0
-	request.refreshAccessToken = func() (string, error) {
+	request.RefreshAccessToken = func() (string, error) {
 		refreshCalls++
 		return "fresh-access", nil
 	}
@@ -148,18 +148,18 @@ func TestGoogleHealthIngestionSurfacesMidRunRefreshFailure(t *testing.T) {
 	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}
 	fetchCalls := 0
-	provider := funcIngestionProvider(func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	provider := funcIngestionProvider(func(request RawRequest, accessToken string) ([]byte, error) {
 		fetchCalls++
-		return nil, &googleHealthHTTPError{StatusCode: 401}
+		return nil, &HTTPError{StatusCode: 401}
 	})
 	ingestion := midRunRefreshTestIngestion(t, provider)
-	request := fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "steps",
-		from:     "2026-01-01",
-		to:       "2026-01-02T00:00:00Z",
+	request := fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		From:     "2026-01-01",
+		To:       "2026-01-02T00:00:00Z",
 	})
 	refreshErr := errors.New("auto-refresh of Connection access token failed: refresh token revoked")
-	request.refreshAccessToken = func() (string, error) {
+	request.RefreshAccessToken = func() (string, error) {
 		return "", refreshErr
 	}
 
@@ -176,7 +176,7 @@ func TestGoogleHealthIngestionSurfacesMidRunRefreshFailure(t *testing.T) {
 // cancellation contract on the refresh path: when SIGINT cancels the
 // run's context while the 401-failing request is in flight, the next
 // boundary is BEFORE the token refresh — ingestion must surface
-// errSyncCanceled instead of spending a refresh + retry the user no
+// ErrSyncCanceled instead of spending a refresh + retry the user no
 // longer wants.
 func TestGoogleHealthIngestionDoesNotRefreshAfter401WhenCanceled(t *testing.T) {
 	t.Parallel()
@@ -184,30 +184,30 @@ func TestGoogleHealthIngestionDoesNotRefreshAfter401WhenCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	canceled := false
-	provider := funcIngestionProvider(func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	provider := funcIngestionProvider(func(request RawRequest, accessToken string) ([]byte, error) {
 		// Simulate the signal landing while the failing request is in
 		// flight: cancel the context, then surface the 401.
 		if !canceled {
 			cancel()
 			canceled = true
 		}
-		return nil, &googleHealthHTTPError{StatusCode: 401}
+		return nil, &HTTPError{StatusCode: 401}
 	})
 	ingestion := midRunRefreshTestIngestion(t, provider)
-	request := fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "steps",
-		from:     "2026-01-01",
-		to:       "2026-01-02T00:00:00Z",
+	request := fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		From:     "2026-01-01",
+		To:       "2026-01-02T00:00:00Z",
 	})
 	refreshCalls := 0
-	request.refreshAccessToken = func() (string, error) {
+	request.RefreshAccessToken = func() (string, error) {
 		refreshCalls++
 		return "fresh-access", nil
 	}
 
 	_, err := ingestion.Execute(ctx, archive, request)
-	if !errors.Is(err, errSyncCanceled) {
-		t.Fatalf("ingest error = %v, want errSyncCanceled", err)
+	if !errors.Is(err, ErrSyncCanceled) {
+		t.Fatalf("ingest error = %v, want ErrSyncCanceled", err)
 	}
 	if refreshCalls != 0 {
 		t.Fatalf("refresh calls = %d, want 0 after cancellation", refreshCalls)
@@ -218,15 +218,15 @@ func TestGoogleHealthIngestionWithoutRefreshHookSurfaces401(t *testing.T) {
 	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}
 	fetchCalls := 0
-	provider := funcIngestionProvider(func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	provider := funcIngestionProvider(func(request RawRequest, accessToken string) ([]byte, error) {
 		fetchCalls++
-		return nil, &googleHealthHTTPError{StatusCode: 401}
+		return nil, &HTTPError{StatusCode: 401}
 	})
 	ingestion := midRunRefreshTestIngestion(t, provider)
-	request := fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "steps",
-		from:     "2026-01-01",
-		to:       "2026-01-02T00:00:00Z",
+	request := fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		From:     "2026-01-01",
+		To:       "2026-01-02T00:00:00Z",
 	})
 
 	_, err := ingestion.Execute(context.Background(), archive, request)
@@ -242,10 +242,10 @@ func TestGoogleHealthIngestionRefreshesAccessTokenMidRunForRollups(t *testing.T)
 	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}
 	var fetchTokens []string
-	provider := funcIngestionProvider(func(request rawProviderRequest, accessToken string) ([]byte, error) {
+	provider := funcIngestionProvider(func(request RawRequest, accessToken string) ([]byte, error) {
 		fetchTokens = append(fetchTokens, accessToken)
 		if accessToken != "fresh-access" {
-			return nil, &googleHealthHTTPError{StatusCode: 401}
+			return nil, &HTTPError{StatusCode: 401}
 		}
 		return []byte(`{
 			"rollupDataPoints": [{
@@ -256,14 +256,14 @@ func TestGoogleHealthIngestionRefreshesAccessTokenMidRunForRollups(t *testing.T)
 		}`), nil
 	})
 	ingestion := midRunRefreshTestIngestion(t, provider)
-	request := fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "steps",
-		rollup:   "daily",
-		from:     "2026-01-01",
-		to:       "2026-01-02",
+	request := fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		Rollup:   "daily",
+		From:     "2026-01-01",
+		To:       "2026-01-02",
 	})
-	request.accessToken = "stale-access"
-	request.refreshAccessToken = func() (string, error) {
+	request.AccessToken = "stale-access"
+	request.RefreshAccessToken = func() (string, error) {
 		return "fresh-access", nil
 	}
 
@@ -271,8 +271,8 @@ func TestGoogleHealthIngestionRefreshesAccessTokenMidRunForRollups(t *testing.T)
 	if err != nil {
 		t.Fatalf("ingest daily Rollups across token expiry: %v", err)
 	}
-	if result.rollupsSeen != 1 || result.rollupsNew != 1 {
-		t.Fatalf("Rollup counts = (%d, %d), want (1, 1)", result.rollupsSeen, result.rollupsNew)
+	if result.RollupsSeen != 1 || result.RollupsNew != 1 {
+		t.Fatalf("Rollup counts = (%d, %d), want (1, 1)", result.RollupsSeen, result.RollupsNew)
 	}
 	if strings.Join(fetchTokens, ",") != "stale-access,fresh-access" {
 		t.Fatalf("fetch tokens = %v, want stale then fresh", fetchTokens)

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 )
 
 func TestIdentityRefreshesArchivedGoogleIdentity(t *testing.T) {
@@ -199,7 +201,7 @@ func TestIdentityReportsAutoRefreshFailureBeforeProviderFetch(t *testing.T) {
 
 // TestIdentityCommandFailsFastWhenScopeMissing pins the second half of
 // the issue #273 parity decision: identity's scope request comes from
-// the same googleHealthIdentityEndpointScopes catalog its siblings use
+// the same googlehealth.IdentityEndpointScopes catalog its siblings use
 // (key "getIdentity") instead of the historical nil. When the stored
 // Connection's granted scopes do not cover it, the command exits
 // non-zero, sets result.Status to "identity_scope_missing", names the
@@ -219,7 +221,7 @@ func TestIdentityCommandFailsFastWhenScopeMissing(t *testing.T) {
 	// stored Connection so AccessToken's scope pre-check fails. Using
 	// the same catalog key the production code reads keeps this test
 	// honest across future catalog revisions.
-	required := googleHealthIdentityEndpointScopes["getIdentity"]
+	required := googlehealth.IdentityEndpointScopes("getIdentity")
 	requiredSet := make(map[string]struct{}, len(required))
 	for _, scope := range required {
 		requiredSet[scope] = struct{}{}
@@ -286,7 +288,7 @@ func TestIdentityCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// requires for getIdentity, so this test still exercises auto-refresh
 	// after a catalog revision moves getIdentity off the default-granted
 	// scope set.
-	for _, scope := range googleHealthIdentityEndpointScopes["getIdentity"] {
+	for _, scope := range googlehealth.IdentityEndpointScopes("getIdentity") {
 		addStoredConnectionScope(t, archivePath, scope)
 	}
 	// Force the stored access-token expires_at into the past so
@@ -416,12 +418,12 @@ func TestFetchGoogleIdentityUsesGetIdentityEndpoint(t *testing.T) {
 		}, nil
 	})}
 
-	identity, err := fetchGoogleIdentity(providerGET{doer: doer}, "access-secret-value")
+	identity, err := fetchGoogleIdentity(googlehealth.NewGET(doer), "access-secret-value")
 	if err != nil {
 		t.Fatalf("fetch identity: %v", err)
 	}
-	if gotURL != googleHealthIdentityURL {
-		t.Fatalf("identity URL = %q, want %q", gotURL, googleHealthIdentityURL)
+	if gotURL != googlehealth.IdentityURL {
+		t.Fatalf("identity URL = %q, want %q", gotURL, googlehealth.IdentityURL)
 	}
 	if identity.healthUserID != "111111256096816351" || identity.legacyFitbitUserID != "A1B2C3" {
 		t.Fatalf("identity = (%q, %q), want response identity", identity.healthUserID, identity.legacyFitbitUserID)

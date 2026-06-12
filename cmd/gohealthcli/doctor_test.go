@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 )
 
 func TestDoctorJSONReportsMissingSetup(t *testing.T) {
@@ -635,8 +637,8 @@ func TestDoctorAcceptsInlineDefaultDataTypesArray(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]"
-	inlineDataTypes := "default_data_types = [\"" + strings.Join(defaultDataTypes, "\", \"") + "\"]"
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(googlehealth.DefaultDataTypes(), "\",\n  \"") + "\",\n]"
+	inlineDataTypes := "default_data_types = [\"" + strings.Join(googlehealth.DefaultDataTypes(), "\", \"") + "\"]"
 	config := strings.Replace(string(configBytes), multilineDataTypes, inlineDataTypes, 1)
 	if config == string(configBytes) {
 		t.Fatalf("config replacement failed:\n%s", string(configBytes))
@@ -683,7 +685,7 @@ func TestDoctorAcceptsMultivalueDefaultDataTypeRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]"
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(googlehealth.DefaultDataTypes(), "\",\n  \"") + "\",\n]"
 	config := strings.Replace(string(configBytes), multilineDataTypes, "default_data_types = [\n  \"steps\", \"weight\",\n]", 1)
 	if config == string(configBytes) {
 		t.Fatalf("config replacement failed:\n%s", string(configBytes))
@@ -723,7 +725,7 @@ func TestDoctorAcceptsOpeningLineMultilineDefaultDataTypesArray(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]"
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(googlehealth.DefaultDataTypes(), "\",\n  \"") + "\",\n]"
 	config := strings.Replace(string(configBytes), multilineDataTypes, "default_data_types = [\"steps\",\n  \"weight\",\n]", 1)
 	if config == string(configBytes) {
 		t.Fatalf("config replacement failed:\n%s", string(configBytes))
@@ -763,7 +765,7 @@ func TestDoctorAcceptsConfiguredDefaultDataTypeSubset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]"
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(googlehealth.DefaultDataTypes(), "\",\n  \"") + "\",\n]"
 	config := strings.Replace(string(configBytes), multilineDataTypes, `default_data_types = ["steps"]`, 1)
 	if config == string(configBytes) {
 		t.Fatalf("config replacement failed:\n%s", string(configBytes))
@@ -803,7 +805,7 @@ func TestDoctorReportsUnsupportedDefaultDataType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]"
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(googlehealth.DefaultDataTypes(), "\",\n  \"") + "\",\n]"
 	config := strings.Replace(string(configBytes), multilineDataTypes, `default_data_types = ["bogus"]`, 1)
 	if config == string(configBytes) {
 		t.Fatalf("config replacement failed:\n%s", string(configBytes))
@@ -854,7 +856,7 @@ func TestDoctorReportsMissingDefaultDataTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]\n\n"
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(googlehealth.DefaultDataTypes(), "\",\n  \"") + "\",\n]\n\n"
 	config := strings.Replace(string(configBytes), multilineDataTypes, "", 1)
 	if config == string(configBytes) {
 		t.Fatalf("config replacement failed:\n%s", string(configBytes))
@@ -1457,13 +1459,13 @@ func TestPersistDoctorOnlineRefreshedTokenRollsBackOnMetadataFailure(t *testing.
 		accessToken:  "refreshed-access-secret",
 		refreshToken: "refresh-secret-value",
 		tokenType:    "Bearer",
-		scopes:       []string{googleHealthActivityReadonlyScope},
+		scopes:       []string{googlehealth.ScopeActivityReadonly},
 		expiresAt:    time.Date(2026, 5, 31, 23, 0, 0, 0, time.UTC),
 		rawTokenMaterialObject: map[string]any{
 			"access_token":  "refreshed-access-secret",
 			"refresh_token": "refresh-secret-value",
 			"expires_in":    float64(3600),
-			"scope":         googleHealthActivityReadonlyScope,
+			"scope":         googlehealth.ScopeActivityReadonly,
 			"token_type":    "Bearer",
 		},
 	}

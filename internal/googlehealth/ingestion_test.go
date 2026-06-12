@@ -1,9 +1,10 @@
-package main
+package googlehealth
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
 	"net/http"
 	"net/url"
 	"strings"
@@ -43,29 +44,29 @@ func TestGoogleHealthIngestionArchivesDataPointListFromProviderPages(t *testing.
 	})
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "steps",
-		from:     "2026-01-01",
-		to:       "2026-01-02T00:00:00Z",
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		From:     "2026-01-01",
+		To:       "2026-01-02T00:00:00Z",
 	}))
 	if err != nil {
 		t.Fatalf("ingest Data Points: %v", err)
 	}
 
-	if result.endpointFamily != "list" {
-		t.Fatalf("endpoint family = %q, want list", result.endpointFamily)
+	if result.EndpointFamily != "list" {
+		t.Fatalf("endpoint family = %q, want list", result.EndpointFamily)
 	}
-	if result.dataPointsSeen != 2 || result.dataPointsNew != 1 || result.dataPointsUpdated != 1 {
-		t.Fatalf("Data Point counts = (%d, %d, %d), want (2, 1, 1)", result.dataPointsSeen, result.dataPointsNew, result.dataPointsUpdated)
+	if result.DataPointsSeen != 2 || result.DataPointsNew != 1 || result.DataPointsUpdated != 1 {
+		t.Fatalf("Data Point counts = (%d, %d, %d), want (2, 1, 1)", result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated)
 	}
 	if len(provider.requests) != 2 {
 		t.Fatalf("request count = %d, want 2", len(provider.requests))
 	}
-	if provider.requests[0].endpointName != "dataTypes.steps.list" || provider.requests[1].endpointName != "dataTypes.steps.list" {
+	if provider.requests[0].EndpointName != "dataTypes.steps.list" || provider.requests[1].EndpointName != "dataTypes.steps.list" {
 		t.Fatalf("requests = %#v, want steps list requests", provider.requests)
 	}
-	if archive.dataPoints[0].upstreamResourceName != "users/me/dataTypes/steps/dataPoints/one" || archive.dataPoints[1].upstreamResourceName != "users/me/dataTypes/steps/dataPoints/two" {
-		t.Fatalf("archived resource names = (%q, %q), want fixture pages", archive.dataPoints[0].upstreamResourceName, archive.dataPoints[1].upstreamResourceName)
+	if archive.dataPoints[0].UpstreamResourceName != "users/me/dataTypes/steps/dataPoints/one" || archive.dataPoints[1].UpstreamResourceName != "users/me/dataTypes/steps/dataPoints/two" {
+		t.Fatalf("archived resource names = (%q, %q), want fixture pages", archive.dataPoints[0].UpstreamResourceName, archive.dataPoints[1].UpstreamResourceName)
 	}
 }
 
@@ -88,27 +89,27 @@ func TestGoogleHealthIngestionChoosesReconcileFromSourceFamily(t *testing.T) {
 	})
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType:     "steps",
-		sourceFamily: "wearable",
-		from:         "2026-01-01",
-		to:           "2026-01-02T00:00:00Z",
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType:     "steps",
+		SourceFamily: "wearable",
+		From:         "2026-01-01",
+		To:           "2026-01-02T00:00:00Z",
 	}))
 	if err != nil {
 		t.Fatalf("ingest reconcile Data Points: %v", err)
 	}
 
-	if result.endpointFamily != "reconcile" {
-		t.Fatalf("endpoint family = %q, want reconcile", result.endpointFamily)
+	if result.EndpointFamily != "reconcile" {
+		t.Fatalf("endpoint family = %q, want reconcile", result.EndpointFamily)
 	}
-	if len(provider.requests) != 1 || provider.requests[0].endpointName != "dataTypes.steps.reconcile" {
+	if len(provider.requests) != 1 || provider.requests[0].EndpointName != "dataTypes.steps.reconcile" {
 		t.Fatalf("requests = %#v, want one reconcile request", provider.requests)
 	}
-	if got := mustURLQuery(t, provider.requests[0].url).Get("dataSourceFamily"); got != googleHealthWearableSourceFamilyFilterName {
+	if got := mustURLQuery(t, provider.requests[0].URL).Get("dataSourceFamily"); got != googleHealthWearableSourceFamilyFilterName {
 		t.Fatalf("dataSourceFamily = %q, want wearable family", got)
 	}
-	if archive.dataPoints[0].sourceFamilyFilter != "wearable" {
-		t.Fatalf("archived source family = %q, want wearable", archive.dataPoints[0].sourceFamilyFilter)
+	if archive.dataPoints[0].SourceFamilyFilter != "wearable" {
+		t.Fatalf("archived source family = %q, want wearable", archive.dataPoints[0].SourceFamilyFilter)
 	}
 }
 
@@ -126,27 +127,27 @@ func TestGoogleHealthIngestionArchivesDailyRollups(t *testing.T) {
 	})
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "steps",
-		rollup:   "daily",
-		from:     "2026-01-01",
-		to:       "2026-01-02",
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		Rollup:   "daily",
+		From:     "2026-01-01",
+		To:       "2026-01-02",
 	}))
 	if err != nil {
 		t.Fatalf("ingest daily Rollups: %v", err)
 	}
 
-	if result.endpointFamily != "dailyRollUp" {
-		t.Fatalf("endpoint family = %q, want dailyRollUp", result.endpointFamily)
+	if result.EndpointFamily != "dailyRollUp" {
+		t.Fatalf("endpoint family = %q, want dailyRollUp", result.EndpointFamily)
 	}
-	if result.rollupsSeen != 1 || result.rollupsNew != 1 || result.rollupsUpdated != 0 {
-		t.Fatalf("Rollup counts = (%d, %d, %d), want (1, 1, 0)", result.rollupsSeen, result.rollupsNew, result.rollupsUpdated)
+	if result.RollupsSeen != 1 || result.RollupsNew != 1 || result.RollupsUpdated != 0 {
+		t.Fatalf("Rollup counts = (%d, %d, %d), want (1, 1, 0)", result.RollupsSeen, result.RollupsNew, result.RollupsUpdated)
 	}
-	if len(provider.requests) != 1 || provider.requests[0].method != http.MethodPost || provider.requests[0].endpointName != "dataTypes.steps.dailyRollUp" {
+	if len(provider.requests) != 1 || provider.requests[0].Method != http.MethodPost || provider.requests[0].EndpointName != "dataTypes.steps.dailyRollUp" {
 		t.Fatalf("requests = %#v, want one dailyRollUp POST", provider.requests)
 	}
-	if archive.rollups[0].rollupKind != "dailyRollUp" || archive.rollups[0].civilDate != "2026-01-01" {
-		t.Fatalf("archived Rollup = (%q, %q), want daily 2026-01-01", archive.rollups[0].rollupKind, archive.rollups[0].civilDate)
+	if archive.rollups[0].RollupKind != "dailyRollUp" || archive.rollups[0].CivilDate != "2026-01-01" {
+		t.Fatalf("archived Rollup = (%q, %q), want daily 2026-01-01", archive.rollups[0].RollupKind, archive.rollups[0].CivilDate)
 	}
 }
 
@@ -160,10 +161,10 @@ func TestGoogleHealthIngestionRejectsRepeatedPageToken(t *testing.T) {
 	provider.pages["same-token"] = `{"dataPoints":[],"nextPageToken":"same-token"}`
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "steps",
-		from:     "2026-01-01",
-		to:       "2026-01-02T00:00:00Z",
+	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		From:     "2026-01-01",
+		To:       "2026-01-02T00:00:00Z",
 	}))
 	if err == nil || !strings.Contains(err.Error(), "Google Health steps list returned a repeated page token") {
 		t.Fatalf("ingest error = %v, want repeated page token", err)
@@ -176,21 +177,21 @@ func TestGoogleHealthIngestionRejectsRepeatedPageToken(t *testing.T) {
 type fakeGoogleHealthIngestionArchive struct {
 	dataPointStatuses []string
 	rollupStatuses    []string
-	dataPoints        []archivedDataPoint
-	rollups           []archivedRollup
+	dataPoints        []archived.DataPoint
+	rollups           []archived.Rollup
 	attachments       []fakeIngestionAttachment
 }
 
 // fakeIngestionAttachment captures one StoreAttachment call so tests
 // can assert the (point, kind, bytes) shape the ingestion handed off.
 type fakeIngestionAttachment struct {
-	point     archivedDataPoint
+	point     archived.DataPoint
 	kind      string
 	payload   []byte
 	fetchedAt string
 }
 
-func (archive *fakeGoogleHealthIngestionArchive) UpsertDataPoint(ctx context.Context, point archivedDataPoint, now string) (string, error) {
+func (archive *fakeGoogleHealthIngestionArchive) UpsertDataPoint(ctx context.Context, point archived.DataPoint, now string) (string, error) {
 	archive.dataPoints = append(archive.dataPoints, point)
 	if len(archive.dataPointStatuses) == 0 {
 		return "new", nil
@@ -200,7 +201,7 @@ func (archive *fakeGoogleHealthIngestionArchive) UpsertDataPoint(ctx context.Con
 	return status, nil
 }
 
-func (archive *fakeGoogleHealthIngestionArchive) UpsertRollup(ctx context.Context, rollup archivedRollup, now string) (string, error) {
+func (archive *fakeGoogleHealthIngestionArchive) UpsertRollup(ctx context.Context, rollup archived.Rollup, now string) (string, error) {
 	archive.rollups = append(archive.rollups, rollup)
 	if len(archive.rollupStatuses) == 0 {
 		return "new", nil
@@ -213,7 +214,7 @@ func (archive *fakeGoogleHealthIngestionArchive) UpsertRollup(ctx context.Contex
 // StoreAttachment records the call so TCX-ingestion tests can assert
 // the wiring: which Data Point the bytes attach to, what kind, the
 // payload, and the fetchedAt stamp.
-func (archive *fakeGoogleHealthIngestionArchive) StoreAttachment(ctx context.Context, point archivedDataPoint, kind string, payload []byte, fetchedAt string) error {
+func (archive *fakeGoogleHealthIngestionArchive) StoreAttachment(ctx context.Context, point archived.DataPoint, kind string, payload []byte, fetchedAt string) error {
 	archive.attachments = append(archive.attachments, fakeIngestionAttachment{
 		point:     point,
 		kind:      kind,
@@ -227,7 +228,7 @@ type fakeGoogleHealthIngestionProvider struct {
 	t               *testing.T
 	wantAccessToken string
 	pages           map[string]string
-	requests        []rawProviderRequest
+	requests        []RawRequest
 	// errorByPageKey overrides the page body with an error response keyed
 	// by the same page key the fixture map uses. Lets TCX tests force a
 	// 404 or transport error on a specific resource without leaking error
@@ -240,7 +241,7 @@ func newFakeGoogleHealthIngestionProvider(t *testing.T, wantAccessToken string, 
 	return &fakeGoogleHealthIngestionProvider{t: t, wantAccessToken: wantAccessToken, pages: pages}
 }
 
-func (provider *fakeGoogleHealthIngestionProvider) Fetch(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+func (provider *fakeGoogleHealthIngestionProvider) Fetch(_ context.Context, request RawRequest, accessToken string) ([]byte, error) {
 	provider.t.Helper()
 	if accessToken != provider.wantAccessToken {
 		provider.t.Fatalf("access token = %q, want fixture token", accessToken)
@@ -257,9 +258,9 @@ func (provider *fakeGoogleHealthIngestionProvider) Fetch(_ context.Context, requ
 	return []byte(body), nil
 }
 
-func (provider *fakeGoogleHealthIngestionProvider) pageKey(request rawProviderRequest) string {
+func (provider *fakeGoogleHealthIngestionProvider) pageKey(request RawRequest) string {
 	provider.t.Helper()
-	if strings.HasSuffix(request.endpointName, ".dailyRollUp") {
+	if strings.HasSuffix(request.EndpointName, ".dailyRollUp") {
 		var body struct {
 			Range struct {
 				Start struct {
@@ -279,7 +280,7 @@ func (provider *fakeGoogleHealthIngestionProvider) pageKey(request rawProviderRe
 			} `json:"range"`
 			PageToken string `json:"pageToken"`
 		}
-		if err := json.Unmarshal(request.body, &body); err != nil {
+		if err := json.Unmarshal(request.Body, &body); err != nil {
 			provider.t.Fatalf("rollup body JSON: %v", err)
 		}
 		return fmt.Sprintf("%04d-%02d-%02d/%04d-%02d-%02d/%s",
@@ -292,7 +293,7 @@ func (provider *fakeGoogleHealthIngestionProvider) pageKey(request rawProviderRe
 			body.PageToken,
 		)
 	}
-	if strings.HasSuffix(request.endpointName, ".rollUp") {
+	if strings.HasSuffix(request.EndpointName, ".rollUp") {
 		var body struct {
 			Range struct {
 				StartTime string `json:"startTime"`
@@ -301,7 +302,7 @@ func (provider *fakeGoogleHealthIngestionProvider) pageKey(request rawProviderRe
 			WindowSize string `json:"windowSize"`
 			PageToken  string `json:"pageToken"`
 		}
-		if err := json.Unmarshal(request.body, &body); err != nil {
+		if err := json.Unmarshal(request.Body, &body); err != nil {
 			provider.t.Fatalf("rollUp body JSON: %v", err)
 		}
 		return fmt.Sprintf("%s/%s/%s/%s",
@@ -311,32 +312,32 @@ func (provider *fakeGoogleHealthIngestionProvider) pageKey(request rawProviderRe
 			body.PageToken,
 		)
 	}
-	if strings.HasSuffix(request.endpointName, ".exportExerciseTcx") {
+	if strings.HasSuffix(request.EndpointName, ".exportExerciseTcx") {
 		// TCX export keys on the data point resource path (the suffix of
 		// the URL after the base prefix). e.g.
 		// "users/me/dataTypes/exercise/dataPoints/run-1:exportExerciseTcx".
-		return strings.TrimPrefix(request.url, googleHealthBaseURL+"/")
+		return strings.TrimPrefix(request.URL, googleHealthBaseURL+"/")
 	}
-	parsedURL, err := url.Parse(request.url)
+	parsedURL, err := url.Parse(request.URL)
 	if err != nil {
 		provider.t.Fatalf("request URL: %v", err)
 	}
 	return parsedURL.Query().Get("pageToken")
 }
 
-func fakeGoogleHealthIngestion(provider *fakeGoogleHealthIngestionProvider) googleHealthIngestion {
-	return googleHealthIngestion{
+func fakeGoogleHealthIngestion(provider *fakeGoogleHealthIngestionProvider) Ingestion {
+	return Ingestion{
 		provider: provider,
 		now:      func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) },
 	}
 }
 
-func fakeGoogleHealthIngestionRequest(request googleHealthIngestionRequest) googleHealthIngestionRequest {
-	request.connection = archivedConnection{
-		id:                 "conn_123",
-		providerName:       "google_health",
-		googleHealthUserID: "111111256096816351",
+func fakeGoogleHealthIngestionRequest(request IngestionRequest) IngestionRequest {
+	request.Connection = archived.Connection{
+		ID:                 "conn_123",
+		ProviderName:       "google_health",
+		GoogleHealthUserID: "111111256096816351",
 	}
-	request.accessToken = "access-secret"
+	request.AccessToken = "access-secret"
 	return request
 }

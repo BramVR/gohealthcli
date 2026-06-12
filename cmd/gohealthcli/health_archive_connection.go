@@ -6,16 +6,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
 	"time"
 )
 
 type healthArchiveConnectionAPI interface {
 	Close() error
 	EnsureSameGoogleIdentity(ctx context.Context, healthUserID string) error
-	CurrentConnection() (archivedConnection, error)
+	CurrentConnection() (archived.Connection, error)
 	UpsertConnection(ctx context.Context, connectionID string, identity googleIdentity, token oauthTokenResponse, now time.Time) error
 	UpdateConnectionTokenMetadata(connectionID string, token oauthTokenResponse, now time.Time) error
-	RefreshConnectionIdentity(ctx context.Context, connection archivedConnection, identity googleIdentity, now time.Time) error
+	RefreshConnectionIdentity(ctx context.Context, connection archived.Connection, identity googleIdentity, now time.Time) error
 	InspectConnectionTokenMetadata() (int, string, error)
 }
 
@@ -39,7 +40,7 @@ func (archive *sqliteHealthArchiveConnectionAPI) EnsureSameGoogleIdentity(ctx co
 	return ensureSameArchiveIdentity(ctx, archive.db, healthUserID)
 }
 
-func (archive *sqliteHealthArchiveConnectionAPI) CurrentConnection() (archivedConnection, error) {
+func (archive *sqliteHealthArchiveConnectionAPI) CurrentConnection() (archived.Connection, error) {
 	return readCurrentConnection(context.Background(), archive.db)
 }
 
@@ -53,7 +54,7 @@ func (archive *sqliteHealthArchiveConnectionAPI) UpdateConnectionTokenMetadata(c
 	return updateConnectionTokenMetadata(context.Background(), archive.db, connectionID, token, now)
 }
 
-func (archive *sqliteHealthArchiveConnectionAPI) RefreshConnectionIdentity(ctx context.Context, connection archivedConnection, identity googleIdentity, now time.Time) error {
+func (archive *sqliteHealthArchiveConnectionAPI) RefreshConnectionIdentity(ctx context.Context, connection archived.Connection, identity googleIdentity, now time.Time) error {
 	return refreshConnectionIdentity(ctx, archive.db, connection, identity, now)
 }
 
@@ -79,7 +80,7 @@ func ensureSameArchiveIdentity(ctx context.Context, db *sql.DB, healthUserID str
 	return rows.Err()
 }
 
-func readCurrentConnection(ctx context.Context, db *sql.DB) (archivedConnection, error) {
+func readCurrentConnection(ctx context.Context, db *sql.DB) (archived.Connection, error) {
 	rows, err := db.QueryContext(ctx, `SELECT
 		id,
 		provider_name,
@@ -88,36 +89,36 @@ func readCurrentConnection(ctx context.Context, db *sql.DB) (archivedConnection,
 		token_metadata_json
 	FROM connections ORDER BY created_at, id LIMIT 2`)
 	if err != nil {
-		return archivedConnection{}, err
+		return archived.Connection{}, err
 	}
 	defer rows.Close()
 
-	var connections []archivedConnection
+	var connections []archived.Connection
 	for rows.Next() {
-		var connection archivedConnection
+		var connection archived.Connection
 		var legacyFitbitUserID sql.NullString
 		if err := rows.Scan(
-			&connection.id,
-			&connection.providerName,
-			&connection.googleHealthUserID,
+			&connection.ID,
+			&connection.ProviderName,
+			&connection.GoogleHealthUserID,
 			&legacyFitbitUserID,
-			&connection.tokenMetadataJSON,
+			&connection.TokenMetadataJSON,
 		); err != nil {
-			return archivedConnection{}, err
+			return archived.Connection{}, err
 		}
 		if legacyFitbitUserID.Valid {
-			connection.legacyFitbitUserID = legacyFitbitUserID.String
+			connection.LegacyFitbitUserID = legacyFitbitUserID.String
 		}
 		connections = append(connections, connection)
 	}
 	if err := rows.Err(); err != nil {
-		return archivedConnection{}, err
+		return archived.Connection{}, err
 	}
 	if len(connections) == 0 {
-		return archivedConnection{}, sql.ErrNoRows
+		return archived.Connection{}, sql.ErrNoRows
 	}
 	if len(connections) > 1 {
-		return archivedConnection{}, errors.New("multiple Connections found; use a separate Health Archive for each Google Identity")
+		return archived.Connection{}, errors.New("multiple Connections found; use a separate Health Archive for each Google Identity")
 	}
 	return connections[0], nil
 }
@@ -191,8 +192,8 @@ func connectionTokenMetadataJSON(connectionID string, token oauthTokenResponse) 
 	return json.Marshal(metadata)
 }
 
-func refreshConnectionIdentity(ctx context.Context, db *sql.DB, connection archivedConnection, identity googleIdentity, now time.Time) error {
-	legacyFitbitUserID := connection.legacyFitbitUserID
+func refreshConnectionIdentity(ctx context.Context, db *sql.DB, connection archived.Connection, identity googleIdentity, now time.Time) error {
+	legacyFitbitUserID := connection.LegacyFitbitUserID
 	if identity.legacyFitbitUserID != "" {
 		legacyFitbitUserID = identity.legacyFitbitUserID
 	}
@@ -206,7 +207,7 @@ func refreshConnectionIdentity(ctx context.Context, db *sql.DB, connection archi
 		legacyFitbitUserID,
 		identity.rawJSON,
 		now.UTC().Format(time.RFC3339),
-		connection.id,
+		connection.ID,
 	)
 	return err
 }
@@ -237,12 +238,4 @@ func inspectConnectionTokenMetadata(ctx context.Context, db *sql.DB) (int, strin
 		return 0, "not_connected", nil
 	}
 	return count, "metadata_present", nil
-}
-
-type archivedConnection struct {
-	id                 string
-	providerName       string
-	googleHealthUserID string
-	legacyFitbitUserID string
-	tokenMetadataJSON  string
 }

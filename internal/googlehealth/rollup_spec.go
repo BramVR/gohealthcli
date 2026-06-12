@@ -1,4 +1,4 @@
-package main
+package googlehealth
 
 import (
 	"fmt"
@@ -6,13 +6,13 @@ import (
 	"time"
 )
 
-// syncRollupSpec is the parsed form of `--rollup` (`daily | weekly |
+// RollupSpec is the parsed form of `--rollup` (`daily | weekly |
 // hourly | window=<duration>`). It carries the windowSize used by the
 // upstream Google Health rollup endpoint, the endpoint family the
 // planner will dispatch to, and the cursor-kind discriminator used by
 // the Sync Cursor (so each (Data Type, source-family, rollup-kind)
 // triple has its own durable highwater).
-type syncRollupSpec struct {
+type RollupSpec struct {
 	cursorKind     string         // "daily" | "hourly" | "weekly" | "window=<duration>"
 	endpointFamily endpointFamily // dailyRollUp for daily; rollUp for hourly/weekly/window
 	windowSize     time.Duration  // 1h / 24h / 168h / parsed-duration
@@ -25,25 +25,34 @@ const syncRollupWindowPrefix = "window="
 // The order here is the order the error message prints.
 var supportedSyncRollupKinds = []string{"daily", "hourly", "weekly", "window=<duration>"}
 
-// parseSyncRollupSpec parses the operator-facing `--rollup` value
-// into a syncRollupSpec. Returns a typed error for unknown literals
+// SupportedRollupKinds returns the literal --rollup values
+// ParseRollupSpec accepts, in the order the rejection message prints
+// them. Main's help/registry drift guard compares the sync command's
+// two usage surfaces against this list so a new kind cannot land
+// without updating the user-facing flag documentation.
+func SupportedRollupKinds() []string {
+	return append([]string(nil), supportedSyncRollupKinds...)
+}
+
+// ParseRollupSpec parses the operator-facing `--rollup` value
+// into a RollupSpec. Returns a typed error for unknown literals
 // and for malformed window=… durations.
-func parseSyncRollupSpec(value string) (syncRollupSpec, error) {
+func ParseRollupSpec(value string) (RollupSpec, error) {
 	switch value {
 	case "daily":
-		return syncRollupSpec{
+		return RollupSpec{
 			cursorKind:     "daily",
 			endpointFamily: endpointFamilyDailyRollUp,
 			windowSize:     24 * time.Hour,
 		}, nil
 	case "hourly":
-		return syncRollupSpec{
+		return RollupSpec{
 			cursorKind:     "hourly",
 			endpointFamily: endpointFamilyRollUp,
 			windowSize:     time.Hour,
 		}, nil
 	case "weekly":
-		return syncRollupSpec{
+		return RollupSpec{
 			cursorKind:     "weekly",
 			endpointFamily: endpointFamilyRollUp,
 			windowSize:     7 * 24 * time.Hour,
@@ -53,18 +62,18 @@ func parseSyncRollupSpec(value string) (syncRollupSpec, error) {
 		raw := strings.TrimPrefix(value, syncRollupWindowPrefix)
 		dur, err := time.ParseDuration(raw)
 		if err != nil {
-			return syncRollupSpec{}, fmt.Errorf("sync --rollup window=%s: %w", raw, err)
+			return RollupSpec{}, fmt.Errorf("sync --rollup window=%s: %w", raw, err)
 		}
 		if dur <= 0 {
-			return syncRollupSpec{}, fmt.Errorf("sync --rollup window=%s: duration must be positive", raw)
+			return RollupSpec{}, fmt.Errorf("sync --rollup window=%s: duration must be positive", raw)
 		}
-		return syncRollupSpec{
+		return RollupSpec{
 			cursorKind:     value,
 			endpointFamily: endpointFamilyRollUp,
 			windowSize:     dur,
 		}, nil
 	}
-	return syncRollupSpec{}, fmt.Errorf("sync --rollup %q is not supported; expected one of %s",
+	return RollupSpec{}, fmt.Errorf("sync --rollup %q is not supported; expected one of %s",
 		value, strings.Join(supportedSyncRollupKinds, " | "))
 }
 
@@ -92,7 +101,7 @@ func parseSyncRollupSpec(value string) (syncRollupSpec, error) {
 // Parse failures surface a local message naming both supported
 // shapes for this rollup kind so the operator no longer sees an
 // opaque upstream HTTP 400 for civil-on-hourly etc.
-func (spec syncRollupSpec) NormalizeRange(from, to string, now time.Time) (normFrom string, normTo string, err error) {
+func (spec RollupSpec) NormalizeRange(from, to string, now time.Time) (normFrom string, normTo string, err error) {
 	_ = now // now is reserved for future relative-input ergonomics (e.g. "yesterday").
 	// Local names use the generic "norm" prefix because the emitted shape
 	// is per-rollup-kind: daily emits civil dates (YYYY-MM-DD), the
@@ -113,11 +122,11 @@ func (spec syncRollupSpec) NormalizeRange(from, to string, now time.Time) (normF
 // normalizeBoundary handles one end of the range. The shape it accepts
 // is the same for both ends; the per-rollup choice is what it EMITS
 // (civil for daily, RFC3339 for the windowed family).
-func (spec syncRollupSpec) normalizeBoundary(value, flag string) (string, error) {
+func (spec RollupSpec) normalizeBoundary(value, flag string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
-	parsed, ok := parseSyncRangeBoundary(value)
+	parsed, ok := ParseRangeBoundary(value)
 	if !ok {
 		return "", fmt.Errorf(
 			"sync %s %q for --rollup %s: expected YYYY-MM-DD or RFC3339 (e.g. 2026-01-02T00:00:00Z)",
@@ -130,11 +139,11 @@ func (spec syncRollupSpec) normalizeBoundary(value, flag string) (string, error)
 	return parsed.UTC().Format(time.RFC3339), nil
 }
 
-// parseSyncRangeBoundary accepts either civil-date (YYYY-MM-DD,
+// ParseRangeBoundary accepts either civil-date (YYYY-MM-DD,
 // interpreted as start-of-UTC-day) or RFC3339. Both shapes are
 // supported by every rollup kind as an input ergonomic, even when
 // the emitted shape is restricted by the upstream endpoint.
-func parseSyncRangeBoundary(value string) (time.Time, bool) {
+func ParseRangeBoundary(value string) (time.Time, bool) {
 	if parsed, err := time.ParseInLocation("2006-01-02", value, time.UTC); err == nil {
 		return parsed, true
 	}
@@ -144,12 +153,12 @@ func parseSyncRangeBoundary(value string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// validateSyncRollupAgainstDataType checks whether the rollup kind
+// ValidateRollupAgainstDataType checks whether the rollup kind
 // the operator asked for is wired into the Data Type's catalog row.
 // Failure quotes the actual SupportedEndpoints map keys — the #106
 // AC requires this verbatim so operators can see what alternatives
 // the Data Type does support.
-func validateSyncRollupAgainstDataType(spec syncRollupSpec, dataType string) error {
+func ValidateRollupAgainstDataType(spec RollupSpec, dataType string) error {
 	entry, ok := googleHealthDataTypes.Lookup(dataType)
 	if !ok {
 		return fmt.Errorf("sync --rollup %s: Data Type %q is not in the catalog", spec.cursorKind, dataType)

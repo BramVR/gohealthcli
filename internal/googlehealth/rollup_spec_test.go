@@ -1,4 +1,4 @@
-package main
+package googlehealth
 
 import (
 	"strings"
@@ -11,9 +11,9 @@ import (
 // family with a 1-day windowSize.
 func TestSyncRollupSpecParseDaily(t *testing.T) {
 	t.Parallel()
-	spec, err := parseSyncRollupSpec("daily")
+	spec, err := ParseRollupSpec("daily")
 	if err != nil {
-		t.Fatalf("parseSyncRollupSpec daily: %v", err)
+		t.Fatalf("ParseRollupSpec daily: %v", err)
 	}
 	if spec.cursorKind != "daily" {
 		t.Errorf("cursorKind = %q, want daily", spec.cursorKind)
@@ -31,9 +31,9 @@ func TestSyncRollupSpecParseDaily(t *testing.T) {
 // kind from daily.
 func TestSyncRollupSpecParseHourly(t *testing.T) {
 	t.Parallel()
-	spec, err := parseSyncRollupSpec("hourly")
+	spec, err := ParseRollupSpec("hourly")
 	if err != nil {
-		t.Fatalf("parseSyncRollupSpec hourly: %v", err)
+		t.Fatalf("ParseRollupSpec hourly: %v", err)
 	}
 	if spec.cursorKind != "hourly" {
 		t.Errorf("cursorKind = %q, want hourly", spec.cursorKind)
@@ -50,9 +50,9 @@ func TestSyncRollupSpecParseHourly(t *testing.T) {
 // windowSize, windowed rollUp family.
 func TestSyncRollupSpecParseWeekly(t *testing.T) {
 	t.Parallel()
-	spec, err := parseSyncRollupSpec("weekly")
+	spec, err := ParseRollupSpec("weekly")
 	if err != nil {
-		t.Fatalf("parseSyncRollupSpec weekly: %v", err)
+		t.Fatalf("ParseRollupSpec weekly: %v", err)
 	}
 	if spec.cursorKind != "weekly" {
 		t.Errorf("cursorKind = %q, want weekly", spec.cursorKind)
@@ -69,9 +69,9 @@ func TestSyncRollupSpecParseWeekly(t *testing.T) {
 // shape — the operator supplies the windowSize directly.
 func TestSyncRollupSpecParseCustomWindow(t *testing.T) {
 	t.Parallel()
-	spec, err := parseSyncRollupSpec("window=6h")
+	spec, err := ParseRollupSpec("window=6h")
 	if err != nil {
-		t.Fatalf("parseSyncRollupSpec window=6h: %v", err)
+		t.Fatalf("ParseRollupSpec window=6h: %v", err)
 	}
 	if spec.cursorKind != "window=6h" {
 		t.Errorf("cursorKind = %q, want window=6h", spec.cursorKind)
@@ -89,9 +89,9 @@ func TestSyncRollupSpecParseCustomWindow(t *testing.T) {
 // not just an Nh regex.
 func TestSyncRollupSpecParseCustomWindowMinutes(t *testing.T) {
 	t.Parallel()
-	spec, err := parseSyncRollupSpec("window=30m")
+	spec, err := ParseRollupSpec("window=30m")
 	if err != nil {
-		t.Fatalf("parseSyncRollupSpec window=30m: %v", err)
+		t.Fatalf("ParseRollupSpec window=30m: %v", err)
 	}
 	if spec.windowSize != 30*time.Minute {
 		t.Errorf("windowSize = %v, want 30m", spec.windowSize)
@@ -102,9 +102,9 @@ func TestSyncRollupSpecParseCustomWindowMinutes(t *testing.T) {
 // with a message that lists the supported kinds.
 func TestSyncRollupSpecParseRejectsUnknownKind(t *testing.T) {
 	t.Parallel()
-	_, err := parseSyncRollupSpec("monthly")
+	_, err := ParseRollupSpec("monthly")
 	if err == nil {
-		t.Fatal("parseSyncRollupSpec monthly: want error, got nil")
+		t.Fatal("ParseRollupSpec monthly: want error, got nil")
 	}
 	if !strings.Contains(err.Error(), "daily") || !strings.Contains(err.Error(), "weekly") {
 		t.Errorf("err = %q, want it to list supported kinds", err.Error())
@@ -115,72 +115,13 @@ func TestSyncRollupSpecParseRejectsUnknownKind(t *testing.T) {
 // values via time.ParseDuration semantics.
 func TestSyncRollupSpecParseRejectsBadWindow(t *testing.T) {
 	t.Parallel()
-	_, err := parseSyncRollupSpec("window=notADuration")
+	_, err := ParseRollupSpec("window=notADuration")
 	if err == nil {
-		t.Fatal("parseSyncRollupSpec window=notADuration: want error, got nil")
+		t.Fatal("ParseRollupSpec window=notADuration: want error, got nil")
 	}
 	if !strings.Contains(err.Error(), "window") {
 		t.Errorf("err = %q, want it to mention window", err.Error())
 	}
-}
-
-// TestSyncHelpRollupUsageListsEveryKind pins issue #147: the --rollup
-// flag's `sync --help` description must list every kind the validator
-// accepts. The expected kinds derive from supportedSyncRollupKinds —
-// the same slice parseSyncRollupSpec's rejection message prints — so a
-// future fifth kind that lands without touching the Usage string fails
-// here instead of shipping a stale help surface. The registry flagSpec
-// (the `schema --json` / docs-regen surface) is held to the same
-// contract so the two help surfaces cannot drift apart.
-func TestSyncHelpRollupUsageListsEveryKind(t *testing.T) {
-	t.Parallel()
-	code, stdout, stderr := runCommand(t, "sync", "--help")
-	if code != 0 {
-		t.Fatalf("`sync --help` exit code = %d, want 0\nstderr: %s", code, stderr.String())
-	}
-	usage := rollupFlagUsageFromHelp(t, stdout.String()+stderr.String())
-	for _, kind := range supportedSyncRollupKinds {
-		if !strings.Contains(usage, kind) {
-			t.Errorf("sync --help -rollup usage %q does not list kind %q", usage, kind)
-		}
-	}
-	for _, cmd := range commands {
-		if cmd.Name != "sync" {
-			continue
-		}
-		for _, spec := range cmd.Flags {
-			if spec.Name != "rollup" {
-				continue
-			}
-			for _, kind := range supportedSyncRollupKinds {
-				if !strings.Contains(spec.Usage, kind) {
-					t.Errorf("sync registry flagSpec rollup usage %q does not list kind %q", spec.Usage, kind)
-				}
-			}
-			return
-		}
-		t.Fatal("sync commandDef has no rollup flagSpec")
-	}
-	t.Fatal("command registry has no sync commandDef")
-}
-
-// rollupFlagUsageFromHelp extracts the usage text printed under the
-// `-rollup` entry of a flag-package help dump (the description sits on
-// the indented line after the `-rollup string` header).
-func rollupFlagUsageFromHelp(t *testing.T, help string) string {
-	t.Helper()
-	lines := strings.Split(help, "\n")
-	for i, line := range lines {
-		if !strings.HasPrefix(strings.TrimSpace(line), "-rollup") {
-			continue
-		}
-		if i+1 >= len(lines) {
-			break
-		}
-		return strings.TrimSpace(lines[i+1])
-	}
-	t.Fatalf("sync --help output has no -rollup entry:\n%s", help)
-	return ""
 }
 
 // TestSyncRollupSpecValidateAgainstDataTypeQuotesSupportedEndpoints
@@ -188,16 +129,16 @@ func rollupFlagUsageFromHelp(t *testing.T, help string) string {
 // actual SupportedEndpoints quoted in the error message".
 func TestSyncRollupSpecValidateAgainstDataTypeQuotesSupportedEndpoints(t *testing.T) {
 	t.Parallel()
-	spec, err := parseSyncRollupSpec("hourly")
+	spec, err := ParseRollupSpec("hourly")
 	if err != nil {
-		t.Fatalf("parseSyncRollupSpec hourly: %v", err)
+		t.Fatalf("ParseRollupSpec hourly: %v", err)
 	}
 	// `sleep` has only `list` in SupportedEndpoints today — no rollup
 	// of any kind. The validation must call out hourly is unsupported
 	// AND list the actual SupportedEndpoints map keys.
-	err = validateSyncRollupAgainstDataType(spec, "sleep")
+	err = ValidateRollupAgainstDataType(spec, "sleep")
 	if err == nil {
-		t.Fatal("validateSyncRollupAgainstDataType sleep+hourly: want error, got nil")
+		t.Fatal("ValidateRollupAgainstDataType sleep+hourly: want error, got nil")
 	}
 	msg := err.Error()
 	if !strings.Contains(msg, "sleep") {
@@ -218,12 +159,12 @@ func TestSyncRollupSpecValidateAgainstDataTypeQuotesSupportedEndpoints(t *testin
 // pins the happy path: heart-rate carries rollUp, so hourly is OK.
 func TestSyncRollupSpecValidateAgainstDataTypeAcceptsHeartRateHourly(t *testing.T) {
 	t.Parallel()
-	spec, err := parseSyncRollupSpec("hourly")
+	spec, err := ParseRollupSpec("hourly")
 	if err != nil {
-		t.Fatalf("parseSyncRollupSpec hourly: %v", err)
+		t.Fatalf("ParseRollupSpec hourly: %v", err)
 	}
-	if err := validateSyncRollupAgainstDataType(spec, "heart-rate"); err != nil {
-		t.Errorf("validateSyncRollupAgainstDataType heart-rate+hourly: %v", err)
+	if err := ValidateRollupAgainstDataType(spec, "heart-rate"); err != nil {
+		t.Errorf("ValidateRollupAgainstDataType heart-rate+hourly: %v", err)
 	}
 }
 
@@ -232,17 +173,17 @@ func TestSyncRollupSpecValidateAgainstDataTypeAcceptsHeartRateHourly(t *testing.
 // behaviour and this widened validator agree on the canonical case.
 func TestSyncRollupSpecValidateAgainstDataTypeAcceptsStepsDaily(t *testing.T) {
 	t.Parallel()
-	spec, err := parseSyncRollupSpec("daily")
+	spec, err := ParseRollupSpec("daily")
 	if err != nil {
-		t.Fatalf("parseSyncRollupSpec daily: %v", err)
+		t.Fatalf("ParseRollupSpec daily: %v", err)
 	}
-	if err := validateSyncRollupAgainstDataType(spec, "steps"); err != nil {
-		t.Errorf("validateSyncRollupAgainstDataType steps+daily: %v", err)
+	if err := ValidateRollupAgainstDataType(spec, "steps"); err != nil {
+		t.Errorf("ValidateRollupAgainstDataType steps+daily: %v", err)
 	}
 }
 
 // TestSyncRollupSpecNormalizeRange pins PRD #141 slice 3: civil-vs-RFC3339
-// is owned by syncRollupSpec. The matrix is (input shape) × (rollup kind)
+// is owned by RollupSpec. The matrix is (input shape) × (rollup kind)
 // → normalized output / error. The planner downstream consumes only the
 // normalized values, so this table is the single source of truth for the
 // shape contract.
@@ -366,9 +307,9 @@ func TestSyncRollupSpecNormalizeRange(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			spec, err := parseSyncRollupSpec(tc.rollup)
+			spec, err := ParseRollupSpec(tc.rollup)
 			if err != nil {
-				t.Fatalf("parseSyncRollupSpec %q: %v", tc.rollup, err)
+				t.Fatalf("ParseRollupSpec %q: %v", tc.rollup, err)
 			}
 			gotFrom, gotTo, err := spec.NormalizeRange(tc.from, tc.to, now)
 			if tc.wantErr != "" {
@@ -408,9 +349,9 @@ func TestSyncRollupSpecNormalizeRange(t *testing.T) {
 // forget to default get an empty-out, not a parse error).
 func TestSyncRollupSpecNormalizeRangePassesThroughEmpty(t *testing.T) {
 	t.Parallel()
-	spec, err := parseSyncRollupSpec("hourly")
+	spec, err := ParseRollupSpec("hourly")
 	if err != nil {
-		t.Fatalf("parseSyncRollupSpec hourly: %v", err)
+		t.Fatalf("ParseRollupSpec hourly: %v", err)
 	}
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	gotFrom, gotTo, err := spec.NormalizeRange("", "2026-06-08T00:00:00Z", now)

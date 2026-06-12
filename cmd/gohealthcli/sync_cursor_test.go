@@ -26,7 +26,7 @@ func TestStatusSurfacesCursorOnlyDataTypeWithZeroCounts(t *testing.T) {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
 	if err := archive.CommitSyncCursor(context.Background(), syncCursorKey{
-		connectionID: connection.id,
+		connectionID: connection.ID,
 		dataType:     "blood-glucose",
 		rollupKind:   syncCursorRollupKindNone,
 	}, syncRunOutcomeCompleted, "2026-01-02T00:00:00Z", "2026-01-02T00:00:01Z"); err != nil {
@@ -81,7 +81,7 @@ func TestSyncCursorResolveReturnsZeroWhenNoCursorExists(t *testing.T) {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
 	cursorTime, found, err := archive.ResolveSyncCursor(context.Background(), syncCursorKey{
-		connectionID: connection.id,
+		connectionID: connection.ID,
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,
 	})
@@ -111,7 +111,7 @@ func TestSyncCursorCommitOnlyAdvancesOnSyncCompleted(t *testing.T) {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
 	key := syncCursorKey{
-		connectionID: connection.id,
+		connectionID: connection.ID,
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,
 	}
@@ -276,7 +276,7 @@ func TestSyncRunExecutorDoesNotCreateCursorWhenFirstRunFails(t *testing.T) {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
 	if _, found, err := archive.ResolveSyncCursor(context.Background(), syncCursorKey{
-		connectionID: connection.id,
+		connectionID: connection.ID,
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,
 	}); err != nil || found {
@@ -444,7 +444,7 @@ func TestArchiveFinalizeSyncRunAtomicallyCommitsRunAndCursor(t *testing.T) {
 	}
 
 	key := syncCursorKey{
-		connectionID: connection.id,
+		connectionID: connection.ID,
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,
 	}
@@ -514,7 +514,7 @@ func TestArchiveFinalizeSyncRunRollsBackRunStatusWhenCursorUpsertFails(t *testin
 	}
 
 	key := syncCursorKey{
-		connectionID: connection.id,
+		connectionID: connection.ID,
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,
 	}
@@ -580,7 +580,7 @@ func TestArchiveFinalizeSyncRunSkipsCursorAdvanceForNonCompletedOutcomes(t *test
 				t.Fatalf("StartSyncRun: %v", err)
 			}
 
-			key := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: syncCursorRollupKindNone}
+			key := syncCursorKey{connectionID: connection.ID, dataType: "steps", rollupKind: syncCursorRollupKindNone}
 			if err := archive.FinalizeSyncRun(context.Background(), syncRunFinalize{
 				SyncRunID:      syncRunID,
 				Outcome:        tc.outcome,
@@ -660,7 +660,7 @@ func TestSyncRunSurfacesFailureWhenFinalizeFails(t *testing.T) {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
 	if _, found, err := archive.ResolveSyncCursor(context.Background(), syncCursorKey{
-		connectionID: connection.id,
+		connectionID: connection.ID,
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,
 	}); err != nil || found {
@@ -734,7 +734,7 @@ func TestSyncRunExecutorPreservesCursorOnFailedRun(t *testing.T) {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
 	cursorTime, found, err := archive.ResolveSyncCursor(context.Background(), syncCursorKey{
-		connectionID: connection.id,
+		connectionID: connection.ID,
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,
 	})

@@ -1,4 +1,4 @@
-package main
+package googlehealth
 
 import (
 	"os"
@@ -31,7 +31,7 @@ func TestREADMEListsEverySyncableDataType(t *testing.T) {
 	t.Parallel()
 	bullets := readmeSyncTypesBulletBlock(t)
 	for _, dataType := range googleHealthDataTypes.order {
-		if !syncDataPointDataTypeSupported(dataType) {
+		if !SupportsSyncDataPoints(dataType) {
 			continue
 		}
 		token := "`" + dataType + "`"
@@ -53,7 +53,7 @@ func TestREADMECaveatListsCatalogTypesSyncRejects(t *testing.T) {
 	t.Parallel()
 	caveat := readmeSyncTypesCaveatParagraph(t)
 	for _, dataType := range googleHealthDataTypes.order {
-		if syncDataPointDataTypeSupported(dataType) {
+		if SupportsSyncDataPoints(dataType) {
 			continue
 		}
 		token := "`" + dataType + "`"

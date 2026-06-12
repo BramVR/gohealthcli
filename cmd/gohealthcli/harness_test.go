@@ -23,6 +23,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 )
 
 var testBinaryPath string
@@ -391,10 +393,10 @@ func bindProfileFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToke
 	}
 }
 
-func bindRawFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, response func(rawProviderRequest) []byte) {
+func bindRawFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, response func(googlehealth.RawRequest) []byte) {
 	t.Helper()
 
-	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("raw access token = %q, want stored token", accessToken)
 		}
@@ -402,7 +404,7 @@ func bindRawFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken st
 	}
 }
 
-func bindStepSyncFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, pages map[string]string) *[]rawProviderRequest {
+func bindStepSyncFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, pages map[string]string) *[]googlehealth.RawRequest {
 	t.Helper()
 
 	bound, requests := withStepSyncFetchFake(t, *runtime, wantAccessToken, pages)
@@ -410,19 +412,19 @@ func bindStepSyncFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessTok
 	return requests
 }
 
-func withStepSyncFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]rawProviderRequest) {
+func withStepSyncFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]googlehealth.RawRequest) {
 	t.Helper()
 
-	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	var requests []googlehealth.RawRequest
+	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("sync access token = %q, want stored token", accessToken)
 		}
-		if request.endpointName != "dataTypes.steps.list" || request.dataType != "steps" {
-			t.Fatalf("sync request = (%q, %q), want steps list", request.endpointName, request.dataType)
+		if request.EndpointName != "dataTypes.steps.list" || request.DataType != "steps" {
+			t.Fatalf("sync request = (%q, %q), want steps list", request.EndpointName, request.DataType)
 		}
 		requests = append(requests, request)
-		pageToken := mustURLQuery(t, request.url).Get("pageToken")
+		pageToken := mustURLQuery(t, request.URL).Get("pageToken")
 		body, ok := pages[pageToken]
 		if !ok {
 			t.Fatalf("no fake page for pageToken %q", pageToken)
@@ -432,7 +434,7 @@ func withStepSyncFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToke
 	return runtime, &requests
 }
 
-func bindStepReconcileFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, pages map[string]string) *[]rawProviderRequest {
+func bindStepReconcileFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, pages map[string]string) *[]googlehealth.RawRequest {
 	t.Helper()
 
 	bound, requests := withStepReconcileFetchFake(t, *runtime, wantAccessToken, pages)
@@ -440,21 +442,21 @@ func bindStepReconcileFetchFake(t *testing.T, runtime *runtimeAdapters, wantAcce
 	return requests
 }
 
-func withStepReconcileFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]rawProviderRequest) {
+func withStepReconcileFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]googlehealth.RawRequest) {
 	t.Helper()
 
-	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	var requests []googlehealth.RawRequest
+	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("reconcile sync access token = %q, want stored token", accessToken)
 		}
-		if request.endpointName != "dataTypes.steps.reconcile" || request.dataType != "steps" {
-			t.Fatalf("reconcile sync request = (%q, %q), want steps reconcile", request.endpointName, request.dataType)
+		if request.EndpointName != "dataTypes.steps.reconcile" || request.DataType != "steps" {
+			t.Fatalf("reconcile sync request = (%q, %q), want steps reconcile", request.EndpointName, request.DataType)
 		}
-		if request.sourceFamilyFilter != "wearable" {
-			t.Fatalf("source family filter = %q, want wearable", request.sourceFamilyFilter)
+		if request.SourceFamilyFilter != "wearable" {
+			t.Fatalf("source family filter = %q, want wearable", request.SourceFamilyFilter)
 		}
-		parsedURL, err := url.Parse(request.url)
+		parsedURL, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse reconcile URL: %v", err)
 		}
@@ -472,21 +474,21 @@ func withStepReconcileFetchFake(t *testing.T, runtime runtimeAdapters, wantAcces
 	return runtime, &requests
 }
 
-func bindDataPointReconcileFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken, dataType string, pages map[string]string) *[]rawProviderRequest {
+func bindDataPointReconcileFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken, dataType string, pages map[string]string) *[]googlehealth.RawRequest {
 	t.Helper()
 
-	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	var requests []googlehealth.RawRequest
+	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("reconcile sync access token = %q, want stored token", accessToken)
 		}
-		if request.endpointName != "dataTypes."+dataType+".reconcile" || request.dataType != dataType {
-			t.Fatalf("reconcile sync request = (%q, %q), want %s reconcile", request.endpointName, request.dataType, dataType)
+		if request.EndpointName != "dataTypes."+dataType+".reconcile" || request.DataType != dataType {
+			t.Fatalf("reconcile sync request = (%q, %q), want %s reconcile", request.EndpointName, request.DataType, dataType)
 		}
-		if request.sourceFamilyFilter != "wearable" {
-			t.Fatalf("source family filter = %q, want wearable", request.sourceFamilyFilter)
+		if request.SourceFamilyFilter != "wearable" {
+			t.Fatalf("source family filter = %q, want wearable", request.SourceFamilyFilter)
 		}
-		parsedURL, err := url.Parse(request.url)
+		parsedURL, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse reconcile URL: %v", err)
 		}
@@ -505,7 +507,7 @@ func bindDataPointReconcileFetchFake(t *testing.T, runtime *runtimeAdapters, wan
 	return &requests
 }
 
-func bindStepDailyRollupFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, pages map[string]string) *[]rawProviderRequest {
+func bindStepDailyRollupFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, pages map[string]string) *[]googlehealth.RawRequest {
 	t.Helper()
 
 	bound, requests := withStepDailyRollupFetchFake(t, *runtime, wantAccessToken, pages)
@@ -513,21 +515,21 @@ func bindStepDailyRollupFetchFake(t *testing.T, runtime *runtimeAdapters, wantAc
 	return requests
 }
 
-func withStepDailyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]rawProviderRequest) {
+func withStepDailyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]googlehealth.RawRequest) {
 	t.Helper()
 
-	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	var requests []googlehealth.RawRequest
+	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("rollup sync access token = %q, want stored token", accessToken)
 		}
-		if request.endpointName != "dataTypes.steps.dailyRollUp" || request.dataType != "steps" {
-			t.Fatalf("rollup sync request = (%q, %q), want steps dailyRollUp", request.endpointName, request.dataType)
+		if request.EndpointName != "dataTypes.steps.dailyRollUp" || request.DataType != "steps" {
+			t.Fatalf("rollup sync request = (%q, %q), want steps dailyRollUp", request.EndpointName, request.DataType)
 		}
-		if request.method != http.MethodPost {
-			t.Fatalf("rollup method = %q, want POST", request.method)
+		if request.Method != http.MethodPost {
+			t.Fatalf("rollup method = %q, want POST", request.Method)
 		}
-		parsedURL, err := url.Parse(request.url)
+		parsedURL, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse rollup URL: %v", err)
 		}
@@ -554,8 +556,8 @@ func withStepDailyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAcc
 			WindowSizeDays int    `json:"windowSizeDays"`
 			PageToken      string `json:"pageToken"`
 		}
-		if err := json.Unmarshal(request.body, &body); err != nil {
-			t.Fatalf("rollup body is not valid JSON: %v\nbody: %s", err, string(request.body))
+		if err := json.Unmarshal(request.Body, &body); err != nil {
+			t.Fatalf("rollup body is not valid JSON: %v\nbody: %s", err, string(request.Body))
 		}
 		if body.WindowSizeDays != 1 {
 			t.Fatalf("windowSizeDays = %d, want 1", body.WindowSizeDays)
@@ -587,21 +589,21 @@ func withStepDailyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAcc
 // the executor actually used the normalized RFC3339 form (the gate emits
 // RFC3339 for hourly per PRD #141 slice 3) rather than the raw civil
 // option.from.
-func withHeartRateHourlyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]rawProviderRequest) {
+func withHeartRateHourlyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]googlehealth.RawRequest) {
 	t.Helper()
 
-	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	var requests []googlehealth.RawRequest
+	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("rollup sync access token = %q, want stored token", accessToken)
 		}
-		if request.endpointName != "dataTypes.heart-rate.rollUp" || request.dataType != "heart-rate" {
-			t.Fatalf("rollup sync request = (%q, %q), want heart-rate rollUp", request.endpointName, request.dataType)
+		if request.EndpointName != "dataTypes.heart-rate.rollUp" || request.DataType != "heart-rate" {
+			t.Fatalf("rollup sync request = (%q, %q), want heart-rate rollUp", request.EndpointName, request.DataType)
 		}
-		if request.method != http.MethodPost {
-			t.Fatalf("rollup method = %q, want POST", request.method)
+		if request.Method != http.MethodPost {
+			t.Fatalf("rollup method = %q, want POST", request.Method)
 		}
-		parsedURL, err := url.Parse(request.url)
+		parsedURL, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse rollup URL: %v", err)
 		}
@@ -616,8 +618,8 @@ func withHeartRateHourlyRollupFetchFake(t *testing.T, runtime runtimeAdapters, w
 			WindowSize string `json:"windowSize"`
 			PageToken  string `json:"pageToken"`
 		}
-		if err := json.Unmarshal(request.body, &body); err != nil {
-			t.Fatalf("rollup body is not valid JSON: %v\nbody: %s", err, string(request.body))
+		if err := json.Unmarshal(request.Body, &body); err != nil {
+			t.Fatalf("rollup body is not valid JSON: %v\nbody: %s", err, string(request.Body))
 		}
 		requests = append(requests, request)
 		key := fmt.Sprintf("%s/%s/%s/%s",
@@ -635,11 +637,11 @@ func withHeartRateHourlyRollupFetchFake(t *testing.T, runtime runtimeAdapters, w
 	return runtime, &requests
 }
 
-func bindDataPointSyncFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken, dataType string, pages map[string]string) *[]rawProviderRequest {
+func bindDataPointSyncFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken, dataType string, pages map[string]string) *[]googlehealth.RawRequest {
 	t.Helper()
 
-	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	var requests []googlehealth.RawRequest
+	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("sync access token = %q, want stored token", accessToken)
 		}
@@ -648,13 +650,13 @@ func bindDataPointSyncFetchFake(t *testing.T, runtime *runtimeAdapters, wantAcce
 		// used by existing exercise sync tests do not carry TCX, so the
 		// fake responds with 404 — the production code path treats 404
 		// as "no TCX for this Data Point" and continues.
-		if request.endpointName == "dataTypes.exercise.exportExerciseTcx" {
-			return nil, &googleHealthHTTPError{StatusCode: 404}
+		if request.EndpointName == "dataTypes.exercise.exportExerciseTcx" {
+			return nil, &googlehealth.HTTPError{StatusCode: 404}
 		}
-		if request.endpointName != "dataTypes."+dataType+".list" || request.dataType != dataType {
-			t.Fatalf("sync request = (%q, %q), want %s list", request.endpointName, request.dataType, dataType)
+		if request.EndpointName != "dataTypes."+dataType+".list" || request.DataType != dataType {
+			t.Fatalf("sync request = (%q, %q), want %s list", request.EndpointName, request.DataType, dataType)
 		}
-		parsedURL, err := url.Parse(request.url)
+		parsedURL, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse sync URL: %v", err)
 		}

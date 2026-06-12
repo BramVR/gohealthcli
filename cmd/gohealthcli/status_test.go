@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 )
 
 func TestStatusReportsHealthArchiveCountsAndSyncRunsReadOnly(t *testing.T) {
@@ -26,7 +28,7 @@ func TestStatusReportsHealthArchiveCountsAndSyncRunsReadOnly(t *testing.T) {
 		t.Fatal("status should not call Provider profile")
 		return googleProfile{}, nil
 	}
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		t.Fatal("status should not call Provider raw endpoints")
 		return nil, nil
 	}

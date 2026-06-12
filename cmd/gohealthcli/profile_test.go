@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 )
 
 // TestProfileCommandFailsFastWhenScopeMissing pins the PRD #142 slice 5
@@ -18,9 +20,9 @@ import (
 // the command exits non-zero, sets result.Status to
 // "profile_scope_missing", names the recovery `gohealthcli connect`
 // command in result.Message, and crucially does NOT issue any HTTP
-// request to googleHealthProfileURL — proving the scope pre-check
+// request to googlehealth.ProfileURL — proving the scope pre-check
 // happens before the upstream call. The test reads the required scope
-// from the same googleHealthIdentityEndpointScopes catalog the
+// from the same googlehealth.IdentityEndpointScopes catalog the
 // production code uses so a future slice-2 revision of the catalog
 // automatically updates what gets stripped from the stored Connection,
 // keeping the test honest without manual edits.
@@ -38,7 +40,7 @@ func TestProfileCommandFailsFastWhenScopeMissing(t *testing.T) {
 	// the same catalog key the production code reads means this test
 	// keeps pinning the right behaviour after slice 2 rewrites the
 	// catalog entry.
-	required := googleHealthIdentityEndpointScopes["getProfile"]
+	required := googlehealth.IdentityEndpointScopes("getProfile")
 	requiredSet := make(map[string]struct{}, len(required))
 	for _, scope := range required {
 		requiredSet[scope] = struct{}{}
@@ -116,7 +118,7 @@ func TestProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// requires for getProfile, so this test still exercises auto-refresh
 	// after slice 2 (#176) revises the catalog away from the default-granted
 	// scope set.
-	for _, scope := range googleHealthIdentityEndpointScopes["getProfile"] {
+	for _, scope := range googlehealth.IdentityEndpointScopes("getProfile") {
 		addStoredConnectionScope(t, archivePath, scope)
 	}
 	// Force the stored access-token expires_at into the past so
@@ -331,7 +333,7 @@ func TestProfileFailsBeforeProviderWhenProfileScopeMissing(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	setConnectionTokenScopes(t, archivePath, []string{googleHealthActivityReadonlyScope})
+	setConnectionTokenScopes(t, archivePath, []string{googlehealth.ScopeActivityReadonly})
 	testRuntime.fetchProfile = func(accessToken string) (googleProfile, error) {
 		t.Fatalf("profile fetch should not be called when profile scope is missing")
 		return googleProfile{}, nil
@@ -351,7 +353,7 @@ func TestProfileFailsBeforeProviderWhenProfileScopeMissing(t *testing.T) {
 		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
 	}
 	message, ok := got["message"].(string)
-	if !ok || !strings.Contains(message, googleHealthProfileReadonlyScope) || !strings.Contains(message, "connect") {
+	if !ok || !strings.Contains(message, googlehealth.ScopeProfileReadonly) || !strings.Contains(message, "connect") {
 		t.Fatalf("message = %T(%v), want profile-scope reconnect guidance", got["message"], got["message"])
 	}
 	assertArchiveTableCount(t, archivePath, "identity_snapshots", 0)
@@ -446,12 +448,12 @@ func TestFetchGoogleProfileUsesProfileEndpoint(t *testing.T) {
 		}, nil
 	})}
 
-	profile, err := fetchGoogleProfile(providerGET{doer: doer}, "access-secret-value")
+	profile, err := fetchGoogleProfile(googlehealth.NewGET(doer), "access-secret-value")
 	if err != nil {
 		t.Fatalf("fetch profile: %v", err)
 	}
-	if gotURL != googleHealthProfileURL {
-		t.Fatalf("profile URL = %q, want %q", gotURL, googleHealthProfileURL)
+	if gotURL != googlehealth.ProfileURL {
+		t.Fatalf("profile URL = %q, want %q", gotURL, googlehealth.ProfileURL)
 	}
 	if profile.healthUserID != "111111256096816351" || profile.resourceName != "users/111111256096816351/profile" {
 		t.Fatalf("profile = (%q, %q), want response profile", profile.healthUserID, profile.resourceName)

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 )
 
 func TestSyncRejectsInvalidSourceFamilyOptionsBeforeSetup(t *testing.T) {
@@ -128,13 +130,13 @@ func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 	if len(*requests) != 2 {
 		t.Fatalf("request count = %d, want 2", len(*requests))
 	}
-	if (*requests)[0].endpointName != "dataTypes.steps.list" || (*requests)[0].dataType != "steps" {
-		t.Fatalf("request target = (%q, %q), want steps list", (*requests)[0].endpointName, (*requests)[0].dataType)
+	if (*requests)[0].EndpointName != "dataTypes.steps.list" || (*requests)[0].DataType != "steps" {
+		t.Fatalf("request target = (%q, %q), want steps list", (*requests)[0].EndpointName, (*requests)[0].DataType)
 	}
-	if strings.Contains((*requests)[0].url, "source") {
-		t.Fatalf("sync URL unexpectedly includes source filtering: %s", (*requests)[0].url)
+	if strings.Contains((*requests)[0].URL, "source") {
+		t.Fatalf("sync URL unexpectedly includes source filtering: %s", (*requests)[0].URL)
 	}
-	if pageToken := mustURLQuery(t, (*requests)[1].url).Get("pageToken"); pageToken != "page-2" {
+	if pageToken := mustURLQuery(t, (*requests)[1].URL).Get("pageToken"); pageToken != "page-2" {
 		t.Fatalf("second pageToken = %q, want page-2", pageToken)
 	}
 	assertArchivedStepDataPoint(t, archivePath)
@@ -281,7 +283,7 @@ func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
 	assertJSONNumber(t, got, "data_points_updated", 0)
-	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `heart_rate.sample_time.physical_time >= "2026-01-01T00:00:00Z" AND heart_rate.sample_time.physical_time < "2026-01-02T00:00:00Z"` {
+	if gotFilter := mustURLQuery(t, (*requests)[0].URL).Get("filter"); gotFilter != `heart_rate.sample_time.physical_time >= "2026-01-01T00:00:00Z" AND heart_rate.sample_time.physical_time < "2026-01-02T00:00:00Z"` {
 		t.Fatalf("heart-rate filter = %q", gotFilter)
 	}
 	assertArchivedSampleDataPoint(t, archivePath, "users/me/dataTypes/heart-rate/dataPoints/hr-2026-01-01-a", "heart-rate", "2026-01-01T07:30:00Z", "2026-01-01T08:30:00", "2026-01-01", `{"utc_offset":"3600s"}`, `"beatsPerMinute":"72"`)
@@ -421,7 +423,7 @@ func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
 	assertJSONNumber(t, got, "data_points_updated", 0)
-	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `weight.sample_time.physical_time >= "2026-01-01T00:00:00Z" AND weight.sample_time.physical_time < "2026-01-02T00:00:00Z"` {
+	if gotFilter := mustURLQuery(t, (*requests)[0].URL).Get("filter"); gotFilter != `weight.sample_time.physical_time >= "2026-01-01T00:00:00Z" AND weight.sample_time.physical_time < "2026-01-02T00:00:00Z"` {
 		t.Fatalf("weight filter = %q", gotFilter)
 	}
 	assertArchivedSampleDataPoint(t, archivePath, "users/me/dataTypes/weight/dataPoints/weight-2026-01-01", "weight", "2026-01-01T05:45:00Z", "2026-01-01T06:45:00", "2026-01-01", `{"utc_offset":"3600s"}`, `"weightGrams":71234.5`)
@@ -511,7 +513,7 @@ func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 	assertJSONString(t, got, "source_family", "wearable")
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
-	if gotFamily := mustURLQuery(t, (*reconcileRequests)[0].url).Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
+	if gotFamily := mustURLQuery(t, (*reconcileRequests)[0].URL).Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
 		t.Fatalf("weight dataSourceFamily = %q, want google-wearables", gotFamily)
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 2)
@@ -553,7 +555,7 @@ func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
 	assertJSONNumber(t, got, "data_points_updated", 0)
-	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `distance.interval.start_time >= "2026-01-01T00:00:00Z" AND distance.interval.start_time < "2026-01-02T00:00:00Z"` {
+	if gotFilter := mustURLQuery(t, (*requests)[0].URL).Get("filter"); gotFilter != `distance.interval.start_time >= "2026-01-01T00:00:00Z" AND distance.interval.start_time < "2026-01-02T00:00:00Z"` {
 		t.Fatalf("distance filter = %q", gotFilter)
 	}
 	assertArchivedIntervalDataPoint(t, archivePath, "users/me/dataTypes/distance/dataPoints/distance-2026-01-01", "distance", "2026-01-01T07:00:00Z", "2026-01-01T07:30:00Z", "2026-01-01T08:00:00", "2026-01-01T08:30:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, "", `"millimeters":"2450"`)
@@ -646,7 +648,7 @@ func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing
 	assertJSONString(t, got, "source_family", "wearable")
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
-	if gotFamily := mustURLQuery(t, (*reconcileRequests)[0].url).Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
+	if gotFamily := mustURLQuery(t, (*reconcileRequests)[0].URL).Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
 		t.Fatalf("distance dataSourceFamily = %q, want google-wearables", gotFamily)
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 2)
@@ -689,13 +691,13 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 	assertJSONString(t, got, "to", "2026-01-02")
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
-	if (*requests)[0].endpointName != "dataTypes.daily-resting-heart-rate.list" {
-		t.Fatalf("endpoint = %q, want daily Data Type list", (*requests)[0].endpointName)
+	if (*requests)[0].EndpointName != "dataTypes.daily-resting-heart-rate.list" {
+		t.Fatalf("endpoint = %q, want daily Data Type list", (*requests)[0].EndpointName)
 	}
-	if strings.Contains((*requests)[0].url, "dailyRollUp") {
-		t.Fatalf("daily Data Point sync used Rollup URL: %s", (*requests)[0].url)
+	if strings.Contains((*requests)[0].URL, "dailyRollUp") {
+		t.Fatalf("daily Data Point sync used Rollup URL: %s", (*requests)[0].URL)
 	}
-	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `daily_resting_heart_rate.date >= "2026-01-01" AND daily_resting_heart_rate.date < "2026-01-02"` {
+	if gotFilter := mustURLQuery(t, (*requests)[0].URL).Get("filter"); gotFilter != `daily_resting_heart_rate.date >= "2026-01-01" AND daily_resting_heart_rate.date < "2026-01-02"` {
 		t.Fatalf("daily resting heart-rate filter = %q", gotFilter)
 	}
 	assertArchivedDailyDataPoint(t, archivePath, "users/me/dataTypes/daily-resting-heart-rate/dataPoints/rhr-2026-01-01", "daily-resting-heart-rate", "2026-01-01", `"beatsPerMinute":"61"`)
@@ -868,10 +870,10 @@ func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
 	assertJSONNumber(t, got, "data_points_updated", 0)
-	if (*requests)[0].endpointName != "dataTypes.sleep.list" {
-		t.Fatalf("endpoint = %q, want sleep Data Type list", (*requests)[0].endpointName)
+	if (*requests)[0].EndpointName != "dataTypes.sleep.list" {
+		t.Fatalf("endpoint = %q, want sleep Data Type list", (*requests)[0].EndpointName)
 	}
-	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `sleep.interval.civil_end_time >= "2026-01-01" AND sleep.interval.civil_end_time < "2026-01-03"` {
+	if gotFilter := mustURLQuery(t, (*requests)[0].URL).Get("filter"); gotFilter != `sleep.interval.civil_end_time >= "2026-01-01" AND sleep.interval.civil_end_time < "2026-01-03"` {
 		t.Fatalf("sleep filter = %q", gotFilter)
 	}
 	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/sleep/dataPoints/sleep-2026-01-01", "sleep", "2026-01-01T21:30:00Z", "2026-01-02T05:45:00Z", "2026-01-01T22:30:00", "2026-01-02T06:45:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"type":"LIGHT"`)
@@ -964,10 +966,10 @@ func TestSyncArchivesExerciseSessionDataPointsIdempotentlyAndTracksRevisions(t *
 	assertJSONNumber(t, got, "data_points_new", 1)
 	assertJSONNumber(t, got, "data_points_updated", 0)
 	assertJSONString(t, got, "to", "2026-01-02")
-	if (*requests)[0].endpointName != "dataTypes.exercise.list" {
-		t.Fatalf("endpoint = %q, want exercise Data Type list", (*requests)[0].endpointName)
+	if (*requests)[0].EndpointName != "dataTypes.exercise.list" {
+		t.Fatalf("endpoint = %q, want exercise Data Type list", (*requests)[0].EndpointName)
 	}
-	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `exercise.interval.civil_start_time >= "2026-01-01" AND exercise.interval.civil_start_time < "2026-01-02"` {
+	if gotFilter := mustURLQuery(t, (*requests)[0].URL).Get("filter"); gotFilter != `exercise.interval.civil_start_time >= "2026-01-01" AND exercise.interval.civil_start_time < "2026-01-02"` {
 		t.Fatalf("exercise filter = %q", gotFilter)
 	}
 	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/exercise/dataPoints/exercise-2026-01-01", "exercise", "2026-01-01T16:15:00Z", "2026-01-01T16:45:00Z", "2026-01-01T17:15:00", "2026-01-01T17:45:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"exerciseType":"RUNNING"`)
@@ -1040,7 +1042,7 @@ func TestSyncArchivesElectrocardiogramSessionDataPoints(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	addStoredConnectionScope(t, archivePath, googleHealthEcgReadonlyScope)
+	addStoredConnectionScope(t, archivePath, googlehealth.ScopeEcgReadonly)
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	ecgPage := string(readTestFixture(t, "googlehealth_electrocardiogram_list.json"))
@@ -1067,10 +1069,10 @@ func TestSyncArchivesElectrocardiogramSessionDataPoints(t *testing.T) {
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
 	assertJSONNumber(t, got, "data_points_updated", 0)
-	if (*requests)[0].endpointName != "dataTypes.electrocardiogram.list" {
-		t.Fatalf("endpoint = %q, want electrocardiogram Data Type list", (*requests)[0].endpointName)
+	if (*requests)[0].EndpointName != "dataTypes.electrocardiogram.list" {
+		t.Fatalf("endpoint = %q, want electrocardiogram Data Type list", (*requests)[0].EndpointName)
 	}
-	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `electrocardiogram.interval.civil_start_time >= "2026-01-01" AND electrocardiogram.interval.civil_start_time < "2026-01-02"` {
+	if gotFilter := mustURLQuery(t, (*requests)[0].URL).Get("filter"); gotFilter != `electrocardiogram.interval.civil_start_time >= "2026-01-01" AND electrocardiogram.interval.civil_start_time < "2026-01-02"` {
 		t.Fatalf("electrocardiogram filter = %q", gotFilter)
 	}
 	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/electrocardiogram/dataPoints/ecg-2026-01-01", "electrocardiogram", "2026-01-01T09:30:00Z", "2026-01-01T09:30:30Z", "2026-01-01T10:30:00", "2026-01-01T10:30:30", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"classification":"SINUS_RHYTHM"`)
@@ -1091,7 +1093,7 @@ func TestSyncArchivesIrregularRhythmNotificationSessionDataPoints(t *testing.T) 
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	addStoredConnectionScope(t, archivePath, googleHealthIrnReadonlyScope)
+	addStoredConnectionScope(t, archivePath, googlehealth.ScopeIrnReadonly)
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	irnPage := string(readTestFixture(t, "googlehealth_irregular_rhythm_notification_list.json"))
@@ -1117,10 +1119,10 @@ func TestSyncArchivesIrregularRhythmNotificationSessionDataPoints(t *testing.T) 
 	assertJSONString(t, got, "endpoint_family", "list")
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
-	if (*requests)[0].endpointName != "dataTypes.irregular-rhythm-notification.list" {
-		t.Fatalf("endpoint = %q, want irregular-rhythm-notification Data Type list", (*requests)[0].endpointName)
+	if (*requests)[0].EndpointName != "dataTypes.irregular-rhythm-notification.list" {
+		t.Fatalf("endpoint = %q, want irregular-rhythm-notification Data Type list", (*requests)[0].EndpointName)
 	}
-	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `irregular_rhythm_notification.interval.civil_start_time >= "2026-01-01" AND irregular_rhythm_notification.interval.civil_start_time < "2026-01-02"` {
+	if gotFilter := mustURLQuery(t, (*requests)[0].URL).Get("filter"); gotFilter != `irregular_rhythm_notification.interval.civil_start_time >= "2026-01-01" AND irregular_rhythm_notification.interval.civil_start_time < "2026-01-02"` {
 		t.Fatalf("irregular-rhythm-notification filter = %q", gotFilter)
 	}
 	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/irregular-rhythm-notification/dataPoints/irn-2026-01-01", "irregular-rhythm-notification", "2026-01-01T08:00:00Z", "2026-01-01T08:00:30Z", "2026-01-01T09:00:00", "2026-01-01T09:00:30", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"classification":"ATRIAL_FIBRILLATION_SUGGESTED"`)
@@ -1160,7 +1162,7 @@ func TestSyncArchivesWearableStepsViaReconcile(t *testing.T) {
 	if len(*listRequests) != 1 {
 		t.Fatalf("default request count = %d, want 1", len(*listRequests))
 	}
-	if query := mustURLQuery(t, (*listRequests)[0].url); query.Get("dataSourceFamily") != "" {
+	if query := mustURLQuery(t, (*listRequests)[0].URL); query.Get("dataSourceFamily") != "" {
 		t.Fatalf("default sync dataSourceFamily = %q, want empty", query.Get("dataSourceFamily"))
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 1)
@@ -1196,7 +1198,7 @@ func TestSyncArchivesWearableStepsViaReconcile(t *testing.T) {
 	if len(*reconcileRequests) != 1 {
 		t.Fatalf("reconcile request count = %d, want 1", len(*reconcileRequests))
 	}
-	query := mustURLQuery(t, (*reconcileRequests)[0].url)
+	query := mustURLQuery(t, (*reconcileRequests)[0].URL)
 	if gotFamily := query.Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
 		t.Fatalf("dataSourceFamily = %q, want google-wearables", gotFamily)
 	}
@@ -1270,8 +1272,8 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 	if len(*listRequests) != 1 {
 		t.Fatalf("default request count = %d, want 1", len(*listRequests))
 	}
-	if (*listRequests)[0].endpointName != "dataTypes.steps.list" {
-		t.Fatalf("default endpoint = %q, want list", (*listRequests)[0].endpointName)
+	if (*listRequests)[0].EndpointName != "dataTypes.steps.list" {
+		t.Fatalf("default endpoint = %q, want list", (*listRequests)[0].EndpointName)
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 0)
 	assertArchiveTableCount(t, archivePath, "rollups", 0)
@@ -1456,7 +1458,7 @@ func TestSyncProviderFailureRecordsFailedRun(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != "connect-access-secret" {
 			t.Fatalf("sync access token = %q, want stored token", accessToken)
 		}
@@ -1508,7 +1510,7 @@ func TestSyncRefusesDifferentProviderIdentityBeforeArchiving(t *testing.T) {
 		legacyFitbitUserID: "DIFFERENT",
 		rawJSON:            `{"healthUserId":"222222222222222222","legacyUserId":"DIFFERENT"}`,
 	})
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		t.Fatal("sync provider fetch should not run after identity mismatch")
 		return nil, nil
 	}
@@ -1615,8 +1617,8 @@ func TestSyncFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	setConnectionTokenScopes(t, archivePath, []string{googleHealthProfileReadonlyScope})
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	setConnectionTokenScopes(t, archivePath, []string{googlehealth.ScopeProfileReadonly})
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		t.Fatal("sync provider fetch should not run with missing scope")
 		return nil, nil
 	}
@@ -1636,11 +1638,11 @@ func TestSyncFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 	if stderr.String() != "" {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
-	if !strings.Contains(stdout.String(), googleHealthActivityReadonlyScope) || !strings.Contains(stdout.String(), "connect") {
+	if !strings.Contains(stdout.String(), googlehealth.ScopeActivityReadonly) || !strings.Contains(stdout.String(), "connect") {
 		t.Fatalf("stdout = %q, want missing scope reconnect hint", stdout.String())
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 0)
-	assertSyncRun(t, archivePath, 1, "sync_failed", 0, 0, 0, googleHealthActivityReadonlyScope)
+	assertSyncRun(t, archivePath, 1, "sync_failed", 0, 0, 0, googlehealth.ScopeActivityReadonly)
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
@@ -1652,8 +1654,8 @@ func TestSyncSampleDataTypeFailsBeforeProviderWhenHealthMetricsScopeMissing(t *t
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	setConnectionTokenScopes(t, archivePath, []string{googleHealthProfileReadonlyScope, googleHealthActivityReadonlyScope})
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	setConnectionTokenScopes(t, archivePath, []string{googlehealth.ScopeProfileReadonly, googlehealth.ScopeActivityReadonly})
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		t.Fatal("sync provider fetch should not run with missing health metrics scope")
 		return nil, nil
 	}
@@ -1674,10 +1676,10 @@ func TestSyncSampleDataTypeFailsBeforeProviderWhenHealthMetricsScopeMissing(t *t
 	if stderr.String() != "" {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
-	if !strings.Contains(stdout.String(), googleHealthHealthMetricsReadonlyScope) || !strings.Contains(stdout.String(), "connect") {
+	if !strings.Contains(stdout.String(), googlehealth.ScopeHealthMetricsReadonly) || !strings.Contains(stdout.String(), "connect") {
 		t.Fatalf("stdout = %q, want missing health metrics scope reconnect hint", stdout.String())
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 0)
-	assertSyncRunForDataType(t, archivePath, 1, "sync_failed", "heart-rate", "list", 0, 0, 0, googleHealthHealthMetricsReadonlyScope)
+	assertSyncRunForDataType(t, archivePath, 1, "sync_failed", "heart-rate", "list", 0, 0, 0, googlehealth.ScopeHealthMetricsReadonly)
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }

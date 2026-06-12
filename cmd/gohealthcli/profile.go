@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"io"
 	"strings"
 )
-
-const googleHealthProfileURL = "https://health.googleapis.com/v4/users/me/profile"
 
 type profileResult struct {
 	Status             string `json:"status"`
@@ -43,12 +43,12 @@ var profileSnapshotCommand = identitySnapshotCommandSpec[profileResult, googlePr
 	statusUnavailable:  "profile_unavailable",
 	statusScopeMissing: "profile_scope_missing",
 	scopeEndpointKey:   "getProfile",
-	seedResult: func(connection archivedConnection) profileResult {
+	seedResult: func(connection archived.Connection) profileResult {
 		return profileResult{
-			ConnectionID:       connection.id,
-			ProviderName:       connection.providerName,
-			GoogleHealthUserID: connection.googleHealthUserID,
-			LegacyFitbitUserID: connection.legacyFitbitUserID,
+			ConnectionID:       connection.ID,
+			ProviderName:       connection.ProviderName,
+			GoogleHealthUserID: connection.GoogleHealthUserID,
+			LegacyFitbitUserID: connection.LegacyFitbitUserID,
 		}
 	},
 	status:       func(result *profileResult) string { return result.Status },
@@ -67,7 +67,7 @@ var profileSnapshotCommand = identitySnapshotCommandSpec[profileResult, googlePr
 			if err != nil {
 				if isCurrentConnectionIdentityMismatch(err) {
 					result.Status = "profile_mismatch"
-				} else if isProviderUnreachableError(err) {
+				} else if googlehealth.IsUnreachableError(err) {
 					result.Status = "provider_unreachable"
 				}
 				return err
@@ -89,13 +89,13 @@ var profileSnapshotCommand = identitySnapshotCommandSpec[profileResult, googlePr
 }
 
 // fetchGoogleProfile is a thin call site over the shared Provider GET
-// module (provider_get.go, issue #280), which owns the transport
+// module (internal/googlehealth, issue #280), which owns the transport
 // behavior: bearer auth, size limit, timeout, typed labeled status
 // errors, JSON validity, and retry/Retry-After. The module value
 // carries the HTTP doer (#281). Profile-shape validation stays in
 // parseGoogleProfile.
-func fetchGoogleProfile(get providerGET, accessToken string) (googleProfile, error) {
-	body, err := fetchProviderJSON(context.Background(), get, googleHealthProfileURL, "profile", accessToken)
+func fetchGoogleProfile(get googlehealth.GET, accessToken string) (googleProfile, error) {
+	body, err := get.FetchJSON(context.Background(), googlehealth.ProfileURL, "profile", accessToken)
 	if err != nil {
 		return googleProfile{}, err
 	}

@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 )
 
 func TestRawEndpointIdentityPrintsProviderJSONWithoutArchiving(t *testing.T) {
@@ -19,9 +21,9 @@ func TestRawEndpointIdentityPrintsProviderJSONWithoutArchiving(t *testing.T) {
 		legacyFitbitUserID: "A1B2C3",
 	})
 	beforeIdentityJSON := archivedConnectionIdentityJSON(t, archivePath)
-	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(request rawProviderRequest) []byte {
-		if request.url != googleHealthIdentityURL {
-			t.Fatalf("raw URL = %q, want identity URL", request.url)
+	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(request googlehealth.RawRequest) []byte {
+		if request.URL != googlehealth.IdentityURL {
+			t.Fatalf("raw URL = %q, want identity URL", request.URL)
 		}
 		return []byte(`{"healthUserId":"999999999999999999","legacyUserId":"RAW"}`)
 	})
@@ -58,11 +60,11 @@ func TestRawDataTypeStepsPrintsFixtureJSON(t *testing.T) {
 		legacyFitbitUserID: "A1B2C3",
 	})
 	fixture := readTestFixture(t, "googlehealth_steps_list.json")
-	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(request rawProviderRequest) []byte {
-		if request.endpointName != "dataTypes.steps.list" || request.dataType != "steps" {
-			t.Fatalf("raw request = (%q, %q), want steps list", request.endpointName, request.dataType)
+	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(request googlehealth.RawRequest) []byte {
+		if request.EndpointName != "dataTypes.steps.list" || request.DataType != "steps" {
+			t.Fatalf("raw request = (%q, %q), want steps list", request.EndpointName, request.DataType)
 		}
-		parsedURL, err := url.Parse(request.url)
+		parsedURL, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse raw URL: %v", err)
 		}
@@ -114,7 +116,7 @@ func TestRawProviderErrorDoesNotLeakToken(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != "connect-access-secret" {
 			t.Fatalf("raw access token = %q, want stored token", accessToken)
 		}
@@ -159,7 +161,7 @@ func TestRawDataTypeFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
 		t.Fatalf("unmarshal token metadata: %v", err)
 	}
-	metadata["scopes"] = []string{googleHealthActivityReadonlyScope}
+	metadata["scopes"] = []string{googlehealth.ScopeActivityReadonly}
 	updatedMetadataJSON, err := json.Marshal(metadata)
 	if err != nil {
 		t.Fatalf("marshal token metadata: %v", err)
@@ -171,7 +173,7 @@ func TestRawDataTypeFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update token scopes: %v", err)
 	}
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		t.Fatal("raw provider fetch should not run with missing scope")
 		return nil, nil
 	}
@@ -185,7 +187,7 @@ func TestRawDataTypeFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 	if stdout.String() != "" {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), googleHealthHealthMetricsReadonlyScope) || !strings.Contains(stderr.String(), "connect") {
+	if !strings.Contains(stderr.String(), googlehealth.ScopeHealthMetricsReadonly) || !strings.Contains(stderr.String(), "connect") {
 		t.Fatalf("stderr = %q, want missing scope reconnect hint", stderr.String())
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())

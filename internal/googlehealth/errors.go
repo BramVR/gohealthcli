@@ -1,4 +1,4 @@
-package main
+package googlehealth
 
 import (
 	"errors"
@@ -11,7 +11,7 @@ import (
 // command routes its upstream failure through these helpers so that:
 //
 //   - auth rejections are detected via errors.As on the typed
-//     googleHealthHTTPError carrying the status code — never by
+//     HTTPError carrying the status code — never by
 //     matching on error message text;
 //   - the original cause chain stays reachable end-to-end (errors.As
 //     keeps working on the returned error);
@@ -20,15 +20,24 @@ import (
 //     consumers can distinguish a Provider outage from local
 //     misconfiguration.
 
-// isProviderUnreachableError reports whether err is a non-auth
+// ErrUnauthorized is the Provider auth-rejection sentinel: the stored
+// Connection token was rejected upstream with HTTP 401 and the user
+// recovers by running `gohealthcli connect` again. The message text is
+// the historical errCurrentConnectionProviderUnauthorized wording
+// verbatim — it surfaces in CLI output and JSON envelopes, so changing
+// it is a user-visible behavior change. Main matches the category via
+// errors.Is on this value.
+var ErrUnauthorized = errors.New("Google Health rejected stored Connection token; run `gohealthcli connect` again")
+
+// IsUnreachableError reports whether err is a non-auth
 // Provider HTTP or network failure — the provider_unreachable
 // category. A typed upstream HTTP error counts unless it is the 401
 // auth rejection (that is a Connection problem the user fixes with
 // `connect`, not an outage); a *url.Error is net/http's transport-
 // level failure shape (dial refused, DNS, TLS, deadline) and always
 // counts.
-func isProviderUnreachableError(err error) bool {
-	var httpErr *googleHealthHTTPError
+func IsUnreachableError(err error) bool {
+	var httpErr *HTTPError
 	if errors.As(err, &httpErr) {
 		return httpErr.StatusCode != http.StatusUnauthorized
 	}
@@ -40,18 +49,18 @@ func isProviderUnreachableError(err error) bool {
 // 401 is the only status that means "access token no longer valid";
 // 403 is a scope/authorization problem a fresh token cannot fix.
 func isUnauthorizedHTTPError(err error) bool {
-	var httpErr *googleHealthHTTPError
+	var httpErr *HTTPError
 	return errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusUnauthorized
 }
 
-// normalizeProviderError translates an upstream Provider failure into
+// NormalizeError translates an upstream Provider failure into
 // the user-facing error category every Provider-touching command
 // shares. A typed HTTP 401 becomes the
-// errCurrentConnectionProviderUnauthorized "run `gohealthcli connect`
+// ErrUnauthorized "run `gohealthcli connect`
 // again" category with the original cause kept in the chain; every
 // other error passes through unchanged. Detection is errors.As on the
-// typed googleHealthHTTPError only — message text never participates.
-func normalizeProviderError(err error) error {
+// typed HTTPError only — message text never participates.
+func NormalizeError(err error) error {
 	if err == nil {
 		return nil
 	}
@@ -62,19 +71,19 @@ func normalizeProviderError(err error) error {
 }
 
 // providerUnauthorizedError is the normalized Provider auth rejection.
-// Its message is the errCurrentConnectionProviderUnauthorized sentinel
+// Its message is the ErrUnauthorized sentinel
 // text verbatim (the JSON message contract predates issue #272), while
 // Unwrap exposes BOTH the sentinel — so errors.Is keeps matching the
 // category — and the typed cause, so errors.As can still reach the
-// googleHealthHTTPError carrying the status code end-to-end.
+// HTTPError carrying the status code end-to-end.
 type providerUnauthorizedError struct {
 	cause error
 }
 
 func (err *providerUnauthorizedError) Error() string {
-	return errCurrentConnectionProviderUnauthorized.Error()
+	return ErrUnauthorized.Error()
 }
 
 func (err *providerUnauthorizedError) Unwrap() []error {
-	return []error{errCurrentConnectionProviderUnauthorized, err.cause}
+	return []error{ErrUnauthorized, err.cause}
 }

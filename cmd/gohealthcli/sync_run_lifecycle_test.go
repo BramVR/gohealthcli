@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"strings"
 	"sync"
 	"testing"
@@ -431,7 +432,7 @@ func TestSyncRunLifecycleConvertsBusyExhaustedToFailedWithRecoveryRow(t *testing
 		t.Fatalf("CurrentConnection: %v", err)
 	}
 	if _, found, err := archive.ResolveSyncCursor(context.Background(), syncCursorKey{
-		connectionID: connection.id,
+		connectionID: connection.ID,
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,
 	}); err != nil || found {
@@ -635,7 +636,7 @@ func TestSyncRunLifecycleCanceledOutcomePreservedThroughRecovery(t *testing.T) {
 		return fakeFinalizeWriter{healthArchiveWriter: inner, failOn: failOnEveryOutcome(busyExhausted)}, nil
 	}
 
-	// Drive ingestion to surface errSyncCanceled so the lifecycle calls
+	// Drive ingestion to surface googlehealth.ErrSyncCanceled so the lifecycle calls
 	// finalize with syncRunOutcomeCanceled. PRD #141 slice 5 adds a
 	// pre-StartSyncRun cancel check at the top of syncRunLifecycle.Run,
 	// so a pre-canceled context now short-circuits before any audit row
@@ -644,7 +645,7 @@ func TestSyncRunLifecycleCanceledOutcomePreservedThroughRecovery(t *testing.T) {
 	// in finalize with the canceled outcome we cancel the run context
 	// inside the fetch fake after StartSyncRun has run; the page loop's
 	// next top-of-iteration check then observes the canceled context and
-	// returns errSyncCanceled, sending the lifecycle into finalize
+	// returns googlehealth.ErrSyncCanceled, sending the lifecycle into finalize
 	// with syncRunOutcomeCanceled.
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	defer cancelRun()
@@ -653,10 +654,10 @@ func TestSyncRunLifecycleCanceledOutcomePreservedThroughRecovery(t *testing.T) {
 		"page-2": `{"dataPoints":[]}`,
 	})
 	wrappedFetch := testRuntime.fetchRawProvider
-	testRuntime.fetchRawProvider = func(ctx context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(ctx context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		body, err := wrappedFetch(ctx, request, accessToken)
 		// Cancel after page 1 returns — the next iteration's
-		// top-of-loop check observes it and returns errSyncCanceled.
+		// top-of-loop check observes it and returns googlehealth.ErrSyncCanceled.
 		cancelRun()
 		return body, err
 	}

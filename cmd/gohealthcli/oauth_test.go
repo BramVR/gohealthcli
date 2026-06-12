@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 )
 
 func TestParseOAuthClientConfigContentPinsHTTPSAndGoogleHosts(t *testing.T) {
@@ -62,12 +64,12 @@ func TestParseOAuthClientConfigContentPinsHTTPSAndGoogleHosts(t *testing.T) {
 
 func TestOAuthScopesUseRecognizedGoogleHealthScopes(t *testing.T) {
 	t.Parallel()
-	scopes := oauthScopesForDataTypes(defaultDataTypes)
+	scopes := oauthScopesForDataTypes(googlehealth.DefaultDataTypes())
 	wantScopes := []string{
-		googleHealthActivityReadonlyScope,
-		googleHealthHealthMetricsReadonlyScope,
-		googleHealthSleepReadonlyScope,
-		googleHealthProfileReadonlyScope,
+		googlehealth.ScopeActivityReadonly,
+		googlehealth.ScopeHealthMetricsReadonly,
+		googlehealth.ScopeSleepReadonly,
+		googlehealth.ScopeProfileReadonly,
 	}
 	if !slices.Equal(scopes, wantScopes) {
 		t.Fatalf("scopes = %v, want configured Google Health readonly scopes %v", scopes, wantScopes)
@@ -84,7 +86,7 @@ func TestOAuthScopesUseRecognizedGoogleHealthScopes(t *testing.T) {
 func TestOAuthScopesForEmptyDataTypesRequestOnlyProfileScope(t *testing.T) {
 	t.Parallel()
 	for name, dataTypes := range map[string][]string{"nil": nil, "empty": {}} {
-		if scopes := oauthScopesForDataTypes(dataTypes); !slices.Equal(scopes, []string{googleHealthProfileReadonlyScope}) {
+		if scopes := oauthScopesForDataTypes(dataTypes); !slices.Equal(scopes, []string{googlehealth.ScopeProfileReadonly}) {
 			t.Fatalf("scopes for %s dataTypes = %v, want only the profile scope", name, scopes)
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"sort"
 	"strings"
 	"time"
@@ -461,8 +462,8 @@ func readStatusTier2(ctx context.Context, db *sql.DB, dataTypes []statusDataType
 	tier2 := &statusTier2{
 		ElectrocardiogramEventCount:             tier2DataPointCount(dataTypes, "electrocardiogram"),
 		IrregularRhythmNotificationCount:        tier2DataPointCount(dataTypes, "irregular-rhythm-notification"),
-		ElectrocardiogramScopeGranted:           scopeListContains(scopes, googleHealthEcgReadonlyScope),
-		IrregularRhythmNotificationScopeGranted: scopeListContains(scopes, googleHealthIrnReadonlyScope),
+		ElectrocardiogramScopeGranted:           scopeListContains(scopes, googlehealth.ScopeEcgReadonly),
+		IrregularRhythmNotificationScopeGranted: scopeListContains(scopes, googlehealth.ScopeIrnReadonly),
 	}
 	return tier2, nil
 }

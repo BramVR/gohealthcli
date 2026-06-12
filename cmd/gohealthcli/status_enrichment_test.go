@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"strings"
 	"testing"
 )
@@ -191,8 +192,8 @@ func TestStatusReportsTier2CountsWhenScopesGranted(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	addStoredConnectionScope(t, archivePath, googleHealthEcgReadonlyScope)
-	addStoredConnectionScope(t, archivePath, googleHealthIrnReadonlyScope)
+	addStoredConnectionScope(t, archivePath, googlehealth.ScopeEcgReadonly)
+	addStoredConnectionScope(t, archivePath, googlehealth.ScopeIrnReadonly)
 	insertTier2DataPoint(t, archivePath, "electrocardiogram", "ecg-1")
 	insertTier2DataPoint(t, archivePath, "electrocardiogram", "ecg-2")
 	insertTier2DataPoint(t, archivePath, "irregular-rhythm-notification", "irn-1")
@@ -256,7 +257,7 @@ func TestStatusReportsTier2CountsWithPartialScopeGrant(t *testing.T) {
 		legacyFitbitUserID: "A1B2C3",
 	})
 	// Only grant the ECG scope — IRN stays missing.
-	addStoredConnectionScope(t, archivePath, googleHealthEcgReadonlyScope)
+	addStoredConnectionScope(t, archivePath, googlehealth.ScopeEcgReadonly)
 	insertTier2DataPoint(t, archivePath, "electrocardiogram", "ecg-1")
 
 	jsonStdout := new(bytes.Buffer)

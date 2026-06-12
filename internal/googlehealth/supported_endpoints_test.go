@@ -1,4 +1,4 @@
-package main
+package googlehealth
 
 import (
 	"testing"
@@ -47,8 +47,8 @@ func TestSupportedEndpointsCatalogConsistencyForEveryDataType(t *testing.T) {
 			_, hasDailyRollup := entry.SupportedEndpoints[endpointFamilyDailyRollUp]
 
 			// Sync-supported types must have at least one of list/reconcile.
-			if syncDataPointDataTypeSupported(dataType) && !hasList && !hasReconcile {
-				t.Errorf("syncDataPointDataTypeSupported says yes but SupportedEndpoints has neither list nor reconcile")
+			if SupportsSyncDataPoints(dataType) && !hasList && !hasReconcile {
+				t.Errorf("SupportsSyncDataPoints says yes but SupportedEndpoints has neither list nor reconcile")
 			}
 			// reconcileDataTypeSupported ↔ map has reconcile.
 			if hasReconcile != reconcileDataTypeSupported(dataType) {

@@ -13,7 +13,7 @@ A plain-language guide to every Data Type the Google Health catalog exposes thro
 - **Rollups** — which `--rollup` kinds the catalog row supports beyond raw Data Points.
 - **Stored as** — the table the row lands in (`data_points` for raw, `rollups` for aggregates) plus the normalized view exposed for queries and `export`.
 
-The catalog is authoritative in `cmd/gohealthcli/google_health_data_types.go`; this page is its narrative companion.
+The catalog is authoritative in `internal/googlehealth/catalog.go`; this page is its narrative companion.
 
 ## How long does each type take to sync?
 

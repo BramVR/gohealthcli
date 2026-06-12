@@ -1,4 +1,4 @@
-package main
+package googlehealth
 
 import (
 	"slices"
@@ -21,7 +21,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 	}{
 		{
 			dataType:              "steps",
-			wantScopes:            []string{googleHealthActivityReadonlyScope},
+			wantScopes:            []string{ScopeActivityReadonly},
 			wantListFilterField:   "steps.interval.start_time",
 			wantSyncDataPoint:     true,
 			wantReconcile:         true,
@@ -32,7 +32,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:              "heart-rate",
-			wantScopes:            []string{googleHealthHealthMetricsReadonlyScope},
+			wantScopes:            []string{ScopeHealthMetricsReadonly},
 			wantListFilterField:   "heart_rate.sample_time.physical_time",
 			wantSyncDataPoint:     true,
 			wantReconcile:         true,
@@ -42,7 +42,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:              "daily-resting-heart-rate",
-			wantScopes:            []string{googleHealthHealthMetricsReadonlyScope},
+			wantScopes:            []string{ScopeHealthMetricsReadonly},
 			wantListFilterField:   "daily_resting_heart_rate.date",
 			wantSyncDataPoint:     true,
 			wantReconcile:         true,
@@ -53,7 +53,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:              "heart-rate-variability",
-			wantScopes:            []string{googleHealthHealthMetricsReadonlyScope},
+			wantScopes:            []string{ScopeHealthMetricsReadonly},
 			wantListFilterField:   "heart_rate_variability.sample_time.physical_time",
 			wantSyncDataPoint:     true,
 			wantReconcile:         true,
@@ -63,7 +63,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:              "daily-heart-rate-variability",
-			wantScopes:            []string{googleHealthHealthMetricsReadonlyScope},
+			wantScopes:            []string{ScopeHealthMetricsReadonly},
 			wantListFilterField:   "daily_heart_rate_variability.date",
 			wantSyncDataPoint:     true,
 			wantReconcile:         true,
@@ -74,7 +74,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:              "oxygen-saturation",
-			wantScopes:            []string{googleHealthHealthMetricsReadonlyScope},
+			wantScopes:            []string{ScopeHealthMetricsReadonly},
 			wantListFilterField:   "oxygen_saturation.sample_time.physical_time",
 			wantSyncDataPoint:     true,
 			wantReconcile:         true,
@@ -84,7 +84,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:              "daily-oxygen-saturation",
-			wantScopes:            []string{googleHealthHealthMetricsReadonlyScope},
+			wantScopes:            []string{ScopeHealthMetricsReadonly},
 			wantListFilterField:   "daily_oxygen_saturation.date",
 			wantSyncDataPoint:     true,
 			wantReconcile:         true,
@@ -95,7 +95,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:              "daily-respiratory-rate",
-			wantScopes:            []string{googleHealthHealthMetricsReadonlyScope},
+			wantScopes:            []string{ScopeHealthMetricsReadonly},
 			wantListFilterField:   "daily_respiratory_rate.date",
 			wantSyncDataPoint:     true,
 			wantReconcile:         true,
@@ -106,7 +106,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:              "sleep",
-			wantScopes:            []string{googleHealthSleepReadonlyScope},
+			wantScopes:            []string{ScopeSleepReadonly},
 			wantListFilterField:   "sleep.interval.civil_end_time",
 			wantSyncDataPoint:     true,
 			wantParser:            "session",
@@ -116,7 +116,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:              "exercise",
-			wantScopes:            []string{googleHealthActivityReadonlyScope},
+			wantScopes:            []string{ScopeActivityReadonly},
 			wantListFilterField:   "exercise.interval.civil_start_time",
 			wantSyncDataPoint:     true,
 			wantParser:            "session",
@@ -126,7 +126,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:              "distance",
-			wantScopes:            []string{googleHealthActivityReadonlyScope},
+			wantScopes:            []string{ScopeActivityReadonly},
 			wantListFilterField:   "distance.interval.start_time",
 			wantSyncDataPoint:     true,
 			wantReconcile:         true,
@@ -136,14 +136,14 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:              "total-calories",
-			wantScopes:            []string{googleHealthActivityReadonlyScope},
+			wantScopes:            []string{ScopeActivityReadonly},
 			wantParser:            "",
 			wantRecordKind:        "",
 			wantDefaultConfigType: true,
 		},
 		{
 			dataType:              "weight",
-			wantScopes:            []string{googleHealthHealthMetricsReadonlyScope},
+			wantScopes:            []string{ScopeHealthMetricsReadonly},
 			wantListFilterField:   "weight.sample_time.physical_time",
 			wantSyncDataPoint:     true,
 			wantReconcile:         true,
@@ -155,7 +155,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		// `--types <name>` — none are DefaultConfigType yet.
 		{
 			dataType:            "body-fat",
-			wantScopes:          []string{googleHealthHealthMetricsReadonlyScope},
+			wantScopes:          []string{ScopeHealthMetricsReadonly},
 			wantListFilterField: "body_fat.sample_time.physical_time",
 			wantSyncDataPoint:   true,
 			wantReconcile:       true,
@@ -164,7 +164,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:            "blood-glucose",
-			wantScopes:          []string{googleHealthHealthMetricsReadonlyScope},
+			wantScopes:          []string{ScopeHealthMetricsReadonly},
 			wantListFilterField: "blood_glucose.sample_time.physical_time",
 			wantSyncDataPoint:   true,
 			wantReconcile:       true,
@@ -173,7 +173,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:            "core-body-temperature",
-			wantScopes:          []string{googleHealthHealthMetricsReadonlyScope},
+			wantScopes:          []string{ScopeHealthMetricsReadonly},
 			wantListFilterField: "core_body_temperature.sample_time.physical_time",
 			wantSyncDataPoint:   true,
 			wantReconcile:       true,
@@ -182,7 +182,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:            "height",
-			wantScopes:          []string{googleHealthHealthMetricsReadonlyScope},
+			wantScopes:          []string{ScopeHealthMetricsReadonly},
 			wantListFilterField: "height.sample_time.physical_time",
 			wantSyncDataPoint:   true,
 			wantReconcile:       true,
@@ -194,7 +194,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		// has run cleanly against real data over multiple weeks.
 		{
 			dataType:             "daily-vo2-max",
-			wantScopes:           []string{googleHealthActivityReadonlyScope},
+			wantScopes:           []string{ScopeActivityReadonly},
 			wantListFilterField:  "daily_vo2_max.date",
 			wantSyncDataPoint:    true,
 			wantReconcile:        true,
@@ -204,7 +204,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:             "daily-heart-rate-zones",
-			wantScopes:           []string{googleHealthHealthMetricsReadonlyScope},
+			wantScopes:           []string{ScopeHealthMetricsReadonly},
 			wantListFilterField:  "daily_heart_rate_zones.date",
 			wantSyncDataPoint:    true,
 			wantReconcile:        true,
@@ -214,7 +214,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:             "daily-sleep-temperature-derivations",
-			wantScopes:           []string{googleHealthSleepReadonlyScope},
+			wantScopes:           []string{ScopeSleepReadonly},
 			wantListFilterField:  "daily_sleep_temperature_derivations.date",
 			wantSyncDataPoint:    true,
 			wantReconcile:        true,
@@ -224,7 +224,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:            "respiratory-rate-sleep-summary",
-			wantScopes:          []string{googleHealthSleepReadonlyScope},
+			wantScopes:          []string{ScopeSleepReadonly},
 			wantListFilterField: "respiratory_rate_sleep_summary.sample_time.physical_time",
 			wantSyncDataPoint:   true,
 			wantReconcile:       true,
@@ -233,7 +233,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:             "hydration-log",
-			wantScopes:           []string{googleHealthNutritionReadonlyScope},
+			wantScopes:           []string{ScopeNutritionReadonly},
 			wantListFilterField:  "hydration_log.interval.civil_start_time",
 			wantSyncDataPoint:    true,
 			wantParser:           "session",
@@ -246,7 +246,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		// once the scope is granted.
 		{
 			dataType:             "electrocardiogram",
-			wantScopes:           []string{googleHealthEcgReadonlyScope},
+			wantScopes:           []string{ScopeEcgReadonly},
 			wantListFilterField:  "electrocardiogram.interval.civil_start_time",
 			wantSyncDataPoint:    true,
 			wantParser:           "session",
@@ -255,7 +255,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:             "irregular-rhythm-notification",
-			wantScopes:           []string{googleHealthIrnReadonlyScope},
+			wantScopes:           []string{ScopeIrnReadonly},
 			wantListFilterField:  "irregular_rhythm_notification.interval.civil_start_time",
 			wantSyncDataPoint:    true,
 			wantParser:           "session",
@@ -281,9 +281,9 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			if gotFilter != tt.wantListFilterField {
 				t.Fatalf("ListFilterField = %q, want %q", gotFilter, tt.wantListFilterField)
 			}
-			gotSyncDataPoint := syncDataPointDataTypeSupported(tt.dataType)
+			gotSyncDataPoint := SupportsSyncDataPoints(tt.dataType)
 			if gotSyncDataPoint != tt.wantSyncDataPoint {
-				t.Fatalf("syncDataPointDataTypeSupported = %v, want %v", gotSyncDataPoint, tt.wantSyncDataPoint)
+				t.Fatalf("SupportsSyncDataPoints = %v, want %v", gotSyncDataPoint, tt.wantSyncDataPoint)
 			}
 			gotReconcile := reconcileDataTypeSupported(tt.dataType)
 			if gotReconcile != tt.wantReconcile {
@@ -311,7 +311,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 
 func TestGoogleHealthDataTypeCatalogDescribesSourceFamilyFilters(t *testing.T) {
 	t.Parallel()
-	filter, err := googleHealthSourceFamilyFilterName("steps", "wearable")
+	filter, err := SourceFamilyFilterName("steps", "wearable")
 	if err != nil {
 		t.Fatalf("source family filter: %v", err)
 	}
@@ -347,13 +347,13 @@ func TestGoogleHealthDataTypeCatalogDefaultDataTypes(t *testing.T) {
 
 func TestGoogleHealthScopesForDataTypeReturnsCopy(t *testing.T) {
 	t.Parallel()
-	scopes := googleHealthScopesForDataType("steps")
+	scopes := ScopesForDataType("steps")
 	if len(scopes) != 1 {
 		t.Fatalf("scopes = %v, want one scope", scopes)
 	}
 	scopes[0] = "mutated"
-	got := googleHealthScopesForDataType("steps")
-	if !slices.Equal(got, []string{googleHealthActivityReadonlyScope}) {
+	got := ScopesForDataType("steps")
+	if !slices.Equal(got, []string{ScopeActivityReadonly}) {
 		t.Fatalf("scopes after mutation = %v, want original scope", got)
 	}
 }

@@ -1,4 +1,4 @@
-package main
+package googlehealth
 
 import (
 	"context"
@@ -32,35 +32,35 @@ func TestGoogleHealthIngestionHourlyHeartRateRollup(t *testing.T) {
 	})
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "heart-rate",
-		rollup:   "hourly",
-		from:     "2026-01-01T00:00:00Z",
-		to:       "2026-01-01T02:00:00Z",
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "heart-rate",
+		Rollup:   "hourly",
+		From:     "2026-01-01T00:00:00Z",
+		To:       "2026-01-01T02:00:00Z",
 	}))
 	if err != nil {
 		t.Fatalf("ingest hourly heart-rate Rollups: %v", err)
 	}
-	if result.endpointFamily != "rollUp" {
-		t.Errorf("endpoint family = %q, want rollUp", result.endpointFamily)
+	if result.EndpointFamily != "rollUp" {
+		t.Errorf("endpoint family = %q, want rollUp", result.EndpointFamily)
 	}
-	if result.rollupsSeen != 2 || result.rollupsNew != 2 {
-		t.Errorf("Rollup counts = (%d new of %d seen), want (2, 2)", result.rollupsNew, result.rollupsSeen)
+	if result.RollupsSeen != 2 || result.RollupsNew != 2 {
+		t.Errorf("Rollup counts = (%d new of %d seen), want (2, 2)", result.RollupsNew, result.RollupsSeen)
 	}
 	if len(provider.requests) != 1 {
 		t.Fatalf("request count = %d, want 1", len(provider.requests))
 	}
-	if provider.requests[0].endpointName != "dataTypes.heart-rate.rollUp" {
-		t.Errorf("endpointName = %q, want dataTypes.heart-rate.rollUp", provider.requests[0].endpointName)
+	if provider.requests[0].EndpointName != "dataTypes.heart-rate.rollUp" {
+		t.Errorf("endpointName = %q, want dataTypes.heart-rate.rollUp", provider.requests[0].EndpointName)
 	}
-	if provider.requests[0].method != http.MethodPost {
-		t.Errorf("method = %q, want POST", provider.requests[0].method)
+	if provider.requests[0].Method != http.MethodPost {
+		t.Errorf("method = %q, want POST", provider.requests[0].Method)
 	}
-	if archive.rollups[0].rollupKind != "hourly" {
-		t.Errorf("rollupKind = %q, want hourly", archive.rollups[0].rollupKind)
+	if archive.rollups[0].RollupKind != "hourly" {
+		t.Errorf("rollupKind = %q, want hourly", archive.rollups[0].RollupKind)
 	}
-	if archive.rollups[0].windowStartUTC != "2026-01-01T00:00:00Z" {
-		t.Errorf("windowStartUTC = %q, want 2026-01-01T00:00:00Z", archive.rollups[0].windowStartUTC)
+	if archive.rollups[0].WindowStartUTC != "2026-01-01T00:00:00Z" {
+		t.Errorf("windowStartUTC = %q, want 2026-01-01T00:00:00Z", archive.rollups[0].WindowStartUTC)
 	}
 }
 
@@ -83,23 +83,23 @@ func TestGoogleHealthIngestionWeeklyStepsRollup(t *testing.T) {
 	})
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "steps",
-		rollup:   "weekly",
-		from:     "2026-01-01T00:00:00Z",
-		to:       "2026-01-15T00:00:00Z",
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		Rollup:   "weekly",
+		From:     "2026-01-01T00:00:00Z",
+		To:       "2026-01-15T00:00:00Z",
 	}))
 	if err != nil {
 		t.Fatalf("ingest weekly steps Rollups: %v", err)
 	}
-	if result.endpointFamily != "rollUp" {
-		t.Errorf("endpoint family = %q, want rollUp", result.endpointFamily)
+	if result.EndpointFamily != "rollUp" {
+		t.Errorf("endpoint family = %q, want rollUp", result.EndpointFamily)
 	}
-	if result.rollupsSeen != 1 || result.rollupsNew != 1 {
-		t.Errorf("Rollup counts = (%d new of %d seen), want (1, 1)", result.rollupsNew, result.rollupsSeen)
+	if result.RollupsSeen != 1 || result.RollupsNew != 1 {
+		t.Errorf("Rollup counts = (%d new of %d seen), want (1, 1)", result.RollupsNew, result.RollupsSeen)
 	}
-	if archive.rollups[0].rollupKind != "weekly" {
-		t.Errorf("rollupKind = %q, want weekly", archive.rollups[0].rollupKind)
+	if archive.rollups[0].RollupKind != "weekly" {
+		t.Errorf("rollupKind = %q, want weekly", archive.rollups[0].RollupKind)
 	}
 }
 
@@ -120,20 +120,20 @@ func TestGoogleHealthIngestionWindowCustomRollup(t *testing.T) {
 	})
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "steps",
-		rollup:   "window=6h",
-		from:     "2026-01-01T00:00:00Z",
-		to:       "2026-01-01T12:00:00Z",
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		Rollup:   "window=6h",
+		From:     "2026-01-01T00:00:00Z",
+		To:       "2026-01-01T12:00:00Z",
 	}))
 	if err != nil {
 		t.Fatalf("ingest window=6h steps Rollups: %v", err)
 	}
-	if result.endpointFamily != "rollUp" {
-		t.Errorf("endpoint family = %q, want rollUp", result.endpointFamily)
+	if result.EndpointFamily != "rollUp" {
+		t.Errorf("endpoint family = %q, want rollUp", result.EndpointFamily)
 	}
-	if archive.rollups[0].rollupKind != "window=6h" {
-		t.Errorf("rollupKind = %q, want window=6h", archive.rollups[0].rollupKind)
+	if archive.rollups[0].RollupKind != "window=6h" {
+		t.Errorf("rollupKind = %q, want window=6h", archive.rollups[0].RollupKind)
 	}
 }
 
@@ -145,11 +145,11 @@ func TestGoogleHealthIngestionWindowCustomRollup(t *testing.T) {
 func TestGoogleHealthIngestionRollupRejectsUnsupportedDataType(t *testing.T) {
 	t.Parallel()
 	ingestion := fakeGoogleHealthIngestion(newFakeGoogleHealthIngestionProvider(t, "access-secret", nil))
-	_, err := ingestion.Plan(googleHealthIngestionRequest{
-		dataType: "sleep",
-		rollup:   "hourly",
-		from:     "2026-01-01T00:00:00Z",
-		to:       "2026-01-02T00:00:00Z",
+	_, err := ingestion.Plan(IngestionRequest{
+		DataType: "sleep",
+		Rollup:   "hourly",
+		From:     "2026-01-01T00:00:00Z",
+		To:       "2026-01-02T00:00:00Z",
 	})
 	if err == nil {
 		t.Fatal("Plan sleep+hourly: want error, got nil")
@@ -172,9 +172,9 @@ func TestGoogleHealthIngestionRollupRejectsUnsupportedDataType(t *testing.T) {
 // proves the equivalence.
 func TestGoogleHealthIngestionHourlyAcceptsCivilDatesViaGate(t *testing.T) {
 	t.Parallel()
-	spec, err := parseSyncRollupSpec("hourly")
+	spec, err := ParseRollupSpec("hourly")
 	if err != nil {
-		t.Fatalf("parseSyncRollupSpec hourly: %v", err)
+		t.Fatalf("ParseRollupSpec hourly: %v", err)
 	}
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 
@@ -203,8 +203,8 @@ func TestGoogleHealthIngestionHourlyAcceptsCivilDatesViaGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildGoogleHealthRollupRawRequest rfc-normalized: %v", err)
 	}
-	if string(civilReq.body) != string(rfcReq.body) {
-		t.Errorf("civil-input body != RFC-input body\ncivil: %s\nrfc:   %s", string(civilReq.body), string(rfcReq.body))
+	if string(civilReq.Body) != string(rfcReq.Body) {
+		t.Errorf("civil-input body != RFC-input body\ncivil: %s\nrfc:   %s", string(civilReq.Body), string(rfcReq.Body))
 	}
 }
 
@@ -217,10 +217,10 @@ func TestGoogleHealthRollupRequestBodyCarriesWindowSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildGoogleHealthRollupRawRequest: %v", err)
 	}
-	if request.endpointName != "dataTypes.heart-rate.rollUp" {
-		t.Errorf("endpointName = %q, want dataTypes.heart-rate.rollUp", request.endpointName)
+	if request.EndpointName != "dataTypes.heart-rate.rollUp" {
+		t.Errorf("endpointName = %q, want dataTypes.heart-rate.rollUp", request.EndpointName)
 	}
-	parsed, err := url.Parse(request.url)
+	parsed, err := url.Parse(request.URL)
 	if err != nil {
 		t.Fatalf("parse URL: %v", err)
 	}
@@ -235,8 +235,8 @@ func TestGoogleHealthRollupRequestBodyCarriesWindowSize(t *testing.T) {
 		} `json:"range"`
 		WindowSize string `json:"windowSize"`
 	}
-	if err := json.Unmarshal(request.body, &body); err != nil {
-		t.Fatalf("body unmarshal: %v\nbody: %s", err, string(request.body))
+	if err := json.Unmarshal(request.Body, &body); err != nil {
+		t.Fatalf("body unmarshal: %v\nbody: %s", err, string(request.Body))
 	}
 	if body.WindowSize != "3600s" {
 		t.Errorf("windowSize = %q, want 3600s", body.WindowSize)

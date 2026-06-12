@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"strings"
 	"testing"
 	"time"
@@ -30,7 +31,7 @@ func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
 	// PRD #142 slice 2 / #176: pairedDevices now requires
 	// settings.readonly, so simulate the user having run
 	// `connect --add-scopes settings`.
-	addStoredConnectionScope(t, archivePath, googleHealthSettingsReadonlyScope)
+	addStoredConnectionScope(t, archivePath, googlehealth.ScopeSettingsReadonly)
 
 	testRuntime.fetchPairedDevices = func(string) (googlePairedDevices, error) {
 		return googlePairedDevices{
@@ -225,7 +226,7 @@ func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
 	// PRD #142 slice 2 / #176: pairedDevices now requires
 	// settings.readonly, so simulate the user having run
 	// `connect --add-scopes settings`.
-	addStoredConnectionScope(t, archivePath, googleHealthSettingsReadonlyScope)
+	addStoredConnectionScope(t, archivePath, googlehealth.ScopeSettingsReadonly)
 
 	testRuntime.fetchPairedDevices = func(string) (googlePairedDevices, error) {
 		return googlePairedDevices{
@@ -249,7 +250,7 @@ func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read current Connection: %v", err)
 	}
-	latest, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "paired-devices")
+	latest, found := latestIdentitySnapshotRow(t, archive.db, connection.ID, "paired-devices")
 	if !found {
 		t.Fatal("latest paired-devices snapshot: not found")
 	}
@@ -267,9 +268,9 @@ func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
 // the command exits non-zero, sets result.Status to
 // "devices_scope_missing", names the recovery `gohealthcli connect`
 // command in result.Message, and crucially does NOT issue any HTTP
-// request to googleHealthPairedDevicesURL — proving the scope
+// request to googlehealth.PairedDevicesURL — proving the scope
 // pre-check happens before the upstream call. The test reads the
-// required scope from the same googleHealthIdentityEndpointScopes
+// required scope from the same googlehealth.IdentityEndpointScopes
 // catalog the production code uses so a future slice-2 revision of
 // the catalog automatically updates what gets stripped from the
 // stored Connection, keeping the test honest without manual edits.
@@ -287,7 +288,7 @@ func TestDevicesCommandFailsFastWhenScopeMissing(t *testing.T) {
 	// the same catalog key the production code reads means this test
 	// keeps pinning the right behaviour after slice 2 rewrites the
 	// catalog entry.
-	required := googleHealthIdentityEndpointScopes["pairedDevices"]
+	required := googlehealth.IdentityEndpointScopes("pairedDevices")
 	requiredSet := make(map[string]struct{}, len(required))
 	for _, scope := range required {
 		requiredSet[scope] = struct{}{}
@@ -364,7 +365,7 @@ func TestDevicesCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// PRD #142 slice 2 / #176: pairedDevices now requires
 	// settings.readonly, so simulate the user having run
 	// `connect --add-scopes settings`.
-	addStoredConnectionScope(t, archivePath, googleHealthSettingsReadonlyScope)
+	addStoredConnectionScope(t, archivePath, googlehealth.ScopeSettingsReadonly)
 	// Force the stored access-token expires_at into the past so
 	// AccessToken must take the auto-refresh path.
 	setConnectionTokenExpiry(t, archivePath, "2026-01-01T00:00:00Z")

@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"io"
 )
-
-const googleHealthIdentityURL = "https://health.googleapis.com/v4/users/me/identity"
 
 type identityResult struct {
 	Status             string `json:"status"`
@@ -42,12 +42,12 @@ var identityCommand = identitySnapshotCommandSpec[identityResult, googleIdentity
 	statusUnavailable:  "identity_unavailable",
 	statusScopeMissing: "identity_scope_missing",
 	scopeEndpointKey:   "getIdentity",
-	seedResult: func(connection archivedConnection) identityResult {
+	seedResult: func(connection archived.Connection) identityResult {
 		return identityResult{
-			ConnectionID:       connection.id,
-			ProviderName:       connection.providerName,
-			GoogleHealthUserID: connection.googleHealthUserID,
-			LegacyFitbitUserID: connection.legacyFitbitUserID,
+			ConnectionID:       connection.ID,
+			ProviderName:       connection.ProviderName,
+			GoogleHealthUserID: connection.GoogleHealthUserID,
+			LegacyFitbitUserID: connection.LegacyFitbitUserID,
 		}
 	},
 	status:      func(result *identityResult) string { return result.Status },
@@ -59,7 +59,7 @@ var identityCommand = identitySnapshotCommandSpec[identityResult, googleIdentity
 		if err != nil {
 			if isCurrentConnectionIdentityMismatch(err) {
 				result.Status = "identity_mismatch"
-			} else if isProviderUnreachableError(err) {
+			} else if googlehealth.IsUnreachableError(err) {
 				// Provider outage (non-auth HTTP failure or network error)
 				// gets its own documented JSON failure status so automation
 				// can tell it apart from local misconfiguration (issue #272).
@@ -81,13 +81,13 @@ var identityCommand = identitySnapshotCommandSpec[identityResult, googleIdentity
 }
 
 // fetchGoogleIdentity is a thin call site over the shared Provider GET
-// module (provider_get.go, issue #280), which owns the transport
+// module (internal/googlehealth, issue #280), which owns the transport
 // behavior: bearer auth, size limit, timeout, typed labeled status
 // errors, JSON validity, and retry/Retry-After. The module value
 // carries the HTTP doer (#281). Identity-shape validation stays in
 // parseGoogleIdentity.
-func fetchGoogleIdentity(get providerGET, accessToken string) (googleIdentity, error) {
-	body, err := fetchProviderJSON(context.Background(), get, googleHealthIdentityURL, "identity", accessToken)
+func fetchGoogleIdentity(get googlehealth.GET, accessToken string) (googleIdentity, error) {
+	body, err := get.FetchJSON(context.Background(), googlehealth.IdentityURL, "identity", accessToken)
 	if err != nil {
 		return googleIdentity{}, err
 	}

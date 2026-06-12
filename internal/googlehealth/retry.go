@@ -1,4 +1,4 @@
-package main
+package googlehealth
 
 import (
 	"context"
@@ -25,7 +25,7 @@ const (
 // middleware can sit in front of it without a new interface. ctx scopes
 // the underlying HTTP request, so a SIGINT-canceled context aborts the
 // in-flight call instead of waiting for it to return (#284).
-type googleHealthRetryFetcher func(ctx context.Context, request rawProviderRequest, accessToken string) ([]byte, error)
+type googleHealthRetryFetcher func(ctx context.Context, request RawRequest, accessToken string) ([]byte, error)
 
 // googleHealthRetrySleeper is the time-source seam tests inject. It
 // receives the run's context so the production implementation can
@@ -35,14 +35,14 @@ type googleHealthRetrySleeper func(ctx context.Context, d time.Duration) (cancel
 
 // fetchWithRetry retries 429 and 5xx responses with bounded exponential
 // backoff plus jitter. Non-transient failures (401, 403, 404, network
-// errors that are not a googleHealthHTTPError) surface immediately so
+// errors that are not a HTTPError) surface immediately so
 // callers see real errors without a multi-second delay. The Retry-After
 // header on 429 is honored as the minimum next-attempt delay. A
 // canceled ctx aborts the in-flight HTTP request and short-circuits an
-// in-flight backoff sleep, surfacing errSyncCanceled either way, so
+// in-flight backoff sleep, surfacing ErrSyncCanceled either way, so
 // SIGINT during a stalled fetch or a 30s backoff does not leave the
 // user waiting (#284).
-func fetchWithRetry(ctx context.Context, fetcher googleHealthRetryFetcher, sleeper googleHealthRetrySleeper, jitter func(time.Duration) time.Duration, request rawProviderRequest, accessToken string) ([]byte, error) {
+func fetchWithRetry(ctx context.Context, fetcher googleHealthRetryFetcher, sleeper googleHealthRetrySleeper, jitter func(time.Duration) time.Duration, request RawRequest, accessToken string) ([]byte, error) {
 	if sleeper == nil {
 		sleeper = sleepWithCancel
 	}
@@ -65,7 +65,7 @@ func fetchWithRetry(ctx context.Context, fetcher googleHealthRetryFetcher, sleep
 			// sync_canceled, not sync_failed. (A client-side timeout uses
 			// the doer's own deadline, leaves ctx.Err() nil, and still
 			// takes the failure path below.)
-			return nil, errSyncCanceled
+			return nil, ErrSyncCanceled
 		}
 		lastErr = err
 		if !isRetryableHTTPError(err) {
@@ -76,7 +76,7 @@ func fetchWithRetry(ctx context.Context, fetcher googleHealthRetryFetcher, sleep
 		}
 		delay := backoffDelay(attempt, retryAfterFromError(err))
 		if canceled := sleeper(ctx, jitter(delay)); canceled {
-			return nil, errSyncCanceled
+			return nil, ErrSyncCanceled
 		}
 	}
 	return nil, fmt.Errorf("Google Health request failed after %d attempts: %w", attempts, lastErr)
@@ -101,11 +101,11 @@ func sleepWithCancel(ctx context.Context, d time.Duration) bool {
 }
 
 // isRetryableHTTPError returns true for 429 and any 5xx response. Other
-// failure modes (network errors that are not a googleHealthHTTPError,
+// failure modes (network errors that are not a HTTPError,
 // 4xx other than 429) are treated as terminal — the right action is to
 // surface them, not loop.
 func isRetryableHTTPError(err error) bool {
-	var httpErr *googleHealthHTTPError
+	var httpErr *HTTPError
 	if !errors.As(err, &httpErr) {
 		return false
 	}
@@ -121,7 +121,7 @@ func isRetryableHTTPError(err error) bool {
 // retryAfterFromError extracts a Retry-After hint from an HTTP error.
 // Returns 0 when the error is not an HTTP error or the header is absent.
 func retryAfterFromError(err error) time.Duration {
-	var httpErr *googleHealthHTTPError
+	var httpErr *HTTPError
 	if !errors.As(err, &httpErr) {
 		return 0
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ func TestHealthArchiveConnectionAPIManagesConnectionIdentityMetadataAndProfileSn
 	now := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
 	token := oauthTokenResponse{
 		tokenType: "Bearer",
-		scopes:    []string{googleHealthActivityReadonlyScope, googleHealthProfileReadonlyScope},
+		scopes:    []string{googlehealth.ScopeActivityReadonly, googlehealth.ScopeProfileReadonly},
 		expiresAt: now.Add(time.Hour),
 		rawTokenMaterialObject: map[string]any{
 			"access_token":  "access-secret",
@@ -49,11 +50,11 @@ func TestHealthArchiveConnectionAPIManagesConnectionIdentityMetadataAndProfileSn
 	if err != nil {
 		t.Fatalf("current connection: %v", err)
 	}
-	if connection.id != connectionID || connection.googleHealthUserID != identity.healthUserID || connection.legacyFitbitUserID != "A1B2C3" {
+	if connection.ID != connectionID || connection.GoogleHealthUserID != identity.healthUserID || connection.LegacyFitbitUserID != "A1B2C3" {
 		t.Fatalf("connection = %+v, want archived identity", connection)
 	}
-	if strings.Contains(connection.tokenMetadataJSON, "access-secret") || strings.Contains(connection.tokenMetadataJSON, "refresh-secret") {
-		t.Fatalf("token metadata leaked token material: %s", connection.tokenMetadataJSON)
+	if strings.Contains(connection.TokenMetadataJSON, "access-secret") || strings.Contains(connection.TokenMetadataJSON, "refresh-secret") {
+		t.Fatalf("token metadata leaked token material: %s", connection.TokenMetadataJSON)
 	}
 
 	count, tokenStatus, err := archive.InspectConnectionTokenMetadata()
@@ -76,8 +77,8 @@ func TestHealthArchiveConnectionAPIManagesConnectionIdentityMetadataAndProfileSn
 	if err != nil {
 		t.Fatalf("current connection after refresh: %v", err)
 	}
-	if connection.legacyFitbitUserID != "Z9Y8X7" {
-		t.Fatalf("legacyFitbitUserID = %q, want refreshed", connection.legacyFitbitUserID)
+	if connection.LegacyFitbitUserID != "Z9Y8X7" {
+		t.Fatalf("legacyFitbitUserID = %q, want refreshed", connection.LegacyFitbitUserID)
 	}
 	// Profile-snapshot insertion has moved to identitySnapshotArchive in
 	// slice B of #97; coverage lives in identity_snapshot_archive_test.go.

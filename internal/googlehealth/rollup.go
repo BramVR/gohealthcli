@@ -1,9 +1,10 @@
-package main
+package googlehealth
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
 	"sort"
 	"strings"
 )
@@ -25,28 +26,28 @@ import (
 //
 // Errors include the Data Type's actual SupportedEndpoints when the
 // rollup kind is unsupported — the #106 AC requires this quote.
-func parseGoogleHealthRollup(connection archivedConnection, dataType, rollupKind string, rawRollup json.RawMessage) (archivedRollup, error) {
+func parseGoogleHealthRollup(connection archived.Connection, dataType, rollupKind string, rawRollup json.RawMessage) (archived.Rollup, error) {
 	entry, ok := googleHealthDataTypes.Lookup(dataType)
 	if !ok {
-		return archivedRollup{}, fmt.Errorf("Google Health %s Rollup: Data Type not in catalog", dataType)
+		return archived.Rollup{}, fmt.Errorf("Google Health %s Rollup: Data Type not in catalog", dataType)
 	}
 	valueType, family, err := rollupValueTypeForKind(entry, rollupKind)
 	if err != nil {
-		return archivedRollup{}, err
+		return archived.Rollup{}, err
 	}
 	canonicalRaw, err := compactJSONString(rawRollup)
 	if err != nil {
-		return archivedRollup{}, fmt.Errorf("Google Health %s %s Rollup is not valid JSON", dataType, rollupKind)
+		return archived.Rollup{}, fmt.Errorf("Google Health %s %s Rollup is not valid JSON", dataType, rollupKind)
 	}
-	rollup := archivedRollup{
-		providerName: connection.providerName,
-		connectionID: connection.id,
-		dataType:     dataType,
-		rollupKind:   rollupKind,
-		rawJSON:      canonicalRaw,
+	rollup := archived.Rollup{
+		ProviderName: connection.ProviderName,
+		ConnectionID: connection.ID,
+		DataType:     dataType,
+		RollupKind:   rollupKind,
+		RawJSON:      canonicalRaw,
 	}
 	if err := rollupValueTypeDispatch(valueType, family, rawRollup, &rollup); err != nil {
-		return archivedRollup{}, err
+		return archived.Rollup{}, err
 	}
 	return rollup, nil
 }
@@ -88,7 +89,7 @@ func formatSupportedEndpoints(endpoints map[endpointFamily]endpointSupport) stri
 // "*Count" / *Sum / Daily…) populates civilDate + timezone metadata;
 // the RFC3339 shape (rollUp hourly/weekly/window) populates
 // windowStartUTC / windowEndUTC.
-func rollupValueTypeDispatch(valueType string, family endpointFamily, rawRollup json.RawMessage, rollup *archivedRollup) error {
+func rollupValueTypeDispatch(valueType string, family endpointFamily, rawRollup json.RawMessage, rollup *archived.Rollup) error {
 	if family == endpointFamilyDailyRollUp {
 		return parseGoogleHealthDailyRollupCivilShape(valueType, rawRollup, rollup)
 	}
@@ -99,7 +100,7 @@ func rollupValueTypeDispatch(valueType string, family endpointFamily, rawRollup 
 // civilEndTime shape used by dailyRollUp responses. Today's catalog
 // names the value-type by the JSON field it carries ("stepsCount" →
 // "steps", "floorsCount" → "floors") so the dispatch is mechanical.
-func parseGoogleHealthDailyRollupCivilShape(valueType string, rawRollup json.RawMessage, rollup *archivedRollup) error {
+func parseGoogleHealthDailyRollupCivilShape(valueType string, rawRollup json.RawMessage, rollup *archived.Rollup) error {
 	jsonField, err := rollupJSONFieldForValueType(valueType)
 	if err != nil {
 		return err
@@ -109,33 +110,33 @@ func parseGoogleHealthDailyRollupCivilShape(valueType string, rawRollup json.Raw
 		CivilEndTime   json.RawMessage `json:"civilEndTime"`
 	}
 	if err := json.Unmarshal(rawRollup, &raw); err != nil {
-		return fmt.Errorf("Google Health %s daily Rollup is not valid JSON", rollup.dataType)
+		return fmt.Errorf("Google Health %s daily Rollup is not valid JSON", rollup.DataType)
 	}
 	value, err := rollupFieldRawValue(rawRollup, jsonField)
 	if err != nil {
 		return err
 	}
 	if value == nil {
-		return fmt.Errorf("Google Health %s daily Rollup missing %s value", rollup.dataType, jsonField)
+		return fmt.Errorf("Google Health %s daily Rollup missing %s value", rollup.DataType, jsonField)
 	}
 	_, civilDate, err := googleCivilDateTimeText(raw.CivilStartTime)
 	if err != nil {
-		return fmt.Errorf("Google Health %s daily Rollup civilStartTime: %w", rollup.dataType, err)
+		return fmt.Errorf("Google Health %s daily Rollup civilStartTime: %w", rollup.DataType, err)
 	}
 	if civilDate == "" {
-		return fmt.Errorf("Google Health %s daily Rollup missing civilStartTime", rollup.dataType)
+		return fmt.Errorf("Google Health %s daily Rollup missing civilStartTime", rollup.DataType)
 	}
 	if _, endCivilDate, err := googleCivilDateTimeText(raw.CivilEndTime); err != nil {
-		return fmt.Errorf("Google Health %s daily Rollup civilEndTime: %w", rollup.dataType, err)
+		return fmt.Errorf("Google Health %s daily Rollup civilEndTime: %w", rollup.DataType, err)
 	} else if endCivilDate == "" {
-		return fmt.Errorf("Google Health %s daily Rollup missing civilEndTime", rollup.dataType)
+		return fmt.Errorf("Google Health %s daily Rollup missing civilEndTime", rollup.DataType)
 	}
 	timezoneMetadata, err := googleDailyRollupTimeMetadataJSON(raw.CivilStartTime, raw.CivilEndTime)
 	if err != nil {
-		return fmt.Errorf("Google Health %s %w", rollup.dataType, err)
+		return fmt.Errorf("Google Health %s %w", rollup.DataType, err)
 	}
-	rollup.civilDate = civilDate
-	rollup.timezoneMetadataJSON = timezoneMetadata
+	rollup.CivilDate = civilDate
+	rollup.TimezoneMetadataJSON = timezoneMetadata
 	return nil
 }
 
@@ -143,7 +144,7 @@ func parseGoogleHealthDailyRollupCivilShape(valueType string, rawRollup json.Raw
 // shape used by rollUp responses (hourly, weekly, custom-window).
 // Times arrive as RFC3339 strings rather than the
 // civilStartTime/civilEndTime objects dailyRollUp returns.
-func parseGoogleHealthWindowRollupShape(valueType string, rawRollup json.RawMessage, rollup *archivedRollup) error {
+func parseGoogleHealthWindowRollupShape(valueType string, rawRollup json.RawMessage, rollup *archived.Rollup) error {
 	jsonField, err := rollupJSONFieldForValueType(valueType)
 	if err != nil {
 		return err
@@ -153,31 +154,31 @@ func parseGoogleHealthWindowRollupShape(valueType string, rawRollup json.RawMess
 		EndTime   string `json:"endTime"`
 	}
 	if err := json.Unmarshal(rawRollup, &raw); err != nil {
-		return fmt.Errorf("Google Health %s %s Rollup is not valid JSON", rollup.dataType, rollup.rollupKind)
+		return fmt.Errorf("Google Health %s %s Rollup is not valid JSON", rollup.DataType, rollup.RollupKind)
 	}
 	value, err := rollupFieldRawValue(rawRollup, jsonField)
 	if err != nil {
 		return err
 	}
 	if value == nil {
-		return fmt.Errorf("Google Health %s %s Rollup missing %s value", rollup.dataType, rollup.rollupKind, jsonField)
+		return fmt.Errorf("Google Health %s %s Rollup missing %s value", rollup.DataType, rollup.RollupKind, jsonField)
 	}
 	if raw.StartTime == "" {
-		return fmt.Errorf("Google Health %s %s Rollup missing startTime", rollup.dataType, rollup.rollupKind)
+		return fmt.Errorf("Google Health %s %s Rollup missing startTime", rollup.DataType, rollup.RollupKind)
 	}
 	if raw.EndTime == "" {
-		return fmt.Errorf("Google Health %s %s Rollup missing endTime", rollup.dataType, rollup.rollupKind)
+		return fmt.Errorf("Google Health %s %s Rollup missing endTime", rollup.DataType, rollup.RollupKind)
 	}
 	startUTC, err := normalizeGoogleTimestamp(raw.StartTime)
 	if err != nil {
-		return fmt.Errorf("Google Health %s %s Rollup startTime: %w", rollup.dataType, rollup.rollupKind, err)
+		return fmt.Errorf("Google Health %s %s Rollup startTime: %w", rollup.DataType, rollup.RollupKind, err)
 	}
 	endUTC, err := normalizeGoogleTimestamp(raw.EndTime)
 	if err != nil {
-		return fmt.Errorf("Google Health %s %s Rollup endTime: %w", rollup.dataType, rollup.rollupKind, err)
+		return fmt.Errorf("Google Health %s %s Rollup endTime: %w", rollup.DataType, rollup.RollupKind, err)
 	}
-	rollup.windowStartUTC = startUTC
-	rollup.windowEndUTC = endUTC
+	rollup.WindowStartUTC = startUTC
+	rollup.WindowEndUTC = endUTC
 	return nil
 }
 

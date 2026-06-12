@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -140,7 +141,7 @@ func configContent(configPath, archivePath string, source oauthClientSource) str
 	builder.WriteString(strconv.Quote(archivePath))
 	builder.WriteString("\n")
 	builder.WriteString("default_data_types = [\n")
-	for _, dataType := range defaultDataTypes {
+	for _, dataType := range googlehealth.DefaultDataTypes() {
 		builder.WriteString("  ")
 		builder.WriteString(strconv.Quote(dataType))
 		builder.WriteString(",\n")
@@ -506,8 +507,7 @@ func validateDefaultDataTypes(dataTypes []string) error {
 	}
 	seen := make(map[string]struct{}, len(dataTypes))
 	for _, dataType := range dataTypes {
-		entry, ok := googleHealthDataTypes.Lookup(dataType)
-		if !ok || !entry.DefaultConfigType {
+		if !googlehealth.IsDefaultConfigDataType(dataType) {
 			return fmt.Errorf("unsupported default Data Type %s", dataType)
 		}
 		if _, ok := seen[dataType]; ok {

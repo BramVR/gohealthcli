@@ -1,4 +1,4 @@
-package main
+package googlehealth
 
 import (
 	"context"
@@ -49,11 +49,11 @@ func TestGoogleHealthIngestionStoresTcxAttachmentForExercise(t *testing.T) {
 	provider.pages["users/me/dataTypes/exercise/dataPoints/run-1:exportExerciseTcx"] = string(envelope)
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	_, err = ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType:      "exercise",
-		from:          "2026-01-01",
-		to:            "2026-01-02",
-		grantedScopes: []string{googleHealthActivityReadonlyScope, googleHealthLocationReadonlyScope},
+	_, err = ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType:      "exercise",
+		From:          "2026-01-01",
+		To:            "2026-01-02",
+		GrantedScopes: []string{ScopeActivityReadonly, ScopeLocationReadonly},
 	}))
 	if err != nil {
 		t.Fatalf("ingest exercise: %v", err)
@@ -66,8 +66,8 @@ func TestGoogleHealthIngestionStoresTcxAttachmentForExercise(t *testing.T) {
 	if got.kind != "tcx" {
 		t.Fatalf("attachment kind = %q, want tcx", got.kind)
 	}
-	if got.point.upstreamResourceName != "users/me/dataTypes/exercise/dataPoints/run-1" {
-		t.Fatalf("attachment linked to %q, want run-1", got.point.upstreamResourceName)
+	if got.point.UpstreamResourceName != "users/me/dataTypes/exercise/dataPoints/run-1" {
+		t.Fatalf("attachment linked to %q, want run-1", got.point.UpstreamResourceName)
 	}
 	if string(got.payload) != tcxXML {
 		t.Fatalf("attachment payload = %q, want unwrapped TCX XML %q", string(got.payload), tcxXML)
@@ -78,7 +78,7 @@ func TestGoogleHealthIngestionStoresTcxAttachmentForExercise(t *testing.T) {
 	// The TCX export endpoint must be hit exactly once (one exercise DP).
 	tcxRequests := 0
 	for _, r := range provider.requests {
-		if r.endpointName == "dataTypes.exercise.exportExerciseTcx" {
+		if r.EndpointName == "dataTypes.exercise.exportExerciseTcx" {
 			tcxRequests++
 		}
 	}
@@ -115,11 +115,11 @@ func TestGoogleHealthIngestionStoresRawTcxWhenResponseIsNotJsonEnvelope(t *testi
 	provider.pages["users/me/dataTypes/exercise/dataPoints/raw-xml:exportExerciseTcx"] = rawXML
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType:      "exercise",
-		from:          "2026-01-01",
-		to:            "2026-01-02",
-		grantedScopes: []string{googleHealthActivityReadonlyScope, googleHealthLocationReadonlyScope},
+	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType:      "exercise",
+		From:          "2026-01-01",
+		To:            "2026-01-02",
+		GrantedScopes: []string{ScopeActivityReadonly, ScopeLocationReadonly},
 	}))
 	if err != nil {
 		t.Fatalf("ingest must succeed when response is not a JSON envelope, got %v", err)
@@ -161,11 +161,11 @@ func TestGoogleHealthIngestionStoresVerbatimWhenJsonShapeUnexpected(t *testing.T
 	provider.pages["users/me/dataTypes/exercise/dataPoints/unexpected:exportExerciseTcx"] = unexpectedJSON
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType:      "exercise",
-		from:          "2026-01-01",
-		to:            "2026-01-02",
-		grantedScopes: []string{googleHealthActivityReadonlyScope, googleHealthLocationReadonlyScope},
+	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType:      "exercise",
+		From:          "2026-01-01",
+		To:            "2026-01-02",
+		GrantedScopes: []string{ScopeActivityReadonly, ScopeLocationReadonly},
 	}))
 	if err != nil {
 		t.Fatalf("ingest must succeed on unexpected JSON shape, got %v", err)
@@ -205,11 +205,11 @@ func TestGoogleHealthIngestionSkipsTcxWhenEnvelopeTcxDataEmpty(t *testing.T) {
 	})
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType:      "exercise",
-		from:          "2026-01-01",
-		to:            "2026-01-02",
-		grantedScopes: []string{googleHealthActivityReadonlyScope, googleHealthLocationReadonlyScope},
+	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType:      "exercise",
+		From:          "2026-01-01",
+		To:            "2026-01-02",
+		GrantedScopes: []string{ScopeActivityReadonly, ScopeLocationReadonly},
 	}))
 	if err != nil {
 		t.Fatalf("ingest must remain green on empty tcxData, got %v", err)
@@ -242,21 +242,21 @@ func TestGoogleHealthIngestionSkipsTcxWhenUpstream404(t *testing.T) {
 		}`,
 	})
 	provider.errorByPageKey = map[string]error{
-		"users/me/dataTypes/exercise/dataPoints/no-gps:exportExerciseTcx": &googleHealthHTTPError{StatusCode: 404},
+		"users/me/dataTypes/exercise/dataPoints/no-gps:exportExerciseTcx": &HTTPError{StatusCode: 404},
 	}
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType:      "exercise",
-		from:          "2026-01-01",
-		to:            "2026-01-02",
-		grantedScopes: []string{googleHealthActivityReadonlyScope, googleHealthLocationReadonlyScope},
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType:      "exercise",
+		From:          "2026-01-01",
+		To:            "2026-01-02",
+		GrantedScopes: []string{ScopeActivityReadonly, ScopeLocationReadonly},
 	}))
 	if err != nil {
 		t.Fatalf("ingest must remain green on 404 TCX export, got %v", err)
 	}
-	if result.dataPointsSeen != 1 || result.dataPointsNew != 1 {
-		t.Fatalf("data point counts = (seen=%d, new=%d), want (1, 1)", result.dataPointsSeen, result.dataPointsNew)
+	if result.DataPointsSeen != 1 || result.DataPointsNew != 1 {
+		t.Fatalf("data point counts = (seen=%d, new=%d), want (1, 1)", result.DataPointsSeen, result.DataPointsNew)
 	}
 	if len(archive.attachments) != 0 {
 		t.Fatalf("attachment count = %d, want 0 on 404; archive = %#v", len(archive.attachments), archive.attachments)
@@ -288,21 +288,21 @@ func TestGoogleHealthIngestionSkipsTcxWhenUpstream403(t *testing.T) {
 		}`,
 	})
 	provider.errorByPageKey = map[string]error{
-		"users/me/dataTypes/exercise/dataPoints/forbidden:exportExerciseTcx": &googleHealthHTTPError{StatusCode: 403},
+		"users/me/dataTypes/exercise/dataPoints/forbidden:exportExerciseTcx": &HTTPError{StatusCode: 403},
 	}
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType:      "exercise",
-		from:          "2026-01-01",
-		to:            "2026-01-02",
-		grantedScopes: []string{googleHealthActivityReadonlyScope, googleHealthLocationReadonlyScope},
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType:      "exercise",
+		From:          "2026-01-01",
+		To:            "2026-01-02",
+		GrantedScopes: []string{ScopeActivityReadonly, ScopeLocationReadonly},
 	}))
 	if err != nil {
 		t.Fatalf("ingest must remain green on 403 TCX export, got %v", err)
 	}
-	if result.dataPointsSeen != 1 || result.dataPointsNew != 1 {
-		t.Fatalf("data point counts = (seen=%d, new=%d), want (1, 1)", result.dataPointsSeen, result.dataPointsNew)
+	if result.DataPointsSeen != 1 || result.DataPointsNew != 1 {
+		t.Fatalf("data point counts = (seen=%d, new=%d), want (1, 1)", result.DataPointsSeen, result.DataPointsNew)
 	}
 	if len(archive.attachments) != 0 {
 		t.Fatalf("attachment count = %d, want 0 on 403; archive = %#v", len(archive.attachments), archive.attachments)
@@ -312,7 +312,7 @@ func TestGoogleHealthIngestionSkipsTcxWhenUpstream403(t *testing.T) {
 	// that silently skipped the hook would still pass.
 	tcxRequested := false
 	for _, req := range provider.requests {
-		if strings.Contains(req.url, ":exportExerciseTcx") {
+		if strings.Contains(req.URL, ":exportExerciseTcx") {
 			tcxRequested = true
 			break
 		}
@@ -346,11 +346,11 @@ func TestGoogleHealthIngestionSkipsTcxWhenUpstreamEmpty(t *testing.T) {
 	})
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType:      "exercise",
-		from:          "2026-01-01",
-		to:            "2026-01-02",
-		grantedScopes: []string{googleHealthActivityReadonlyScope, googleHealthLocationReadonlyScope},
+	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType:      "exercise",
+		From:          "2026-01-01",
+		To:            "2026-01-02",
+		GrantedScopes: []string{ScopeActivityReadonly, ScopeLocationReadonly},
 	}))
 	if err != nil {
 		t.Fatalf("ingest must remain green on empty TCX body, got %v", err)
@@ -387,11 +387,11 @@ func TestGoogleHealthIngestionSurfacesTcxNon404Errors(t *testing.T) {
 	}
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType:      "exercise",
-		from:          "2026-01-01",
-		to:            "2026-01-02",
-		grantedScopes: []string{googleHealthActivityReadonlyScope, googleHealthLocationReadonlyScope},
+	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType:      "exercise",
+		From:          "2026-01-01",
+		To:            "2026-01-02",
+		GrantedScopes: []string{ScopeActivityReadonly, ScopeLocationReadonly},
 	}))
 	if err == nil {
 		t.Fatalf("ingest must surface non-404 TCX errors")
@@ -432,25 +432,25 @@ func TestGoogleHealthIngestionSkipsTcxWhenLocationScopeNotGranted(t *testing.T) 
 	provider.pages["users/me/dataTypes/exercise/dataPoints/run-1:exportExerciseTcx"] = `<?xml version="1.0"?>`
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "exercise",
-		from:     "2026-01-01",
-		to:       "2026-01-02",
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "exercise",
+		From:     "2026-01-01",
+		To:       "2026-01-02",
 		// Only the base activity scope — the location scope that
 		// authorises exportExerciseTcx is NOT granted.
-		grantedScopes: []string{googleHealthActivityReadonlyScope},
+		GrantedScopes: []string{ScopeActivityReadonly},
 	}))
 	if err != nil {
 		t.Fatalf("ingest must remain green without location scope, got %v", err)
 	}
-	if result.dataPointsSeen != 1 || result.dataPointsNew != 1 {
-		t.Fatalf("data point counts = (seen=%d, new=%d), want (1, 1)", result.dataPointsSeen, result.dataPointsNew)
+	if result.DataPointsSeen != 1 || result.DataPointsNew != 1 {
+		t.Fatalf("data point counts = (seen=%d, new=%d), want (1, 1)", result.DataPointsSeen, result.DataPointsNew)
 	}
 	if len(archive.attachments) != 0 {
 		t.Fatalf("attachment count = %d, want 0 when location.readonly not granted", len(archive.attachments))
 	}
 	for _, req := range provider.requests {
-		if strings.Contains(req.url, ":exportExerciseTcx") {
+		if strings.Contains(req.URL, ":exportExerciseTcx") {
 			t.Fatalf("exportExerciseTcx must not be called when location.readonly is not granted; got request %+v", req)
 		}
 	}
@@ -478,16 +478,16 @@ func TestGoogleHealthIngestionDoesNotCallTcxForNonExerciseDataTypes(t *testing.T
 	})
 	ingestion := fakeGoogleHealthIngestion(provider)
 
-	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(googleHealthIngestionRequest{
-		dataType: "steps",
-		from:     "2026-01-01",
-		to:       "2026-01-02T00:00:00Z",
+	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		From:     "2026-01-01",
+		To:       "2026-01-02T00:00:00Z",
 	}))
 	if err != nil {
 		t.Fatalf("ingest steps: %v", err)
 	}
 	for _, r := range provider.requests {
-		if r.endpointName == "dataTypes.exercise.exportExerciseTcx" {
+		if r.EndpointName == "dataTypes.exercise.exportExerciseTcx" {
 			t.Fatalf("exportExerciseTcx called for non-exercise sync: %#v", r)
 		}
 	}

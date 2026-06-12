@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"github.com/BramVR/gohealthcli/internal/archived"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +14,7 @@ import (
 // source-family rule, a fixed clock, and a stub current-connection
 // lookup. Re-uses the production rules via thin closures so the gate's
 // behaviour stays in lockstep with the catalog as it grows.
-func fakeSyncPreflightContext(now time.Time, connection archivedConnection) syncPreflightContext {
+func fakeSyncPreflightContext(now time.Time, connection archived.Connection) syncPreflightContext {
 	return syncPreflightContext{
 		now: func() time.Time { return now },
 		dataTypeSupported: func(dataType string) bool {
@@ -37,13 +39,19 @@ func fakeSyncPreflightContext(now time.Time, connection archivedConnection) sync
 		defaultAllDataTypes: func() []string {
 			return []string{"steps", "heart-rate", "sleep"}
 		},
-		currentConnection: func() (archivedConnection, error) {
+		currentConnection: func() (archived.Connection, error) {
 			return connection, nil
 		},
-		rollupCatalogValidator: func(spec syncRollupSpec, dataType string) error {
+		rollupCatalogValidator: func(spec googlehealth.RollupSpec, dataType string) error {
 			// Only `steps` carries `daily` in the fake catalog; everything
 			// else returns the same shape the production validator emits.
-			if spec.cursorKind == "daily" && dataType != "steps" {
+			// RollupSpec is comparable, so the daily kind is recognised by
+			// equality with a freshly parsed daily spec.
+			daily, err := googlehealth.ParseRollupSpec("daily")
+			if err != nil {
+				return err
+			}
+			if spec == daily && dataType != "steps" {
 				return errors.New("sync --rollup daily: Data Type " + dataType + " does not support daily Rollups")
 			}
 			return nil
@@ -54,7 +62,7 @@ func fakeSyncPreflightContext(now time.Time, connection archivedConnection) sync
 func TestSyncPreflightGateRulesTable(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
-	conn := archivedConnection{id: "googlehealth:111", providerName: "Google Health"}
+	conn := archived.Connection{ID: "googlehealth:111", ProviderName: "Google Health"}
 	ctx := fakeSyncPreflightContext(now, conn)
 	gate := syncPreflightGate{ctx: ctx}
 
@@ -195,7 +203,7 @@ func TestSyncPreflightGateRulesTable(t *testing.T) {
 func TestSyncPreflightGateAllExpandsToCatalogList(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
-	conn := archivedConnection{id: "googlehealth:111", providerName: "Google Health"}
+	conn := archived.Connection{ID: "googlehealth:111", ProviderName: "Google Health"}
 	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
 
 	plan, err := gate.Validate(syncCommandOptions{allTypes: true, from: "2026-01-01", to: "2026-01-02T00:00:00Z"})
@@ -211,15 +219,15 @@ func TestSyncPreflightGateAllExpandsToCatalogList(t *testing.T) {
 			t.Errorf("plan.dataTypes[%d] = %q, want %q", i, plan.dataTypes[i], dt)
 		}
 	}
-	if plan.connection.id != conn.id {
-		t.Errorf("plan.connection.id = %q, want %q", plan.connection.id, conn.id)
+	if plan.connection.ID != conn.ID {
+		t.Errorf("plan.connection.id = %q, want %q", plan.connection.ID, conn.ID)
 	}
 }
 
 func TestSyncPreflightGateDefaultsToWhenEmpty(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
-	conn := archivedConnection{id: "googlehealth:111"}
+	conn := archived.Connection{ID: "googlehealth:111"}
 	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
 
 	plan, err := gate.Validate(syncCommandOptions{dataTypes: []string{"steps"}, from: "2026-01-01"})
@@ -236,7 +244,7 @@ func TestSyncPreflightGateDefaultsToWhenEmpty(t *testing.T) {
 func TestSyncPreflightGateDefaultsToWhenDailyRollup(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
-	conn := archivedConnection{id: "googlehealth:111"}
+	conn := archived.Connection{ID: "googlehealth:111"}
 	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
 
 	plan, err := gate.Validate(syncCommandOptions{dataTypes: []string{"steps"}, rollup: "daily", from: "2026-01-01"})
@@ -250,12 +258,12 @@ func TestSyncPreflightGateDefaultsToWhenDailyRollup(t *testing.T) {
 
 // TestSyncPreflightGateNormalizesRangePerRollupKind pins PRD #141 slice 3:
 // the gate owns the civil-vs-RFC3339 contract by routing both --from and
-// --to through syncRollupSpec.NormalizeRange. The planner downstream
+// --to through googlehealth.RollupSpec.NormalizeRange. The planner downstream
 // consumes the normalized plan.from / plan.to without re-parsing.
 func TestSyncPreflightGateNormalizesRangePerRollupKind(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
-	conn := archivedConnection{id: "googlehealth:111"}
+	conn := archived.Connection{ID: "googlehealth:111"}
 	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
 
 	cases := []struct {
@@ -342,7 +350,7 @@ func TestSyncPreflightGateNormalizesRangePerRollupKind(t *testing.T) {
 func TestSyncPreflightGateRangeParseDistinctFromRollupParse(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
-	conn := archivedConnection{id: "googlehealth:111"}
+	conn := archived.Connection{ID: "googlehealth:111"}
 	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
 
 	_, err := gate.Validate(syncCommandOptions{
@@ -374,7 +382,7 @@ func TestSyncPreflightGateRangeParseDistinctFromRollupParse(t *testing.T) {
 func TestSyncPreflightGateRejectsBadShapeWithLocalMessage(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
-	conn := archivedConnection{id: "googlehealth:111"}
+	conn := archived.Connection{ID: "googlehealth:111"}
 	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
 
 	cases := []struct {
@@ -411,7 +419,7 @@ func TestSyncPreflightGateRejectsBadShapeWithLocalMessage(t *testing.T) {
 func TestSyncPreflightGateSkipsRangeOrderCheckOnCursorResume(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
-	conn := archivedConnection{id: "googlehealth:111"}
+	conn := archived.Connection{ID: "googlehealth:111"}
 	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
 
 	// --from empty means "resume from Sync Cursor"; the lifecycle resolves
@@ -428,7 +436,7 @@ func TestSyncPreflightGateSkipsRangeOrderCheckOnCursorResume(t *testing.T) {
 func TestSyncPreflightGateProducesCursorKeyPerDataType(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
-	conn := archivedConnection{id: "googlehealth:abc"}
+	conn := archived.Connection{ID: "googlehealth:abc"}
 	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, conn)}
 
 	plan, err := gate.Validate(syncCommandOptions{
@@ -446,8 +454,8 @@ func TestSyncPreflightGateProducesCursorKeyPerDataType(t *testing.T) {
 		t.Errorf("cursor keys = %+v, want one per Data Type", plan.cursorKeys)
 	}
 	for i, key := range plan.cursorKeys {
-		if key.connectionID != conn.id {
-			t.Errorf("cursorKeys[%d].connectionID = %q, want %q", i, key.connectionID, conn.id)
+		if key.connectionID != conn.ID {
+			t.Errorf("cursorKeys[%d].connectionID = %q, want %q", i, key.connectionID, conn.ID)
 		}
 		if key.rollupKind != syncCursorRollupKindNone {
 			t.Errorf("cursorKeys[%d].rollupKind = %q, want none", i, key.rollupKind)

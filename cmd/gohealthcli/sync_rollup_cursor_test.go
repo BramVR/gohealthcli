@@ -39,13 +39,13 @@ func TestSyncCursorRollupKindIndependence(t *testing.T) {
 		"window=6h": "2026-05-01T00:00:00Z",
 	}
 	for _, kind := range kinds {
-		key := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: kind}
+		key := syncCursorKey{connectionID: connection.ID, dataType: "steps", rollupKind: kind}
 		if err := archive.CommitSyncCursor(context.Background(), key, syncRunOutcomeCompleted, wantTo[kind], "2026-06-01T00:00:00Z"); err != nil {
 			t.Fatalf("CommitSyncCursor %s: %v", kind, err)
 		}
 	}
 	for _, kind := range kinds {
-		key := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: kind}
+		key := syncCursorKey{connectionID: connection.ID, dataType: "steps", rollupKind: kind}
 		got, found, err := archive.ResolveSyncCursor(context.Background(), key)
 		if err != nil {
 			t.Fatalf("ResolveSyncCursor %s: %v", kind, err)
@@ -60,12 +60,12 @@ func TestSyncCursorRollupKindIndependence(t *testing.T) {
 	}
 
 	// Advancing one cursor must not affect the others.
-	advanced := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: "hourly"}
+	advanced := syncCursorKey{connectionID: connection.ID, dataType: "steps", rollupKind: "hourly"}
 	if err := archive.CommitSyncCursor(context.Background(), advanced, syncRunOutcomeCompleted, "2026-07-01T00:00:00Z", "2026-07-02T00:00:00Z"); err != nil {
 		t.Fatalf("re-advance hourly: %v", err)
 	}
 	for _, kind := range kinds {
-		key := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: kind}
+		key := syncCursorKey{connectionID: connection.ID, dataType: "steps", rollupKind: kind}
 		got, _, err := archive.ResolveSyncCursor(context.Background(), key)
 		if err != nil {
 			t.Fatalf("post-advance ResolveSyncCursor %s: %v", kind, err)
