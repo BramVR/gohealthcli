@@ -13,8 +13,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -207,14 +205,6 @@ type statusSyncRun struct {
 	ErrorSummary       string   `json:"error_summary,omitempty"`
 }
 
-type archivedConnection struct {
-	id                 string
-	providerName       string
-	googleHealthUserID string
-	legacyFitbitUserID string
-	tokenMetadataJSON  string
-}
-
 type rawProviderRequest struct {
 	endpointName       string
 	dataType           string
@@ -244,12 +234,6 @@ type syncCommandOptions struct {
 	to           string
 	rollup       string
 	sourceFamily string
-}
-
-type archiveCheck struct {
-	schemaVersion   int
-	connectionCount int
-	tokenStatus     string
 }
 
 type googleIdentity struct {
@@ -2246,13 +2230,6 @@ func googleDailyRollupTimeMetadataJSON(civilStartTime, civilEndTime json.RawMess
 	return string(content), nil
 }
 
-func nullString(value string) any {
-	if value == "" {
-		return nil
-	}
-	return value
-}
-
 func parseCommaList(value string) []string {
 	var out []string
 	for _, part := range strings.Split(value, ",") {
@@ -2262,58 +2239,6 @@ func parseCommaList(value string) []string {
 		}
 	}
 	return out
-}
-
-func openArchive(archivePath string) (*sql.DB, error) {
-	dsn, err := archiveDSN(archivePath, false)
-	if err != nil {
-		return nil, err
-	}
-	return openArchiveDSN(dsn)
-}
-
-func openArchiveReadOnly(archivePath string) (*sql.DB, error) {
-	dsn, err := archiveDSN(archivePath, true)
-	if err != nil {
-		return nil, err
-	}
-	return openArchiveDSN(dsn)
-}
-
-func openArchiveDSN(dsn string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	return db, nil
-}
-
-func archiveDSN(archivePath string, readOnly bool) (string, error) {
-	absPath, err := filepath.Abs(archivePath)
-	if err != nil {
-		return "", err
-	}
-	uriPath := filepath.ToSlash(absPath)
-	if runtime.GOOS == "windows" && !strings.HasPrefix(uriPath, "/") {
-		uriPath = "/" + uriPath
-	}
-	query := url.Values{}
-	query.Add("_pragma", "foreign_keys=on")
-	// busy_timeout makes SQLite block internally for up to 5 seconds
-	// when it encounters a lock contention (SQLITE_BUSY) instead of
-	// immediately surfacing the error. This is what lets two concurrent
-	// sync invocations against the same Health Archive coexist without
-	// the second one failing at StartSyncRun — modernc's driver does
-	// not implement an automatic global busy_timeout the way mattn's
-	// does, so the DSN must opt in explicitly. The finalize-time retry
-	// (retryFinalizeSyncRunOnBusy) still guards the terminal-write
-	// path for the rare case where the wait elapses.
-	query.Add("_pragma", "busy_timeout=5000")
-	if readOnly {
-		query.Add("mode", "ro")
-	}
-	return (&url.URL{Scheme: "file", Path: uriPath, RawQuery: query.Encode()}).String(), nil
 }
 
 func writeStatusResult(result statusResult, mode outputMode, stdout io.Writer) error {
