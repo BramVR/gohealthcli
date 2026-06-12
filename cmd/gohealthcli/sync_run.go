@@ -1,7 +1,10 @@
 package main
 
-import "context"
-import "github.com/BramVR/gohealthcli/internal/googlehealth"
+import (
+	"context"
+
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
+)
 
 type syncRunExecutor struct {
 	runtime runtimeAdapters

@@ -66,7 +66,7 @@ type IngestionRequest struct {
 	// want to exercise the hook must inject the granting scope
 	// explicitly.
 	GrantedScopes []string
-	// refreshAccessToken, when set, lets a Sync Run survive access-token
+	// RefreshAccessToken, when set, lets a Sync Run survive access-token
 	// expiry mid-run. Google access tokens live about an hour; a long
 	// backfill's pagination can outlive one. When an upstream call
 	// returns HTTP 401, ingestion calls this hook — sync wires it to the
@@ -75,7 +75,7 @@ type IngestionRequest struct {
 	// requests in the same run keep using the refreshed token. nil
 	// preserves the historical behavior: the first 401 fails the run.
 	RefreshAccessToken func() (string, error)
-	// progress, when non-nil, is invoked at the TOP of every page
+	// Progress, when non-nil, is invoked at the TOP of every page
 	// iteration — before the fetch — with the counts archived so far,
 	// so the caller can persist a heartbeat on the sync_runs row
 	// (#236). Heartbeating before the fetch (rather than after the
