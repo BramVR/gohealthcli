@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
 	"io"
 	"net/http"
 	"net/url"
@@ -5025,9 +5026,9 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 
 func TestParseStepsDailyRollupRequiresCivilEndTime(t *testing.T) {
 	t.Parallel()
-	_, err := parseGoogleHealthRollup(archivedConnection{
-		providerName: "googlehealth",
-		id:           "googlehealth:111111256096816351",
+	_, err := parseGoogleHealthRollup(archived.Connection{
+		ProviderName: "googlehealth",
+		ID:           "googlehealth:111111256096816351",
 	}, "steps", "dailyRollUp", json.RawMessage(`{
 		"steps": {"countSum": "1234"},
 		"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}}

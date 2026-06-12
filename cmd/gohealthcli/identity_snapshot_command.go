@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
 	"io"
 	"time"
 )
@@ -73,7 +74,7 @@ type identitySnapshotCommandSpec[R, P any] struct {
 
 	// seedResult builds the result struct from the archived
 	// Connection once it is known (after the unavailable check).
-	seedResult func(connection archivedConnection) R
+	seedResult func(connection archived.Connection) R
 
 	// status / setStatus / setMessage are the engine's window into
 	// the per-command result struct, keeping R free of interface
@@ -130,7 +131,7 @@ type identitySnapshotCommandContext struct {
 	archivePath      string
 	runtime          runtimeAdapters
 	archive          healthArchiveConnectionAPI
-	connection       archivedConnection
+	connection       archived.Connection
 	connectionAccess currentConnectionAccess
 	accessToken      string
 }

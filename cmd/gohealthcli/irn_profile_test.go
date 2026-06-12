@@ -85,7 +85,7 @@ func TestCurrentIRNProfileViewProjectsLatestSnapshot(t *testing.T) {
 	}
 	defer db.Close()
 	var onboarding, enrollment, lastUpdate string
-	err = db.QueryRowContext(context.Background(), `SELECT onboarding_state, enrollment_state, last_update_time FROM current_irn_profile WHERE connection_id = ?`, connection.id).Scan(&onboarding, &enrollment, &lastUpdate)
+	err = db.QueryRowContext(context.Background(), `SELECT onboarding_state, enrollment_state, last_update_time FROM current_irn_profile WHERE connection_id = ?`, connection.ID).Scan(&onboarding, &enrollment, &lastUpdate)
 	if err != nil {
 		t.Fatalf("query current_irn_profile: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestIRNProfileCommandArchivesSnapshotWhenScopeGranted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read current Connection: %v", err)
 	}
-	latest, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "irn-profile")
+	latest, found := latestIdentitySnapshotRow(t, archive.db, connection.ID, "irn-profile")
 	if !found {
 		t.Fatal("latest irn-profile snapshot: not found")
 	}

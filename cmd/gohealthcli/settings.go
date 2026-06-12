@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
 	"io"
 )
 
@@ -49,11 +50,11 @@ var settingsSnapshotCommand = identitySnapshotCommandSpec[settingsResult, google
 	statusUnavailable:  "settings_unavailable",
 	statusScopeMissing: "settings_scope_missing",
 	scopeEndpointKey:   "getSettings",
-	seedResult: func(connection archivedConnection) settingsResult {
+	seedResult: func(connection archived.Connection) settingsResult {
 		return settingsResult{
-			ConnectionID:       connection.id,
-			ProviderName:       connection.providerName,
-			GoogleHealthUserID: connection.googleHealthUserID,
+			ConnectionID:       connection.ID,
+			ProviderName:       connection.ProviderName,
+			GoogleHealthUserID: connection.GoogleHealthUserID,
 		}
 	},
 	status:       func(result *settingsResult) string { return result.Status },

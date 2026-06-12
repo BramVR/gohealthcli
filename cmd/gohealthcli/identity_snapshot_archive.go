@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
 )
 
 // identitySnapshotArchive is the dedicated read/write surface for
@@ -27,7 +28,7 @@ type identitySnapshotArchive struct {
 // the archive. Centralizing the close-then-open dance here keeps the
 // double-close cognitive load off the profile/settings/devices/irn
 // command paths.
-func writeIdentitySnapshotHandoff(ctx context.Context, connectionArchive healthArchiveConnectionAPI, archivePath string, connection archivedConnection, kind, rawJSON, fetchedAt string) (int64, error) {
+func writeIdentitySnapshotHandoff(ctx context.Context, connectionArchive healthArchiveConnectionAPI, archivePath string, connection archived.Connection, kind, rawJSON, fetchedAt string) (int64, error) {
 	if err := connectionArchive.Close(); err != nil {
 		return 0, fmt.Errorf("close Connection API before identity snapshot handoff: %w", err)
 	}
@@ -55,7 +56,7 @@ func (archive *identitySnapshotArchive) Close() error {
 // (CONTEXT.md term: profile | settings | paired-devices | irn-profile);
 // the archive only enforces non-empty so an invalid CLI surface can't
 // silently produce kind-empty rows.
-func (archive *identitySnapshotArchive) Insert(ctx context.Context, connection archivedConnection, kind, rawJSON, fetchedAt string) (int64, error) {
+func (archive *identitySnapshotArchive) Insert(ctx context.Context, connection archived.Connection, kind, rawJSON, fetchedAt string) (int64, error) {
 	if kind == "" {
 		return 0, errors.New("identity snapshot kind must not be empty")
 	}
@@ -65,7 +66,7 @@ func (archive *identitySnapshotArchive) Insert(ctx context.Context, connection a
 		snapshot_kind,
 		raw_json,
 		fetched_at
-	) VALUES (?, ?, ?, ?, ?)`, connection.providerName, connection.id, kind, rawJSON, fetchedAt)
+	) VALUES (?, ?, ?, ?, ?)`, connection.ProviderName, connection.ID, kind, rawJSON, fetchedAt)
 	if err != nil {
 		return 0, fmt.Errorf("insert Identity Snapshot: %w", err)
 	}

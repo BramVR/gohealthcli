@@ -5,13 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/BramVR/gohealthcli/internal/archived"
 	"reflect"
 	"time"
 )
 
 type healthArchiveWriter interface {
 	Close() error
-	CurrentConnection(ctx context.Context) (archivedConnection, error)
+	CurrentConnection(ctx context.Context) (archived.Connection, error)
 	StartSyncRun(ctx context.Context, start syncRunStart) (int64, error)
 	// HeartbeatSyncRun refreshes the running counts and the
 	// last_progress_at heartbeat on an in-flight sync_running row
@@ -26,13 +27,13 @@ type healthArchiveWriter interface {
 	FenceAbandonedSyncRuns(ctx context.Context, now time.Time) (int64, error)
 	FinishSyncRun(ctx context.Context, finish syncRunFinish) error
 	FinalizeSyncRun(ctx context.Context, finalize syncRunFinalize) error
-	UpsertDataPoint(ctx context.Context, point archivedDataPoint, now string) (string, error)
-	UpsertRollup(ctx context.Context, rollup archivedRollup, now string) (string, error)
+	UpsertDataPoint(ctx context.Context, point archived.DataPoint, now string) (string, error)
+	UpsertRollup(ctx context.Context, rollup archived.Rollup, now string) (string, error)
 	// StoreAttachment writes a content-addressed sidecar file via the
 	// Attachment Store (ADR-0009) and inserts a data_point_attachments
 	// row linked to the just-upserted Data Point identified by `point`'s
 	// identity columns. Used by exercise sync to archive TCX bytes.
-	StoreAttachment(ctx context.Context, point archivedDataPoint, kind string, payload []byte, fetchedAt string) error
+	StoreAttachment(ctx context.Context, point archived.DataPoint, kind string, payload []byte, fetchedAt string) error
 	ResolveSyncCursor(ctx context.Context, key syncCursorKey) (string, bool, error)
 	CommitSyncCursor(ctx context.Context, key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error
 	// UpdateConnectionTokenMetadata lets sync persist a refreshed access
@@ -50,7 +51,7 @@ type healthArchiveWriter interface {
 // pattern (#277) so the start/finish/finalize writer chain shares one
 // shape language and no call site lines up seven positional arguments.
 type syncRunStart struct {
-	Connection         archivedConnection
+	Connection         archived.Connection
 	DataTypes          []string
 	From               string
 	To                 string
@@ -145,10 +146,10 @@ func (archive *sqliteHealthArchiveWriter) Close() error {
 	return archive.db.Close()
 }
 
-func (archive *sqliteHealthArchiveWriter) CurrentConnection(ctx context.Context) (archivedConnection, error) {
+func (archive *sqliteHealthArchiveWriter) CurrentConnection(ctx context.Context) (archived.Connection, error) {
 	connection, err := readCurrentConnection(ctx, archive.db)
 	if errors.Is(err, sql.ErrNoRows) {
-		return archivedConnection{}, errors.New("no Connection found; run `gohealthcli connect` first")
+		return archived.Connection{}, errors.New("no Connection found; run `gohealthcli connect` first")
 	}
 	return connection, err
 }
@@ -188,11 +189,11 @@ func (archive *sqliteHealthArchiveWriter) FenceAbandonedSyncRuns(ctx context.Con
 	return fenceAbandonedSyncRuns(ctx, archive.db, now)
 }
 
-func (archive *sqliteHealthArchiveWriter) UpsertDataPoint(ctx context.Context, point archivedDataPoint, now string) (string, error) {
+func (archive *sqliteHealthArchiveWriter) UpsertDataPoint(ctx context.Context, point archived.DataPoint, now string) (string, error) {
 	return upsertDataPoint(ctx, archive.db, point, now)
 }
 
-func (archive *sqliteHealthArchiveWriter) UpsertRollup(ctx context.Context, rollup archivedRollup, now string) (string, error) {
+func (archive *sqliteHealthArchiveWriter) UpsertRollup(ctx context.Context, rollup archived.Rollup, now string) (string, error) {
 	return upsertRollup(ctx, archive.db, rollup, now)
 }
 
@@ -215,7 +216,7 @@ func (archive *sqliteHealthArchiveWriter) UpdateConnectionTokenMetadata(connecti
 // the Attachment Store (ADR-0009). The write reuses the same SQLite
 // handle the rest of sync holds so there's only one BEGIN IMMEDIATE
 // holder per Sync Run.
-func (archive *sqliteHealthArchiveWriter) StoreAttachment(ctx context.Context, point archivedDataPoint, kind string, payload []byte, fetchedAt string) error {
+func (archive *sqliteHealthArchiveWriter) StoreAttachment(ctx context.Context, point archived.DataPoint, kind string, payload []byte, fetchedAt string) error {
 	dataPointID, _, found, err := findExistingDataPoint(ctx, archive.db, point)
 	if err != nil {
 		return err
@@ -296,8 +297,8 @@ func insertSyncRun(ctx context.Context, db *sql.DB, start syncRunStart) (int64, 
 		status,
 		started_at
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		start.Connection.providerName,
-		start.Connection.id,
+		start.Connection.ProviderName,
+		start.Connection.ID,
 		string(dataTypesJSON),
 		string(rangeJSON),
 		start.EndpointFamily,
@@ -339,7 +340,7 @@ func finishSyncRun(ctx context.Context, executor sqlExecutor, finish syncRunFini
 	return err
 }
 
-func upsertDataPoint(ctx context.Context, db *sql.DB, point archivedDataPoint, now string) (string, error) {
+func upsertDataPoint(ctx context.Context, db *sql.DB, point archived.DataPoint, now string) (string, error) {
 	existingID, existingRawJSON, found, err := findExistingDataPoint(ctx, db, point)
 	if err != nil {
 		return "", err
@@ -363,20 +364,20 @@ func upsertDataPoint(ctx context.Context, db *sql.DB, point archivedDataPoint, n
 			inserted_at,
 			updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			point.providerName,
-			point.connectionID,
-			point.dataType,
-			nullString(point.upstreamResourceName),
-			point.recordKind,
-			nullString(point.startTimeUTC),
-			nullString(point.endTimeUTC),
-			nullString(point.startCivilTime),
-			nullString(point.endCivilTime),
-			nullString(point.providerCivilDate),
-			nullString(point.timezoneMetadataJSON),
-			point.dataSourceJSON,
-			nullString(point.sourceFamilyFilter),
-			point.rawJSON,
+			point.ProviderName,
+			point.ConnectionID,
+			point.DataType,
+			nullString(point.UpstreamResourceName),
+			point.RecordKind,
+			nullString(point.StartTimeUTC),
+			nullString(point.EndTimeUTC),
+			nullString(point.StartCivilTime),
+			nullString(point.EndCivilTime),
+			nullString(point.ProviderCivilDate),
+			nullString(point.TimezoneMetadataJSON),
+			point.DataSourceJSON,
+			nullString(point.SourceFamilyFilter),
+			point.RawJSON,
 			now,
 			now,
 		)
@@ -385,7 +386,7 @@ func upsertDataPoint(ctx context.Context, db *sql.DB, point archivedDataPoint, n
 		}
 		return "new", nil
 	}
-	if sameJSONValue(existingRawJSON, point.rawJSON) {
+	if sameJSONValue(existingRawJSON, point.RawJSON) {
 		return "unchanged", nil
 	}
 	tx, err := db.BeginTx(ctx, nil)
@@ -416,16 +417,16 @@ func upsertDataPoint(ctx context.Context, db *sql.DB, point archivedDataPoint, n
 		raw_json = ?,
 		updated_at = ?
 	WHERE id = ?`,
-		point.recordKind,
-		nullString(point.startTimeUTC),
-		nullString(point.endTimeUTC),
-		nullString(point.startCivilTime),
-		nullString(point.endCivilTime),
-		nullString(point.providerCivilDate),
-		nullString(point.timezoneMetadataJSON),
-		point.dataSourceJSON,
-		nullString(point.sourceFamilyFilter),
-		point.rawJSON,
+		point.RecordKind,
+		nullString(point.StartTimeUTC),
+		nullString(point.EndTimeUTC),
+		nullString(point.StartCivilTime),
+		nullString(point.EndCivilTime),
+		nullString(point.ProviderCivilDate),
+		nullString(point.TimezoneMetadataJSON),
+		point.DataSourceJSON,
+		nullString(point.SourceFamilyFilter),
+		point.RawJSON,
 		now,
 		existingID,
 	); err != nil {
@@ -437,7 +438,7 @@ func upsertDataPoint(ctx context.Context, db *sql.DB, point archivedDataPoint, n
 	return "updated", nil
 }
 
-func upsertRollup(ctx context.Context, db *sql.DB, rollup archivedRollup, now string) (string, error) {
+func upsertRollup(ctx context.Context, db *sql.DB, rollup archived.Rollup, now string) (string, error) {
 	existingID, existingRawJSON, found, err := findExistingRollup(ctx, db, rollup)
 	if err != nil {
 		return "", err
@@ -456,15 +457,15 @@ func upsertRollup(ctx context.Context, db *sql.DB, rollup archivedRollup, now st
 			inserted_at,
 			updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			rollup.providerName,
-			rollup.connectionID,
-			rollup.dataType,
-			rollup.rollupKind,
-			nullString(rollup.windowStartUTC),
-			nullString(rollup.windowEndUTC),
-			nullString(rollup.civilDate),
-			nullString(rollup.timezoneMetadataJSON),
-			rollup.rawJSON,
+			rollup.ProviderName,
+			rollup.ConnectionID,
+			rollup.DataType,
+			rollup.RollupKind,
+			nullString(rollup.WindowStartUTC),
+			nullString(rollup.WindowEndUTC),
+			nullString(rollup.CivilDate),
+			nullString(rollup.TimezoneMetadataJSON),
+			rollup.RawJSON,
 			now,
 			now,
 		)
@@ -473,7 +474,7 @@ func upsertRollup(ctx context.Context, db *sql.DB, rollup archivedRollup, now st
 		}
 		return "new", nil
 	}
-	if sameJSONValue(existingRawJSON, rollup.rawJSON) {
+	if sameJSONValue(existingRawJSON, rollup.RawJSON) {
 		return "unchanged", nil
 	}
 	_, err = db.ExecContext(ctx, `UPDATE rollups SET
@@ -481,8 +482,8 @@ func upsertRollup(ctx context.Context, db *sql.DB, rollup archivedRollup, now st
 		raw_json = ?,
 		updated_at = ?
 	WHERE id = ?`,
-		nullString(rollup.timezoneMetadataJSON),
-		rollup.rawJSON,
+		nullString(rollup.TimezoneMetadataJSON),
+		rollup.RawJSON,
 		now,
 		existingID,
 	)
@@ -492,7 +493,7 @@ func upsertRollup(ctx context.Context, db *sql.DB, rollup archivedRollup, now st
 	return "updated", nil
 }
 
-func findExistingRollup(ctx context.Context, db *sql.DB, rollup archivedRollup) (int64, string, bool, error) {
+func findExistingRollup(ctx context.Context, db *sql.DB, rollup archived.Rollup) (int64, string, bool, error) {
 	rows, err := db.QueryContext(ctx, `SELECT id, raw_json FROM rollups
 	WHERE provider_name = ?
 		AND connection_id = ?
@@ -502,13 +503,13 @@ func findExistingRollup(ctx context.Context, db *sql.DB, rollup archivedRollup) 
 		AND IFNULL(window_end_utc, '') = ?
 		AND IFNULL(civil_date, '') = ?
 	ORDER BY id LIMIT 2`,
-		rollup.providerName,
-		rollup.connectionID,
-		rollup.dataType,
-		rollup.rollupKind,
-		rollup.windowStartUTC,
-		rollup.windowEndUTC,
-		rollup.civilDate,
+		rollup.ProviderName,
+		rollup.ConnectionID,
+		rollup.DataType,
+		rollup.RollupKind,
+		rollup.WindowStartUTC,
+		rollup.WindowEndUTC,
+		rollup.CivilDate,
 	)
 	if err != nil {
 		return 0, "", false, err
@@ -538,8 +539,8 @@ func findExistingRollup(ctx context.Context, db *sql.DB, rollup archivedRollup) 
 	return matches[0].id, matches[0].rawJSON, true, nil
 }
 
-func findExistingDataPoint(ctx context.Context, db *sql.DB, point archivedDataPoint) (int64, string, bool, error) {
-	if point.upstreamResourceName != "" {
+func findExistingDataPoint(ctx context.Context, db *sql.DB, point archived.DataPoint) (int64, string, bool, error) {
+	if point.UpstreamResourceName != "" {
 		return findExistingDataPointByQuery(ctx, db, `SELECT id, raw_json FROM data_points
 		WHERE provider_name = ?
 			AND connection_id = ?
@@ -547,11 +548,11 @@ func findExistingDataPoint(ctx context.Context, db *sql.DB, point archivedDataPo
 			AND upstream_resource_name = ?
 			AND IFNULL(source_family_filter, '') = ?
 		ORDER BY id LIMIT 2`,
-			point.providerName,
-			point.connectionID,
-			point.dataType,
-			point.upstreamResourceName,
-			point.sourceFamilyFilter,
+			point.ProviderName,
+			point.ConnectionID,
+			point.DataType,
+			point.UpstreamResourceName,
+			point.SourceFamilyFilter,
 		)
 	}
 	return findExistingDataPointByQuery(ctx, db, `SELECT id, raw_json FROM data_points
@@ -569,19 +570,19 @@ func findExistingDataPoint(ctx context.Context, db *sql.DB, point archivedDataPo
 		AND data_source_json = ?
 		AND IFNULL(source_family_filter, '') = ?
 	ORDER BY id LIMIT 2`,
-		point.providerName,
-		point.connectionID,
-		point.dataType,
-		point.upstreamResourceName,
-		point.recordKind,
-		point.startTimeUTC,
-		point.endTimeUTC,
-		point.startCivilTime,
-		point.endCivilTime,
-		point.providerCivilDate,
-		point.timezoneMetadataJSON,
-		point.dataSourceJSON,
-		point.sourceFamilyFilter,
+		point.ProviderName,
+		point.ConnectionID,
+		point.DataType,
+		point.UpstreamResourceName,
+		point.RecordKind,
+		point.StartTimeUTC,
+		point.EndTimeUTC,
+		point.StartCivilTime,
+		point.EndCivilTime,
+		point.ProviderCivilDate,
+		point.TimezoneMetadataJSON,
+		point.DataSourceJSON,
+		point.SourceFamilyFilter,
 	)
 }
 

@@ -442,7 +442,7 @@ func TestSyncRunLifecycleConvertsBusyExhaustedToFailedWithRecoveryRow(t *testing
 		t.Fatalf("CurrentConnection: %v", err)
 	}
 	if _, found, err := archive.ResolveSyncCursor(context.Background(), syncCursorKey{
-		connectionID: connection.id,
+		connectionID: connection.ID,
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,
 	}); err != nil || found {

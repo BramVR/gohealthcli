@@ -277,7 +277,7 @@ func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read current Connection: %v", err)
 	}
-	latest, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "paired-devices")
+	latest, found := latestIdentitySnapshotRow(t, archive.db, connection.ID, "paired-devices")
 	if !found {
 		t.Fatal("latest paired-devices snapshot: not found")
 	}

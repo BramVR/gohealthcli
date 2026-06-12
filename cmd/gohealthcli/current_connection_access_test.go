@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"github.com/BramVR/gohealthcli/internal/archived"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,9 +15,9 @@ func TestCurrentConnectionAccessTokenValidatesMetadataBeforeCredentialStore(t *t
 	t.Parallel()
 	access := newCurrentConnectionAccessWithRuntime(
 		credentialStoreConfig{kind: "bogus"},
-		archivedConnection{
-			id:                "googlehealth:111",
-			tokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope}),
+		archived.Connection{
+			ID:                "googlehealth:111",
+			TokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope}),
 		},
 		nil,
 		productionRuntimeAdapters(),
@@ -33,9 +34,9 @@ func TestCurrentConnectionAccessTokenRequiresScopesBeforeCredentialStore(t *test
 	t.Parallel()
 	access := newCurrentConnectionAccessWithRuntime(
 		credentialStoreConfig{kind: "bogus"},
-		archivedConnection{
-			id:                "googlehealth:111",
-			tokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC), []string{googleHealthActivityReadonlyScope}),
+		archived.Connection{
+			ID:                "googlehealth:111",
+			TokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC), []string{googleHealthActivityReadonlyScope}),
 		},
 		nil,
 		productionRuntimeAdapters(),
@@ -122,9 +123,9 @@ func TestCurrentConnectionAccessTokenScopeMissingSentinel(t *testing.T) {
 			setup: func(t *testing.T) currentConnectionAccess {
 				access := newCurrentConnectionAccessWithRuntime(
 					credentialStoreConfig{kind: "bogus"},
-					archivedConnection{
-						id:                "googlehealth:111",
-						tokenMetadataJSON: tokenMetadataJSON(t, expiresFuture, []string{googleHealthActivityReadonlyScope}),
+					archived.Connection{
+						ID:                "googlehealth:111",
+						TokenMetadataJSON: tokenMetadataJSON(t, expiresFuture, []string{googleHealthActivityReadonlyScope}),
 					},
 					nil,
 					productionRuntimeAdapters(),
@@ -140,9 +141,9 @@ func TestCurrentConnectionAccessTokenScopeMissingSentinel(t *testing.T) {
 			setup: func(t *testing.T) currentConnectionAccess {
 				access := newCurrentConnectionAccessWithRuntime(
 					credentialStoreConfig{kind: "bogus"},
-					archivedConnection{
-						id:                "googlehealth:111",
-						tokenMetadataJSON: tokenMetadataJSON(t, expiresPast, []string{googleHealthIrnReadonlyScope}),
+					archived.Connection{
+						ID:                "googlehealth:111",
+						TokenMetadataJSON: tokenMetadataJSON(t, expiresPast, []string{googleHealthIrnReadonlyScope}),
 					},
 					nil,
 					productionRuntimeAdapters(),
@@ -162,9 +163,9 @@ func TestCurrentConnectionAccessTokenScopeMissingSentinel(t *testing.T) {
 				})
 				access := newCurrentConnectionAccessWithRuntime(
 					fixture.credentialStore,
-					archivedConnection{
-						id:                "googlehealth:111",
-						tokenMetadataJSON: tokenMetadataJSON(t, expiresFuture, []string{googleHealthIrnReadonlyScope}),
+					archived.Connection{
+						ID:                "googlehealth:111",
+						TokenMetadataJSON: tokenMetadataJSON(t, expiresFuture, []string{googleHealthIrnReadonlyScope}),
 					},
 					nil,
 					productionRuntimeAdapters(),
@@ -197,9 +198,9 @@ func TestCurrentConnectionAccessTokenScopeMissingSentinel(t *testing.T) {
 				}
 				access := newCurrentConnectionAccessWithRuntime(
 					fixture.credentialStore,
-					archivedConnection{
-						id:                "googlehealth:111",
-						tokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthIrnReadonlyScope}),
+					archived.Connection{
+						ID:                "googlehealth:111",
+						TokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthIrnReadonlyScope}),
 					},
 					nil,
 					runtime,
@@ -254,9 +255,9 @@ func TestCurrentConnectionAccessTokenScopeMissingNamesAddScopesRecovery(t *testi
 		t.Run(tt.name, func(t *testing.T) {
 			access := newCurrentConnectionAccessWithRuntime(
 				credentialStoreConfig{kind: "bogus"},
-				archivedConnection{
-					id:                "googlehealth:111",
-					tokenMetadataJSON: tokenMetadataJSON(t, expiresFuture, []string{googleHealthActivityReadonlyScope}),
+				archived.Connection{
+					ID:                "googlehealth:111",
+					TokenMetadataJSON: tokenMetadataJSON(t, expiresFuture, []string{googleHealthActivityReadonlyScope}),
 				},
 				nil,
 				productionRuntimeAdapters(),
@@ -287,7 +288,7 @@ func TestCurrentConnectionAccessFetchVerifiedIdentityNormalizesUnauthorized(t *t
 	}
 	access := newCurrentConnectionAccessWithRuntime(
 		credentialStoreConfig{},
-		archivedConnection{googleHealthUserID: "111111256096816351"},
+		archived.Connection{GoogleHealthUserID: "111111256096816351"},
 		nil,
 		runtime,
 	)
@@ -309,7 +310,7 @@ func TestCurrentConnectionAccessFetchVerifiedIdentityRejectsMismatch(t *testing.
 	}
 	access := newCurrentConnectionAccessWithRuntime(
 		credentialStoreConfig{},
-		archivedConnection{googleHealthUserID: "111111256096816351"},
+		archived.Connection{GoogleHealthUserID: "111111256096816351"},
 		nil,
 		runtime,
 	)
@@ -371,7 +372,7 @@ func TestFileCredentialStoreLoadReturnsTypedNotFoundSentinel(t *testing.T) {
 
 func TestMidRunTokenRefresherNilWithoutAutoRefresh(t *testing.T) {
 	t.Parallel()
-	access := newCurrentConnectionAccessWithRuntime(credentialStoreConfig{}, archivedConnection{}, nil, runtimeAdapters{})
+	access := newCurrentConnectionAccessWithRuntime(credentialStoreConfig{}, archived.Connection{}, nil, runtimeAdapters{})
 	if access.MidRunTokenRefresher() != nil {
 		t.Fatal("MidRunTokenRefresher = non-nil, want nil without WithAutoRefresh")
 	}
@@ -411,9 +412,9 @@ func TestCurrentConnectionAccessTokenAutoRefreshesExpiredToken(t *testing.T) {
 	archive := &fakeHealthArchiveConnectionAPI{}
 	access := newCurrentConnectionAccessWithRuntime(
 		fixture.credentialStore,
-		archivedConnection{
-			id:                "googlehealth:111",
-			tokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope}),
+		archived.Connection{
+			ID:                "googlehealth:111",
+			TokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope}),
 		},
 		nil,
 		runtime,
@@ -436,7 +437,7 @@ type autoRefreshFixture struct {
 // setupAutoRefreshFixture writes a minimal OAuth client file and seeds a
 // file Credential Store with the supplied token material, returning the
 // paths and config needed to drive the auto-refresh path. The credential
-// store is keyed by "googlehealth:111" to match the archivedConnection
+// store is keyed by "googlehealth:111" to match the archived.Connection
 // fixtures the tests construct.
 func setupAutoRefreshFixture(t *testing.T, seedTokenMaterial map[string]any) autoRefreshFixture {
 	t.Helper()
@@ -483,9 +484,9 @@ func TestCurrentConnectionAccessTokenAutoRefreshRejectsGroupReadableOAuthClientF
 	archive := &fakeHealthArchiveConnectionAPI{}
 	access := newCurrentConnectionAccessWithRuntime(
 		fixture.credentialStore,
-		archivedConnection{
-			id:                "googlehealth:111",
-			tokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope}),
+		archived.Connection{
+			ID:                "googlehealth:111",
+			TokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope}),
 		},
 		nil,
 		runtime,
@@ -534,9 +535,9 @@ func TestCurrentConnectionAccessTokenAutoRefreshPersistsToCredentialStoreAndArch
 	archive := &fakeHealthArchiveConnectionAPI{}
 	access := newCurrentConnectionAccessWithRuntime(
 		fixture.credentialStore,
-		archivedConnection{
-			id:                "googlehealth:111",
-			tokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope}),
+		archived.Connection{
+			ID:                "googlehealth:111",
+			TokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope}),
 		},
 		nil,
 		runtime,
@@ -583,9 +584,9 @@ func TestCurrentConnectionAccessTokenAutoRefreshFailureNamesCauseAndPointsAtDoct
 	}
 	access := newCurrentConnectionAccessWithRuntime(
 		fixture.credentialStore,
-		archivedConnection{
-			id:                "googlehealth:111",
-			tokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope}),
+		archived.Connection{
+			ID:                "googlehealth:111",
+			TokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope}),
 		},
 		nil,
 		runtime,
@@ -616,8 +617,8 @@ func (archive *fakeHealthArchiveConnectionAPI) Close() error { return nil }
 func (archive *fakeHealthArchiveConnectionAPI) EnsureSameGoogleIdentity(string) error {
 	return nil
 }
-func (archive *fakeHealthArchiveConnectionAPI) CurrentConnection() (archivedConnection, error) {
-	return archivedConnection{}, nil
+func (archive *fakeHealthArchiveConnectionAPI) CurrentConnection() (archived.Connection, error) {
+	return archived.Connection{}, nil
 }
 func (archive *fakeHealthArchiveConnectionAPI) UpsertConnection(string, googleIdentity, oauthTokenResponse, time.Time) error {
 	return nil
@@ -629,7 +630,7 @@ func (archive *fakeHealthArchiveConnectionAPI) UpdateConnectionTokenMetadata(con
 	archive.updateNow = now
 	return archive.updateErr
 }
-func (archive *fakeHealthArchiveConnectionAPI) RefreshConnectionIdentity(archivedConnection, googleIdentity, time.Time) error {
+func (archive *fakeHealthArchiveConnectionAPI) RefreshConnectionIdentity(archived.Connection, googleIdentity, time.Time) error {
 	return nil
 }
 func (archive *fakeHealthArchiveConnectionAPI) InspectConnectionTokenMetadata() (int, string, error) {

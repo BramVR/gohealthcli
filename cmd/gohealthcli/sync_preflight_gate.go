@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
 	"time"
 )
 
@@ -33,7 +34,7 @@ type syncPreflightContext struct {
 	dataTypeUsesDateRange  func(dataType string) bool
 	sourceFamilyFilter     func(dataType, sourceFamily string) (string, error)
 	defaultAllDataTypes    func() []string
-	currentConnection      func() (archivedConnection, error)
+	currentConnection      func() (archived.Connection, error)
 	rollupCatalogValidator func(spec syncRollupSpec, dataType string) error
 }
 
@@ -48,7 +49,7 @@ type preflightPlan struct {
 	to         string
 	rollup     string
 	rollupSpec *syncRollupSpec
-	connection archivedConnection
+	connection archived.Connection
 	cursorKeys []syncCursorKey
 }
 
@@ -172,7 +173,7 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 	cursorKeys := make([]syncCursorKey, 0, len(dataTypes))
 	for _, dataType := range dataTypes {
 		cursorKeys = append(cursorKeys, syncCursorKey{
-			connectionID:       connection.id,
+			connectionID:       connection.ID,
 			dataType:           dataType,
 			sourceFamilyFilter: options.sourceFamily,
 			rollupKind:         rollupKindForSync(options.rollup),
@@ -316,13 +317,13 @@ func productionSyncPreflightContext(ctx context.Context, options syncCommandOpti
 		// over; other readers also treat it as read-only, so returning it
 		// directly avoids allocating a fresh copy on every Validate call.
 		defaultAllDataTypes: func() []string { return defaultDataTypes },
-		currentConnection: func() (archivedConnection, error) {
+		currentConnection: func() (archived.Connection, error) {
 			if _, err := inspectIdentityConfig(options.configPath, options.archivePath); err != nil {
-				return archivedConnection{}, fmt.Errorf("config check failed: %w", err)
+				return archived.Connection{}, fmt.Errorf("config check failed: %w", err)
 			}
 			archive, err := runtime.openHealthArchiveWriter(options.archivePath)
 			if err != nil {
-				return archivedConnection{}, err
+				return archived.Connection{}, err
 			}
 			defer archive.Close()
 			// WithoutCancel: the gate's connection lookup is a fast local

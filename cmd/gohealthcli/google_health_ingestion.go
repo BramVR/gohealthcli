@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -19,15 +20,15 @@ type googleHealthIngestionArchive interface {
 	// at the next loop boundary, so SIGINT never discards paid-for
 	// upstream data (TestSyncOrchestratorCancelsActiveDataTypeMidPagination
 	// pins this; upsert dedupe absorbs the overlap on resume).
-	UpsertDataPoint(ctx context.Context, point archivedDataPoint, now string) (string, error)
-	UpsertRollup(ctx context.Context, rollup archivedRollup, now string) (string, error)
+	UpsertDataPoint(ctx context.Context, point archived.DataPoint, now string) (string, error)
+	UpsertRollup(ctx context.Context, rollup archived.Rollup, now string) (string, error)
 	// StoreAttachment is invoked by the TCX-ingestion hook for #107
 	// slice D: after upserting an exercise Data Point, the ingestion
 	// calls this with the just-upserted point + the bytes returned by
 	// `users.dataTypes.dataPoints.exportExerciseTcx`. The archive impl
 	// resolves the data_point row id from the point's identity columns
 	// and writes the sidecar via the Attachment Store (ADR-0009).
-	StoreAttachment(ctx context.Context, point archivedDataPoint, kind string, payload []byte, fetchedAt string) error
+	StoreAttachment(ctx context.Context, point archived.DataPoint, kind string, payload []byte, fetchedAt string) error
 }
 
 type googleHealthIngestionProvider interface {
@@ -44,7 +45,7 @@ type googleHealthIngestion struct {
 }
 
 type googleHealthIngestionRequest struct {
-	connection   archivedConnection
+	connection   archived.Connection
 	dataType     string
 	from         string
 	to           string
@@ -466,17 +467,17 @@ func grantedScopesAuthoriseTcxExport(grantedScopes []string) bool {
 //
 // All other errors (5xx, transport failure, 401) are propagated so the
 // Sync Cursor stays put and the user can retry.
-func (ingestion googleHealthIngestion) attachExerciseTcxIfAvailable(ctx context.Context, archive googleHealthIngestionArchive, request googleHealthIngestionRequest, point archivedDataPoint, fetchedAt string) error {
+func (ingestion googleHealthIngestion) attachExerciseTcxIfAvailable(ctx context.Context, archive googleHealthIngestionArchive, request googleHealthIngestionRequest, point archived.DataPoint, fetchedAt string) error {
 	if request.dataType != "exercise" {
 		return nil
 	}
-	if point.upstreamResourceName == "" {
+	if point.UpstreamResourceName == "" {
 		return nil
 	}
 	if !grantedScopesAuthoriseTcxExport(request.grantedScopes) {
 		return nil
 	}
-	tcxRequest, err := buildGoogleHealthExportExerciseTcxRawRequest(point.upstreamResourceName)
+	tcxRequest, err := buildGoogleHealthExportExerciseTcxRawRequest(point.UpstreamResourceName)
 	if err != nil {
 		return err
 	}

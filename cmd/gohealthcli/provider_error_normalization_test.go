@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/BramVR/gohealthcli/internal/archived"
 	"net/http"
 	"net/url"
 	"testing"
@@ -130,7 +131,7 @@ func TestFetchVerifiedIdentityPreservesTypedCauseChainOnUnauthorized(t *testing.
 	}
 	access := newCurrentConnectionAccessWithRuntime(
 		credentialStoreConfig{},
-		archivedConnection{googleHealthUserID: "111111256096816351"},
+		archived.Connection{GoogleHealthUserID: "111111256096816351"},
 		nil,
 		runtime,
 	)
@@ -166,7 +167,7 @@ func TestSyncIngestionNormalizesTypedUnauthorizedPreservingChain(t *testing.T) {
 	ingestion := midRunRefreshTestIngestion(t, provider)
 
 	_, err := ingestion.Execute(context.Background(), archive, googleHealthIngestionRequest{
-		connection:  archivedConnection{id: "googlehealth:111"},
+		connection:  archived.Connection{ID: "googlehealth:111"},
 		dataType:    "steps",
 		from:        "2026-01-01T00:00:00Z",
 		to:          "2026-01-02T00:00:00Z",
@@ -390,7 +391,7 @@ func TestFetchVerifiedIdentityDoesNotMatchOnErrorText(t *testing.T) {
 	}
 	access := newCurrentConnectionAccessWithRuntime(
 		credentialStoreConfig{},
-		archivedConnection{googleHealthUserID: "111111256096816351"},
+		archived.Connection{GoogleHealthUserID: "111111256096816351"},
 		nil,
 		runtime,
 	)

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/BramVR/gohealthcli/internal/archived"
 	"net/url"
 	"runtime"
 	"strings"
@@ -188,7 +189,7 @@ func TestSyncOrchestratorRespectsCancellationBetweenDataTypes(t *testing.T) {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
 	if _, found, err := archive.ResolveSyncCursor(context.Background(), syncCursorKey{
-		connectionID: connection.id,
+		connectionID: connection.ID,
 		dataType:     "heart-rate",
 		rollupKind:   syncCursorRollupKindNone,
 	}); err != nil || found {
@@ -411,7 +412,7 @@ func TestSyncOrchestratorCancelsActiveDataTypeMidPagination(t *testing.T) {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
 	if _, found, err := archive.ResolveSyncCursor(context.Background(), syncCursorKey{
-		connectionID: connection.id,
+		connectionID: connection.ID,
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,
 	}); err != nil || found {
@@ -600,7 +601,7 @@ func TestPerTypeSyncOptionsClearsAllTypes(t *testing.T) {
 	}
 	// Drive the resulting options through the gate's expandDataTypes to
 	// confirm the all-vs-types conflict no longer fires.
-	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(time.Now(), archivedConnection{id: "x"})}
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(time.Now(), archived.Connection{ID: "x"})}
 	got, err := gate.expandDataTypes(perType)
 	if err != nil {
 		t.Fatalf("gate.expandDataTypes(perType): %v — orchestrator forwards a config the gate rejects", err)

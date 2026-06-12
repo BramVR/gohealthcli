@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/BramVR/gohealthcli/internal/archived"
 	"net/http"
 	"net/url"
 	"sync"
@@ -56,7 +57,7 @@ func TestIngestionCancelAbortsInFlightProviderFetch(t *testing.T) {
 	done := make(chan executeOutcome, 1)
 	go func() {
 		result, err := ingestion.Execute(ctx, archive, googleHealthIngestionRequest{
-			connection:  archivedConnection{id: "googlehealth:111111256096816351", providerName: "googlehealth"},
+			connection:  archived.Connection{ID: "googlehealth:111111256096816351", ProviderName: "googlehealth"},
 			dataType:    "steps",
 			from:        "2026-01-01",
 			to:          "2026-01-02T00:00:00Z",

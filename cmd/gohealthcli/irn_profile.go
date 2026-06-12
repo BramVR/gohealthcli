@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
 	"io"
 )
 
@@ -48,11 +49,11 @@ var irnProfileSnapshotCommand = identitySnapshotCommandSpec[irnProfileResult, go
 	statusUnavailable:  "irn_profile_unavailable",
 	statusScopeMissing: "irn_profile_scope_missing",
 	scopeEndpointKey:   "getIrnProfile",
-	seedResult: func(connection archivedConnection) irnProfileResult {
+	seedResult: func(connection archived.Connection) irnProfileResult {
 		return irnProfileResult{
-			ConnectionID:       connection.id,
-			ProviderName:       connection.providerName,
-			GoogleHealthUserID: connection.googleHealthUserID,
+			ConnectionID:       connection.ID,
+			ProviderName:       connection.ProviderName,
+			GoogleHealthUserID: connection.GoogleHealthUserID,
 		}
 	},
 	status:       func(result *irnProfileResult) string { return result.Status },

@@ -77,7 +77,7 @@ func TestIdentitySnapshotArchiveInsertAndLatestRoundTrip(t *testing.T) {
 		t.Fatalf("Insert: %v", err)
 	}
 
-	snapshot, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "settings")
+	snapshot, found := latestIdentitySnapshotRow(t, archive.db, connection.ID, "settings")
 	if !found {
 		t.Fatal("latest settings snapshot returned not-found after Insert")
 	}
@@ -136,14 +136,14 @@ func TestIdentitySnapshotArchiveLatestFiltersByKind(t *testing.T) {
 		}
 	}
 
-	latestSettings, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "settings")
+	latestSettings, found := latestIdentitySnapshotRow(t, archive.db, connection.ID, "settings")
 	if !found {
 		t.Fatal("latest settings snapshot: not found")
 	}
 	if latestSettings.RawJSON != `{"unit":"metric","timezone":"UTC"}` {
 		t.Fatalf("latest settings RawJSON = %q, want newest settings row", latestSettings.RawJSON)
 	}
-	latestProfile, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "profile")
+	latestProfile, found := latestIdentitySnapshotRow(t, archive.db, connection.ID, "profile")
 	if !found {
 		t.Fatal("latest profile snapshot: not found")
 	}
@@ -152,7 +152,7 @@ func TestIdentitySnapshotArchiveLatestFiltersByKind(t *testing.T) {
 	}
 	// A kind never inserted must surface as not-found, not as some
 	// accidental cross-kind match.
-	if _, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "paired-devices"); found {
+	if _, found := latestIdentitySnapshotRow(t, archive.db, connection.ID, "paired-devices"); found {
 		t.Fatal("latest paired-devices snapshot returned a row, want not-found")
 	}
 }
@@ -201,7 +201,7 @@ func TestProfileCommandWritesViaIdentitySnapshotArchive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read current Connection: %v", err)
 	}
-	latest, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "profile")
+	latest, found := latestIdentitySnapshotRow(t, archive.db, connection.ID, "profile")
 	if !found {
 		t.Fatal("latest profile snapshot: not found")
 	}
@@ -257,7 +257,7 @@ func TestSettingsCommandArchivesSnapshotWithKindSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read current Connection: %v", err)
 	}
-	latest, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "settings")
+	latest, found := latestIdentitySnapshotRow(t, archive.db, connection.ID, "settings")
 	if !found {
 		t.Fatal("latest settings snapshot: not found")
 	}
@@ -311,7 +311,7 @@ func TestCurrentSettingsViewProjectsLatestSnapshot(t *testing.T) {
 	}
 	defer db.Close()
 	var measurementSystem, timezone, fetchedAt string
-	err = db.QueryRowContext(context.Background(), `SELECT measurement_system, timezone, fetched_at FROM current_settings WHERE connection_id = ?`, connection.id).
+	err = db.QueryRowContext(context.Background(), `SELECT measurement_system, timezone, fetched_at FROM current_settings WHERE connection_id = ?`, connection.ID).
 		Scan(&measurementSystem, &timezone, &fetchedAt)
 	if err != nil {
 		t.Fatalf("query current_settings: %v", err)
@@ -377,7 +377,7 @@ func TestIdentitySnapshotArchiveLatestUsesFetchedAtForRecency(t *testing.T) {
 	}
 	defer db.Close()
 	var measurementSystem, fetchedAt string
-	err = db.QueryRowContext(context.Background(), `SELECT measurement_system, fetched_at FROM current_settings WHERE connection_id = ?`, connection.id).
+	err = db.QueryRowContext(context.Background(), `SELECT measurement_system, fetched_at FROM current_settings WHERE connection_id = ?`, connection.ID).
 		Scan(&measurementSystem, &fetchedAt)
 	if err != nil {
 		t.Fatalf("query current_settings: %v", err)
@@ -588,7 +588,7 @@ func TestIdentitySnapshotArchiveInsertHonorsCanceledContext(t *testing.T) {
 	if _, err := archive.Insert(ctx, connection, "settings", `{"unit":"metric"}`, "2026-06-01T00:00:00Z"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Insert with canceled context = %v, want context.Canceled", err)
 	}
-	if _, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "settings"); found {
+	if _, found := latestIdentitySnapshotRow(t, archive.db, connection.ID, "settings"); found {
 		t.Fatal("snapshot row present after canceled Insert, want none")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
 	"strings"
 	"time"
 )
@@ -29,7 +30,7 @@ var (
 
 type currentConnectionAccess struct {
 	credentialStore credentialStoreConfig
-	connection      archivedConnection
+	connection      archived.Connection
 	protectedPaths  []string
 	runtime         runtimeAdapters
 	// autoRefresh, when set, lets AccessToken transparently refresh and
@@ -60,7 +61,7 @@ type doctorOnlineTokenCheck struct {
 	previousTokenMaterial map[string]any
 }
 
-func newCurrentConnectionAccessWithRuntime(credentialStore credentialStoreConfig, connection archivedConnection, protectedPaths []string, runtime runtimeAdapters) currentConnectionAccess {
+func newCurrentConnectionAccessWithRuntime(credentialStore credentialStoreConfig, connection archived.Connection, protectedPaths []string, runtime runtimeAdapters) currentConnectionAccess {
 	return currentConnectionAccess{
 		credentialStore: credentialStore,
 		connection:      connection,
@@ -75,16 +76,16 @@ func (access currentConnectionAccess) WithAutoRefresh(oauthClient oauthClientSou
 }
 
 func (access currentConnectionAccess) AccessToken(requiredScopes []string) (string, error) {
-	if err := requireUsableConnectionAccessToken(access.connection.tokenMetadataJSON, access.runtime.now()); err != nil {
+	if err := requireUsableConnectionAccessToken(access.connection.TokenMetadataJSON, access.runtime.now()); err != nil {
 		if access.autoRefresh == nil || !errors.Is(err, errCurrentConnectionTokenExpired) {
 			return "", err
 		}
-		if err := requireConnectionScopes(access.connection.tokenMetadataJSON, requiredScopes); err != nil {
+		if err := requireConnectionScopes(access.connection.TokenMetadataJSON, requiredScopes); err != nil {
 			return "", err
 		}
 		return access.refreshAndPersistAccessToken()
 	}
-	if err := requireConnectionScopes(access.connection.tokenMetadataJSON, requiredScopes); err != nil {
+	if err := requireConnectionScopes(access.connection.TokenMetadataJSON, requiredScopes); err != nil {
 		return "", err
 	}
 	tokenMaterial, err := access.loadTokenMaterial()
@@ -105,7 +106,7 @@ func (access currentConnectionAccess) refreshAndPersistAccessToken() (string, er
 	if err := persistDoctorOnlineRefreshedTokenWithRuntime(
 		access.autoRefresh.archive,
 		access.credentialStore,
-		access.connection.id,
+		access.connection.ID,
 		*check.refreshedToken,
 		check.previousTokenMaterial,
 		access.runtime,
@@ -145,7 +146,7 @@ func (access currentConnectionAccess) FetchVerifiedIdentity(accessToken string) 
 }
 
 func (access currentConnectionAccess) RequireMatchingHealthUserID(healthUserID string) error {
-	if healthUserID != access.connection.googleHealthUserID {
+	if healthUserID != access.connection.GoogleHealthUserID {
 		return errCurrentConnectionIdentityMismatch
 	}
 	return nil
@@ -163,7 +164,7 @@ func (access currentConnectionAccess) RefreshableAccessToken(oauthClient oauthCl
 	if !ok || refreshToken == "" {
 		return doctorOnlineTokenCheck{}, errCurrentConnectionMissingRefreshToken
 	}
-	_, scopes, err := connectionTokenExpiryAndScopes(access.connection.tokenMetadataJSON)
+	_, scopes, err := connectionTokenExpiryAndScopes(access.connection.TokenMetadataJSON)
 	if err != nil {
 		return doctorOnlineTokenCheck{}, err
 	}
@@ -189,7 +190,7 @@ func (access currentConnectionAccess) loadTokenMaterial() (map[string]any, error
 	if err != nil {
 		return nil, err
 	}
-	return store.Load(access.connection.id)
+	return store.Load(access.connection.ID)
 }
 
 func accessTokenFromTokenMaterial(tokenMaterial map[string]any) (string, error) {

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"github.com/BramVR/gohealthcli/internal/archived"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -67,16 +68,16 @@ func TestHealthArchiveWriterRecordsDataPointRevisionsRollupsAndSyncRun(t *testin
 		t.Fatalf("StartSyncRun: %v", err)
 	}
 
-	point := archivedDataPoint{
-		providerName:         connection.providerName,
-		connectionID:         connection.id,
-		dataType:             "steps",
-		upstreamResourceName: "users/me/dataTypes/steps/dataPoints/archive-writer",
-		recordKind:           "interval",
-		startTimeUTC:         "2026-01-01T08:00:00Z",
-		endTimeUTC:           "2026-01-01T08:15:00Z",
-		dataSourceJSON:       `{"platform":"FITBIT"}`,
-		rawJSON:              `{"steps":{"count":"123"}}`,
+	point := archived.DataPoint{
+		ProviderName:         connection.ProviderName,
+		ConnectionID:         connection.ID,
+		DataType:             "steps",
+		UpstreamResourceName: "users/me/dataTypes/steps/dataPoints/archive-writer",
+		RecordKind:           "interval",
+		StartTimeUTC:         "2026-01-01T08:00:00Z",
+		EndTimeUTC:           "2026-01-01T08:15:00Z",
+		DataSourceJSON:       `{"platform":"FITBIT"}`,
+		RawJSON:              `{"steps":{"count":"123"}}`,
 	}
 	if status, err := archive.UpsertDataPoint(context.Background(), point, "2026-01-01T00:00:01Z"); err != nil || status != "new" {
 		t.Fatalf("first UpsertDataPoint = (%q, %v), want new", status, err)
@@ -84,24 +85,24 @@ func TestHealthArchiveWriterRecordsDataPointRevisionsRollupsAndSyncRun(t *testin
 	if status, err := archive.UpsertDataPoint(context.Background(), point, "2026-01-01T00:00:02Z"); err != nil || status != "unchanged" {
 		t.Fatalf("same UpsertDataPoint = (%q, %v), want unchanged", status, err)
 	}
-	point.rawJSON = `{"steps":{"count":"456"}}`
+	point.RawJSON = `{"steps":{"count":"456"}}`
 	if status, err := archive.UpsertDataPoint(context.Background(), point, "2026-01-01T00:00:03Z"); err != nil || status != "updated" {
 		t.Fatalf("corrected UpsertDataPoint = (%q, %v), want updated", status, err)
 	}
 
-	rollup := archivedRollup{
-		providerName:         connection.providerName,
-		connectionID:         connection.id,
-		dataType:             "steps",
-		rollupKind:           "dailyRollUp",
-		civilDate:            "2026-01-01",
-		timezoneMetadataJSON: "{}",
-		rawJSON:              `{"steps":{"countSum":"123"}}`,
+	rollup := archived.Rollup{
+		ProviderName:         connection.ProviderName,
+		ConnectionID:         connection.ID,
+		DataType:             "steps",
+		RollupKind:           "dailyRollUp",
+		CivilDate:            "2026-01-01",
+		TimezoneMetadataJSON: "{}",
+		RawJSON:              `{"steps":{"countSum":"123"}}`,
 	}
 	if status, err := archive.UpsertRollup(context.Background(), rollup, "2026-01-01T00:00:04Z"); err != nil || status != "new" {
 		t.Fatalf("first UpsertRollup = (%q, %v), want new", status, err)
 	}
-	rollup.rawJSON = `{"steps":{"countSum":"456"}}`
+	rollup.RawJSON = `{"steps":{"countSum":"456"}}`
 	if status, err := archive.UpsertRollup(context.Background(), rollup, "2026-01-01T00:00:05Z"); err != nil || status != "updated" {
 		t.Fatalf("corrected UpsertRollup = (%q, %v), want updated", status, err)
 	}
@@ -263,16 +264,16 @@ func TestHealthArchiveWriterStoreAttachmentWritesSidecarRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	point := archivedDataPoint{
-		providerName:         connection.providerName,
-		connectionID:         connection.id,
-		dataType:             "exercise",
-		upstreamResourceName: "users/me/dataTypes/exercise/dataPoints/tcx-writer",
-		recordKind:           "session",
-		startTimeUTC:         "2026-01-01T08:00:00Z",
-		endTimeUTC:           "2026-01-01T08:30:00Z",
-		dataSourceJSON:       `{"platform":"FITBIT"}`,
-		rawJSON:              `{"exercise":{"exerciseType":"RUNNING"}}`,
+	point := archived.DataPoint{
+		ProviderName:         connection.ProviderName,
+		ConnectionID:         connection.ID,
+		DataType:             "exercise",
+		UpstreamResourceName: "users/me/dataTypes/exercise/dataPoints/tcx-writer",
+		RecordKind:           "session",
+		StartTimeUTC:         "2026-01-01T08:00:00Z",
+		EndTimeUTC:           "2026-01-01T08:30:00Z",
+		DataSourceJSON:       `{"platform":"FITBIT"}`,
+		RawJSON:              `{"exercise":{"exerciseType":"RUNNING"}}`,
 	}
 	if status, err := archive.UpsertDataPoint(context.Background(), point, "2026-01-01T00:00:01Z"); err != nil || status != "new" {
 		t.Fatalf("UpsertDataPoint = (%q, %v), want new", status, err)
@@ -326,12 +327,12 @@ func TestHealthArchiveWriterStoreAttachmentErrorsWhenDataPointMissing(t *testing
 	}
 	defer archive.Close()
 
-	point := archivedDataPoint{
-		providerName:         "googlehealth",
-		connectionID:         "googlehealth:phantom",
-		dataType:             "exercise",
-		upstreamResourceName: "users/me/dataTypes/exercise/dataPoints/missing",
-		recordKind:           "session",
+	point := archived.DataPoint{
+		ProviderName:         "googlehealth",
+		ConnectionID:         "googlehealth:phantom",
+		DataType:             "exercise",
+		UpstreamResourceName: "users/me/dataTypes/exercise/dataPoints/missing",
+		RecordKind:           "session",
 	}
 	if err := archive.StoreAttachment(context.Background(), point, "tcx", []byte("<?xml?>"), "2026-01-01T00:00:00Z"); err == nil {
 		t.Fatalf("expected error attaching to missing Data Point")
@@ -381,7 +382,7 @@ func TestFinalizeSyncRunRetriesOnBusyThenAdvancesCursor(t *testing.T) {
 		t.Fatalf("StartSyncRun: %v", err)
 	}
 
-	cursorKey := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: syncCursorRollupKindNone}
+	cursorKey := syncCursorKey{connectionID: connection.ID, dataType: "steps", rollupKind: syncCursorRollupKindNone}
 	finalize := syncRunFinalize{
 		SyncRunID:      runID,
 		Outcome:        syncRunOutcomeCompleted,
@@ -459,7 +460,7 @@ func TestFinalizeSyncRunDoesNotAdvanceCursorOnFailedOutcome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartSyncRun: %v", err)
 	}
-	cursorKey := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: syncCursorRollupKindNone}
+	cursorKey := syncCursorKey{connectionID: connection.ID, dataType: "steps", rollupKind: syncCursorRollupKindNone}
 	if err := archive.FinalizeSyncRun(context.Background(), syncRunFinalize{
 		SyncRunID:      runID,
 		Outcome:        syncRunOutcomeFailed,
@@ -525,16 +526,16 @@ func TestHealthArchiveWriterHonorsCanceledContext(t *testing.T) {
 	}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("StartSyncRun with canceled context = %v, want context.Canceled", err)
 	}
-	if _, err := archive.UpsertDataPoint(ctx, archivedDataPoint{
-		providerName:         connection.providerName,
-		connectionID:         connection.id,
-		dataType:             "steps",
-		upstreamResourceName: "users/me/dataTypes/steps/dataPoints/cancel-probe",
-		recordKind:           "interval",
-		startTimeUTC:         "2026-01-01T08:00:00Z",
-		endTimeUTC:           "2026-01-01T08:15:00Z",
-		dataSourceJSON:       `{"platform":"FITBIT"}`,
-		rawJSON:              `{"steps":{"count":"123"}}`,
+	if _, err := archive.UpsertDataPoint(ctx, archived.DataPoint{
+		ProviderName:         connection.ProviderName,
+		ConnectionID:         connection.ID,
+		DataType:             "steps",
+		UpstreamResourceName: "users/me/dataTypes/steps/dataPoints/cancel-probe",
+		RecordKind:           "interval",
+		StartTimeUTC:         "2026-01-01T08:00:00Z",
+		EndTimeUTC:           "2026-01-01T08:15:00Z",
+		DataSourceJSON:       `{"platform":"FITBIT"}`,
+		RawJSON:              `{"steps":{"count":"123"}}`,
 	}, "2026-01-01T00:00:01Z"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("UpsertDataPoint with canceled context = %v, want context.Canceled", err)
 	}

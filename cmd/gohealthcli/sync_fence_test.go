@@ -252,7 +252,7 @@ func TestFinalizeAfterFenceConvergesToTrueTerminalStatus(t *testing.T) {
 
 	// The real finalize lands: row converges to sync_completed and
 	// the cursor advances exactly as on an unfenced run.
-	cursorKey := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: syncCursorRollupKindNone}
+	cursorKey := syncCursorKey{connectionID: connection.ID, dataType: "steps", rollupKind: syncCursorRollupKindNone}
 	if err := writer.FinalizeSyncRun(context.Background(), syncRunFinalize{
 		SyncRunID:      syncRunID,
 		Outcome:        syncRunOutcomeCompleted,
@@ -313,7 +313,7 @@ func TestFenceNeverAdvancesTheSyncCursor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	cursorKey := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: syncCursorRollupKindNone}
+	cursorKey := syncCursorKey{connectionID: connection.ID, dataType: "steps", rollupKind: syncCursorRollupKindNone}
 	// Seed a cursor from an earlier completed run.
 	if err := writer.CommitSyncCursor(context.Background(), cursorKey, syncRunOutcomeCompleted, "2026-06-08", "2026-06-08T00:00:10Z"); err != nil {
 		t.Fatalf("seed cursor: %v", err)

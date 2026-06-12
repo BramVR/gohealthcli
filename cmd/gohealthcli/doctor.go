@@ -240,7 +240,7 @@ func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtim
 		return result, err
 	}
 	if tokenCheck.refreshedToken != nil {
-		if err := persistDoctorOnlineRefreshedTokenWithRuntime(archiveAPI, config.credentialStore, connection.id, *tokenCheck.refreshedToken, tokenCheck.previousTokenMaterial, runtime); err != nil {
+		if err := persistDoctorOnlineRefreshedTokenWithRuntime(archiveAPI, config.credentialStore, connection.ID, *tokenCheck.refreshedToken, tokenCheck.previousTokenMaterial, runtime); err != nil {
 			result.TokenStatus = "refresh_failed"
 			return result, err
 		}

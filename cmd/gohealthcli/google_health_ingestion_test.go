@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
 	"net/http"
 	"net/url"
 	"strings"
@@ -64,8 +65,8 @@ func TestGoogleHealthIngestionArchivesDataPointListFromProviderPages(t *testing.
 	if provider.requests[0].endpointName != "dataTypes.steps.list" || provider.requests[1].endpointName != "dataTypes.steps.list" {
 		t.Fatalf("requests = %#v, want steps list requests", provider.requests)
 	}
-	if archive.dataPoints[0].upstreamResourceName != "users/me/dataTypes/steps/dataPoints/one" || archive.dataPoints[1].upstreamResourceName != "users/me/dataTypes/steps/dataPoints/two" {
-		t.Fatalf("archived resource names = (%q, %q), want fixture pages", archive.dataPoints[0].upstreamResourceName, archive.dataPoints[1].upstreamResourceName)
+	if archive.dataPoints[0].UpstreamResourceName != "users/me/dataTypes/steps/dataPoints/one" || archive.dataPoints[1].UpstreamResourceName != "users/me/dataTypes/steps/dataPoints/two" {
+		t.Fatalf("archived resource names = (%q, %q), want fixture pages", archive.dataPoints[0].UpstreamResourceName, archive.dataPoints[1].UpstreamResourceName)
 	}
 }
 
@@ -107,8 +108,8 @@ func TestGoogleHealthIngestionChoosesReconcileFromSourceFamily(t *testing.T) {
 	if got := mustURLQuery(t, provider.requests[0].url).Get("dataSourceFamily"); got != googleHealthWearableSourceFamilyFilterName {
 		t.Fatalf("dataSourceFamily = %q, want wearable family", got)
 	}
-	if archive.dataPoints[0].sourceFamilyFilter != "wearable" {
-		t.Fatalf("archived source family = %q, want wearable", archive.dataPoints[0].sourceFamilyFilter)
+	if archive.dataPoints[0].SourceFamilyFilter != "wearable" {
+		t.Fatalf("archived source family = %q, want wearable", archive.dataPoints[0].SourceFamilyFilter)
 	}
 }
 
@@ -145,8 +146,8 @@ func TestGoogleHealthIngestionArchivesDailyRollups(t *testing.T) {
 	if len(provider.requests) != 1 || provider.requests[0].method != http.MethodPost || provider.requests[0].endpointName != "dataTypes.steps.dailyRollUp" {
 		t.Fatalf("requests = %#v, want one dailyRollUp POST", provider.requests)
 	}
-	if archive.rollups[0].rollupKind != "dailyRollUp" || archive.rollups[0].civilDate != "2026-01-01" {
-		t.Fatalf("archived Rollup = (%q, %q), want daily 2026-01-01", archive.rollups[0].rollupKind, archive.rollups[0].civilDate)
+	if archive.rollups[0].RollupKind != "dailyRollUp" || archive.rollups[0].CivilDate != "2026-01-01" {
+		t.Fatalf("archived Rollup = (%q, %q), want daily 2026-01-01", archive.rollups[0].RollupKind, archive.rollups[0].CivilDate)
 	}
 }
 
@@ -176,21 +177,21 @@ func TestGoogleHealthIngestionRejectsRepeatedPageToken(t *testing.T) {
 type fakeGoogleHealthIngestionArchive struct {
 	dataPointStatuses []string
 	rollupStatuses    []string
-	dataPoints        []archivedDataPoint
-	rollups           []archivedRollup
+	dataPoints        []archived.DataPoint
+	rollups           []archived.Rollup
 	attachments       []fakeIngestionAttachment
 }
 
 // fakeIngestionAttachment captures one StoreAttachment call so tests
 // can assert the (point, kind, bytes) shape the ingestion handed off.
 type fakeIngestionAttachment struct {
-	point     archivedDataPoint
+	point     archived.DataPoint
 	kind      string
 	payload   []byte
 	fetchedAt string
 }
 
-func (archive *fakeGoogleHealthIngestionArchive) UpsertDataPoint(ctx context.Context, point archivedDataPoint, now string) (string, error) {
+func (archive *fakeGoogleHealthIngestionArchive) UpsertDataPoint(ctx context.Context, point archived.DataPoint, now string) (string, error) {
 	archive.dataPoints = append(archive.dataPoints, point)
 	if len(archive.dataPointStatuses) == 0 {
 		return "new", nil
@@ -200,7 +201,7 @@ func (archive *fakeGoogleHealthIngestionArchive) UpsertDataPoint(ctx context.Con
 	return status, nil
 }
 
-func (archive *fakeGoogleHealthIngestionArchive) UpsertRollup(ctx context.Context, rollup archivedRollup, now string) (string, error) {
+func (archive *fakeGoogleHealthIngestionArchive) UpsertRollup(ctx context.Context, rollup archived.Rollup, now string) (string, error) {
 	archive.rollups = append(archive.rollups, rollup)
 	if len(archive.rollupStatuses) == 0 {
 		return "new", nil
@@ -213,7 +214,7 @@ func (archive *fakeGoogleHealthIngestionArchive) UpsertRollup(ctx context.Contex
 // StoreAttachment records the call so TCX-ingestion tests can assert
 // the wiring: which Data Point the bytes attach to, what kind, the
 // payload, and the fetchedAt stamp.
-func (archive *fakeGoogleHealthIngestionArchive) StoreAttachment(ctx context.Context, point archivedDataPoint, kind string, payload []byte, fetchedAt string) error {
+func (archive *fakeGoogleHealthIngestionArchive) StoreAttachment(ctx context.Context, point archived.DataPoint, kind string, payload []byte, fetchedAt string) error {
 	archive.attachments = append(archive.attachments, fakeIngestionAttachment{
 		point:     point,
 		kind:      kind,
@@ -332,10 +333,10 @@ func fakeGoogleHealthIngestion(provider *fakeGoogleHealthIngestionProvider) goog
 }
 
 func fakeGoogleHealthIngestionRequest(request googleHealthIngestionRequest) googleHealthIngestionRequest {
-	request.connection = archivedConnection{
-		id:                 "conn_123",
-		providerName:       "google_health",
-		googleHealthUserID: "111111256096816351",
+	request.connection = archived.Connection{
+		ID:                 "conn_123",
+		ProviderName:       "google_health",
+		GoogleHealthUserID: "111111256096816351",
 	}
 	request.accessToken = "access-secret"
 	return request

@@ -56,11 +56,11 @@ func TestGoogleHealthIngestionHourlyHeartRateRollup(t *testing.T) {
 	if provider.requests[0].method != http.MethodPost {
 		t.Errorf("method = %q, want POST", provider.requests[0].method)
 	}
-	if archive.rollups[0].rollupKind != "hourly" {
-		t.Errorf("rollupKind = %q, want hourly", archive.rollups[0].rollupKind)
+	if archive.rollups[0].RollupKind != "hourly" {
+		t.Errorf("rollupKind = %q, want hourly", archive.rollups[0].RollupKind)
 	}
-	if archive.rollups[0].windowStartUTC != "2026-01-01T00:00:00Z" {
-		t.Errorf("windowStartUTC = %q, want 2026-01-01T00:00:00Z", archive.rollups[0].windowStartUTC)
+	if archive.rollups[0].WindowStartUTC != "2026-01-01T00:00:00Z" {
+		t.Errorf("windowStartUTC = %q, want 2026-01-01T00:00:00Z", archive.rollups[0].WindowStartUTC)
 	}
 }
 
@@ -98,8 +98,8 @@ func TestGoogleHealthIngestionWeeklyStepsRollup(t *testing.T) {
 	if result.rollupsSeen != 1 || result.rollupsNew != 1 {
 		t.Errorf("Rollup counts = (%d new of %d seen), want (1, 1)", result.rollupsNew, result.rollupsSeen)
 	}
-	if archive.rollups[0].rollupKind != "weekly" {
-		t.Errorf("rollupKind = %q, want weekly", archive.rollups[0].rollupKind)
+	if archive.rollups[0].RollupKind != "weekly" {
+		t.Errorf("rollupKind = %q, want weekly", archive.rollups[0].RollupKind)
 	}
 }
 
@@ -132,8 +132,8 @@ func TestGoogleHealthIngestionWindowCustomRollup(t *testing.T) {
 	if result.endpointFamily != "rollUp" {
 		t.Errorf("endpoint family = %q, want rollUp", result.endpointFamily)
 	}
-	if archive.rollups[0].rollupKind != "window=6h" {
-		t.Errorf("rollupKind = %q, want window=6h", archive.rollups[0].rollupKind)
+	if archive.rollups[0].RollupKind != "window=6h" {
+		t.Errorf("rollupKind = %q, want window=6h", archive.rollups[0].RollupKind)
 	}
 }
 

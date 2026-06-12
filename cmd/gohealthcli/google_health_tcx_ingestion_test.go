@@ -66,8 +66,8 @@ func TestGoogleHealthIngestionStoresTcxAttachmentForExercise(t *testing.T) {
 	if got.kind != "tcx" {
 		t.Fatalf("attachment kind = %q, want tcx", got.kind)
 	}
-	if got.point.upstreamResourceName != "users/me/dataTypes/exercise/dataPoints/run-1" {
-		t.Fatalf("attachment linked to %q, want run-1", got.point.upstreamResourceName)
+	if got.point.UpstreamResourceName != "users/me/dataTypes/exercise/dataPoints/run-1" {
+		t.Fatalf("attachment linked to %q, want run-1", got.point.UpstreamResourceName)
 	}
 	if string(got.payload) != tcxXML {
 		t.Fatalf("attachment payload = %q, want unwrapped TCX XML %q", string(got.payload), tcxXML)

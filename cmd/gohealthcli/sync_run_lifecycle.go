@@ -117,7 +117,7 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 		resumedFromCursor = true
 	}
 	ingestion := newGoogleHealthIngestionWithRuntime(runtime)
-	_, grantedScopes, err := connectionTokenExpiryAndScopes(connection.tokenMetadataJSON)
+	_, grantedScopes, err := connectionTokenExpiryAndScopes(connection.TokenMetadataJSON)
 	if err != nil {
 		return syncRunFailure(syncResult{
 			DataTypes: options.dataTypes,
@@ -143,8 +143,8 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 		}, err)
 	}
 	result := syncResult{
-		ConnectionID:      connection.id,
-		ProviderName:      connection.providerName,
+		ConnectionID:      connection.ID,
+		ProviderName:      connection.ProviderName,
 		DataTypes:         options.dataTypes,
 		From:              options.from,
 		To:                options.to,
