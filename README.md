@@ -92,7 +92,13 @@ Google Health reconcile path. `sync --types steps --rollup daily` archives
 steps daily Rollups. `total-calories` is known to the catalog but is not
 supported by raw Data Point sync because Google exposes it as Rollup data.
 
-The drift guard in `cmd/gohealthcli/readme_sync_types_test.go`
+With the Tier 2 `tcx` scope granted (`gohealthcli connect --add-scopes
+tcx`), `exercise` sync also archives each session's TCX route file as a
+`tcx`-kind Attachment under `<archive>.attachments/` (ADR-0009). Without
+the scope, exercise Data Points still sync and the TCX step is skipped —
+no failed provider call, no partial archive.
+
+The drift guard in `internal/googlehealth/readme_sync_types_test.go`
 (`TestREADMEListsEverySyncableDataType` and
 `TestREADMECaveatListsCatalogTypesSyncRejects`) fails if a Data Type is
 added to the Google Health catalog without a matching entry in the list
@@ -192,6 +198,16 @@ In Google Cloud:
   - `https://www.googleapis.com/auth/googlehealth.sleep.readonly`
 - Create an OAuth client with application type `Desktop app`.
 - Download the client JSON.
+
+The four scopes above cover the default Tier 1 surface. The Tier 2
+features — the `settings`, `devices`, and `irn-profile` commands, the
+`electrocardiogram`, `irregular-rhythm-notification`, and
+`hydration-log` sync types, and TCX route archiving — each need an
+extra opt-in scope granted with `gohealthcli connect --add-scopes`
+(keywords: `ecg`, `irn`, `nutrition`, `settings`, `tcx`); without it
+the provider returns HTTP 403. Add the matching optional scopes in
+Google Cloud as well — the full scope-to-keyword table is in
+[docs/google-auth-setup.md](./docs/google-auth-setup.md).
 
 Do not use a Web application client. `gohealthcli` uses an installed-app
 localhost callback flow and rejects web-client JSON.
@@ -325,8 +341,8 @@ exclusive`"). The check fires for `--version` too, so
 `gohealthcli --plain --json --version` is rejected before any output is
 written.
 
-A few subcommands treat `--plain` / `--json` as no-ops on their *success*
-output:
+A few subcommands deviate from the standard `--plain` / `--json`
+contract:
 
 - `describe-schema` always emits the curated JSON catalog (or live DDL when
   `--sql` is passed). Its own `--json` flag is on by default; the global
@@ -334,15 +350,14 @@ output:
   schema bytes. Its *failure* envelopes do route through the Failure
   Reporter, so `gohealthcli --json describe-schema bogus` lands a JSON
   failure on stdout like every other subcommand.
-- `export` always writes CSV (default) or JSONL according to its own
-  `--format` flag. The global `--plain` / `--json` are no-ops both for its
-  success output (always CSV/JSONL) AND for its failure envelopes — the
-  subcommand's `ReportFailure` call sites do not currently set `Mode`, so
-  failure messages stay as the canonical `export: <reason>` plain line
-  regardless of which global mode was requested. Passing `--plain` /
-  `--json` *after* `export` is rejected at parse time as an unknown flag
-  (export's own flag set declares only `--config`, `--db`, `--format`,
-  `--output`, `--stdout`, `--no-input`). See
+- `export` always writes CSV (default) or JSONL according to its
+  `--format` flag, and treats `--plain` / `--json` as format synonyms
+  rather than output-mode switches: `--json` means `--format jsonl` and
+  `--plain` means `--format csv`. Passing a synonym alongside a
+  contradictory `--format` value (`--json --format csv`) fails with a
+  "`--json conflicts with --format csv`" error. Failure envelopes do
+  honour the requested mode — `export <dataset> --json` reports failures
+  as a JSON envelope, `--plain` as plain key/value lines. See
   [docs/commands/export.md](./docs/commands/export.md).
 - `raw` writes the provider's raw bytes to stdout and ignores `--plain`,
   `--json`, and `--no-input`; passing any of them directly on `raw` is
@@ -400,7 +415,6 @@ Default local paths:
 
 - config: `~/.config/gohealthcli/config.toml`
 - archive: `~/.local/share/gohealthcli/gohealthcli.sqlite`
-- file Credential Store fallback: `~/.config/gohealthcli/tokens.json`
 
 Default runtime token storage is OS-native:
 
@@ -408,8 +422,10 @@ Default runtime token storage is OS-native:
 - Windows: Windows Credential Manager
 - Linux: Secret Service/libsecret
 
-For local testing, the explicit file Credential Store is acceptable if it stays
-owner-only:
+For local testing, an explicit file Credential Store is acceptable if it stays
+owner-only. There is no default file path — a `type = "file"` store must set
+`path` explicitly (a conventional location is
+`~/.config/gohealthcli/tokens.json`):
 
 ```toml
 [credential_store]

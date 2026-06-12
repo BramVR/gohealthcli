@@ -3,6 +3,7 @@ package googlehealth
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -60,6 +61,38 @@ func TestREADMECaveatListsCatalogTypesSyncRejects(t *testing.T) {
 		if !strings.Contains(caveat, token) {
 			t.Errorf("README sync-types caveat paragraph missing %s (looked for %q); extend the \"known to the catalog but not supported\" sentence", dataType, token)
 		}
+	}
+}
+
+// TestREADMECitesThisDriftGuardFile pins the README's breadcrumb to this
+// drift-guard suite: the "Supported Data Point sync types" section must
+// cite this file by its repo-relative path. The #287/#312 extraction
+// moved the suite from cmd/gohealthcli to internal/googlehealth and the
+// README kept pointing at the old location (#313); computing the path
+// at runtime makes the assertion follow the file through any future
+// move instead of hard-coding the package again. The repo root is the
+// same "../.." the suite already bakes into readmeSectionBody; the file
+// name comes from runtime.Caller's base so a rename is picked up even
+// under -trimpath builds.
+func TestREADMECitesThisDriftGuardFile(t *testing.T) {
+	t.Parallel()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed; cannot locate this test file")
+	}
+	packageDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("resolve package dir: %v", err)
+	}
+	repoRoot := filepath.Join(packageDir, "..", "..")
+	rel, err := filepath.Rel(repoRoot, filepath.Join(packageDir, filepath.Base(thisFile)))
+	if err != nil {
+		t.Fatalf("relativize %s against %s: %v", thisFile, repoRoot, err)
+	}
+	token := "`" + filepath.ToSlash(rel) + "`"
+	body := readmeSectionBody(t, readmeSyncTypesSectionMarker)
+	if !strings.Contains(body, token) {
+		t.Errorf("README sync-types section does not cite this drift-guard file as %s; update the \"drift guard in ...\" paragraph in README.md", token)
 	}
 }
 
