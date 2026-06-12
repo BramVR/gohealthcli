@@ -256,3 +256,24 @@ func TestHealthArchiveLifecycleOpenHonorsCanceledContext(t *testing.T) {
 		t.Fatalf("Open with canceled context = %v, want context.Canceled", err)
 	}
 }
+
+func TestArchiveDSNUsesAbsoluteFileURI(t *testing.T) {
+	t.Parallel()
+	dsn, err := archiveDSN("relative.sqlite", false)
+	if err != nil {
+		t.Fatalf("archiveDSN: %v", err)
+	}
+	if !strings.HasPrefix(dsn, "file:///") {
+		t.Fatalf("dsn = %q, want absolute file URI", dsn)
+	}
+	if !strings.Contains(dsn, "_pragma=foreign_keys%3Don") {
+		t.Fatalf("dsn = %q, want foreign key pragma", dsn)
+	}
+	readOnlyDSN, err := archiveDSN("relative.sqlite", true)
+	if err != nil {
+		t.Fatalf("archiveDSN readonly: %v", err)
+	}
+	if !strings.Contains(readOnlyDSN, "mode=ro") {
+		t.Fatalf("dsn = %q, want readonly mode", readOnlyDSN)
+	}
+}

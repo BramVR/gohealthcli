@@ -91,17 +91,12 @@ func TestSyncStatusFencesAbandonedRunningRowsIdempotently(t *testing.T) {
 // is a corpse from a killed process.
 func TestSyncCommandFencesAbandonedRunningRowsOnEntry(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	insertSyncStatusFixtureRuns(t, archivePath, []syncStatusFixtureRun{
 		{
 			dataTypesJSON:  `["heart-rate"]`,
@@ -192,17 +187,12 @@ func TestFenceLeavesLongRunningRowWithFreshHeartbeatAlone(t *testing.T) {
 // never happened.
 func TestFinalizeAfterFenceConvergesToTrueTerminalStatus(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	writer, err := openHealthArchiveWriter(archivePath)
 	if err != nil {
 		t.Fatalf("open writer: %v", err)
@@ -293,17 +283,12 @@ func TestFinalizeAfterFenceConvergesToTrueTerminalStatus(t *testing.T) {
 // sync_cursors, and this test keeps it that way.
 func TestFenceNeverAdvancesTheSyncCursor(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	writer, err := openHealthArchiveWriter(archivePath)
 	if err != nil {
 		t.Fatalf("open writer: %v", err)

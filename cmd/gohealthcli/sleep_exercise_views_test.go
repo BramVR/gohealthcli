@@ -31,11 +31,7 @@ func TestSleepStagesViewExplodesEachStage(t *testing.T) {
 		]}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
 	rows, err := db.QueryContext(context.Background(), `SELECT sleep_stage, duration_seconds, start_time_utc, end_time_utc, civil_date, upstream_resource_name FROM sleep_stages ORDER BY start_time_utc`)
 	if err != nil {
@@ -100,11 +96,7 @@ func TestExerciseSplitsViewExplodesEachSplit(t *testing.T) {
 		]}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
 	rows, err := db.QueryContext(context.Background(), `SELECT split_type, distance_meters, start_time_utc, end_time_utc, civil_date, upstream_resource_name FROM exercise_splits ORDER BY start_time_utc`)
 	if err != nil {
@@ -149,11 +141,7 @@ func TestSleepStagesViewHandlesSessionWithoutStages(t *testing.T) {
 		rawJSON:      `{"sleep":{}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var count int
 	if err := db.QueryRowContext(context.Background(), `SELECT count(*) FROM sleep_stages`).Scan(&count); err != nil {
 		t.Fatalf("query sleep_stages: %v", err)

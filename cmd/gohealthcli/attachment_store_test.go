@@ -359,11 +359,7 @@ func TestResolveContainedPathCleansRootBeforeBoundaryCheck(t *testing.T) {
 
 func countAttachmentRows(t *testing.T, archivePath string) int {
 	t.Helper()
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var count int
 	if err := db.QueryRowContext(context.Background(), `SELECT count(*) FROM data_point_attachments`).Scan(&count); err != nil {
 		t.Fatalf("count: %v", err)

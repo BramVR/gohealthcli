@@ -60,11 +60,7 @@ type syncStatusFixtureRun struct {
 
 func insertSyncStatusFixtureRuns(t *testing.T, archivePath string, runs []syncStatusFixtureRun) {
 	t.Helper()
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	for _, run := range runs {
 		if _, err := db.ExecContext(context.Background(), `INSERT INTO sync_runs (
 			provider_name,

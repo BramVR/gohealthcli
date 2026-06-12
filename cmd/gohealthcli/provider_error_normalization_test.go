@@ -30,16 +30,11 @@ func bindFetcherProviderGET[Result any](seam *func(string) (Result, error), fetc
 // and dispatch through runWithRuntime.
 func connectedProviderFixture(t *testing.T, extraScopes ...string) (string, string, runtimeAdapters) {
 	t.Helper()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:  "connect-access-secret",
 		refreshToken: "connect-refresh-secret",
 		healthUserID: "111111256096816351",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 	for _, scope := range extraScopes {
 		addStoredConnectionScope(t, archivePath, scope)
 	}

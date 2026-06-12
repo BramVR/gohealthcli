@@ -61,9 +61,7 @@ func TestSyncRunLifecycleStatusEnumOnEveryReachableReturn(t *testing.T) {
 			healthUserID:       "111111256096816351",
 			legacyFitbitUserID: "A1B2C3",
 		})
-		if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, runtime); err != nil {
-			t.Fatalf("connect setup: %v", err)
-		}
+		mustConnectSetup(t, configPath, archivePath, runtime)
 		runtime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 		result, err := (syncRunExecutor{runtime: runtime}).Execute(context.Background(), syncCommandOptions{
 			configPath:  configPath,
@@ -90,9 +88,7 @@ func TestSyncRunLifecycleStatusEnumOnEveryReachableReturn(t *testing.T) {
 			healthUserID:       "111111256096816351",
 			legacyFitbitUserID: "A1B2C3",
 		})
-		if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, runtime); err != nil {
-			t.Fatalf("connect setup: %v", err)
-		}
+		mustConnectSetup(t, configPath, archivePath, runtime)
 		runtime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 		runtime, _ = withStepSyncFetchFake(t, runtime, "connect-access-secret", map[string]string{
 			"": `{"dataPoints":[]}`,
@@ -257,17 +253,12 @@ func TestRetryFinalizeSyncRunExhaustsBudgetAndReturnsTypedError(t *testing.T) {
 // no dangling sync_running row.
 func TestConcurrentSyncRunsLeaveNoSyncRunningRows(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	seedRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, _ := connectedArchiveViaSetup(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, seedRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
 
 	runSync := func(dataType, from, to, accessToken string, pages map[string]string) (syncResult, error) {
 		runtime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -390,9 +381,7 @@ func TestSyncRunLifecycleConvertsBusyExhaustedToFailedWithRecoveryRow(t *testing
 	// budget*backoffCap of wallclock per scenario (#283: injected via
 	// the adapters, not package state).
 	testRuntime.sleep = func(time.Duration) {}
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 
 	busyExhausted := &errFinalizeSyncRunBusyExhausted{attempts: finalizeSyncRunRetryBudget, cause: errors.New("database is locked")}
@@ -514,9 +503,7 @@ func TestSyncRunLifecycleRecoveryWriteAlsoRetriesOnBusy(t *testing.T) {
 	// budget*backoffCap of wallclock per scenario (#283: injected via
 	// the adapters, not package state).
 	testRuntime.sleep = func(time.Duration) {}
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 
 	busyExhausted := &errFinalizeSyncRunBusyExhausted{attempts: finalizeSyncRunRetryBudget, cause: errors.New("database is locked")}
@@ -577,9 +564,7 @@ func TestSyncRunLifecycleRecoveryBudgetExhaustedReturnsTypedError(t *testing.T) 
 	// budget*backoffCap of wallclock per scenario (#283: injected via
 	// the adapters, not package state).
 	testRuntime.sleep = func(time.Duration) {}
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 
 	busyExhausted := &errFinalizeSyncRunBusyExhausted{attempts: finalizeSyncRunRetryBudget, cause: errors.New("database is locked")}
@@ -638,9 +623,7 @@ func TestSyncRunLifecycleCanceledOutcomePreservedThroughRecovery(t *testing.T) {
 	// budget*backoffCap of wallclock per scenario (#283: injected via
 	// the adapters, not package state).
 	testRuntime.sleep = func(time.Duration) {}
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 
 	busyExhausted := &errFinalizeSyncRunBusyExhausted{attempts: finalizeSyncRunRetryBudget, cause: errors.New("database is locked")}
@@ -713,17 +696,12 @@ func TestSyncRunLifecycleCanceledOutcomePreservedThroughRecovery(t *testing.T) {
 // SQLITE_BUSY path must actually execute.
 func TestConcurrentSyncRunsForceSQLiteBusyContention(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	seedRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	_, archivePath, _ := connectedArchiveViaSetup(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, seedRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
 
 	// Open a competing writer handle and grab a BEGIN IMMEDIATE write
 	// lock by inserting into the existing sync_cursors table (any

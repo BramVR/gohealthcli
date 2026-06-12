@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -88,5 +90,22 @@ func TestHealthArchiveReaderHonorsCanceledContext(t *testing.T) {
 	}
 	if _, err := reader.ExportRows(ctx, exportDatasetSpecs["daily-steps"]); !errors.Is(err, context.Canceled) {
 		t.Fatalf("ExportRows with canceled context = %v, want context.Canceled", err)
+	}
+}
+
+func TestCountArchiveRowsRejectsUnknownTable(t *testing.T) {
+	t.Parallel()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open memory archive: %v", err)
+	}
+	defer db.Close()
+
+	_, err = countArchiveRows(context.Background(), db, "data_points; DROP TABLE data_points")
+	if err == nil {
+		t.Fatal("countArchiveRows error = nil, want unsupported table")
+	}
+	if !strings.Contains(err.Error(), "unsupported Health Archive table") {
+		t.Fatalf("countArchiveRows error = %v, want unsupported table", err)
 	}
 }

@@ -25,11 +25,7 @@ func TestDailyVo2MaxViewProjectsScalars(t *testing.T) {
 		rawJSON:      `{"dailyVo2Max":{"date":{"year":2026,"month":6,"day":7},"vo2Max":52.72084217366443,"cardioFitnessLevel":"VERY_GOOD","vo2MaxCovariance":0.76340626688998781}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
 	var civilDate, vo2Max, cardioLevel, covariance string
 	if err := db.QueryRowContext(context.Background(), `SELECT civil_date, vo2_max, cardio_fitness_level, vo2_max_covariance FROM daily_vo2_max`).Scan(&civilDate, &vo2Max, &cardioLevel, &covariance); err != nil {
@@ -78,11 +74,7 @@ func TestDailyHeartRateZonesViewExplodesEachZone(t *testing.T) {
 		]}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
 	rows, err := db.QueryContext(context.Background(), `SELECT civil_date, heart_rate_zone_type, min_beats_per_minute, max_beats_per_minute FROM daily_heart_rate_zones ORDER BY heart_rate_zone_type`)
 	if err != nil {
@@ -142,11 +134,7 @@ func TestDailySleepTemperatureDerivationsViewProjectsScalars(t *testing.T) {
 		rawJSON:      `{"dailySleepTemperatureDerivations":{"date":{"year":2026,"month":6,"day":7},"nightlyTemperatureCelsius":36.4,"baselineTemperatureCelsius":36.7,"relativeNightlyStddev30dCelsius":0.25}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
 	var civilDate, nightly, baseline, stddev string
 	if err := db.QueryRowContext(context.Background(), `SELECT civil_date, nightly_temperature_celsius, baseline_temperature_celsius, relative_nightly_stddev_30d_celsius FROM daily_sleep_temperature_derivations`).Scan(&civilDate, &nightly, &baseline, &stddev); err != nil {
@@ -181,11 +169,7 @@ func TestRespiratoryRateSleepSummaryViewProjectsPerStageScalars(t *testing.T) {
 		rawJSON:      `{"respiratoryRateSleepSummary":{"sampleTime":{"physicalTime":"2026-06-01T05:18:30Z"},"deepSleepStats":{"breathsPerMinute":13.4},"lightSleepStats":{"breathsPerMinute":13.6},"remSleepStats":{"breathsPerMinute":14.2},"fullSleepStats":{"breathsPerMinute":13.4}}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
 	var sampleTime, civilDate, full, deep, light, rem string
 	if err := db.QueryRowContext(context.Background(), `SELECT sample_time_utc, civil_date, full_sleep_breaths_per_minute, deep_sleep_breaths_per_minute, light_sleep_breaths_per_minute, rem_sleep_breaths_per_minute FROM respiratory_rate_sleep_summary`).Scan(&sampleTime, &civilDate, &full, &deep, &light, &rem); err != nil {
@@ -226,11 +210,7 @@ func TestHydrationLogSessionsViewProjectsVolume(t *testing.T) {
 		rawJSON:      `{"hydrationLog":{"interval":{"startTime":"2026-06-07T10:00:00Z","endTime":"2026-06-07T10:00:00Z","startUtcOffset":"7200s","endUtcOffset":"7200s"},"volume":{"liters":0.25}}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
 	var startTime, endTime, civilDate, liters, platform string
 	if err := db.QueryRowContext(context.Background(), `SELECT start_time_utc, end_time_utc, civil_date, volume_liters, source_platform FROM hydration_log_sessions`).Scan(&startTime, &endTime, &civilDate, &liters, &platform); err != nil {

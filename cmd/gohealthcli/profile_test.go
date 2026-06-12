@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -23,17 +26,12 @@ import (
 // keeping the test honest without manual edits.
 func TestProfileCommandFailsFastWhenScopeMissing(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	// Strip every scope the catalog ties to getProfile from the
 	// stored Connection so AccessToken's scope pre-check fails. Using
@@ -113,9 +111,7 @@ func TestProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	// Ensure the stored Connection carries every scope the catalog
 	// requires for getProfile, so this test still exercises auto-refresh
 	// after slice 2 (#176) revises the catalog away from the default-granted
@@ -134,25 +130,12 @@ func TestProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// once" contract is guarded against a regression where retries
 	// would silently double-rotate the stored token.
 	refreshCalls := 0
-	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-		refreshCalls++
-		if refreshToken != "connect-refresh-secret" {
-			t.Fatalf("refresh token = %q, want connect-refresh-secret", refreshToken)
-		}
-		return oauthTokenResponse{
-			accessToken:  "rotated-access-secret",
-			refreshToken: "connect-refresh-secret",
-			tokenType:    "Bearer",
-			scopes:       fallbackScopes,
-			expiresAt:    refreshedExpiresAt,
-			rawTokenMaterialObject: map[string]any{
-				"access_token":  "rotated-access-secret",
-				"refresh_token": "connect-refresh-secret",
-				"token_type":    "Bearer",
-				"expires_in":    float64(3600),
-			},
-		}, nil
-	}
+	bindRefreshOAuthTokenFake(t, &testRuntime, fakeRefreshConfig{
+		wantRefreshToken: "connect-refresh-secret",
+		accessToken:      "rotated-access-secret",
+		expiresAt:        refreshedExpiresAt,
+		calls:            &refreshCalls,
+	})
 
 	// profile reaches the Provider through runtime.fetchProfile, so the
 	// auto-refresh path's stub lives on the runtime adapters; without it
@@ -197,16 +180,283 @@ func TestProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// A new identity_snapshots row with snapshot_kind = 'profile'
 	// must exist so the auto-refresh path doesn't silently skip the
 	// archive write the AC requires.
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var snapshotCount int
 	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM identity_snapshots WHERE snapshot_kind = 'profile'`).Scan(&snapshotCount); err != nil {
 		t.Fatalf("count profile snapshots: %v", err)
 	}
 	if snapshotCount != 1 {
 		t.Fatalf("profile snapshot count = %d, want 1", snapshotCount)
+	}
+}
+
+func TestProfileArchivesSnapshotAndPrintsSummary(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		now:                time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC),
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	bindProfileFetchFake(t, &testRuntime, "connect-access-secret", googleProfile{
+		healthUserID: "111111256096816351",
+		rawJSON:      `{"name":"users/111111256096816351/profile","profile":{"unit":"metric"}}`,
+	}, nil)
+	testRuntime.now = func() time.Time {
+		return time.Date(2026, 6, 1, 10, 30, 0, 0, time.UTC)
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
+	if code != 0 {
+		t.Fatalf("profile exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "profile_archived")
+	assertJSONString(t, got, "connection_id", "googlehealth:111111256096816351")
+	assertJSONString(t, got, "provider_name", "googlehealth")
+	assertJSONString(t, got, "google_health_user_id", "111111256096816351")
+	assertJSONString(t, got, "legacy_fitbit_user_id", "A1B2C3")
+	assertJSONString(t, got, "fetched_at", "2026-06-01T10:30:00Z")
+	snapshotID, ok := got["snapshot_id"].(float64)
+	if !ok || snapshotID != 1 {
+		t.Fatalf("snapshot_id = %T(%v), want 1", got["snapshot_id"], got["snapshot_id"])
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+
+	db := openArchiveForTest(t, archivePath)
+	var providerName, connectionID, rawJSON, fetchedAt string
+	if err := db.QueryRowContext(context.Background(), `SELECT provider_name, connection_id, raw_json, fetched_at FROM identity_snapshots WHERE id = ?`, 1).Scan(&providerName, &connectionID, &rawJSON, &fetchedAt); err != nil {
+		t.Fatalf("query profile snapshot: %v", err)
+	}
+	if providerName != "googlehealth" || connectionID != "googlehealth:111111256096816351" {
+		t.Fatalf("snapshot owner = (%q, %q), want archived Connection", providerName, connectionID)
+	}
+	if rawJSON != `{"name":"users/111111256096816351/profile","profile":{"unit":"metric"}}` {
+		t.Fatalf("raw_json = %s, want provider profile JSON", rawJSON)
+	}
+	if fetchedAt != "2026-06-01T10:30:00Z" {
+		t.Fatalf("fetched_at = %q, want fixed timestamp", fetchedAt)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 0)
+	assertArchiveTableCount(t, archivePath, "rollups", 0)
+}
+
+func TestProfilePlainIncludesStableSnapshotFields(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		now:                time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC),
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	bindProfileFetchFake(t, &testRuntime, "connect-access-secret", googleProfile{
+		healthUserID: "111111256096816351",
+		rawJSON:      `{"name":"users/111111256096816351/profile"}`,
+	}, nil)
+	testRuntime.now = func() time.Time {
+		return time.Date(2026, 6, 1, 10, 30, 0, 0, time.UTC)
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{"profile", "--config", configPath, "--db", archivePath, "--plain"}, stdout, stderr, testRuntime)
+	if code != 0 {
+		t.Fatalf("profile exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	want := "status: profile_archived\nsnapshot_id: 1\nconnection_id: googlehealth:111111256096816351\nprovider_name: googlehealth\ngoogle_health_user_id: 111111256096816351\nlegacy_fitbit_user_id: A1B2C3\nfetched_at: 2026-06-01T10:30:00Z\nmessage: Profile Snapshot archived\n"
+	if stdout.String() != want {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestProfileProviderFailureDoesNotArchiveSnapshot(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	bindProfileFetchFake(t, &testRuntime, "connect-access-secret", googleProfile{}, errors.New("Google Health profile request failed with HTTP 503"))
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
+	if code != 1 {
+		t.Fatalf("profile exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "profile_failed")
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, "HTTP 503") {
+		t.Fatalf("message = %T(%v), want provider status", got["message"], got["message"])
+	}
+	if _, ok := got["snapshot_id"]; ok {
+		t.Fatalf("snapshot_id = %v, want omitted on failure", got["snapshot_id"])
+	}
+	assertArchiveTableCount(t, archivePath, "identity_snapshots", 0)
+	assertArchiveTableCount(t, archivePath, "data_points", 0)
+	assertArchiveTableCount(t, archivePath, "rollups", 0)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+	if strings.Contains(stdout.String()+stderr.String(), "connect-access-secret") || strings.Contains(stdout.String()+stderr.String(), "connect-refresh-secret") {
+		t.Fatalf("profile output leaked token material:\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
+	}
+}
+
+func TestProfileFailsBeforeProviderWhenProfileScopeMissing(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	setConnectionTokenScopes(t, archivePath, []string{googleHealthActivityReadonlyScope})
+	testRuntime.fetchProfile = func(accessToken string) (googleProfile, error) {
+		t.Fatalf("profile fetch should not be called when profile scope is missing")
+		return googleProfile{}, nil
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
+	if code != 1 {
+		t.Fatalf("profile exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	message, ok := got["message"].(string)
+	if !ok || !strings.Contains(message, googleHealthProfileReadonlyScope) || !strings.Contains(message, "connect") {
+		t.Fatalf("message = %T(%v), want profile-scope reconnect guidance", got["message"], got["message"])
+	}
+	assertArchiveTableCount(t, archivePath, "identity_snapshots", 0)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestProfileRejectsAliasProfileWhenIdentityVerificationDiffers(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	bindProfileFetchFake(t, &testRuntime, "connect-access-secret", googleProfile{
+		rawJSON: `{"name":"users/me/profile","profile":{"unit":"metric"}}`,
+	}, nil)
+	bindIdentityFetchFake(t, &testRuntime, "connect-access-secret", googleIdentity{
+		healthUserID:       "222222222222222222",
+		legacyFitbitUserID: "Z9Y8X7",
+		rawJSON:            `{"healthUserId":"222222222222222222","legacyUserId":"Z9Y8X7"}`,
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
+	if code != 1 {
+		t.Fatalf("profile exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "profile_mismatch")
+	if _, ok := got["snapshot_id"]; ok {
+		t.Fatalf("snapshot_id = %v, want omitted on mismatch", got["snapshot_id"])
+	}
+	assertArchiveTableCount(t, archivePath, "identity_snapshots", 0)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestProfileRejectsDifferentGoogleIdentityWithoutArchiving(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	bindProfileFetchFake(t, &testRuntime, "connect-access-secret", googleProfile{
+		healthUserID: "222222222222222222",
+		rawJSON:      `{"name":"users/222222222222222222/profile"}`,
+	}, nil)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{"profile", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
+	if code != 1 {
+		t.Fatalf("profile exit code = %d, want 1", code)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "profile_mismatch")
+	assertJSONString(t, got, "connection_id", "googlehealth:111111256096816351")
+	if _, ok := got["snapshot_id"]; ok {
+		t.Fatalf("snapshot_id = %v, want omitted on mismatch", got["snapshot_id"])
+	}
+	assertArchiveTableCount(t, archivePath, "identity_snapshots", 0)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestFetchGoogleProfileUsesProfileEndpoint(t *testing.T) {
+	t.Parallel()
+	var gotURL string
+	doer := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		gotURL = request.URL.String()
+		if request.Header.Get("Authorization") != "Bearer access-secret-value" {
+			t.Fatalf("Authorization = %q, want bearer token", request.Header.Get("Authorization"))
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"name":"users/111111256096816351/profile","userConfiguredWalkingStrideLengthMm":720}`)),
+		}, nil
+	})}
+
+	profile, err := fetchGoogleProfile(providerGET{doer: doer}, "access-secret-value")
+	if err != nil {
+		t.Fatalf("fetch profile: %v", err)
+	}
+	if gotURL != googleHealthProfileURL {
+		t.Fatalf("profile URL = %q, want %q", gotURL, googleHealthProfileURL)
+	}
+	if profile.healthUserID != "111111256096816351" || profile.resourceName != "users/111111256096816351/profile" {
+		t.Fatalf("profile = (%q, %q), want response profile", profile.healthUserID, profile.resourceName)
+	}
+	if !strings.Contains(profile.rawJSON, "userConfiguredWalkingStrideLengthMm") {
+		t.Fatalf("profile raw JSON = %s, want profile payload", profile.rawJSON)
 	}
 }
