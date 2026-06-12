@@ -1178,7 +1178,7 @@ func TestDoctorOnlineRefreshesExpiredTokenAndChecksProvider(t *testing.T) {
 
 func TestDoctorOnlineReportsRefreshFailureAsConnectionHealth(t *testing.T) {
 	t.Parallel()
-	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+	configPath, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
 		accessToken:        "old-access-secret",
 		refreshToken:       "refresh-secret-value",
@@ -1186,7 +1186,7 @@ func TestDoctorOnlineReportsRefreshFailureAsConnectionHealth(t *testing.T) {
 		legacyFitbitUserID: "A1B2C3",
 	})
 	setConnectionTokenExpiry(t, archivePath, "2026-05-31T21:00:00Z")
-	testRuntime = newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
+	testRuntime := newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
 		now:                  time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
 		wantRefreshToken:     "refresh-secret-value",
 		refreshErr:           errors.New("OAuth token refresh failed with HTTP 400"),
@@ -1216,14 +1216,14 @@ func TestDoctorOnlineReportsRefreshFailureAsConnectionHealth(t *testing.T) {
 
 func TestDoctorOnlineValidatesRefreshWhenAccessTokenIsCurrent(t *testing.T) {
 	t.Parallel()
-	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+	configPath, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
 		accessToken:        "current-access-secret",
 		refreshToken:       "refresh-secret-value",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	testRuntime = newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
+	testRuntime := newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
 		now:                  time.Date(2026, 5, 31, 20, 30, 0, 0, time.UTC),
 		wantRefreshToken:     "refresh-secret-value",
 		refreshErr:           errors.New("OAuth token refresh failed with HTTP 400"),
@@ -1487,7 +1487,7 @@ func TestPersistDoctorOnlineRefreshedTokenRollsBackOnMetadataFailure(t *testing.
 
 func TestDoctorDefaultDoesNotRefreshOrCallProvider(t *testing.T) {
 	t.Parallel()
-	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+	configPath, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
@@ -1495,7 +1495,7 @@ func TestDoctorDefaultDoesNotRefreshOrCallProvider(t *testing.T) {
 		legacyFitbitUserID: "A1B2C3",
 	})
 	setConnectionTokenExpiry(t, archivePath, "2026-05-31T19:00:00Z")
-	testRuntime = newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
+	testRuntime := newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
 		now:                  time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
 		failRefreshIfCalled:  true,
 		failProviderIfCalled: true,
