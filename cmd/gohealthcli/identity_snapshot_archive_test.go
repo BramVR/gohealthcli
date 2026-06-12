@@ -68,7 +68,7 @@ func TestIdentitySnapshotArchiveInsertAndLatestRoundTrip(t *testing.T) {
 	}
 	defer archive.Close()
 
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		t.Fatalf("read current Connection: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestIdentitySnapshotArchiveLatestFiltersByKind(t *testing.T) {
 		t.Fatalf("open archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		t.Fatalf("read current Connection: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestProfileCommandWritesViaIdentitySnapshotArchive(t *testing.T) {
 		t.Fatalf("open identity snapshot archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		t.Fatalf("read current Connection: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestSettingsCommandArchivesSnapshotWithKindSettings(t *testing.T) {
 		t.Fatalf("open identity snapshot archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		t.Fatalf("read current Connection: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestCurrentSettingsViewProjectsLatestSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		archive.Close()
 		t.Fatalf("read current Connection: %v", err)
@@ -352,7 +352,7 @@ func TestIdentitySnapshotArchiveLatestUsesFetchedAtForRecency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		archive.Close()
 		t.Fatalf("read current Connection: %v", err)

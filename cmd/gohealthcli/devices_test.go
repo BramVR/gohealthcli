@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"strings"
@@ -126,7 +127,7 @@ func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		archive.Close()
 		t.Fatalf("read current Connection: %v", err)
@@ -205,7 +206,7 @@ func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		archive.Close()
 		t.Fatalf("read current Connection: %v", err)
@@ -272,7 +273,7 @@ func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
 		t.Fatalf("open identity snapshot archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		t.Fatalf("read current Connection: %v", err)
 	}

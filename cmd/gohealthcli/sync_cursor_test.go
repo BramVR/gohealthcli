@@ -25,12 +25,12 @@ func TestStatusSurfacesCursorOnlyDataTypeWithZeroCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open writer: %v", err)
 	}
-	connection, err := archive.CurrentConnection()
+	connection, err := archive.CurrentConnection(context.Background())
 	if err != nil {
 		archive.Close()
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	if err := archive.CommitSyncCursor(syncCursorKey{
+	if err := archive.CommitSyncCursor(context.Background(), syncCursorKey{
 		connectionID: connection.id,
 		dataType:     "blood-glucose",
 		rollupKind:   syncCursorRollupKindNone,
@@ -86,11 +86,11 @@ func TestSyncCursorResolveReturnsZeroWhenNoCursorExists(t *testing.T) {
 		t.Fatalf("open writer: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := archive.CurrentConnection(context.Background())
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	cursorTime, found, err := archive.ResolveSyncCursor(syncCursorKey{
+	cursorTime, found, err := archive.ResolveSyncCursor(context.Background(), syncCursorKey{
 		connectionID: connection.id,
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,
@@ -121,7 +121,7 @@ func TestSyncCursorCommitOnlyAdvancesOnSyncCompleted(t *testing.T) {
 		t.Fatalf("open writer: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := archive.CurrentConnection(context.Background())
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
@@ -132,53 +132,53 @@ func TestSyncCursorCommitOnlyAdvancesOnSyncCompleted(t *testing.T) {
 	}
 
 	// Failed commit before any cursor exists must not create one.
-	if err := archive.CommitSyncCursor(key, syncRunOutcomeFailed, "2026-01-05T00:00:00Z", "2026-01-05T01:00:00Z"); err != nil {
+	if err := archive.CommitSyncCursor(context.Background(), key, syncRunOutcomeFailed, "2026-01-05T00:00:00Z", "2026-01-05T01:00:00Z"); err != nil {
 		t.Fatalf("CommitSyncCursor(failed): %v", err)
 	}
-	if _, found, err := archive.ResolveSyncCursor(key); err != nil || found {
+	if _, found, err := archive.ResolveSyncCursor(context.Background(), key); err != nil || found {
 		t.Fatalf("after failed commit: found=%v err=%v, want absent", found, err)
 	}
 
 	// Canceled commit before any cursor exists must also not create one.
-	if err := archive.CommitSyncCursor(key, syncRunOutcomeCanceled, "2026-01-05T00:00:00Z", "2026-01-05T01:00:00Z"); err != nil {
+	if err := archive.CommitSyncCursor(context.Background(), key, syncRunOutcomeCanceled, "2026-01-05T00:00:00Z", "2026-01-05T01:00:00Z"); err != nil {
 		t.Fatalf("CommitSyncCursor(canceled): %v", err)
 	}
-	if _, found, err := archive.ResolveSyncCursor(key); err != nil || found {
+	if _, found, err := archive.ResolveSyncCursor(context.Background(), key); err != nil || found {
 		t.Fatalf("after canceled commit: found=%v err=%v, want absent", found, err)
 	}
 
 	// Completed commit advances the cursor.
-	if err := archive.CommitSyncCursor(key, syncRunOutcomeCompleted, "2026-01-05T00:00:00Z", "2026-01-05T01:00:00Z"); err != nil {
+	if err := archive.CommitSyncCursor(context.Background(), key, syncRunOutcomeCompleted, "2026-01-05T00:00:00Z", "2026-01-05T01:00:00Z"); err != nil {
 		t.Fatalf("CommitSyncCursor(completed): %v", err)
 	}
-	cursorTime, found, err := archive.ResolveSyncCursor(key)
+	cursorTime, found, err := archive.ResolveSyncCursor(context.Background(), key)
 	if err != nil || !found || cursorTime != "2026-01-05T00:00:00Z" {
 		t.Fatalf("after completed commit: cursorTime=%q found=%v err=%v, want 2026-01-05T00:00:00Z", cursorTime, found, err)
 	}
 
 	// A subsequent failed commit must not move the cursor backwards.
-	if err := archive.CommitSyncCursor(key, syncRunOutcomeFailed, "2026-01-10T00:00:00Z", "2026-01-10T01:00:00Z"); err != nil {
+	if err := archive.CommitSyncCursor(context.Background(), key, syncRunOutcomeFailed, "2026-01-10T00:00:00Z", "2026-01-10T01:00:00Z"); err != nil {
 		t.Fatalf("CommitSyncCursor(failed after completed): %v", err)
 	}
-	cursorTime, _, _ = archive.ResolveSyncCursor(key)
+	cursorTime, _, _ = archive.ResolveSyncCursor(context.Background(), key)
 	if cursorTime != "2026-01-05T00:00:00Z" {
 		t.Fatalf("after failed commit: cursorTime=%q, want unchanged 2026-01-05T00:00:00Z", cursorTime)
 	}
 
 	// A subsequent canceled commit must not move the cursor either.
-	if err := archive.CommitSyncCursor(key, syncRunOutcomeCanceled, "2026-01-12T00:00:00Z", "2026-01-12T01:00:00Z"); err != nil {
+	if err := archive.CommitSyncCursor(context.Background(), key, syncRunOutcomeCanceled, "2026-01-12T00:00:00Z", "2026-01-12T01:00:00Z"); err != nil {
 		t.Fatalf("CommitSyncCursor(canceled after completed): %v", err)
 	}
-	cursorTime, _, _ = archive.ResolveSyncCursor(key)
+	cursorTime, _, _ = archive.ResolveSyncCursor(context.Background(), key)
 	if cursorTime != "2026-01-05T00:00:00Z" {
 		t.Fatalf("after canceled commit: cursorTime=%q, want unchanged 2026-01-05T00:00:00Z", cursorTime)
 	}
 
 	// Another completed commit advances the cursor forward.
-	if err := archive.CommitSyncCursor(key, syncRunOutcomeCompleted, "2026-01-20T00:00:00Z", "2026-01-20T01:00:00Z"); err != nil {
+	if err := archive.CommitSyncCursor(context.Background(), key, syncRunOutcomeCompleted, "2026-01-20T00:00:00Z", "2026-01-20T01:00:00Z"); err != nil {
 		t.Fatalf("CommitSyncCursor(completed advance): %v", err)
 	}
-	cursorTime, _, _ = archive.ResolveSyncCursor(key)
+	cursorTime, _, _ = archive.ResolveSyncCursor(context.Background(), key)
 	if cursorTime != "2026-01-20T00:00:00Z" {
 		t.Fatalf("after second completed commit: cursorTime=%q, want 2026-01-20T00:00:00Z", cursorTime)
 	}
@@ -301,11 +301,11 @@ func TestSyncRunExecutorDoesNotCreateCursorWhenFirstRunFails(t *testing.T) {
 		t.Fatalf("reopen archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := archive.CurrentConnection(context.Background())
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	if _, found, err := archive.ResolveSyncCursor(syncCursorKey{
+	if _, found, err := archive.ResolveSyncCursor(context.Background(), syncCursorKey{
 		connectionID: connection.id,
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,
@@ -419,13 +419,13 @@ type fakeFinalizeWriter struct {
 	failOn func(outcome syncRunOutcome) error
 }
 
-func (writer fakeFinalizeWriter) FinalizeSyncRun(finalize syncRunFinalize) error {
+func (writer fakeFinalizeWriter) FinalizeSyncRun(ctx context.Context, finalize syncRunFinalize) error {
 	if writer.failOn != nil {
 		if err := writer.failOn(finalize.Outcome); err != nil {
 			return err
 		}
 	}
-	return writer.healthArchiveWriter.FinalizeSyncRun(finalize)
+	return writer.healthArchiveWriter.FinalizeSyncRun(context.Background(), finalize)
 }
 
 func failOnEveryOutcome(err error) func(syncRunOutcome) error {
@@ -467,11 +467,11 @@ func TestArchiveFinalizeSyncRunAtomicallyCommitsRunAndCursor(t *testing.T) {
 		t.Fatalf("open writer: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := archive.CurrentConnection(context.Background())
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	syncRunID, err := archive.StartSyncRun(syncRunStart{
+	syncRunID, err := archive.StartSyncRun(context.Background(), syncRunStart{
 		Connection:     connection,
 		DataTypes:      []string{"steps"},
 		From:           "2026-01-01",
@@ -488,7 +488,7 @@ func TestArchiveFinalizeSyncRunAtomicallyCommitsRunAndCursor(t *testing.T) {
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,
 	}
-	if err := archive.FinalizeSyncRun(syncRunFinalize{
+	if err := archive.FinalizeSyncRun(context.Background(), syncRunFinalize{
 		SyncRunID:      syncRunID,
 		Outcome:        syncRunOutcomeCompleted,
 		FinishedAt:     "2026-01-05T00:00:01Z",
@@ -500,7 +500,7 @@ func TestArchiveFinalizeSyncRunAtomicallyCommitsRunAndCursor(t *testing.T) {
 	}
 
 	assertSyncRunForDataType(t, archivePath, syncRunID, "sync_completed", "steps", "list", 0, 0, 0, "")
-	cursorTime, found, err := archive.ResolveSyncCursor(key)
+	cursorTime, found, err := archive.ResolveSyncCursor(context.Background(), key)
 	if err != nil || !found || cursorTime != "2026-01-02T00:00:00Z" {
 		t.Fatalf("after FinalizeSyncRun: cursor (%q, %v, %v), want 2026-01-02T00:00:00Z true nil", cursorTime, found, err)
 	}
@@ -534,11 +534,11 @@ func TestArchiveFinalizeSyncRunRollsBackRunStatusWhenCursorUpsertFails(t *testin
 		t.Fatalf("open writer: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := archive.CurrentConnection(context.Background())
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	syncRunID, err := archive.StartSyncRun(syncRunStart{
+	syncRunID, err := archive.StartSyncRun(context.Background(), syncRunStart{
 		Connection:     connection,
 		DataTypes:      []string{"steps"},
 		From:           "2026-01-01",
@@ -563,7 +563,7 @@ func TestArchiveFinalizeSyncRunRollsBackRunStatusWhenCursorUpsertFails(t *testin
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,
 	}
-	finalizeErr := archive.FinalizeSyncRun(syncRunFinalize{
+	finalizeErr := archive.FinalizeSyncRun(context.Background(), syncRunFinalize{
 		SyncRunID:      syncRunID,
 		Outcome:        syncRunOutcomeCompleted,
 		FinishedAt:     "2026-01-05T00:00:01Z",
@@ -614,11 +614,11 @@ func TestArchiveFinalizeSyncRunSkipsCursorAdvanceForNonCompletedOutcomes(t *test
 				t.Fatalf("open writer: %v", err)
 			}
 			defer archive.Close()
-			connection, err := archive.CurrentConnection()
+			connection, err := archive.CurrentConnection(context.Background())
 			if err != nil {
 				t.Fatalf("CurrentConnection: %v", err)
 			}
-			syncRunID, err := archive.StartSyncRun(syncRunStart{
+			syncRunID, err := archive.StartSyncRun(context.Background(), syncRunStart{
 				Connection:     connection,
 				DataTypes:      []string{"steps"},
 				From:           "2026-01-01",
@@ -631,7 +631,7 @@ func TestArchiveFinalizeSyncRunSkipsCursorAdvanceForNonCompletedOutcomes(t *test
 			}
 
 			key := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: syncCursorRollupKindNone}
-			if err := archive.FinalizeSyncRun(syncRunFinalize{
+			if err := archive.FinalizeSyncRun(context.Background(), syncRunFinalize{
 				SyncRunID:      syncRunID,
 				Outcome:        tc.outcome,
 				FinishedAt:     "2026-01-05T00:00:01Z",
@@ -644,7 +644,7 @@ func TestArchiveFinalizeSyncRunSkipsCursorAdvanceForNonCompletedOutcomes(t *test
 			}
 
 			assertSyncRunForDataType(t, archivePath, syncRunID, string(tc.outcome), "steps", "list", 0, 0, 0, "simulated")
-			if _, found, err := archive.ResolveSyncCursor(key); err != nil || found {
+			if _, found, err := archive.ResolveSyncCursor(context.Background(), key); err != nil || found {
 				t.Fatalf("cursor present after %s finalize: found=%v err=%v, want absent (ADR-0008)", tc.outcome, found, err)
 			}
 		})
@@ -710,11 +710,11 @@ func TestSyncRunSurfacesFailureWhenFinalizeFails(t *testing.T) {
 		t.Fatalf("reopen archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := archive.CurrentConnection(context.Background())
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	if _, found, err := archive.ResolveSyncCursor(syncCursorKey{
+	if _, found, err := archive.ResolveSyncCursor(context.Background(), syncCursorKey{
 		connectionID: connection.id,
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,
@@ -789,11 +789,11 @@ func TestSyncRunExecutorPreservesCursorOnFailedRun(t *testing.T) {
 		t.Fatalf("reopen archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := archive.CurrentConnection(context.Background())
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	cursorTime, found, err := archive.ResolveSyncCursor(syncCursorKey{
+	cursorTime, found, err := archive.ResolveSyncCursor(context.Background(), syncCursorKey{
 		connectionID: connection.id,
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,

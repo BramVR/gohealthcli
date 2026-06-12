@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 // TestSyncCursorRollupKindIndependence pins the #106 AC: the cursor
 // for (connection, dataType, sourceFamily, rollup_kind) resumes
@@ -27,7 +30,7 @@ func TestSyncCursorRollupKindIndependence(t *testing.T) {
 		t.Fatalf("open writer: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := archive.CurrentConnection(context.Background())
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
@@ -42,13 +45,13 @@ func TestSyncCursorRollupKindIndependence(t *testing.T) {
 	}
 	for _, kind := range kinds {
 		key := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: kind}
-		if err := archive.CommitSyncCursor(key, syncRunOutcomeCompleted, wantTo[kind], "2026-06-01T00:00:00Z"); err != nil {
+		if err := archive.CommitSyncCursor(context.Background(), key, syncRunOutcomeCompleted, wantTo[kind], "2026-06-01T00:00:00Z"); err != nil {
 			t.Fatalf("CommitSyncCursor %s: %v", kind, err)
 		}
 	}
 	for _, kind := range kinds {
 		key := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: kind}
-		got, found, err := archive.ResolveSyncCursor(key)
+		got, found, err := archive.ResolveSyncCursor(context.Background(), key)
 		if err != nil {
 			t.Fatalf("ResolveSyncCursor %s: %v", kind, err)
 		}
@@ -63,12 +66,12 @@ func TestSyncCursorRollupKindIndependence(t *testing.T) {
 
 	// Advancing one cursor must not affect the others.
 	advanced := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: "hourly"}
-	if err := archive.CommitSyncCursor(advanced, syncRunOutcomeCompleted, "2026-07-01T00:00:00Z", "2026-07-02T00:00:00Z"); err != nil {
+	if err := archive.CommitSyncCursor(context.Background(), advanced, syncRunOutcomeCompleted, "2026-07-01T00:00:00Z", "2026-07-02T00:00:00Z"); err != nil {
 		t.Fatalf("re-advance hourly: %v", err)
 	}
 	for _, kind := range kinds {
 		key := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: kind}
-		got, _, err := archive.ResolveSyncCursor(key)
+		got, _, err := archive.ResolveSyncCursor(context.Background(), key)
 		if err != nil {
 			t.Fatalf("post-advance ResolveSyncCursor %s: %v", kind, err)
 		}

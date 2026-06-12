@@ -712,7 +712,7 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 		}
 		result.AttachmentRootPath = attachmentRoot
 		result.AttachmentRootMode = attachmentMode
-		attachments, attachmentsErr := collectAttachmentOrphans(common.ArchivePath)
+		attachments, attachmentsErr := collectAttachmentOrphans(context.Background(), common.ArchivePath)
 		if attachmentsErr != nil {
 			return runDoctorInvalid(common.ConfigPath, common.ArchivePath, attachmentsErr.Error(), mode, stdout, stderr)
 		}
@@ -1554,7 +1554,7 @@ func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtim
 	}
 	result.AttachmentRootPath = attachmentRoot
 	result.AttachmentRootMode = attachmentMode
-	attachments, attachmentsErr := collectAttachmentOrphans(archivePath)
+	attachments, attachmentsErr := collectAttachmentOrphans(context.Background(), archivePath)
 	if attachmentsErr != nil {
 		result.Status = "setup_invalid"
 		return result, attachmentsErr

@@ -13,15 +13,21 @@ import (
 )
 
 type googleHealthIngestionArchive interface {
-	UpsertDataPoint(point archivedDataPoint, now string) (string, error)
-	UpsertRollup(rollup archivedRollup, now string) (string, error)
+	// The archive writes carry a context (#305), but the pagination
+	// drivers deliberately pass a WithoutCancel-derived one: a page that
+	// was already fetched is archived in full before cancellation lands
+	// at the next loop boundary, so SIGINT never discards paid-for
+	// upstream data (TestSyncOrchestratorCancelsActiveDataTypeMidPagination
+	// pins this; upsert dedupe absorbs the overlap on resume).
+	UpsertDataPoint(ctx context.Context, point archivedDataPoint, now string) (string, error)
+	UpsertRollup(ctx context.Context, rollup archivedRollup, now string) (string, error)
 	// StoreAttachment is invoked by the TCX-ingestion hook for #107
 	// slice D: after upserting an exercise Data Point, the ingestion
 	// calls this with the just-upserted point + the bytes returned by
 	// `users.dataTypes.dataPoints.exportExerciseTcx`. The archive impl
 	// resolves the data_point row id from the point's identity columns
 	// and writes the sidecar via the Attachment Store (ADR-0009).
-	StoreAttachment(point archivedDataPoint, kind string, payload []byte, fetchedAt string) error
+	StoreAttachment(ctx context.Context, point archivedDataPoint, kind string, payload []byte, fetchedAt string) error
 }
 
 type googleHealthIngestionProvider interface {
@@ -236,6 +242,9 @@ func (ingestion googleHealthIngestion) executeDailyRollupPages(ctx context.Conte
 	if err != nil {
 		return err
 	}
+	// archiveCtx: see googleHealthIngestionArchive — page archiving is
+	// not a cancellation point.
+	archiveCtx := context.WithoutCancel(ctx)
 	for _, window := range windows {
 		seenPageTokens := map[string]struct{}{}
 		for pageToken := ""; ; {
@@ -263,7 +272,7 @@ func (ingestion googleHealthIngestion) executeDailyRollupPages(ctx context.Conte
 				if err != nil {
 					return err
 				}
-				status, err := archive.UpsertRollup(rollup, ingestion.now().UTC().Format(time.RFC3339))
+				status, err := archive.UpsertRollup(archiveCtx, rollup, ingestion.now().UTC().Format(time.RFC3339))
 				if err != nil {
 					return err
 				}
@@ -295,6 +304,9 @@ func (ingestion googleHealthIngestion) executeDailyRollupPages(ctx context.Conte
 // not need the 90-day client-side window split that dailyRollUp does.
 func (ingestion googleHealthIngestion) executeWindowRollupPages(ctx context.Context, archive googleHealthIngestionArchive, request googleHealthIngestionRequest, spec syncRollupSpec, result *googleHealthIngestionResult) error {
 	windowSize := fmt.Sprintf("%ds", int64(spec.windowSize.Seconds()))
+	// archiveCtx: see googleHealthIngestionArchive — page archiving is
+	// not a cancellation point.
+	archiveCtx := context.WithoutCancel(ctx)
 	seenPageTokens := map[string]struct{}{}
 	for pageToken := ""; ; {
 		if ctx.Err() != nil {
@@ -321,7 +333,7 @@ func (ingestion googleHealthIngestion) executeWindowRollupPages(ctx context.Cont
 			if err != nil {
 				return err
 			}
-			status, err := archive.UpsertRollup(rollup, ingestion.now().UTC().Format(time.RFC3339))
+			status, err := archive.UpsertRollup(archiveCtx, rollup, ingestion.now().UTC().Format(time.RFC3339))
 			if err != nil {
 				return err
 			}
@@ -346,6 +358,9 @@ func (ingestion googleHealthIngestion) executeWindowRollupPages(ctx context.Cont
 }
 
 func (ingestion googleHealthIngestion) executeDataPointPages(ctx context.Context, archive googleHealthIngestionArchive, request googleHealthIngestionRequest, result *googleHealthIngestionResult) error {
+	// archiveCtx: see googleHealthIngestionArchive — page archiving is
+	// not a cancellation point.
+	archiveCtx := context.WithoutCancel(ctx)
 	seenPageTokens := map[string]struct{}{}
 	for pageToken := ""; ; {
 		if ctx.Err() != nil {
@@ -373,7 +388,7 @@ func (ingestion googleHealthIngestion) executeDataPointPages(ctx context.Context
 				return err
 			}
 			now := ingestion.now().UTC().Format(time.RFC3339)
-			status, err := archive.UpsertDataPoint(point, now)
+			status, err := archive.UpsertDataPoint(archiveCtx, point, now)
 			if err != nil {
 				return err
 			}
@@ -500,7 +515,9 @@ func (ingestion googleHealthIngestion) attachExerciseTcxIfAvailable(ctx context.
 		// archive a zero-byte sidecar.
 		return nil
 	}
-	return archive.StoreAttachment(point, "tcx", payload, fetchedAt)
+	// WithoutCancel: the sidecar write belongs to the already-fetched
+	// page — see googleHealthIngestionArchive.
+	return archive.StoreAttachment(context.WithoutCancel(ctx), point, "tcx", payload, fetchedAt)
 }
 
 // unwrapExerciseTcxResponse extracts the raw TCX XML from Google's

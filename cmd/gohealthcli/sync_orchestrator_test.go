@@ -183,11 +183,11 @@ func TestSyncOrchestratorRespectsCancellationBetweenDataTypes(t *testing.T) {
 		t.Fatalf("open archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := archive.CurrentConnection(context.Background())
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	if _, found, err := archive.ResolveSyncCursor(syncCursorKey{
+	if _, found, err := archive.ResolveSyncCursor(context.Background(), syncCursorKey{
 		connectionID: connection.id,
 		dataType:     "heart-rate",
 		rollupKind:   syncCursorRollupKindNone,
@@ -406,11 +406,11 @@ func TestSyncOrchestratorCancelsActiveDataTypeMidPagination(t *testing.T) {
 		t.Fatalf("open archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := archive.CurrentConnection(context.Background())
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	if _, found, err := archive.ResolveSyncCursor(syncCursorKey{
+	if _, found, err := archive.ResolveSyncCursor(context.Background(), syncCursorKey{
 		connectionID: connection.id,
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,

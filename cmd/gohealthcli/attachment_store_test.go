@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -42,7 +43,7 @@ func TestAttachmentStoreStoreWritesSidecarAndRow(t *testing.T) {
 	expectedHash := sha256.Sum256(payload)
 	expectedHex := hex.EncodeToString(expectedHash[:])
 
-	got, err := store.Store(1, "tcx", payload, "2026-06-08T17:35:00Z")
+	got, err := store.Store(context.Background(), 1, "tcx", payload, "2026-06-08T17:35:00Z")
 	if err != nil {
 		t.Fatalf("Store: %v", err)
 	}
@@ -85,11 +86,11 @@ func TestAttachmentStoreStoreIsContentAddressedAndIdempotent(t *testing.T) {
 	defer store.Close()
 	payload := []byte("same bytes")
 
-	first, err := store.Store(1, "tcx", payload, "2026-06-08T17:35:00Z")
+	first, err := store.Store(context.Background(), 1, "tcx", payload, "2026-06-08T17:35:00Z")
 	if err != nil {
 		t.Fatalf("first Store: %v", err)
 	}
-	second, err := store.Store(1, "tcx", payload, "2026-06-08T17:36:00Z")
+	second, err := store.Store(context.Background(), 1, "tcx", payload, "2026-06-08T17:36:00Z")
 	if err != nil {
 		t.Fatalf("second Store: %v", err)
 	}
@@ -131,7 +132,7 @@ func TestAttachmentStoreSidecarFilesAreOwnerOnly(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer store.Close()
-	stored, err := store.Store(1, "tcx", []byte("xxx"), "2026-06-08T17:35:00Z")
+	stored, err := store.Store(context.Background(), 1, "tcx", []byte("xxx"), "2026-06-08T17:35:00Z")
 	if err != nil {
 		t.Fatalf("Store: %v", err)
 	}
@@ -172,7 +173,7 @@ func TestAttachmentStoreWalkReportsOrphansBothSides(t *testing.T) {
 	}
 
 	// Healthy attachment — should not appear in Walk's orphan list.
-	healthy, err := store.Store(1, "tcx", []byte("healthy bytes"), "2026-06-08T17:35:00Z")
+	healthy, err := store.Store(context.Background(), 1, "tcx", []byte("healthy bytes"), "2026-06-08T17:35:00Z")
 	if err != nil {
 		t.Fatalf("Store healthy: %v", err)
 	}
@@ -203,7 +204,7 @@ func TestAttachmentStoreWalkReportsOrphansBothSides(t *testing.T) {
 	defer store.Close()
 
 	var orphans []attachmentOrphan
-	if err := store.Walk(func(o attachmentOrphan) error {
+	if err := store.Walk(context.Background(), func(o attachmentOrphan) error {
 		orphans = append(orphans, o)
 		return nil
 	}); err != nil {
@@ -297,7 +298,7 @@ func TestAttachmentStoreWalkRejectsTraversalPathRelative(t *testing.T) {
 	defer store.Close()
 
 	var orphans []attachmentOrphan
-	if err := store.Walk(func(o attachmentOrphan) error {
+	if err := store.Walk(context.Background(), func(o attachmentOrphan) error {
 		orphans = append(orphans, o)
 		return nil
 	}); err != nil {

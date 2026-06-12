@@ -104,9 +104,11 @@ func perTypeSyncOptions(options syncCommandOptions, dataType string) syncCommand
 // invokes the I/O adapters (currentConnection, sourceFamilyFilter,
 // rollupCatalogValidator), so passing the production context here is
 // safe and avoids a separate partial-context constructor with nil
-// adapters that any future expansion-time rule could nil-deref.
+// adapters that any future expansion-time rule could nil-deref. The
+// context.Background() follows for the same reason: only the never-
+// invoked currentConnection adapter would consume it (#305).
 func (orchestrator syncOrchestrator) expandDataTypes(options syncCommandOptions) ([]string, error) {
-	gate := syncPreflightGate{ctx: productionSyncPreflightContext(options, orchestrator.executor.runtime)}
+	gate := syncPreflightGate{ctx: productionSyncPreflightContext(context.Background(), options, orchestrator.executor.runtime)}
 	return gate.expandDataTypes(options)
 }
 

@@ -212,7 +212,7 @@ func statusSetup(ctx context.Context, archivePath string, now time.Time) (status
 	// failing the command. Open errors are not lost — the reader open
 	// below goes through the same lifecycle and surfaces the identical
 	// healthArchiveOpenError for the caller to decode.
-	_, _ = fenceAbandonedSyncRunsAtPath(archivePath, now)
+	_, _ = fenceAbandonedSyncRunsAtPath(ctx, archivePath, now)
 	reader, err := openHealthArchiveReader(archivePath)
 	if err != nil {
 		var openErr healthArchiveReaderOpenError

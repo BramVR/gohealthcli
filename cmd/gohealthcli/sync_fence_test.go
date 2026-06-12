@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -207,11 +208,11 @@ func TestFinalizeAfterFenceConvergesToTrueTerminalStatus(t *testing.T) {
 		t.Fatalf("open writer: %v", err)
 	}
 	defer writer.Close()
-	connection, err := writer.CurrentConnection()
+	connection, err := writer.CurrentConnection(context.Background())
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	syncRunID, err := writer.StartSyncRun(syncRunStart{
+	syncRunID, err := writer.StartSyncRun(context.Background(), syncRunStart{
 		Connection:     connection,
 		DataTypes:      []string{"steps"},
 		From:           "2026-06-01",
@@ -223,7 +224,7 @@ func TestFinalizeAfterFenceConvergesToTrueTerminalStatus(t *testing.T) {
 		t.Fatalf("StartSyncRun: %v", err)
 	}
 
-	fencedCount, err := fenceAbandonedSyncRunsAtPath(archivePath, time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
+	fencedCount, err := fenceAbandonedSyncRunsAtPath(context.Background(), archivePath, time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("fence: %v", err)
 	}
@@ -233,7 +234,7 @@ func TestFinalizeAfterFenceConvergesToTrueTerminalStatus(t *testing.T) {
 
 	// A late heartbeat from the still-alive process must NOT
 	// resurrect the fenced row to sync_running.
-	if err := writer.HeartbeatSyncRun(syncRunHeartbeat{
+	if err := writer.HeartbeatSyncRun(context.Background(), syncRunHeartbeat{
 		SyncRunID: syncRunID,
 		SeenCount: 10,
 		NewCount:  10,
@@ -252,7 +253,7 @@ func TestFinalizeAfterFenceConvergesToTrueTerminalStatus(t *testing.T) {
 	// The real finalize lands: row converges to sync_completed and
 	// the cursor advances exactly as on an unfenced run.
 	cursorKey := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: syncCursorRollupKindNone}
-	if err := writer.FinalizeSyncRun(syncRunFinalize{
+	if err := writer.FinalizeSyncRun(context.Background(), syncRunFinalize{
 		SyncRunID:      syncRunID,
 		Outcome:        syncRunOutcomeCompleted,
 		SeenCount:      42,
@@ -276,7 +277,7 @@ func TestFinalizeAfterFenceConvergesToTrueTerminalStatus(t *testing.T) {
 	if converged.finishedAt.String != "2026-06-10T12:01:00Z" {
 		t.Fatalf("finished_at after finalize = %q, want the finalize timestamp", converged.finishedAt.String)
 	}
-	cursorTime, found, err := writer.ResolveSyncCursor(cursorKey)
+	cursorTime, found, err := writer.ResolveSyncCursor(context.Background(), cursorKey)
 	if err != nil || !found {
 		t.Fatalf("cursor after finalize: found=%v err=%v", found, err)
 	}
@@ -308,17 +309,17 @@ func TestFenceNeverAdvancesTheSyncCursor(t *testing.T) {
 		t.Fatalf("open writer: %v", err)
 	}
 	defer writer.Close()
-	connection, err := writer.CurrentConnection()
+	connection, err := writer.CurrentConnection(context.Background())
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
 	cursorKey := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: syncCursorRollupKindNone}
 	// Seed a cursor from an earlier completed run.
-	if err := writer.CommitSyncCursor(cursorKey, syncRunOutcomeCompleted, "2026-06-08", "2026-06-08T00:00:10Z"); err != nil {
+	if err := writer.CommitSyncCursor(context.Background(), cursorKey, syncRunOutcomeCompleted, "2026-06-08", "2026-06-08T00:00:10Z"); err != nil {
 		t.Fatalf("seed cursor: %v", err)
 	}
 	// An orphaned run covering a LATER range dies without heartbeats.
-	if _, err := writer.StartSyncRun(syncRunStart{
+	if _, err := writer.StartSyncRun(context.Background(), syncRunStart{
 		Connection:     connection,
 		DataTypes:      []string{"steps"},
 		From:           "2026-06-08",
@@ -329,14 +330,14 @@ func TestFenceNeverAdvancesTheSyncCursor(t *testing.T) {
 		t.Fatalf("StartSyncRun: %v", err)
 	}
 
-	fencedCount, err := fenceAbandonedSyncRunsAtPath(archivePath, time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
+	fencedCount, err := fenceAbandonedSyncRunsAtPath(context.Background(), archivePath, time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("fence: %v", err)
 	}
 	if fencedCount != 1 {
 		t.Fatalf("fenced %d rows, want 1", fencedCount)
 	}
-	cursorTime, found, err := writer.ResolveSyncCursor(cursorKey)
+	cursorTime, found, err := writer.ResolveSyncCursor(context.Background(), cursorKey)
 	if err != nil || !found {
 		t.Fatalf("cursor after fence: found=%v err=%v", found, err)
 	}

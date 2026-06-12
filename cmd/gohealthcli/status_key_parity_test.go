@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"regexp"
 	"sort"
@@ -86,7 +87,7 @@ func TestStatusJSONHasTopLevelPairedDeviceCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	connection, err := readCurrentConnection(snapshots.db)
+	connection, err := readCurrentConnection(context.Background(), snapshots.db)
 	if err != nil {
 		snapshots.Close()
 		t.Fatalf("read current Connection: %v", err)
@@ -199,7 +200,7 @@ func TestStatusPlainOutputPreservedAfterParityChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	connection, err := readCurrentConnection(snapshots.db)
+	connection, err := readCurrentConnection(context.Background(), snapshots.db)
 	if err != nil {
 		snapshots.Close()
 		t.Fatalf("read current Connection: %v", err)
@@ -255,7 +256,7 @@ func TestStatusPlainAndJSONKeyParity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	connection, err := readCurrentConnection(snapshots.db)
+	connection, err := readCurrentConnection(context.Background(), snapshots.db)
 	if err != nil {
 		snapshots.Close()
 		t.Fatalf("read current Connection: %v", err)

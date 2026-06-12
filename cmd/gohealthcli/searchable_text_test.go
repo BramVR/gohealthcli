@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -30,7 +31,7 @@ func TestSearchableTextViewReturnsRowsFromAllFourSources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open snapshot archive: %v", err)
 	}
-	connection, err := readCurrentConnection(snapshots.db)
+	connection, err := readCurrentConnection(context.Background(), snapshots.db)
 	if err != nil {
 		snapshots.Close()
 		t.Fatalf("read current Connection: %v", err)
@@ -123,7 +124,7 @@ func TestSearchableTextLIKENeedleAnswersAcrossKinds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open snapshots: %v", err)
 	}
-	connection, err := readCurrentConnection(snapshots.db)
+	connection, err := readCurrentConnection(context.Background(), snapshots.db)
 	if err != nil {
 		snapshots.Close()
 		t.Fatalf("read current Connection: %v", err)

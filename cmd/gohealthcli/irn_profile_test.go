@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -63,7 +64,7 @@ func TestCurrentIRNProfileViewProjectsLatestSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		archive.Close()
 		t.Fatalf("read current Connection: %v", err)
@@ -136,7 +137,7 @@ func TestIRNProfileCommandArchivesSnapshotWhenScopeGranted(t *testing.T) {
 		t.Fatalf("open archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := readCurrentConnection(archive.db)
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		t.Fatalf("read current Connection: %v", err)
 	}

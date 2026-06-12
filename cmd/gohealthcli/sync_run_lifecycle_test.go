@@ -437,11 +437,11 @@ func TestSyncRunLifecycleConvertsBusyExhaustedToFailedWithRecoveryRow(t *testing
 		t.Fatalf("reopen archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := archive.CurrentConnection(context.Background())
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	if _, found, err := archive.ResolveSyncCursor(syncCursorKey{
+	if _, found, err := archive.ResolveSyncCursor(context.Background(), syncCursorKey{
 		connectionID: connection.id,
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,
@@ -792,11 +792,11 @@ type fakeFinishRetryWriter struct {
 	finishCallsObserved *int
 }
 
-func (writer *fakeFinishRetryWriter) FinalizeSyncRun(finalize syncRunFinalize) error {
+func (writer *fakeFinishRetryWriter) FinalizeSyncRun(ctx context.Context, finalize syncRunFinalize) error {
 	return writer.finalizeErr
 }
 
-func (writer *fakeFinishRetryWriter) FinishSyncRun(finish syncRunFinish) error {
+func (writer *fakeFinishRetryWriter) FinishSyncRun(ctx context.Context, finish syncRunFinish) error {
 	writer.finishCallCounter++
 	if writer.finishCallsObserved != nil {
 		*writer.finishCallsObserved = writer.finishCallCounter
@@ -804,5 +804,5 @@ func (writer *fakeFinishRetryWriter) FinishSyncRun(finish syncRunFinish) error {
 	if writer.finishCallCounter <= writer.finishBusyAttempts {
 		return errors.New("database is locked")
 	}
-	return writer.healthArchiveWriter.FinishSyncRun(finish)
+	return writer.healthArchiveWriter.FinishSyncRun(context.Background(), finish)
 }

@@ -40,7 +40,7 @@ func (archive *sqliteHealthArchiveConnectionAPI) EnsureSameGoogleIdentity(health
 }
 
 func (archive *sqliteHealthArchiveConnectionAPI) CurrentConnection() (archivedConnection, error) {
-	return readCurrentConnection(archive.db)
+	return readCurrentConnection(context.Background(), archive.db)
 }
 
 func (archive *sqliteHealthArchiveConnectionAPI) UpsertConnection(connectionID string, identity googleIdentity, token oauthTokenResponse, now time.Time) error {
@@ -48,7 +48,9 @@ func (archive *sqliteHealthArchiveConnectionAPI) UpsertConnection(connectionID s
 }
 
 func (archive *sqliteHealthArchiveConnectionAPI) UpdateConnectionTokenMetadata(connectionID string, token oauthTokenResponse, now time.Time) error {
-	return updateConnectionTokenMetadata(archive.db, connectionID, token, now)
+	// context.Background(): token persistence is deliberately not
+	// cancelable — see the healthArchiveWriter interface comment (#305).
+	return updateConnectionTokenMetadata(context.Background(), archive.db, connectionID, token, now)
 }
 
 func (archive *sqliteHealthArchiveConnectionAPI) RefreshConnectionIdentity(connection archivedConnection, identity googleIdentity, now time.Time) error {
@@ -77,8 +79,8 @@ func ensureSameArchiveIdentity(db *sql.DB, healthUserID string) error {
 	return rows.Err()
 }
 
-func readCurrentConnection(db *sql.DB) (archivedConnection, error) {
-	rows, err := db.Query(`SELECT
+func readCurrentConnection(ctx context.Context, db *sql.DB) (archivedConnection, error) {
+	rows, err := db.QueryContext(ctx, `SELECT
 		id,
 		provider_name,
 		google_health_user_id,
@@ -153,12 +155,12 @@ func upsertConnection(db *sql.DB, connectionID string, identity googleIdentity, 
 	return err
 }
 
-func updateConnectionTokenMetadata(db *sql.DB, connectionID string, token oauthTokenResponse, now time.Time) error {
+func updateConnectionTokenMetadata(ctx context.Context, db *sql.DB, connectionID string, token oauthTokenResponse, now time.Time) error {
 	metadataJSON, err := connectionTokenMetadataJSON(connectionID, token)
 	if err != nil {
 		return err
 	}
-	result, err := db.Exec(`UPDATE connections SET token_metadata_json = ?, updated_at = ? WHERE id = ?`,
+	result, err := db.ExecContext(ctx, `UPDATE connections SET token_metadata_json = ?, updated_at = ? WHERE id = ?`,
 		string(metadataJSON),
 		now.UTC().Format(time.RFC3339),
 		connectionID,

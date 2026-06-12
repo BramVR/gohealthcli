@@ -88,7 +88,7 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 	// mutates the archive). Best-effort: a fence that loses a
 	// SQLITE_BUSY race is retried by the next entry point; it must not
 	// fail a sync that is otherwise ready to run.
-	_, _ = archive.FenceAbandonedSyncRuns(runtime.now().UTC())
+	_, _ = archive.FenceAbandonedSyncRuns(ctx, runtime.now().UTC())
 	config, err := inspectIdentityConfig(options.configPath, options.archivePath)
 	if err != nil {
 		return syncRunFailure(syncResult{
@@ -100,7 +100,7 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 	cursorKey := plan.cursorKeys[0]
 	resumedFromCursor := false
 	if options.from == "" {
-		cursorTime, found, err := archive.ResolveSyncCursor(cursorKey)
+		cursorTime, found, err := archive.ResolveSyncCursor(ctx, cursorKey)
 		if err != nil {
 			return syncRunFailure(syncResult{
 				DataTypes: options.dataTypes,
@@ -153,7 +153,7 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 		ResumedFromCursor: resumedFromCursor,
 	}
 	startedAt := runtime.now().UTC().Format(time.RFC3339)
-	syncRunID, err := archive.StartSyncRun(syncRunStart{
+	syncRunID, err := archive.StartSyncRun(ctx, syncRunStart{
 		Connection:         connection,
 		DataTypes:          options.dataTypes,
 		From:               options.from,
@@ -165,7 +165,13 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 	if err != nil {
 		// StartSyncRun failed before any audit row was written: no
 		// SyncRunID to populate. The status enum stays well-defined
-		// (sync_failed) so the JSON envelope still satisfies AC #2.
+		// (sync_failed) so the JSON envelope still satisfies AC #2. A
+		// SIGINT that lands mid-INSERT surfaces as the canceled outcome
+		// (#305), matching every other cancellation boundary.
+		if ctx.Err() != nil {
+			result.Message = errSyncCanceled.Error()
+			return syncResultFromOutcome(syncRunOutcomeCanceled, result), errSyncCanceled
+		}
 		return syncRunFailure(result, err)
 	}
 	result.SyncRunID = syncRunID
@@ -175,10 +181,10 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 	}
 	accessToken, err := connectionAccess.AccessToken(googleHealthScopesForDataType(dataType))
 	if err != nil {
-		return lifecycle.finalize(archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeFailed, err)
+		return lifecycle.finalize(ctx, archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeFailed, err)
 	}
 	if _, err := connectionAccess.FetchVerifiedIdentity(accessToken); err != nil {
-		return lifecycle.finalize(archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeFailed, err)
+		return lifecycle.finalize(ctx, archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeFailed, err)
 	}
 	ingestionRequest.accessToken = accessToken
 	// Per-page heartbeat (#236): before every page fetch the counts so
@@ -194,7 +200,7 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 		var snapshot syncResult
 		applyGoogleHealthIngestionCounts(&snapshot, counts)
 		seen, newCount, updated := syncResultTotalCounts(snapshot)
-		_ = archive.HeartbeatSyncRun(syncRunHeartbeat{
+		_ = archive.HeartbeatSyncRun(ctx, syncRunHeartbeat{
 			SyncRunID:    syncRunID,
 			SeenCount:    seen,
 			NewCount:     newCount,
@@ -207,9 +213,9 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 	applyGoogleHealthIngestionCounts(&result, ingestionResult)
 	if err != nil {
 		if errors.Is(err, errSyncCanceled) {
-			return lifecycle.finalize(archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeCanceled, err)
+			return lifecycle.finalize(ctx, archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeCanceled, err)
 		}
-		return lifecycle.finalize(archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeFailed, err)
+		return lifecycle.finalize(ctx, archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeFailed, err)
 	}
 	if options.rollup != "" {
 		result.Message = fmt.Sprintf("Sync Run archived %s %s Rollups", dataType, options.rollup)
@@ -218,7 +224,7 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 	} else {
 		result.Message = fmt.Sprintf("Sync Run archived %s Data Points", dataType)
 	}
-	return lifecycle.finalize(archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeCompleted, nil)
+	return lifecycle.finalize(ctx, archive, result, syncRunID, cursorKey, options.to, syncRunOutcomeCompleted, nil)
 }
 
 // finalize is the single terminal-write seam. Every Sync Run that
@@ -233,8 +239,14 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 // sync_runs row never lingers as sync_running. The cursor remains
 // untouched because the recovery write goes through FinishSyncRun
 // (not Finalize) and the original Finalize never committed.
-func (lifecycle syncRunLifecycle) finalize(archive healthArchiveWriter, result syncResult, syncRunID int64, cursorKey syncCursorKey, cursorTo string, outcome syncRunOutcome, cause error) (syncResult, error) {
+func (lifecycle syncRunLifecycle) finalize(ctx context.Context, archive healthArchiveWriter, result syncResult, syncRunID int64, cursorKey syncCursorKey, cursorTo string, outcome syncRunOutcome, cause error) (syncResult, error) {
 	runtime := lifecycle.runtime.withDefaults()
+	// The terminal audit write must complete even when the run's context
+	// is already canceled — a SIGINT'd run owes the audit trail its
+	// sync_canceled row (the orchestrator cancel test pins the persisted
+	// status). WithoutCancel detaches cancellation while preserving the
+	// context's values (#305).
+	ctx = context.WithoutCancel(ctx)
 	result.SyncRunID = syncRunID
 	result = syncResultFromOutcome(outcome, result)
 	errorSummary := ""
@@ -244,7 +256,7 @@ func (lifecycle syncRunLifecycle) finalize(archive healthArchiveWriter, result s
 	}
 	now := runtime.now().UTC().Format(time.RFC3339)
 	seen, newCount, updated := syncResultTotalCounts(result)
-	finalizeErr := archive.FinalizeSyncRun(syncRunFinalize{
+	finalizeErr := archive.FinalizeSyncRun(ctx, syncRunFinalize{
 		SyncRunID:      syncRunID,
 		Outcome:        outcome,
 		SeenCount:      seen,
@@ -298,7 +310,7 @@ func (lifecycle syncRunLifecycle) finalize(archive healthArchiveWriter, result s
 	// budget+backoff because if the original finalize lost the lock,
 	// the recovery write almost certainly hits the same contention.
 	recoveryErr := retryFinalizeSyncRunOnBusyWithSleep(finalizeSyncRunRetryBudget, runtime.sleep, func() error {
-		return archive.FinishSyncRun(syncRunFinish{
+		return archive.FinishSyncRun(ctx, syncRunFinish{
 			SyncRunID:    syncRunID,
 			Status:       recoveryStatus,
 			SeenCount:    seen,
