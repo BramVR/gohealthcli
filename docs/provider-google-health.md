@@ -15,7 +15,9 @@ Canonical provider name: `googlehealth`.
 
 Base API: Google Health API v4.
 
-Likely Go module: `google.golang.org/api/health/v4`.
+The provider client is hand-rolled REST over `net/http` against
+`https://health.googleapis.com/v4` (`internal/googlehealth/fetch.go`).
+There is no `google.golang.org/api` Go module dependency.
 
 ## Endpoint Families
 
@@ -59,9 +61,10 @@ provider failures do not require restarting a multi-year backfill:
   (`250ms` base, doubling each attempt) plus jitter. The exponential
   component is capped at `30s`; the final sleep can exceed that cap when
   the server-supplied `Retry-After` value is larger (see next bullet).
-- `Retry-After` (when present on a `429`) is honored as the minimum
-  next-attempt delay and overrides the exponential cap when larger, so
-  a `Retry-After: 120` response waits ~120 s before the next attempt.
+- `Retry-After` (when present on a retryable response, `429` or `5xx`) is
+  honored as the minimum next-attempt delay and overrides the exponential
+  cap when larger, so a `Retry-After: 120` response waits ~120 s before
+  the next attempt.
 - `401 Unauthorized` surfaces immediately with the existing
   "run `gohealthcli connect` again" message.
 - Other `4xx` (`400`, `403`, `404`, ...) surface immediately without retry.
@@ -90,6 +93,9 @@ For this project, that means:
 - Keep provider parsing isolated.
 - Keep raw JSON in the archive.
 - Add fixtures for every Data Type before normalizing it.
-- Complete provider pagination within a Sync Run. Do not persist durable resume
-  cursors unless the API requires them for correctness; reruns should rely on
-  idempotent archiving.
+- Complete provider pagination within a Sync Run; pagination page tokens are
+  not persisted. Durable time cursors are a separate concept governed by the
+  sync-cursors ADR (ADR-0008, "Sync Cursors Advance Only on
+  `sync_completed`"): the Sync Cursor is a durable highwater mark stored in
+  the `sync_cursors` table, and reruns stay safe because archiving is
+  idempotent.
