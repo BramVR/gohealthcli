@@ -140,8 +140,13 @@ func TestBuildGoogleHealthRawRequestUnknownEndpoint(t *testing.T) {
 // a catalog mutation for the duration of the test flows through to the
 // request's requiredScopes — proving the branch did a catalog lookup,
 // not a hard-coded literal.
+//
+// Deliberately serial (no t.Parallel): the sentinel swap mutates the
+// package-level googleHealthIdentityEndpointScopes catalog while
+// parallel siblings read that same map (identity scope prechecks, raw
+// endpoint requests). Running it serially keeps the mutation invisible
+// to every other test and race-free (flagged by review on #310).
 func TestBuildGoogleHealthRawRequestEndpointsReadFromCatalog(t *testing.T) {
-	t.Parallel()
 	for _, endpoint := range []string{"getIdentity", "getProfile", "getSettings", "pairedDevices", "getIrnProfile"} {
 		t.Run(endpoint, func(t *testing.T) {
 			original, ok := googleHealthIdentityEndpointScopes[endpoint]
