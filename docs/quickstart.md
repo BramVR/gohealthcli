@@ -30,9 +30,12 @@ In the Google Cloud console:
    - `https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly`
    - `https://www.googleapis.com/auth/googlehealth.sleep.readonly`
 
-   Optionally add these too if you plan to use `connect --add-scopes`:
-   - `https://www.googleapis.com/auth/googlehealth.irn.readonly` — needed by `gohealthcli irn-profile`.
-   - `https://www.googleapis.com/auth/googlehealth.electrocardiogram.readonly` — needed by Tier 2 ECG Data Types.
+   Optionally add these too if you plan to use `connect --add-scopes`. Each scope below maps to one of the five `--add-scopes` keywords (`ecg`, `irn`, `nutrition`, `settings`, `tcx`); declaring it here now saves a return trip to Google Cloud later:
+   - `https://www.googleapis.com/auth/googlehealth.electrocardiogram.readonly` (`ecg`) — needed by the Tier 2 `electrocardiogram` Data Type.
+   - `https://www.googleapis.com/auth/googlehealth.irn.readonly` (`irn`) — needed by `gohealthcli irn-profile` and the Tier 2 `irregular-rhythm-notification` Data Type.
+   - `https://www.googleapis.com/auth/googlehealth.nutrition.readonly` (`nutrition`) — needed by the `hydration-log` Data Type.
+   - `https://www.googleapis.com/auth/googlehealth.settings.readonly` (`settings`) — needed by `gohealthcli settings` and `gohealthcli devices`.
+   - `https://www.googleapis.com/auth/googlehealth.location.readonly` (`tcx`) — needed to archive TCX route files during exercise sync.
 6. Create an OAuth client with application type **Desktop app**.
 7. Download the client JSON.
 

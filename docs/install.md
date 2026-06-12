@@ -82,7 +82,7 @@ Default local paths once `gohealthcli init` is run:
 
 - Config: `~/.config/gohealthcli/config.toml`
 - Health Archive: `~/.local/share/gohealthcli/gohealthcli.sqlite`
-- Credential Store fallback: `~/.config/gohealthcli/tokens.json` (only if you opt out of the OS-native Credential Store)
+- Credential Store: OS-native (`init` always writes `type = "os_native"`). The file fallback has no default path — opting out means setting `[credential_store] type = "file"` plus an explicit `path = ...` of your choosing in the config.
 
 These paths are visible to `doctor` and can be moved or backed up like any other file.
 

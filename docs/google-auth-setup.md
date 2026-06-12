@@ -74,7 +74,8 @@ path = "/absolute/path/to/client_secret.json"
 ## Credential Store
 
 Default runtime token storage is OS-native. For local testing, the explicit file
-fallback is acceptable if it stays owner-only:
+fallback is acceptable if it stays owner-only. The file store has no default
+path — pick one and set it explicitly:
 
 ```toml
 [credential_store]
@@ -85,10 +86,11 @@ path = "/absolute/path/to/gohealthcli/tokens.json"
 Use the file fallback if macOS Keychain storage blocks at a `security` prompt
 during `connect`.
 
-After `connect`, verify token-file permissions without printing token material:
+After `connect`, verify token-file permissions at the configured path without
+printing token material:
 
 ```bash
-ls -l ~/.config/gohealthcli/tokens.json
+ls -l /absolute/path/to/gohealthcli/tokens.json
 ```
 
 Expected mode: `-rw-------`.
