@@ -151,6 +151,39 @@ func TestGoogleHealthIngestionArchivesDailyRollups(t *testing.T) {
 	}
 }
 
+// TestDailyRollupGuardNamesCatalogSupportedDataTypes pins the
+// unsupported-Data-Type guard on the dailyRollUp request builder to
+// the catalog (#318): the error must name every Data Type whose
+// catalog row grants the dailyRollUp endpoint family (today: steps,
+// floors), so the message cannot drift when the catalog gains or
+// loses a dailyRollUp Data Type. The guard is normally shadowed by
+// the ValidateRollupAgainstDataType preflight in Plan, so the builder
+// is exercised directly — the narrowest surface that reaches it.
+func TestDailyRollupGuardNamesCatalogSupportedDataTypes(t *testing.T) {
+	t.Parallel()
+	var supported []string
+	for _, dataType := range googleHealthDataTypes.order {
+		if dailyRollupDataTypeSupported(dataType) {
+			supported = append(supported, dataType)
+		}
+	}
+	// Non-vacuity: the catalog grants dailyRollUp to more than one
+	// Data Type, so a message naming a single Data Type must fail.
+	if len(supported) < 2 {
+		t.Fatalf("catalog dailyRollUp Data Types = %v, want at least steps and floors", supported)
+	}
+
+	_, err := buildGoogleHealthDailyRollupRawRequest("sleep", "2026-01-01", "2026-01-02", 0, "")
+	if err == nil {
+		t.Fatal("dailyRollUp request for sleep: want unsupported-Data-Type error, got nil")
+	}
+	for _, dataType := range supported {
+		if !strings.Contains(err.Error(), dataType) {
+			t.Errorf("daily Rollup guard error %q does not name catalog-supported Data Type %q", err.Error(), dataType)
+		}
+	}
+}
+
 func TestGoogleHealthIngestionRejectsRepeatedPageToken(t *testing.T) {
 	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}

@@ -617,6 +617,20 @@ func dailyRollupDataTypeSupported(dataType string) bool {
 	return hasDaily
 }
 
+// dailyRollupSupportedDataTypes returns, in catalog order, every Data
+// Type whose catalog row grants the dailyRollUp endpoint family. The
+// unsupported-Data-Type guard on the dailyRollUp request builder quotes
+// this set so its error message cannot drift from the catalog (#318).
+func dailyRollupSupportedDataTypes() []string {
+	var dataTypes []string
+	for _, dataType := range googleHealthDataTypes.order {
+		if dailyRollupDataTypeSupported(dataType) {
+			dataTypes = append(dataTypes, dataType)
+		}
+	}
+	return dataTypes
+}
+
 func UsesDateRangeDefault(dataType string) bool {
 	entry, ok := googleHealthDataTypes.Lookup(dataType)
 	return ok && entry.UsesDateRangeDefault
