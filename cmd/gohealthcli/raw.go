@@ -20,9 +20,12 @@ type rawCommandOptions struct {
 	target      []string
 }
 
-func runRawWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("raw", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	// raw does not accept --json / --plain on its own slot, so failure
+	// rendering honours the GLOBAL output mode only.
+	mode := commonOutputMode(globals)
 	// raw's success output is the provider's raw bytes on stdout — it
 	// does not honour --plain / --json / --no-input. The Common Flag
 	// Set's pre-Parse scan turns those known-global flags into a
@@ -30,8 +33,8 @@ func runRawWithRuntime(args []string, configPath, archivePath string, mode outpu
 	// passes them on raw, instead of letting them silently lose values
 	// or fall through to stdlib's generic wording.
 	common := RegisterCommon(flags, CommonFlagSpec{Accepted: rawCommonFlagNames()}, CommonFlagValues{
-		ConfigPath:  configPath,
-		ArchivePath: archivePath,
+		ConfigPath:  globals.ConfigPath,
+		ArchivePath: globals.ArchivePath,
 	})
 	rawFrom := flags.String("from", "", "inclusive time-range start (where supported by the endpoint)")
 	rawTo := flags.String("to", "", "exclusive time-range end (where supported by the endpoint)")

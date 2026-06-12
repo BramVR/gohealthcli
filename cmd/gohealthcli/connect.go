@@ -20,16 +20,16 @@ type connectResult struct {
 	Message            string `json:"message"`
 }
 
-func runConnectWithRuntime(args []string, configPath, archivePath string, globalNoInput bool, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+func runConnectWithRuntime(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("connect", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
 	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
-		ConfigPath:  configPath,
-		ArchivePath: archivePath,
-		JSONOutput:  mode.json,
-		PlainOutput: mode.plain,
-		NoInput:     globalNoInput,
+		ConfigPath:  globals.ConfigPath,
+		ArchivePath: globals.ArchivePath,
+		JSONOutput:  globals.JSONOutput,
+		PlainOutput: globals.PlainOutput,
+		NoInput:     globals.NoInput,
 	})
 	// The keyword list is rendered from connectAddScopeKeywords so the
 	// --help text can never drift from what expandConnectAddScopes
@@ -39,7 +39,7 @@ func runConnectWithRuntime(args []string, configPath, archivePath string, global
 	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
-	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
+	mode := commonOutputMode(*common)
 	if flags.NArg() != 0 {
 		return ReportFailure(FailureReport{
 			Command: "connect",

@@ -20,15 +20,15 @@ type initResult struct {
 	Message           string   `json:"message,omitempty"`
 }
 
-func runInit(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+func runInit(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("init", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
 	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
-		ConfigPath:  configPath,
-		ArchivePath: archivePath,
-		JSONOutput:  mode.json,
-		PlainOutput: mode.plain,
+		ConfigPath:  globals.ConfigPath,
+		ArchivePath: globals.ArchivePath,
+		JSONOutput:  globals.JSONOutput,
+		PlainOutput: globals.PlainOutput,
 	})
 	oauthClientFile := flags.String("oauth-client-file", "", "OAuth client JSON file reference")
 	secretProvider := flags.String("secret-provider", "", "Secret Provider name for OAuth client setup")
@@ -37,7 +37,7 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
-	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
+	mode := commonOutputMode(*common)
 	if flags.NArg() != 0 {
 		return ReportFailure(FailureReport{
 			Command: "init",

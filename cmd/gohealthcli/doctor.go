@@ -43,22 +43,22 @@ type doctorOrphanFile struct {
 	AbsolutePath string `json:"absolute_path"`
 }
 
-func runDoctorWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+func runDoctorWithRuntime(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
 	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
-		ConfigPath:  configPath,
-		ArchivePath: archivePath,
-		JSONOutput:  mode.json,
-		PlainOutput: mode.plain,
+		ConfigPath:  globals.ConfigPath,
+		ArchivePath: globals.ArchivePath,
+		JSONOutput:  globals.JSONOutput,
+		PlainOutput: globals.PlainOutput,
 	})
 	doctorOnline := flags.Bool("online", false, "refresh tokens and check provider reachability")
 
 	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
-	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
+	mode := commonOutputMode(*common)
 	if flags.NArg() != 0 {
 		return ReportFailure(FailureReport{
 			Command: "doctor",

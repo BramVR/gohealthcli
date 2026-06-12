@@ -141,21 +141,21 @@ type identitySnapshotCommandContext struct {
 // commands bit-for-bit: a setup error renders the result with the
 // per-command failed status as fallback and exits 1; a result-writer
 // error routes through the Failure Reporter as archive_unwritable.
-func runIdentitySnapshotCommand[R, P any](spec identitySnapshotCommandSpec[R, P], args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+func runIdentitySnapshotCommand[R, P any](spec identitySnapshotCommandSpec[R, P], args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet(spec.command, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
 	common := RegisterCommon(flags, spec.commonFlags(), CommonFlagValues{
-		ConfigPath:  configPath,
-		ArchivePath: archivePath,
-		JSONOutput:  mode.json,
-		PlainOutput: mode.plain,
+		ConfigPath:  globals.ConfigPath,
+		ArchivePath: globals.ArchivePath,
+		JSONOutput:  globals.JSONOutput,
+		PlainOutput: globals.PlainOutput,
 	})
 
 	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
-	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
+	mode := commonOutputMode(*common)
 	if flags.NArg() != 0 {
 		return ReportFailure(FailureReport{
 			Command: spec.command,

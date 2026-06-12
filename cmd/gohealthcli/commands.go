@@ -23,13 +23,15 @@ import "io"
 //     Omitted entirely when empty so
 //     the wire shape stays additive.
 //
-// Run is the dispatch adapter — invoked by runWithRuntime after a successful
-// registry lookup (PRD #143 slice 6, issue #175). The `json:"-"` tag keeps
-// the function out of the published JSON contract: the schema documents the
-// surface, the adapter implements the call. Subcommands whose underlying
-// signature differs (status's ArchivePathExplicit, export's no-runtime,
-// schema's stdout/stderr-only) satisfy this uniform type via thin wrappers
-// that fold the differences into CommonFlagValues or ignore unused params.
+// Run is the dispatch entry point — invoked by runWithRuntime after a
+// successful registry lookup (PRD #143 slice 6, issue #175). The `json:"-"`
+// tag keeps the function out of the published JSON contract: the schema
+// documents the surface, Run implements the call. Since issue #285 every
+// runner accepts the CommonFlagValues struct directly, so most entries bind
+// their runner as a plain function value; the remaining closures only fold
+// in a per-command spec (the Identity Snapshot family) or adapt the two
+// build-time verbs (schema, docs-export-datasets) that ignore the common
+// flags entirely.
 type commandDef struct {
 	Name           string                                                                                              `json:"name"`
 	Short          string                                                                                              `json:"short"`
@@ -221,10 +223,12 @@ func commonFlagNames() []string {
 }
 
 // commonOutputMode collapses the CommonFlagValues' json/plain pair into
-// the outputMode struct every subcommand's WithRuntime entry point already
-// expects. Keeping the projection in one place means a future shared-flag
-// addition (a hypothetical --quiet) only has to be wired here and in the
-// CommonFlagSet module — not threaded through every adapter inline.
+// the outputMode struct the render paths expect. Runners call it after
+// ParseCommon resolves the subcommand-slot flags (raw, which accepts
+// neither, projects the global-slot values instead). Keeping the
+// projection in one place means a future shared-flag addition (a
+// hypothetical --quiet) only has to be wired here and in the
+// CommonFlagSet module — not threaded through every runner inline.
 func commonOutputMode(common CommonFlagValues) outputMode {
 	return outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 }
@@ -232,11 +236,12 @@ func commonOutputMode(common CommonFlagValues) outputMode {
 // commands is the registry of every subcommand the binary exposes. The
 // dispatch path (`runWithRuntime` after `--version` / `--help`) and the
 // `--help` printer both read from this slice — there is no parallel switch.
-// PRD #143 slice 6 (issue #175): every entry's Run adapter binds the
-// uniform `(args, common, stdout, stderr, runtime) → int` shape down to
-// each subcommand's existing entry point, folding the diverged signatures
-// (status's ArchivePathExplicit, export's no-runtime, schema's minimal)
-// into thin wrappers that ignore unused params.
+// PRD #143 slice 6 (issue #175) introduced the uniform
+// `(args, common, stdout, stderr, runtime) → int` Run shape; issue #285
+// made every runner accept CommonFlagValues directly, so entries bind
+// their runner as a plain function value instead of an exploding wrapper.
+// Each runner seeds RegisterCommon from the global-slot values itself and
+// documents which fields it deliberately ignores.
 //
 // Entries are listed in the order that they should appear in the Project
 // Site sidebar and the auto-generated command-reference index.
@@ -253,9 +258,7 @@ var commands = []commandDef{
 		CommonFlags: commonFlagNames(),
 		// init runs entirely against the local filesystem (config + archive);
 		// the runtime adapter bundle only carries the flag-drift observer.
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runInit(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
-		},
+		Run: runInit,
 	},
 	{
 		Name:  "doctor",
@@ -265,9 +268,7 @@ var commands = []commandDef{
 			flagSpec{Name: "online", Type: "bool", Default: "false", Usage: "refresh tokens and check provider reachability"},
 		),
 		CommonFlags: commonFlagNames(),
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runDoctorWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
-		},
+		Run:         runDoctorWithRuntime,
 	},
 	{
 		Name:  "connect",
@@ -282,9 +283,7 @@ var commands = []commandDef{
 			flagSpec{Name: "add-scopes", Type: "string", Default: "", Usage: connectAddScopesUsage()},
 		),
 		CommonFlags: commonFlagNames(),
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runConnectWithRuntime(args, common.ConfigPath, common.ArchivePath, common.NoInput, commonOutputMode(common), stdout, stderr, runtime)
-		},
+		Run:         runConnectWithRuntime,
 	},
 	{
 		Name:        "identity",
@@ -293,7 +292,7 @@ var commands = []commandDef{
 		Flags:       withCommon(),
 		CommonFlags: commonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runIdentitySnapshotCommand(identityCommand, args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runIdentitySnapshotCommand(identityCommand, args, common, stdout, stderr, runtime)
 		},
 	},
 	{
@@ -303,7 +302,7 @@ var commands = []commandDef{
 		Flags:       withCommon(),
 		CommonFlags: commonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runIdentitySnapshotCommand(profileSnapshotCommand, args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runIdentitySnapshotCommand(profileSnapshotCommand, args, common, stdout, stderr, runtime)
 		},
 	},
 	{
@@ -317,7 +316,7 @@ var commands = []commandDef{
 		Flags:       withCommonSubset(identitySnapshotCommonFlagNames()),
 		CommonFlags: identitySnapshotCommonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runIdentitySnapshotCommand(settingsSnapshotCommand, args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runIdentitySnapshotCommand(settingsSnapshotCommand, args, common, stdout, stderr, runtime)
 		},
 	},
 	{
@@ -331,7 +330,7 @@ var commands = []commandDef{
 		Flags:       withCommonSubset(identitySnapshotCommonFlagNames()),
 		CommonFlags: identitySnapshotCommonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runIdentitySnapshotCommand(devicesSnapshotCommand, args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runIdentitySnapshotCommand(devicesSnapshotCommand, args, common, stdout, stderr, runtime)
 		},
 	},
 	{
@@ -345,7 +344,7 @@ var commands = []commandDef{
 		Flags:       withCommonSubset(identitySnapshotCommonFlagNames()),
 		CommonFlags: identitySnapshotCommonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runIdentitySnapshotCommand(irnProfileSnapshotCommand, args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runIdentitySnapshotCommand(irnProfileSnapshotCommand, args, common, stdout, stderr, runtime)
 		},
 	},
 	{
@@ -363,9 +362,7 @@ var commands = []commandDef{
 			flagSpec{Name: "window", Type: "string", Default: "", Usage: "with --status: how far back to list finished Sync Runs (Go duration, default 15m, max 24h)"},
 		),
 		CommonFlags: commonFlagNames(),
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runSyncWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
-		},
+		Run:         runSyncWithRuntime,
 	},
 	{
 		Name:        "status",
@@ -373,13 +370,11 @@ var commands = []commandDef{
 		Long:        "Print a per-Data-Type summary of the Health Archive: how many Data Points are stored, the newest synced timestamp, and the most recent Sync Run status. Useful as a quick health check before or after a long sync.\n\nAlso reports identity-metadata freshness: a `paired_device_count` line (when a `paired-devices` snapshot is archived) and an `identity_snapshot.<kind>.fetched_at` line per Identity Snapshot kind that has at least one row (`profile`, `settings`, `paired-devices`, `irn-profile`). In `--json` these surface under an `identity_snapshots_freshness` block — omitted entirely when no snapshots exist. `paired_device_count` is also emitted as a top-level JSON key so `--plain` and `--json` carry the same field; the nested `identity_snapshots_freshness.paired_device_count` is preserved for back-compat.\n\n`--plain` and `--json` carry the same information. The plain `known_data_types: a,b,c` line maps to a top-level `known_data_types` JSON array. Plain `data_type.<name>.*` and `identity_snapshot.<kind>.*` lines flatten the JSON `data_types[]` and `identity_snapshots_freshness` blocks, and the `latest_successful_sync_run_*` / `latest_failed_sync_run_*` lines flatten the matching JSON objects.\n\nAlso reports Tier 2 coverage: `electrocardiogram_event_count` and `irregular_rhythm_notification_count` (plain) appear only when the corresponding scope has been granted via `connect --add-scopes ecg,irn`. In `--json` these surface under a `tier_2` block alongside `electrocardiogram_scope_granted` / `irregular_rhythm_notification_scope_granted` flags, both counts defaulting to 0 when the scope is not granted.\n\n`status` does no provider I/O — it reads only the local Health Archive. On entry it fences abandoned Sync Runs: any `sync_running` row whose heartbeat is older than 5 minutes is flipped to `sync_failed` with `error_summary` `abandoned (no heartbeat for 5m)` (see `sync --status` for the full fencing rule), so the summary never reports a killed process as still running.",
 		Flags:       withCommon(),
 		CommonFlags: commonFlagNames(),
-		// status's underlying signature carries an explicit ArchivePathExplicit
-		// flag (so its own --db can win over the config-recorded path); the
-		// adapter sources it from CommonFlagValues, which the dispatch path
-		// populates from the FlagSet Visit pass.
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runStatus(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr, runtime)
-		},
+		// status reads the ConfigPathExplicit / ArchivePathExplicit bits out
+		// of CommonFlagValues (so its own --db can win over the
+		// config-recorded path); the dispatch path populates them from the
+		// FlagSet Visit pass.
+		Run: runStatus,
 	},
 	{
 		Name:           "query",
@@ -399,9 +394,7 @@ var commands = []commandDef{
 		// on the global side (before the subcommand) still wins. query
 		// hits the archive read-only, so the runtime adapter bundle only
 		// carries the flag-drift observer.
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runQuery(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr, runtime)
-		},
+		Run: runQuery,
 	},
 	{
 		Name:           "export",
@@ -419,10 +412,10 @@ var commands = []commandDef{
 		// has its own --format / --output flag surface, plus the Common
 		// Flag Set synonym mappings handled inside runExport. export is
 		// read-only against the local archive; the runtime adapter bundle
-		// only carries the flag-drift observer.
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runExport(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, stdout, stderr, runtime)
-		},
+		// only carries the flag-drift observer. The global-slot --json /
+		// --plain are deliberately ignored inside runExport: the synonyms
+		// are scoped to export's own flag slot.
+		Run: runExport,
 	},
 	{
 		Name:           "raw",
@@ -438,20 +431,16 @@ var commands = []commandDef{
 		// raw's success output is the provider's raw bytes on stdout, so
 		// --plain / --json / --no-input would have no useful effect. Its
 		// CommonFlagSpec at the runtime layer (see runRawWithRuntime in
-		// main.go) declares the same rawCommonFlagNames() subset;
+		// raw.go) declares the same rawCommonFlagNames() subset;
 		// CommonFlags here mirrors that contract so the schema reflects
 		// the divergence honestly.
 		CommonFlags: rawCommonFlagNames(),
 		// raw owns its own --from / --to / --page-size / --page-token flag
-		// surface and writes the provider's raw bytes. runRawWithRuntime's
-		// signature already declares the outputMode arg unused (`_`), but
-		// the adapter still passes commonOutputMode(common) so this entry
-		// has the same call-site shape as every other registry adapter —
-		// future code that promotes the mode out of unused-arg status will
-		// not have to special-case `raw`.
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runRawWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
-		},
+		// surface and writes the provider's raw bytes. raw does not accept
+		// --json / --plain on its own slot, so runRawWithRuntime derives
+		// the failure-rendering mode from the GLOBAL-slot values carried
+		// in CommonFlagValues.
+		Run: runRawWithRuntime,
 	},
 	{
 		Name:  "describe-schema",
@@ -462,9 +451,7 @@ var commands = []commandDef{
 			flagSpec{Name: "sql", Type: "bool", Default: "false", Usage: "dump live DDL from sqlite_master (excludes internal sqlite_* objects)"},
 		),
 		CommonFlags: commonFlagNames(),
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runDescribeSchemaWithRuntime(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr, runtime)
-		},
+		Run:         runDescribeSchemaWithRuntime,
 	},
 	{
 		Name:   "schema",

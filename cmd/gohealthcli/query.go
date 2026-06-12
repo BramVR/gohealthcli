@@ -37,17 +37,17 @@ type queryResult struct {
 	Message     string   `json:"message"`
 }
 
-func runQuery(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+func runQuery(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("query", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
 	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
-		ConfigPath:          configPath,
-		ArchivePath:         archivePath,
-		JSONOutput:          mode.json,
-		PlainOutput:         mode.plain,
-		ArchivePathExplicit: archivePathExplicit,
-		ConfigPathExplicit:  configPathExplicit,
+		ConfigPath:          globals.ConfigPath,
+		ArchivePath:         globals.ArchivePath,
+		JSONOutput:          globals.JSONOutput,
+		PlainOutput:         globals.PlainOutput,
+		ArchivePathExplicit: globals.ArchivePathExplicit,
+		ConfigPathExplicit:  globals.ConfigPathExplicit,
 	})
 	// --raw-text opts out of the JSON-typed column passthrough that
 	// `--json` enables by default. Plain mode never participates in
@@ -59,7 +59,7 @@ func runQuery(args []string, configPath, archivePath string, configPathExplicit,
 	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
-	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
+	mode := commonOutputMode(*common)
 	if flags.NArg() != 1 {
 		return ReportFailure(FailureReport{
 			Command: "query",

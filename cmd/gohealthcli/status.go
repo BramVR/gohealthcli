@@ -92,7 +92,7 @@ type statusSyncRun struct {
 	ErrorSummary       string   `json:"error_summary,omitempty"`
 }
 
-func runStatus(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+func runStatus(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("status", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -103,18 +103,18 @@ func runStatus(args []string, configPath, archivePath string, configPathExplicit
 	// flag values too, so passing them on either side of the subcommand
 	// works the same way.
 	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
-		ConfigPath:          configPath,
-		ArchivePath:         archivePath,
-		JSONOutput:          mode.json,
-		PlainOutput:         mode.plain,
-		ArchivePathExplicit: archivePathExplicit,
-		ConfigPathExplicit:  configPathExplicit,
+		ConfigPath:          globals.ConfigPath,
+		ArchivePath:         globals.ArchivePath,
+		JSONOutput:          globals.JSONOutput,
+		PlainOutput:         globals.PlainOutput,
+		ArchivePathExplicit: globals.ArchivePathExplicit,
+		ConfigPathExplicit:  globals.ConfigPathExplicit,
 	})
 
 	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
-	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
+	mode := commonOutputMode(*common)
 	if flags.NArg() != 0 {
 		return ReportFailure(FailureReport{
 			Command: "status",
