@@ -320,9 +320,9 @@ func TestProviderGETDoesNotRetryNetworkFailure(t *testing.T) {
 	}
 }
 
-// countingFailingTransport is failingProviderTransport with an attempt
-// counter, so a test can prove the module did not loop on a
-// non-retryable transport failure.
+// countingFailingTransport fails every request at the transport
+// layer and counts attempts, so a test can prove the module did not
+// loop on a non-retryable transport failure.
 type countingFailingTransport struct {
 	attempts *int
 	err      error
