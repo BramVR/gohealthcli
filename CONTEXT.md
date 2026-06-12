@@ -38,7 +38,7 @@ _Avoid_: summary, aggregate
 **Normalized View**: A SQL VIEW (or, where measurement requires it, an expression index plus generated columns on `data_points`) that projects raw Data Point, Rollup, or Identity Snapshot JSON into a stable column-shaped surface for `query` and `export`. A Normalized View is read-only and recomputes on read; the raw row remains the source of truth.
 _Avoid_: normalized export dataset, materialized view, projection
 
-**Identity Snapshot**: Raw provider identity-level metadata fetched for a Google Identity at a point in time, append-only and tagged by **kind**: `profile`, `settings`, `paired-devices`, or `irn-profile`. An Identity Snapshot is not a Data Point, Rollup, or analytics result. Normalized views (`current_profile`, `current_settings`, `paired_devices`, `current_irn_profile`) project the latest snapshot of each kind into queryable form.
+**Identity Snapshot**: Raw provider identity-level metadata fetched for a Google Identity at a point in time, append-only and tagged by **kind**: `profile`, `settings`, `paired-devices`, or `irn-profile`. An Identity Snapshot is not a Data Point, Rollup, or analytics result. Normalized views (`current_settings`, `paired_devices`, `current_irn_profile`) project the latest snapshot of their kind into queryable form; the `profile` kind has no projection view.
 _Avoid_: profile snapshot, profile, settings, account data, device record
 
 **Sync Run**: One attempt to fetch and archive Data Points or Rollups for **one selected Data Type** and time range. Multi-Data-Type CLI invocations (`sync --all`, `sync --types a,b,c`) fan out into one Sync Run per Data Type so per-type counts and failure status stay isolated.
