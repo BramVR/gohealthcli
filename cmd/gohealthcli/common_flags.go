@@ -355,3 +355,14 @@ func preScanUnknownButKnownGlobal(fs *flag.FlagSet, args []string) error {
 	}
 	return nil
 }
+
+func parseCommaList(value string) []string {
+	var out []string
+	for _, part := range strings.Split(value, ",") {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}

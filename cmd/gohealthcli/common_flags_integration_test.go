@@ -181,7 +181,7 @@ func TestMigratedSubcommandEntryPointsCallRegisterCommon(t *testing.T) {
 	}{
 		{"init", "init.go", "func runInit("},
 		{"doctor", "doctor.go", "func runDoctorWithRuntime("},
-		{"connect", "main.go", "func runConnectWithRuntime("},
+		{"connect", "connect.go", "func runConnectWithRuntime("},
 		{"sync", "main.go", "func runSyncWithRuntime("},
 		{"raw", "main.go", "func runRawWithRuntime("},
 		{"query", "query.go", "func runQuery("},
