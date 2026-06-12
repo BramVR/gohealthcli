@@ -506,6 +506,20 @@ func syncWriterFixtureMinimal() syncResult {
 	}
 }
 
+// syncWriterFixtureCanceled mirrors a SIGINT mid-run: the audit row
+// exists (SyncRunID set), counts are partial, and the executor's
+// errSyncCanceled message landed on the result.
+func syncWriterFixtureCanceled() syncResult {
+	return syncResult{
+		Status:         "sync_canceled",
+		SyncRunID:      59,
+		DataTypes:      []string{"steps"},
+		DataPointsSeen: 40,
+		DataPointsNew:  40,
+		Message:        "Sync Run canceled",
+	}
+}
+
 const syncWriterRichJSON = `{
   "status": "sync_completed",
   "sync_run_id": 57,
@@ -593,6 +607,17 @@ Rollups: seen 0, new 0, updated 0
 Message: provider unreachable
 `
 
+// A canceled single-type sync must NOT render the "Sync Run failed"
+// header — JSON and plain modes already distinguish sync_canceled, and
+// the human header has to agree (Copilot finding on #307).
+const syncWriterCanceledHuman = `Sync Run canceled
+Sync Run: 59
+Data Types: steps
+Data Points: seen 40, new 40, updated 0
+Rollups: seen 0, new 0, updated 0
+Message: Sync Run canceled
+`
+
 func TestSyncWriterEmitsByteIdenticalOutputAcrossModes(t *testing.T) {
 	t.Parallel()
 	for _, testCase := range []struct {
@@ -607,6 +632,7 @@ func TestSyncWriterEmitsByteIdenticalOutputAcrossModes(t *testing.T) {
 		{"minimal json", syncWriterFixtureMinimal(), outputMode{json: true}, syncWriterMinimalJSON},
 		{"minimal plain", syncWriterFixtureMinimal(), outputMode{plain: true}, syncWriterMinimalPlain},
 		{"minimal human", syncWriterFixtureMinimal(), outputMode{}, syncWriterMinimalHuman},
+		{"canceled human", syncWriterFixtureCanceled(), outputMode{}, syncWriterCanceledHuman},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			buffer := new(bytes.Buffer)
@@ -727,21 +753,58 @@ Totals: Data Points seen=120 new=110 updated=10, Rollups seen=2 new=1 updated=1
 Sync Run summary: 2 Data Types attempted, at least one failed
 `
 
+// syncFanOutWriterCanceledFixture mirrors SIGINT during the second Data
+// Type of a fan-out: steps finished, heart-rate was canceled mid-run,
+// and any later types were skipped (absent from the slice).
+func syncFanOutWriterCanceledFixture() []syncResult {
+	return []syncResult{
+		{
+			Status:            "sync_completed",
+			SyncRunID:         58,
+			DataTypes:         []string{"steps"},
+			DataPointsSeen:    120,
+			DataPointsNew:     110,
+			DataPointsUpdated: 10,
+			RollupsSeen:       2,
+			RollupsNew:        1,
+			RollupsUpdated:    1,
+			Message:           "Sync Run completed",
+		},
+		{
+			Status:         "sync_canceled",
+			SyncRunID:      59,
+			DataTypes:      []string{"heart-rate"},
+			DataPointsSeen: 40,
+			DataPointsNew:  40,
+			Message:        "Sync Run canceled",
+		},
+	}
+}
+
+const syncFanOutWriterCanceledHuman = `Sync Run fan-out canceled across 2 Data Types
+- steps: sync_completed — Data Points new=110 updated=10, Rollups new=1 updated=1
+- heart-rate: sync_canceled — Data Points new=40 updated=0, Rollups new=0 updated=0
+Totals: Data Points seen=160 new=150 updated=10, Rollups seen=2 new=1 updated=1
+Sync Run summary: 1 Data Types completed before cancellation
+`
+
 func TestSyncFanOutWriterEmitsByteIdenticalOutputAcrossModes(t *testing.T) {
 	t.Parallel()
 	options := syncCommandOptions{from: "2026-06-09", to: "2026-06-10T00:00:00Z"}
 	for _, testCase := range []struct {
-		name string
-		mode outputMode
-		want string
+		name    string
+		results []syncResult
+		mode    outputMode
+		want    string
 	}{
-		{"json", outputMode{json: true}, syncFanOutWriterJSON},
-		{"plain", outputMode{plain: true}, syncFanOutWriterPlain},
-		{"human", outputMode{}, syncFanOutWriterHuman},
+		{"json", syncFanOutWriterFixture(), outputMode{json: true}, syncFanOutWriterJSON},
+		{"plain", syncFanOutWriterFixture(), outputMode{plain: true}, syncFanOutWriterPlain},
+		{"human", syncFanOutWriterFixture(), outputMode{}, syncFanOutWriterHuman},
+		{"canceled human", syncFanOutWriterCanceledFixture(), outputMode{}, syncFanOutWriterCanceledHuman},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			buffer := new(bytes.Buffer)
-			if err := writeSyncFanOutResult(syncFanOutWriterFixture(), options, testCase.mode, buffer); err != nil {
+			if err := writeSyncFanOutResult(testCase.results, options, testCase.mode, buffer); err != nil {
 				t.Fatalf("writeSyncFanOutResult: %v", err)
 			}
 			if got := buffer.String(); got != testCase.want {
