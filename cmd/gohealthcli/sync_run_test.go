@@ -316,25 +316,12 @@ func TestSyncRunExecutorRefreshesAccessTokenMidRunAndPersists(t *testing.T) {
 	refreshedExpiresAt := syncNow.Add(time.Hour)
 	testRuntime.now = func() time.Time { return syncNow }
 	refreshCalls := 0
-	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-		refreshCalls++
-		if refreshToken != "connect-refresh-secret" {
-			t.Fatalf("refresh token = %q, want connect-refresh-secret", refreshToken)
-		}
-		return oauthTokenResponse{
-			accessToken:  "rotated-access-secret",
-			refreshToken: "connect-refresh-secret",
-			tokenType:    "Bearer",
-			scopes:       fallbackScopes,
-			expiresAt:    refreshedExpiresAt,
-			rawTokenMaterialObject: map[string]any{
-				"access_token":  "rotated-access-secret",
-				"refresh_token": "connect-refresh-secret",
-				"token_type":    "Bearer",
-				"expires_in":    float64(3600),
-			},
-		}, nil
-	}
+	bindRefreshOAuthTokenFake(t, &testRuntime, fakeRefreshConfig{
+		wantRefreshToken: "connect-refresh-secret",
+		accessToken:      "rotated-access-secret",
+		expiresAt:        refreshedExpiresAt,
+		calls:            &refreshCalls,
+	})
 
 	dataPointPage := func(name, nextPageToken string) string {
 		return `{
@@ -422,24 +409,11 @@ func TestSyncRunExecutorAutoRefreshesExpiredAccessTokenAndPersists(t *testing.T)
 	syncNow := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC)
 	refreshedExpiresAt := syncNow.Add(time.Hour)
 	testRuntime.now = func() time.Time { return syncNow }
-	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-		if refreshToken != "connect-refresh-secret" {
-			t.Fatalf("refresh token = %q, want connect-refresh-secret", refreshToken)
-		}
-		return oauthTokenResponse{
-			accessToken:  "rotated-access-secret",
-			refreshToken: "connect-refresh-secret",
-			tokenType:    "Bearer",
-			scopes:       fallbackScopes,
-			expiresAt:    refreshedExpiresAt,
-			rawTokenMaterialObject: map[string]any{
-				"access_token":  "rotated-access-secret",
-				"refresh_token": "connect-refresh-secret",
-				"token_type":    "Bearer",
-				"expires_in":    float64(3600),
-			},
-		}, nil
-	}
+	bindRefreshOAuthTokenFake(t, &testRuntime, fakeRefreshConfig{
+		wantRefreshToken: "connect-refresh-secret",
+		accessToken:      "rotated-access-secret",
+		expiresAt:        refreshedExpiresAt,
+	})
 	testRuntime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
 		if accessToken != "rotated-access-secret" {
 			t.Fatalf("identity access token = %q, want rotated token", accessToken)

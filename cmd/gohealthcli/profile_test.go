@@ -127,25 +127,12 @@ func TestProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// once" contract is guarded against a regression where retries
 	// would silently double-rotate the stored token.
 	refreshCalls := 0
-	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-		refreshCalls++
-		if refreshToken != "connect-refresh-secret" {
-			t.Fatalf("refresh token = %q, want connect-refresh-secret", refreshToken)
-		}
-		return oauthTokenResponse{
-			accessToken:  "rotated-access-secret",
-			refreshToken: "connect-refresh-secret",
-			tokenType:    "Bearer",
-			scopes:       fallbackScopes,
-			expiresAt:    refreshedExpiresAt,
-			rawTokenMaterialObject: map[string]any{
-				"access_token":  "rotated-access-secret",
-				"refresh_token": "connect-refresh-secret",
-				"token_type":    "Bearer",
-				"expires_in":    float64(3600),
-			},
-		}, nil
-	}
+	bindRefreshOAuthTokenFake(t, &testRuntime, fakeRefreshConfig{
+		wantRefreshToken: "connect-refresh-secret",
+		accessToken:      "rotated-access-secret",
+		expiresAt:        refreshedExpiresAt,
+		calls:            &refreshCalls,
+	})
 
 	// profile reaches the Provider through runtime.fetchProfile, so the
 	// auto-refresh path's stub lives on the runtime adapters; without it

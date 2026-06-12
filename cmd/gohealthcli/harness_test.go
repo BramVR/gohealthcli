@@ -187,6 +187,56 @@ type fakeDoctorOnlineConfig struct {
 	failProviderIfCalled    bool
 }
 
+// fakeRefreshConfig drives bindRefreshOAuthTokenFake. Empty want
+// fields skip their checks; an empty refreshToken returns
+// wantRefreshToken unrotated.
+type fakeRefreshConfig struct {
+	wantClientID     string
+	wantRefreshToken string
+	accessToken      string
+	refreshToken     string
+	expiresAt        time.Time
+	calls            *int
+}
+
+// bindRefreshOAuthTokenFake replaces runtime.refreshOAuthToken with the
+// standard success-shaped refresh fake: assert the stored refresh token
+// (and optionally the OAuth client id), return refreshed token material
+// with the canonical raw token object, and count calls when a counter
+// is bound — the stanza connected-state auto-refresh tests previously
+// pasted.
+func bindRefreshOAuthTokenFake(t *testing.T, runtime *runtimeAdapters, config fakeRefreshConfig) {
+	t.Helper()
+
+	if config.refreshToken == "" {
+		config.refreshToken = config.wantRefreshToken
+	}
+	runtime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
+		if config.calls != nil {
+			*config.calls++
+		}
+		if config.wantClientID != "" && client.clientID != config.wantClientID {
+			t.Fatalf("oauth client id = %q, want %q", client.clientID, config.wantClientID)
+		}
+		if config.wantRefreshToken != "" && refreshToken != config.wantRefreshToken {
+			t.Fatalf("refresh token = %q, want %q", refreshToken, config.wantRefreshToken)
+		}
+		return oauthTokenResponse{
+			accessToken:  config.accessToken,
+			refreshToken: config.refreshToken,
+			tokenType:    "Bearer",
+			scopes:       fallbackScopes,
+			expiresAt:    config.expiresAt,
+			rawTokenMaterialObject: map[string]any{
+				"access_token":  config.accessToken,
+				"refresh_token": config.refreshToken,
+				"token_type":    "Bearer",
+				"expires_in":    float64(3600),
+			},
+		}, nil
+	}
+}
+
 func newConnectFakeRuntime(t *testing.T, config fakeConnectConfig) runtimeAdapters {
 	t.Helper()
 
