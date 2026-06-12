@@ -3,6 +3,7 @@ package googlehealth
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -63,6 +64,38 @@ func TestREADMECaveatListsCatalogTypesSyncRejects(t *testing.T) {
 	}
 }
 
+// TestREADMECitesThisDriftGuardFile pins the README's breadcrumb to this
+// drift-guard suite: the "Supported Data Point sync types" section must
+// cite this file by its repo-relative path. The #287/#312 extraction
+// moved the suite from cmd/gohealthcli to internal/googlehealth and the
+// README kept pointing at the old location (#313); computing the path
+// at runtime makes the assertion follow the file through any future
+// move instead of hard-coding the package again. The repo root is
+// located by walking up to go.mod, so a depth change moves with it; the
+// file name comes from runtime.Caller's base so a rename is picked up
+// even under -trimpath builds.
+func TestREADMECitesThisDriftGuardFile(t *testing.T) {
+	t.Parallel()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed; cannot locate this test file")
+	}
+	packageDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("resolve package dir: %v", err)
+	}
+	repoRoot := repoRootDir(t)
+	rel, err := filepath.Rel(repoRoot, filepath.Join(packageDir, filepath.Base(thisFile)))
+	if err != nil {
+		t.Fatalf("relativize %s against %s: %v", thisFile, repoRoot, err)
+	}
+	token := "`" + filepath.ToSlash(rel) + "`"
+	body := readmeSectionBody(t, readmeSyncTypesSectionMarker)
+	if !strings.Contains(body, token) {
+		t.Errorf("README sync-types section does not cite this drift-guard file as %s; update the \"drift guard in ...\" paragraph in README.md", token)
+	}
+}
+
 const readmeSyncTypesSectionMarker = "Supported Data Point sync types"
 
 // readmeSyncTypesBulletBlock returns just the bullet list following the
@@ -114,12 +147,33 @@ func readmeSyncTypesCaveatParagraph(t *testing.T) string {
 	return body[paraStart : hit+paraEnd]
 }
 
+// repoRootDir walks up from the package dir to the directory holding
+// go.mod, so the suite keeps working if this package moves to a
+// different depth in the tree.
+func repoRootDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("resolve package dir: %v", err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("go.mod not found walking up from the package dir; cannot locate the repo root")
+		}
+		dir = parent
+	}
+}
+
 // readmeSectionBody returns the README region from the line after the
 // given marker through to the next "## " heading (or EOF). The bullet-
 // and caveat-specific helpers above narrow further before asserting.
 func readmeSectionBody(t *testing.T, marker string) string {
 	t.Helper()
-	readmePath := filepath.Join("..", "..", "README.md")
+	readmePath := filepath.Join(repoRootDir(t), "README.md")
 	content, err := os.ReadFile(readmePath)
 	if err != nil {
 		t.Fatalf("read README: %v", err)
