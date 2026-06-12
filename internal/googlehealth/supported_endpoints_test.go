@@ -1,8 +1,32 @@
 package googlehealth
 
 import (
+	"slices"
+	"sort"
 	"testing"
 )
+
+// TestDailyRollupSupportIsExactlyStepsAndFloors pins the docs claim
+// from #316: only `steps` and `floors` carry the dailyRollUp endpoint
+// family, so `--rollup daily` is rejected for every other Data Type.
+// docs/data-types.md states this in its Rollups section — if a new
+// catalog entry gains dailyRollUp, update that section alongside this
+// expectation.
+func TestDailyRollupSupportIsExactlyStepsAndFloors(t *testing.T) {
+	t.Parallel()
+	want := []string{"floors", "steps"}
+	var got []string
+	for _, dataType := range googleHealthDataTypes.order {
+		entry, _ := googleHealthDataTypes.Lookup(dataType)
+		if _, ok := entry.SupportedEndpoints[endpointFamilyDailyRollUp]; ok {
+			got = append(got, dataType)
+		}
+	}
+	sort.Strings(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("data types with dailyRollUp = %v, want %v", got, want)
+	}
+}
 
 // TestSupportedEndpointsMapMatchesPlannerForSteps is the tracer for
 // #100: every existing Data Type's SupportedEndpoints map carries the
