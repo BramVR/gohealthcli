@@ -6110,6 +6110,15 @@ func TestOAuthScopesUseRecognizedGoogleHealthScopes(t *testing.T) {
 	}
 }
 
+func TestOAuthScopesForEmptyDataTypesRequestOnlyProfileScope(t *testing.T) {
+	t.Parallel()
+	for name, dataTypes := range map[string][]string{"nil": nil, "empty": {}} {
+		if scopes := oauthScopesForDataTypes(dataTypes); !slices.Equal(scopes, []string{googleHealthProfileReadonlyScope}) {
+			t.Fatalf("scopes for %s dataTypes = %v, want only the profile scope", name, scopes)
+		}
+	}
+}
+
 func TestListenForOAuthRedirectPreservesEmptyLoopbackPath(t *testing.T) {
 	t.Parallel()
 	listener, redirectURI, err := listenForOAuthRedirect([]string{"http://localhost"})
