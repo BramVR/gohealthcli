@@ -1052,7 +1052,7 @@ var identityCommand = identitySnapshotCommandSpec[identityResult, googleIdentity
 			}
 			return err
 		}
-		if err := engine.archive.RefreshConnectionIdentity(engine.connection, identity, engine.runtime.now()); err != nil {
+		if err := engine.archive.RefreshConnectionIdentity(context.Background(), engine.connection, identity, engine.runtime.now()); err != nil {
 			return err
 		}
 		result.Status = "identity_refreshed"
@@ -1461,13 +1461,18 @@ func connectSetupWithRuntimeAndExtraScopes(configPath, archivePath string, noInp
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
 	defer archive.Close()
-	if err := archive.EnsureSameGoogleIdentity(identity.healthUserID); err != nil {
+	// context.Background(): connect is a synchronous interactive flow
+	// with no cancellation path today (its OAuth POST rides
+	// context.Background() the same way, #284); the context keeps the
+	// Connection writes on the Context API (#305) without changing
+	// behavior.
+	if err := archive.EnsureSameGoogleIdentity(context.Background(), identity.healthUserID); err != nil {
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
 	if err := store.Store(connectionID, token.rawTokenMaterialObject); err != nil {
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
-	if err := archive.UpsertConnection(connectionID, identity, token, runtime.now()); err != nil {
+	if err := archive.UpsertConnection(context.Background(), connectionID, identity, token, runtime.now()); err != nil {
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
 	}
 	return connectResult{

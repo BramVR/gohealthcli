@@ -136,7 +136,7 @@ func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 		{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"TRACKER","batteryStatus":"Medium","batteryLevel":50,"deviceVersion":"Google Pixel Watch 4"},
 		{"name":"users/111111256096816351/pairedDevices/1122334455","deviceType":"SCALE","batteryStatus":"High","deviceVersion":"Withings Body+"}
 	]}`
-	if _, err := archive.Insert(connection, "paired-devices", payload, "2026-06-08T13:00:00Z"); err != nil {
+	if _, err := archive.Insert(context.Background(), connection, "paired-devices", payload, "2026-06-08T13:00:00Z"); err != nil {
 		archive.Close()
 		t.Fatalf("Insert: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
 		t.Fatalf("read current Connection: %v", err)
 	}
 	for _, payload := range []string{`{"pairedDevices":[]}`, `{}`} {
-		if _, err := archive.Insert(connection, "paired-devices", payload, "2026-06-08T13:00:00Z"); err != nil {
+		if _, err := archive.Insert(context.Background(), connection, "paired-devices", payload, "2026-06-08T13:00:00Z"); err != nil {
 			archive.Close()
 			t.Fatalf("Insert %s: %v", payload, err)
 		}

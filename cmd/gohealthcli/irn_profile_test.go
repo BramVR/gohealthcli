@@ -69,11 +69,11 @@ func TestCurrentIRNProfileViewProjectsLatestSnapshot(t *testing.T) {
 		archive.Close()
 		t.Fatalf("read current Connection: %v", err)
 	}
-	if _, err := archive.Insert(connection, "irn-profile", `{"onboardingState":"PENDING","enrollmentState":"NOT_ENROLLED","lastUpdateTime":"2026-05-01T00:00:00Z"}`, "2026-05-01T00:00:00Z"); err != nil {
+	if _, err := archive.Insert(context.Background(), connection, "irn-profile", `{"onboardingState":"PENDING","enrollmentState":"NOT_ENROLLED","lastUpdateTime":"2026-05-01T00:00:00Z"}`, "2026-05-01T00:00:00Z"); err != nil {
 		archive.Close()
 		t.Fatalf("Insert old: %v", err)
 	}
-	if _, err := archive.Insert(connection, "irn-profile", `{"onboardingState":"COMPLETED","enrollmentState":"ENROLLED","lastUpdateTime":"2026-06-08T00:00:00Z"}`, "2026-06-08T00:00:00Z"); err != nil {
+	if _, err := archive.Insert(context.Background(), connection, "irn-profile", `{"onboardingState":"COMPLETED","enrollmentState":"ENROLLED","lastUpdateTime":"2026-06-08T00:00:00Z"}`, "2026-06-08T00:00:00Z"); err != nil {
 		archive.Close()
 		t.Fatalf("Insert new: %v", err)
 	}

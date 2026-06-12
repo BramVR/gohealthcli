@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"flag"
@@ -267,7 +268,12 @@ func identitySnapshotSetupWithRuntime[R, P any](spec identitySnapshotCommandSpec
 		}
 	}
 	fetchedAt := runtime.now().UTC().Format(time.RFC3339)
-	snapshotID, err := writeIdentitySnapshotHandoff(archive, archivePath, connection, spec.snapshotKind, spec.payloadRawJSON(payload), fetchedAt)
+	// context.Background(): the Identity Snapshot commands are
+	// synchronous fetch-then-archive flows with no cancellation path
+	// today (their Provider fetches ride context.Background() the same
+	// way, #284); the context keeps the snapshot write on the Context
+	// API (#305) without changing behavior.
+	snapshotID, err := writeIdentitySnapshotHandoff(context.Background(), archive, archivePath, connection, spec.snapshotKind, spec.payloadRawJSON(payload), fetchedAt)
 	archiveClosed = true // handoff owns archive's lifecycle now
 	if err != nil {
 		return result, err

@@ -92,7 +92,7 @@ func TestStatusJSONHasTopLevelPairedDeviceCount(t *testing.T) {
 		snapshots.Close()
 		t.Fatalf("read current Connection: %v", err)
 	}
-	if _, err := snapshots.Insert(connection, "paired-devices", `{"pairedDevices":[{"deviceVersion":"Pixel Watch 2"},{"deviceVersion":"Pixel 8"},{"deviceVersion":"Pixel Watch 4"}]}`, "2026-06-08T00:00:00Z"); err != nil {
+	if _, err := snapshots.Insert(context.Background(), connection, "paired-devices", `{"pairedDevices":[{"deviceVersion":"Pixel Watch 2"},{"deviceVersion":"Pixel 8"},{"deviceVersion":"Pixel Watch 4"}]}`, "2026-06-08T00:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert paired-devices: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestStatusPlainOutputPreservedAfterParityChange(t *testing.T) {
 		snapshots.Close()
 		t.Fatalf("read current Connection: %v", err)
 	}
-	if _, err := snapshots.Insert(connection, "paired-devices", `{"pairedDevices":[{"deviceVersion":"Pixel Watch 2"}]}`, "2026-06-08T00:00:00Z"); err != nil {
+	if _, err := snapshots.Insert(context.Background(), connection, "paired-devices", `{"pairedDevices":[{"deviceVersion":"Pixel Watch 2"}]}`, "2026-06-08T00:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert paired-devices: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestStatusPlainAndJSONKeyParity(t *testing.T) {
 		snapshots.Close()
 		t.Fatalf("read current Connection: %v", err)
 	}
-	if _, err := snapshots.Insert(connection, "paired-devices", `{"pairedDevices":[{"deviceVersion":"Pixel Watch 2"}]}`, "2026-06-08T00:00:00Z"); err != nil {
+	if _, err := snapshots.Insert(context.Background(), connection, "paired-devices", `{"pairedDevices":[{"deviceVersion":"Pixel Watch 2"}]}`, "2026-06-08T00:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert paired-devices: %v", err)
 	}

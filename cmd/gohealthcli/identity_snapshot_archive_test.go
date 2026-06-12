@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -72,7 +73,7 @@ func TestIdentitySnapshotArchiveInsertAndLatestRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read current Connection: %v", err)
 	}
-	if _, err := archive.Insert(connection, "settings", `{"unit":"metric"}`, "2026-06-01T00:00:00Z"); err != nil {
+	if _, err := archive.Insert(context.Background(), connection, "settings", `{"unit":"metric"}`, "2026-06-01T00:00:00Z"); err != nil {
 		t.Fatalf("Insert: %v", err)
 	}
 
@@ -130,7 +131,7 @@ func TestIdentitySnapshotArchiveLatestFiltersByKind(t *testing.T) {
 		{"settings", `{"unit":"metric"}`, "2026-06-01T00:00:00Z"},
 		{"settings", `{"unit":"metric","timezone":"UTC"}`, "2026-06-10T00:00:00Z"},
 	} {
-		if _, err := archive.Insert(connection, row.kind, row.raw, row.at); err != nil {
+		if _, err := archive.Insert(context.Background(), connection, row.kind, row.raw, row.at); err != nil {
 			t.Fatalf("Insert(%s): %v", row.kind, err)
 		}
 	}
@@ -296,10 +297,10 @@ func TestCurrentSettingsViewProjectsLatestSnapshot(t *testing.T) {
 		t.Fatalf("read current Connection: %v", err)
 	}
 	// Two settings snapshots: only the newest (id=2) should surface.
-	if _, err := archive.Insert(connection, "settings", `{"measurementSystem":"IMPERIAL","timezone":"America/New_York"}`, "2026-05-01T00:00:00Z"); err != nil {
+	if _, err := archive.Insert(context.Background(), connection, "settings", `{"measurementSystem":"IMPERIAL","timezone":"America/New_York"}`, "2026-05-01T00:00:00Z"); err != nil {
 		t.Fatalf("insert old settings: %v", err)
 	}
-	if _, err := archive.Insert(connection, "settings", `{"measurementSystem":"METRIC","timezone":"Europe/Brussels"}`, "2026-06-08T00:00:00Z"); err != nil {
+	if _, err := archive.Insert(context.Background(), connection, "settings", `{"measurementSystem":"METRIC","timezone":"Europe/Brussels"}`, "2026-06-08T00:00:00Z"); err != nil {
 		t.Fatalf("insert new settings: %v", err)
 	}
 	archive.Close()
@@ -359,12 +360,12 @@ func TestIdentitySnapshotArchiveLatestUsesFetchedAtForRecency(t *testing.T) {
 	}
 
 	// id=1, fetched_at=2026-06-08 (the actually-newest)
-	if _, err := archive.Insert(connection, "settings", `{"measurementSystem":"NEWEST-FETCH"}`, "2026-06-08T00:00:00Z"); err != nil {
+	if _, err := archive.Insert(context.Background(), connection, "settings", `{"measurementSystem":"NEWEST-FETCH"}`, "2026-06-08T00:00:00Z"); err != nil {
 		archive.Close()
 		t.Fatalf("Insert newer: %v", err)
 	}
 	// id=2, fetched_at=2026-05-01 (older, even though inserted later)
-	if _, err := archive.Insert(connection, "settings", `{"measurementSystem":"OLDER-FETCH"}`, "2026-05-01T00:00:00Z"); err != nil {
+	if _, err := archive.Insert(context.Background(), connection, "settings", `{"measurementSystem":"OLDER-FETCH"}`, "2026-05-01T00:00:00Z"); err != nil {
 		archive.Close()
 		t.Fatalf("Insert older: %v", err)
 	}
@@ -552,4 +553,42 @@ func archiveColumnExists(t *testing.T, db *sql.DB, table, column string) bool {
 		t.Fatalf("rows.Err: %v", err)
 	}
 	return false
+}
+
+// TestIdentitySnapshotArchiveInsertHonorsCanceledContext pins the
+// noctx-completion slice (#305): Insert rides the caller's context, so
+// a canceled context aborts the snapshot write instead of appending a
+// row behind the caller's back.
+func TestIdentitySnapshotArchiveInsertHonorsCanceledContext(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
+		t.Fatalf("connect exit code = %d", code)
+	}
+
+	archive, err := openIdentitySnapshotArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open identity snapshot archive: %v", err)
+	}
+	defer archive.Close()
+	connection, err := readCurrentConnection(context.Background(), archive.db)
+	if err != nil {
+		t.Fatalf("read current Connection: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := archive.Insert(ctx, connection, "settings", `{"unit":"metric"}`, "2026-06-01T00:00:00Z"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Insert with canceled context = %v, want context.Canceled", err)
+	}
+	if _, found := latestIdentitySnapshotRow(t, archive.db, connection.id, "settings"); found {
+		t.Fatal("snapshot row present after canceled Insert, want none")
+	}
 }
