@@ -18,7 +18,7 @@ var (
 	// on when the stored Connection's granted scopes do not cover the
 	// scopes required for an upstream call. The wrapping error still
 	// carries the precise `connect --add-scopes <keyword>` recovery
-	// message that requireConnectionScopes already builds (main.go:1842);
+	// message that requireConnectionScopes already builds (below);
 	// the sentinel only adds a typed test surface so each command can
 	// set its own "<command>_scope_missing" status without duplicating
 	// the pre-check logic. The sentinel's own Error() text matches the
