@@ -1,5 +1,12 @@
 package main
 
+// main_test.go holds the tests of main.go's own feature: top-level
+// dispatch — the no-args help, the help verb and --help forms, and the
+// unknown-command path. Per-feature command tests live next to their
+// features (doctor_test.go, sync_test.go, ...), the shared fixtures and
+// drivers live in harness_test.go, and the few tests that need the
+// compiled binary live in binary_smoke_test.go (issue #286).
+
 import (
 	"strings"
 	"testing"
