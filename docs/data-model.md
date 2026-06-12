@@ -76,7 +76,9 @@ read_when:
 - provider name
 - connection ID
 - Data Type
-- rollup kind: rollUp or dailyRollUp
+- rollup kind: `dailyRollUp` for daily Rollups; `hourly`, `weekly`, or
+  `window=<duration>` for windowed Rollups (the `rollUp` endpoint name is
+  never stored)
 - window start/end as UTC instants when available
 - civil date when daily
 - timezone offset or provider timezone metadata when supplied
@@ -149,7 +151,7 @@ fetched_at)`.
 
 The Attachment Store module exposes `Store(dataPointID, kind, bytes)
 → {sha256, path}` (content-addressed; same bytes → same path,
-idempotent insert), `Resolve(sha256) → path`, and `Walk(fn)` for
+idempotent insert) and `Walk(fn)` for
 orphan detection (row with no sidecar, sidecar with no row). `doctor`
 surfaces the orphan counts in its default report (`attachments_orphan_files`
 and `attachments_orphan_rows` in `--plain`, an `attachments` block in
@@ -219,6 +221,10 @@ default; no parallel-table-with-view shim was used (PRD #93
 - status (`sync_running`, `sync_completed`, `sync_failed`, `sync_canceled`)
 - seen/new/updated counts
 - started/finished timestamps
+- last-progress heartbeat timestamp (`last_progress_at`, migration 22),
+  rewritten after every archived page so a concurrent `sync --status` can
+  tell a live long run from an abandoned one; NULL on rows predating the
+  migration
 - error summary
 
 The First Release records Sync Runs and newest archived timestamps, but does not
@@ -230,7 +236,7 @@ Types, source filtering, and correction behavior are better understood.
 - connection ID
 - Data Type
 - source-family filter (empty string when none)
-- rollup kind (`none`, `daily`; future: `hourly`, `weekly`, `window:<duration>`)
+- rollup kind (`none`, `daily`, `hourly`, `weekly`, `window=<duration>`)
 - cursor time — the durable highwater mark, used as the next `--from`
 - advanced-at timestamp
 
