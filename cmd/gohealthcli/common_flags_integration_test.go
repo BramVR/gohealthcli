@@ -180,7 +180,7 @@ func TestMigratedSubcommandEntryPointsCallRegisterCommon(t *testing.T) {
 		funcSig string
 	}{
 		{"init", "init.go", "func runInit("},
-		{"doctor", "main.go", "func runDoctorWithRuntime("},
+		{"doctor", "doctor.go", "func runDoctorWithRuntime("},
 		{"connect", "main.go", "func runConnectWithRuntime("},
 		{"sync", "main.go", "func runSyncWithRuntime("},
 		{"raw", "main.go", "func runRawWithRuntime("},
