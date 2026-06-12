@@ -272,8 +272,8 @@ func (gate syncPreflightGate) defaultTo(options syncCommandOptions, dataTypes []
 // validatePreflightRangeOrder enforces the two range-ordering rules
 // (inverted range, zero-width window) on a parsed time.Time so civil-
 // date and RFC3339 inputs compose correctly. It reuses the single
-// boundary parser owned by googlehealth.RollupSpec (googlehealth.ParseRangeBoundary) so
-// there is ONE source of truth for the two-shape acceptance contract.
+// boundary parser the googlehealth package owns (ParseRangeBoundary)
+// so there is ONE source of truth for the two-shape acceptance contract.
 //
 // Parse failures DEFER to the downstream code path: when --rollup is
 // non-empty, the gate has already called NormalizeRange (which authors
