@@ -20,8 +20,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const setupMissingExitCode = 2
-
 const googleHealthBaseURL = "https://health.googleapis.com/v4"
 const googleHealthIdentityURL = "https://health.googleapis.com/v4/users/me/identity"
 const googleHealthProfileURL = "https://health.googleapis.com/v4/users/me/profile"
