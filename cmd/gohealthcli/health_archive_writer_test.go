@@ -33,17 +33,12 @@ func TestHealthArchiveWriterRequiresCurrentConnection(t *testing.T) {
 
 func TestHealthArchiveWriterRecordsDataPointRevisionsRollupsAndSyncRun(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 
 	archive, err := openHealthArchiveWriter(archivePath)
 	if err != nil {
@@ -131,17 +126,12 @@ func TestHealthArchiveWriterRecordsDataPointRevisionsRollupsAndSyncRun(t *testin
 // new/updated swap is invisible.
 func TestSyncRunStartFinishRoundTripsDistinctCounts(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	archive, err := openHealthArchiveWriter(archivePath)
 	if err != nil {
 		t.Fatalf("open Health Archive writer: %v", err)
@@ -182,17 +172,12 @@ func TestSyncRunStartFinishRoundTripsDistinctCounts(t *testing.T) {
 // `sync --status` poller reads mid-run.
 func TestSyncRunHeartbeatRoundTripsDistinctCounts(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	archive, err := openHealthArchiveWriter(archivePath)
 	if err != nil {
 		t.Fatalf("open Health Archive writer: %v", err)
@@ -243,17 +228,12 @@ func TestSyncRunHeartbeatRoundTripsDistinctCounts(t *testing.T) {
 // Owner-only POSIX permissions on the sidecar file are enforced.
 func TestHealthArchiveWriterStoreAttachmentWritesSidecarRow(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	archive, err := openHealthArchiveWriter(archivePath)
 	if err != nil {
 		t.Fatalf("open Health Archive writer: %v", err)
@@ -350,17 +330,12 @@ func TestHealthArchiveWriterStoreAttachmentErrorsWhenDataPointMissing(t *testing
 // concurrent-process integration test.
 func TestFinalizeSyncRunRetriesOnBusyThenAdvancesCursor(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	archive, err := openHealthArchiveWriter(archivePath)
 	if err != nil {
 		t.Fatalf("open writer: %v", err)
@@ -429,17 +404,12 @@ func TestFinalizeSyncRunRetriesOnBusyThenAdvancesCursor(t *testing.T) {
 // stays unset.
 func TestFinalizeSyncRunDoesNotAdvanceCursorOnFailedOutcome(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	archive, err := openHealthArchiveWriter(archivePath)
 	if err != nil {
 		t.Fatalf("open writer: %v", err)
@@ -491,17 +461,12 @@ func TestFinalizeSyncRunDoesNotAdvanceCursorOnFailedOutcome(t *testing.T) {
 // completion behind the user's back.
 func TestHealthArchiveWriterHonorsCanceledContext(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 
 	archive, err := openHealthArchiveWriter(archivePath)
 	if err != nil {

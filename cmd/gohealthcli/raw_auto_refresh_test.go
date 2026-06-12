@@ -29,9 +29,7 @@ func TestRawEndpointGetProfileAutoRefreshesExpiredAccessToken(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	// Force the stored access-token expires_at into the past so
 	// AccessToken must take the auto-refresh path. The profile.readonly
 	// scope is part of the base set granted by connect, so no
@@ -44,25 +42,12 @@ func TestRawEndpointGetProfileAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// Count refresh attempts so a regression where retries silently
 	// double-rotate the stored token surfaces here as well.
 	refreshCalls := 0
-	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-		refreshCalls++
-		if refreshToken != "connect-refresh-secret" {
-			t.Fatalf("refresh token = %q, want connect-refresh-secret", refreshToken)
-		}
-		return oauthTokenResponse{
-			accessToken:  "rotated-access-secret",
-			refreshToken: "connect-refresh-secret",
-			tokenType:    "Bearer",
-			scopes:       fallbackScopes,
-			expiresAt:    refreshedExpiresAt,
-			rawTokenMaterialObject: map[string]any{
-				"access_token":  "rotated-access-secret",
-				"refresh_token": "connect-refresh-secret",
-				"token_type":    "Bearer",
-				"expires_in":    float64(3600),
-			},
-		}, nil
-	}
+	bindRefreshOAuthTokenFake(t, &testRuntime, fakeRefreshConfig{
+		wantRefreshToken: "connect-refresh-secret",
+		accessToken:      "rotated-access-secret",
+		expiresAt:        refreshedExpiresAt,
+		calls:            &refreshCalls,
+	})
 
 	const providerBody = `{"name":"users/me/profile","displayName":"Rotated User"}`
 	rawCalls := 0

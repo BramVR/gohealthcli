@@ -389,27 +389,12 @@ func TestCurrentConnectionAccessTokenAutoRefreshesExpiredToken(t *testing.T) {
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	runtime := runtimeAdapters{}
 	runtime.now = func() time.Time { return now }
-	runtime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-		if client.clientID != "test-client" {
-			t.Fatalf("oauth client id = %q, want test-client", client.clientID)
-		}
-		if refreshToken != "stored-refresh" {
-			t.Fatalf("refresh token = %q, want stored-refresh", refreshToken)
-		}
-		return oauthTokenResponse{
-			accessToken:  "fresh-access",
-			refreshToken: "stored-refresh",
-			tokenType:    "Bearer",
-			scopes:       fallbackScopes,
-			expiresAt:    now.Add(time.Hour),
-			rawTokenMaterialObject: map[string]any{
-				"access_token":  "fresh-access",
-				"refresh_token": "stored-refresh",
-				"token_type":    "Bearer",
-				"expires_in":    float64(3600),
-			},
-		}, nil
-	}
+	bindRefreshOAuthTokenFake(t, &runtime, fakeRefreshConfig{
+		wantClientID:     "test-client",
+		wantRefreshToken: "stored-refresh",
+		accessToken:      "fresh-access",
+		expiresAt:        now.Add(time.Hour),
+	})
 	archive := &fakeHealthArchiveConnectionAPI{}
 	access := newCurrentConnectionAccessWithRuntime(
 		fixture.credentialStore,
@@ -518,21 +503,11 @@ func TestCurrentConnectionAccessTokenAutoRefreshPersistsToCredentialStoreAndArch
 	refreshedExpiresAt := now.Add(time.Hour)
 	runtime := runtimeAdapters{}
 	runtime.now = func() time.Time { return now }
-	runtime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-		return oauthTokenResponse{
-			accessToken:  "fresh-access",
-			refreshToken: "rotated-refresh",
-			tokenType:    "Bearer",
-			scopes:       fallbackScopes,
-			expiresAt:    refreshedExpiresAt,
-			rawTokenMaterialObject: map[string]any{
-				"access_token":  "fresh-access",
-				"refresh_token": "rotated-refresh",
-				"token_type":    "Bearer",
-				"expires_in":    float64(3600),
-			},
-		}, nil
-	}
+	bindRefreshOAuthTokenFake(t, &runtime, fakeRefreshConfig{
+		accessToken:  "fresh-access",
+		refreshToken: "rotated-refresh",
+		expiresAt:    refreshedExpiresAt,
+	})
 	archive := &fakeHealthArchiveConnectionAPI{}
 	access := newCurrentConnectionAccessWithRuntime(
 		fixture.credentialStore,

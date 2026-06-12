@@ -10,17 +10,12 @@ import (
 
 func TestSyncRunExecutorArchivesDataPointList(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	testRuntime, requests := withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
@@ -68,17 +63,12 @@ func TestSyncRunExecutorArchivesDataPointList(t *testing.T) {
 
 func TestSyncRunExecutorArchivesDataPointReconcileForSourceFamily(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	testRuntime, requests := withStepReconcileFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
@@ -125,17 +115,12 @@ func TestSyncRunExecutorArchivesDataPointReconcileForSourceFamily(t *testing.T) 
 
 func TestSyncRunExecutorArchivesDailyRollups(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC) }
 
 	testRuntime, requests := withStepDailyRollupFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
@@ -185,17 +170,12 @@ func TestSyncRunExecutorArchivesDailyRollups(t *testing.T) {
 // page for key ..." with the civil form on the left-hand side.
 func TestSyncRunExecutorWiresNormalizedFromIntoHourlyRollup(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC) }
 
 	testRuntime, requests := withHeartRateHourlyRollupFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
@@ -236,17 +216,12 @@ func TestSyncRunExecutorWiresNormalizedFromIntoHourlyRollup(t *testing.T) {
 
 func TestSyncRunExecutorRecordsFailedListRunForRepeatedPageToken(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
@@ -273,17 +248,12 @@ func TestSyncRunExecutorRecordsFailedListRunForRepeatedPageToken(t *testing.T) {
 
 func TestSyncRunExecutorRecordsPartialCountsWhenLaterPageFails(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
@@ -339,9 +309,7 @@ func TestSyncRunExecutorRefreshesAccessTokenMidRunAndPersists(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 
 	// 00:30: the stored token (expires 01:00) is still valid at run
 	// start, so the pre-run AccessToken path does NOT refresh.
@@ -349,25 +317,12 @@ func TestSyncRunExecutorRefreshesAccessTokenMidRunAndPersists(t *testing.T) {
 	refreshedExpiresAt := syncNow.Add(time.Hour)
 	testRuntime.now = func() time.Time { return syncNow }
 	refreshCalls := 0
-	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-		refreshCalls++
-		if refreshToken != "connect-refresh-secret" {
-			t.Fatalf("refresh token = %q, want connect-refresh-secret", refreshToken)
-		}
-		return oauthTokenResponse{
-			accessToken:  "rotated-access-secret",
-			refreshToken: "connect-refresh-secret",
-			tokenType:    "Bearer",
-			scopes:       fallbackScopes,
-			expiresAt:    refreshedExpiresAt,
-			rawTokenMaterialObject: map[string]any{
-				"access_token":  "rotated-access-secret",
-				"refresh_token": "connect-refresh-secret",
-				"token_type":    "Bearer",
-				"expires_in":    float64(3600),
-			},
-		}, nil
-	}
+	bindRefreshOAuthTokenFake(t, &testRuntime, fakeRefreshConfig{
+		wantRefreshToken: "connect-refresh-secret",
+		accessToken:      "rotated-access-secret",
+		expiresAt:        refreshedExpiresAt,
+		calls:            &refreshCalls,
+	})
 
 	dataPointPage := func(name, nextPageToken string) string {
 		return `{
@@ -447,9 +402,7 @@ func TestSyncRunExecutorAutoRefreshesExpiredAccessTokenAndPersists(t *testing.T)
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	// Force the stored access-token expires_at into the past so AccessToken
 	// must take the auto-refresh path.
 	setConnectionTokenExpiry(t, archivePath, "2026-01-01T00:00:00Z")
@@ -457,24 +410,11 @@ func TestSyncRunExecutorAutoRefreshesExpiredAccessTokenAndPersists(t *testing.T)
 	syncNow := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC)
 	refreshedExpiresAt := syncNow.Add(time.Hour)
 	testRuntime.now = func() time.Time { return syncNow }
-	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-		if refreshToken != "connect-refresh-secret" {
-			t.Fatalf("refresh token = %q, want connect-refresh-secret", refreshToken)
-		}
-		return oauthTokenResponse{
-			accessToken:  "rotated-access-secret",
-			refreshToken: "connect-refresh-secret",
-			tokenType:    "Bearer",
-			scopes:       fallbackScopes,
-			expiresAt:    refreshedExpiresAt,
-			rawTokenMaterialObject: map[string]any{
-				"access_token":  "rotated-access-secret",
-				"refresh_token": "connect-refresh-secret",
-				"token_type":    "Bearer",
-				"expires_in":    float64(3600),
-			},
-		}, nil
-	}
+	bindRefreshOAuthTokenFake(t, &testRuntime, fakeRefreshConfig{
+		wantRefreshToken: "connect-refresh-secret",
+		accessToken:      "rotated-access-secret",
+		expiresAt:        refreshedExpiresAt,
+	})
 	testRuntime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
 		if accessToken != "rotated-access-secret" {
 			t.Fatalf("identity access token = %q, want rotated token", accessToken)

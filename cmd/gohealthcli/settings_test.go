@@ -42,17 +42,12 @@ func TestSettingsRejectsNoInputFlag(t *testing.T) {
 // keeping the test honest without manual edits.
 func TestSettingsCommandFailsFastWhenScopeMissing(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	// Strip every scope the catalog ties to getSettings from the
 	// stored Connection so AccessToken's scope pre-check fails. Using
@@ -132,9 +127,7 @@ func TestSettingsCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	// Ensure the stored Connection carries every scope the catalog
 	// requires for getSettings, so this test still exercises auto-refresh
 	// after slice 2 (#176) revises the catalog away from the default-granted
@@ -153,25 +146,12 @@ func TestSettingsCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// once" contract is guarded against a regression where retries
 	// would silently double-rotate the stored token.
 	refreshCalls := 0
-	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-		refreshCalls++
-		if refreshToken != "connect-refresh-secret" {
-			t.Fatalf("refresh token = %q, want connect-refresh-secret", refreshToken)
-		}
-		return oauthTokenResponse{
-			accessToken:  "rotated-access-secret",
-			refreshToken: "connect-refresh-secret",
-			tokenType:    "Bearer",
-			scopes:       fallbackScopes,
-			expiresAt:    refreshedExpiresAt,
-			rawTokenMaterialObject: map[string]any{
-				"access_token":  "rotated-access-secret",
-				"refresh_token": "connect-refresh-secret",
-				"token_type":    "Bearer",
-				"expires_in":    float64(3600),
-			},
-		}, nil
-	}
+	bindRefreshOAuthTokenFake(t, &testRuntime, fakeRefreshConfig{
+		wantRefreshToken: "connect-refresh-secret",
+		accessToken:      "rotated-access-secret",
+		expiresAt:        refreshedExpiresAt,
+		calls:            &refreshCalls,
+	})
 
 	var calledWithToken string
 	testRuntime.fetchSettings = func(accessToken string) (googleSettings, error) {
@@ -212,11 +192,7 @@ func TestSettingsCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// A new identity_snapshots row with snapshot_kind = 'settings'
 	// must exist so the auto-refresh path doesn't silently skip the
 	// archive write the AC requires.
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var snapshotCount int
 	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM identity_snapshots WHERE snapshot_kind = 'settings'`).Scan(&snapshotCount); err != nil {
 		t.Fatalf("count settings snapshots: %v", err)

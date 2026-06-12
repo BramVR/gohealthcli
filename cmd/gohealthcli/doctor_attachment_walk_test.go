@@ -16,17 +16,12 @@ import (
 // `attachments` block. Reporting only — the archive is not modified.
 func TestDoctorJSONReportsAttachmentOrphans(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 	store, err := openAttachmentStoreMode(archivePath, writeArchive)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -108,17 +103,12 @@ func TestDoctorJSONReportsAttachmentOrphans(t *testing.T) {
 // count line.
 func TestDoctorPlainReportsAttachmentOrphanCounts(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 	rootDir := attachmentRootDirForArchive(archivePath)
 	orphanDir := filepath.Join(rootDir, "tcx", "f0")
 	if err := os.MkdirAll(orphanDir, 0o700); err != nil {

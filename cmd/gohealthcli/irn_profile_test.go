@@ -14,11 +14,7 @@ import (
 // need to simulate a Connection where --add-scopes has already run.
 func addStoredConnectionScope(t *testing.T, archivePath, scope string) {
 	t.Helper()
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var metadata string
 	if err := db.QueryRowContext(context.Background(), `SELECT token_metadata_json FROM connections LIMIT 1`).Scan(&metadata); err != nil {
 		t.Fatalf("read token_metadata_json: %v", err)
@@ -48,17 +44,12 @@ func addStoredConnectionScope(t *testing.T, archivePath, scope string) {
 // enrollment state.
 func TestCurrentIRNProfileViewProjectsLatestSnapshot(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	archive, err := openIdentitySnapshotArchive(archivePath)
 	if err != nil {
@@ -79,11 +70,7 @@ func TestCurrentIRNProfileViewProjectsLatestSnapshot(t *testing.T) {
 	}
 	archive.Close()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var onboarding, enrollment, lastUpdate string
 	err = db.QueryRowContext(context.Background(), `SELECT onboarding_state, enrollment_state, last_update_time FROM current_irn_profile WHERE connection_id = ?`, connection.ID).Scan(&onboarding, &enrollment, &lastUpdate)
 	if err != nil {
@@ -103,17 +90,12 @@ func TestCurrentIRNProfileViewProjectsLatestSnapshot(t *testing.T) {
 // kind='irn-profile'.
 func TestIRNProfileCommandArchivesSnapshotWhenScopeGranted(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	// Mark the IRN scope as granted on the stored Connection — slice B
 	// reads from token_metadata_json's `scopes` field.
@@ -167,9 +149,7 @@ func TestIRNProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	// Mark the IRN scope as granted on the stored Connection so the
 	// scope pre-check passes — the verb under test exercises the
 	// auto-refresh path, not the scope-missing path.
@@ -185,25 +165,12 @@ func TestIRNProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// once" contract is guarded against a regression where retries would
 	// silently double-rotate the stored token.
 	refreshCalls := 0
-	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-		refreshCalls++
-		if refreshToken != "connect-refresh-secret" {
-			t.Fatalf("refresh token = %q, want connect-refresh-secret", refreshToken)
-		}
-		return oauthTokenResponse{
-			accessToken:  "rotated-access-secret",
-			refreshToken: "connect-refresh-secret",
-			tokenType:    "Bearer",
-			scopes:       fallbackScopes,
-			expiresAt:    refreshedExpiresAt,
-			rawTokenMaterialObject: map[string]any{
-				"access_token":  "rotated-access-secret",
-				"refresh_token": "connect-refresh-secret",
-				"token_type":    "Bearer",
-				"expires_in":    float64(3600),
-			},
-		}, nil
-	}
+	bindRefreshOAuthTokenFake(t, &testRuntime, fakeRefreshConfig{
+		wantRefreshToken: "connect-refresh-secret",
+		accessToken:      "rotated-access-secret",
+		expiresAt:        refreshedExpiresAt,
+		calls:            &refreshCalls,
+	})
 
 	var calledWithToken string
 	testRuntime.fetchIRNProfile = func(accessToken string) (googleIRNProfile, error) {
@@ -248,17 +215,12 @@ func TestIRNProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 // and does NOT trigger the browser flow or call the upstream API.
 func TestIRNProfileCommandFailsFastWhenScopeMissing(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	// fetchIRNProfile MUST NOT be called when the scope is missing.
 	testRuntime.fetchIRNProfile = func(string) (googleIRNProfile, error) {

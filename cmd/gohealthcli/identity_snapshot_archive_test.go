@@ -23,11 +23,7 @@ func TestFreshArchiveHasIdentitySnapshotsTable(t *testing.T) {
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
 	if !archiveTableExists(t, db, "identity_snapshots") {
 		t.Fatal("identity_snapshots table missing from fresh archive")
@@ -52,17 +48,12 @@ func TestFreshArchiveHasIdentitySnapshotsTable(t *testing.T) {
 // deleted with the dead command-wrapper layer (#270).
 func TestIdentitySnapshotArchiveInsertAndLatestRoundTrip(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	archive, err := openIdentitySnapshotArchive(archivePath)
 	if err != nil {
@@ -99,17 +90,12 @@ func TestIdentitySnapshotArchiveInsertAndLatestRoundTrip(t *testing.T) {
 // present — i.e. Insert tags every row so kinds never bleed.
 func TestIdentitySnapshotArchiveLatestFiltersByKind(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	archive, err := openIdentitySnapshotArchive(archivePath)
 	if err != nil {
@@ -164,17 +150,12 @@ func TestIdentitySnapshotArchiveLatestFiltersByKind(t *testing.T) {
 // back from the archive must surface the row the command wrote.
 func TestProfileCommandWritesViaIdentitySnapshotArchive(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	// Run the profile command via the existing test surface — same path
 	// the real CLI uses end-to-end.
@@ -220,17 +201,12 @@ func TestProfileCommandWritesViaIdentitySnapshotArchive(t *testing.T) {
 // reports success to the user.
 func TestSettingsCommandArchivesSnapshotWithKindSettings(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 	// PRD #142 slice 2 / #176: getSettings now requires
 	// settings.readonly, so simulate the user having run
 	// `connect --add-scopes settings`.
@@ -276,17 +252,12 @@ func TestSettingsCommandArchivesSnapshotWithKindSettings(t *testing.T) {
 // columns (measurement_system, timezone) plus the source identifiers.
 func TestCurrentSettingsViewProjectsLatestSnapshot(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	archive, err := openIdentitySnapshotArchive(archivePath)
 	if err != nil {
@@ -306,11 +277,7 @@ func TestCurrentSettingsViewProjectsLatestSnapshot(t *testing.T) {
 	}
 	archive.Close()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var measurementSystem, timezone, fetchedAt string
 	err = db.QueryRowContext(context.Background(), `SELECT measurement_system, timezone, fetched_at FROM current_settings WHERE connection_id = ?`, connection.ID).
 		Scan(&measurementSystem, &timezone, &fetchedAt)
@@ -338,17 +305,12 @@ func TestCurrentSettingsViewProjectsLatestSnapshot(t *testing.T) {
 // inserted most recently.
 func TestIdentitySnapshotArchiveLatestUsesFetchedAtForRecency(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	archive, err := openIdentitySnapshotArchive(archivePath)
 	if err != nil {
@@ -372,11 +334,7 @@ func TestIdentitySnapshotArchiveLatestUsesFetchedAtForRecency(t *testing.T) {
 	}
 	archive.Close()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var measurementSystem, fetchedAt string
 	err = db.QueryRowContext(context.Background(), `SELECT measurement_system, fetched_at FROM current_settings WHERE connection_id = ?`, connection.ID).
 		Scan(&measurementSystem, &fetchedAt)
@@ -408,11 +366,7 @@ func TestV6ArchiveMigratesProfileSnapshotsWithKindDefault(t *testing.T) {
 		t.Fatalf("migrate legacy v6 archive to current schema version: %v", err)
 	}
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
 	var version int
 	if err := db.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&version); err != nil {
@@ -426,7 +380,7 @@ func TestV6ArchiveMigratesProfileSnapshotsWithKindDefault(t *testing.T) {
 	}
 
 	var kind, rawJSON, fetchedAt string
-	err = db.QueryRowContext(context.Background(), `SELECT snapshot_kind, raw_json, fetched_at FROM identity_snapshots WHERE id = 1`).Scan(&kind, &rawJSON, &fetchedAt)
+	err := db.QueryRowContext(context.Background(), `SELECT snapshot_kind, raw_json, fetched_at FROM identity_snapshots WHERE id = 1`).Scan(&kind, &rawJSON, &fetchedAt)
 	if err != nil {
 		t.Fatalf("read migrated row: %v", err)
 	}
@@ -495,11 +449,7 @@ func createLegacyV6ArchiveWithProfileSnapshot(t *testing.T, archivePath, connect
 	if err := ensureOwnerOnlyDir(filepath.Dir(archivePath)); err != nil {
 		t.Fatalf("create legacy archive parent: %v", err)
 	}
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open legacy archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	if err := applyV6SchemaForLegacyTest(db); err != nil {
 		t.Fatalf("apply legacy v6 schema: %v", err)
 	}
@@ -562,17 +512,12 @@ func archiveColumnExists(t *testing.T, db *sql.DB, table, column string) bool {
 // row behind the caller's back.
 func TestIdentitySnapshotArchiveInsertHonorsCanceledContext(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	archive, err := openIdentitySnapshotArchive(archivePath)
 	if err != nil {

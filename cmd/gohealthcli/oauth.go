@@ -196,9 +196,6 @@ func oauthScopesForDataTypes(dataTypes []string) []string {
 			needed[scope] = struct{}{}
 		}
 	}
-	if len(needed) == 0 {
-		needed[googlehealth.ScopeActivityReadonly] = struct{}{}
-	}
 	ordered := []string{
 		googlehealth.ScopeActivityReadonly,
 		googlehealth.ScopeHealthMetricsReadonly,

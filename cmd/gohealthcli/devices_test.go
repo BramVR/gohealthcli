@@ -22,17 +22,12 @@ import (
 // deviceVersion.
 func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 	// PRD #142 slice 2 / #176: pairedDevices now requires
 	// settings.readonly, so simulate the user having run
 	// `connect --add-scopes settings`.
@@ -112,17 +107,12 @@ func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
 // the latest paired-devices snapshot, with the contracted columns.
 func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	archive, err := openIdentitySnapshotArchive(archivePath)
 	if err != nil {
@@ -143,11 +133,7 @@ func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 	}
 	archive.Close()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	rows, err := db.QueryContext(context.Background(), `SELECT name, device_type, device_version, battery_status, battery_level FROM paired_devices ORDER BY device_version`)
 	if err != nil {
 		t.Fatalf("query paired_devices: %v", err)
@@ -191,17 +177,12 @@ func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 // bare {} payload (the key is omitted upstream when nothing is paired).
 func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	archive, err := openIdentitySnapshotArchive(archivePath)
 	if err != nil {
@@ -220,11 +201,7 @@ func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
 	}
 	archive.Close()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var count int
 	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM paired_devices`).Scan(&count); err != nil {
 		t.Fatalf("query paired_devices: %v", err)
@@ -240,17 +217,12 @@ func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
 // Identity Snapshot Archive with kind='paired-devices'.
 func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 	// PRD #142 slice 2 / #176: pairedDevices now requires
 	// settings.readonly, so simulate the user having run
 	// `connect --add-scopes settings`.
@@ -304,17 +276,12 @@ func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
 // stored Connection, keeping the test honest without manual edits.
 func TestDevicesCommandFailsFastWhenScopeMissing(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	// Strip every scope the catalog ties to pairedDevices from the
 	// stored Connection so AccessToken's scope pre-check fails. Using
@@ -394,9 +361,7 @@ func TestDevicesCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	// PRD #142 slice 2 / #176: pairedDevices now requires
 	// settings.readonly, so simulate the user having run
 	// `connect --add-scopes settings`.
@@ -412,25 +377,12 @@ func TestDevicesCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// once" contract is guarded against a regression where retries
 	// would silently double-rotate the stored token.
 	refreshCalls := 0
-	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-		refreshCalls++
-		if refreshToken != "connect-refresh-secret" {
-			t.Fatalf("refresh token = %q, want connect-refresh-secret", refreshToken)
-		}
-		return oauthTokenResponse{
-			accessToken:  "rotated-access-secret",
-			refreshToken: "connect-refresh-secret",
-			tokenType:    "Bearer",
-			scopes:       fallbackScopes,
-			expiresAt:    refreshedExpiresAt,
-			rawTokenMaterialObject: map[string]any{
-				"access_token":  "rotated-access-secret",
-				"refresh_token": "connect-refresh-secret",
-				"token_type":    "Bearer",
-				"expires_in":    float64(3600),
-			},
-		}, nil
-	}
+	bindRefreshOAuthTokenFake(t, &testRuntime, fakeRefreshConfig{
+		wantRefreshToken: "connect-refresh-secret",
+		accessToken:      "rotated-access-secret",
+		expiresAt:        refreshedExpiresAt,
+		calls:            &refreshCalls,
+	})
 
 	var calledWithToken string
 	testRuntime.fetchPairedDevices = func(accessToken string) (googlePairedDevices, error) {
@@ -471,11 +423,7 @@ func TestDevicesCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// A new identity_snapshots row with snapshot_kind = 'paired-devices'
 	// must exist so the auto-refresh path doesn't silently skip the
 	// archive write the AC requires.
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var snapshotCount int
 	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM identity_snapshots WHERE snapshot_kind = 'paired-devices'`).Scan(&snapshotCount); err != nil {
 		t.Fatalf("count paired-devices snapshots: %v", err)
