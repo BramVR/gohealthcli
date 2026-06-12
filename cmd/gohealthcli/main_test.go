@@ -592,7 +592,7 @@ func TestDoctorDefaultPathsAreUsable(t *testing.T) {
 	xdgConfig := filepath.Join(home, "xdg-config")
 	xdgData := filepath.Join(home, "xdg-data")
 
-	code, stdout, stderr := runCommandWithEnv(t,
+	code, stdout, stderr := runBinaryWithEnv(t,
 		[]string{
 			"HOME=" + home,
 			"XDG_CONFIG_HOME=" + xdgConfig,
@@ -1031,7 +1031,7 @@ func TestDoctorAcceptsRelativeOAuthClientFileAfterInitFromDifferentDirectory(t *
 		t.Fatalf("create doctor dir: %v", err)
 	}
 
-	code, _, stderr := runCommandInDir(t,
+	code, _, stderr := runBinaryInDir(t,
 		initDir,
 		"init",
 		"--config", configPath,
@@ -1053,7 +1053,7 @@ func TestDoctorAcceptsRelativeOAuthClientFileAfterInitFromDifferentDirectory(t *
 		t.Fatalf("config missing absolute OAuth client path %q:\n%s", want, string(configBytes))
 	}
 
-	code, stdout, stderr := runCommandInDir(t,
+	code, stdout, stderr := runBinaryInDir(t,
 		doctorDir,
 		"doctor",
 		"--config", configPath,

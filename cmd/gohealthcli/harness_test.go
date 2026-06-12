@@ -51,25 +51,44 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// runCommand drives one CLI invocation in-process through run() — the
+// same dispatch entry main() wires to os.Args — so the executed command
+// paths count toward package coverage (issue #286). Tests that need
+// true binary semantics (a private process environment, a different
+// working directory, exit-status wiring) use the runBinary* drivers.
 func runCommand(t *testing.T, args ...string) (int, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 
-	return runCommandWithEnv(t, nil, args...)
+	ensureTestOAuthClientFiles(t, "", args)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run(args, stdout, stderr)
+	return code, stdout, stderr
 }
 
-func runCommandInDir(t *testing.T, dir string, args ...string) (int, *bytes.Buffer, *bytes.Buffer) {
+// runBinary executes the compiled gohealthcli binary built by TestMain.
+// Reach for it only when binary semantics are the point of the test;
+// runCommand covers everything else without the subprocess cost.
+func runBinary(t *testing.T, args ...string) (int, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 
-	return runCommandInDirWithEnv(t, dir, nil, args...)
+	return runBinaryInDirWithEnv(t, "", nil, args...)
 }
 
-func runCommandWithEnv(t *testing.T, env []string, args ...string) (int, *bytes.Buffer, *bytes.Buffer) {
+func runBinaryInDir(t *testing.T, dir string, args ...string) (int, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 
-	return runCommandInDirWithEnv(t, "", env, args...)
+	return runBinaryInDirWithEnv(t, dir, nil, args...)
 }
 
-func runCommandInDirWithEnv(t *testing.T, dir string, env []string, args ...string) (int, *bytes.Buffer, *bytes.Buffer) {
+func runBinaryWithEnv(t *testing.T, env []string, args ...string) (int, *bytes.Buffer, *bytes.Buffer) {
+	t.Helper()
+
+	return runBinaryInDirWithEnv(t, "", env, args...)
+}
+
+func runBinaryInDirWithEnv(t *testing.T, dir string, env []string, args ...string) (int, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 
 	ensureTestOAuthClientFiles(t, dir, args)
