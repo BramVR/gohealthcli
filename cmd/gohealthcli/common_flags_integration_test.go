@@ -183,7 +183,7 @@ func TestMigratedSubcommandEntryPointsCallRegisterCommon(t *testing.T) {
 		{"doctor", "doctor.go", "func runDoctorWithRuntime("},
 		{"connect", "connect.go", "func runConnectWithRuntime("},
 		{"sync", "sync.go", "func runSyncWithRuntime("},
-		{"raw", "main.go", "func runRawWithRuntime("},
+		{"raw", "raw.go", "func runRawWithRuntime("},
 		{"query", "query.go", "func runQuery("},
 		{"identity", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
 		{"profile", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
