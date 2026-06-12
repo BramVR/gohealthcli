@@ -1680,9 +1680,7 @@ func TestDoctorOnlineRefreshesExpiredTokenAndChecksProvider(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
+	mustConnect(t, configPath, archivePath, testRuntime)
 	setConnectionTokenExpiry(t, archivePath, "2026-05-31T21:00:00Z")
 	testRuntime = newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
 		now:                     time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
@@ -1728,18 +1726,13 @@ func TestDoctorOnlineRefreshesExpiredTokenAndChecksProvider(t *testing.T) {
 
 func TestDoctorOnlineReportsRefreshFailureAsConnectionHealth(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
 		accessToken:        "old-access-secret",
 		refreshToken:       "refresh-secret-value",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	setConnectionTokenExpiry(t, archivePath, "2026-05-31T21:00:00Z")
 	testRuntime = newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
 		now:                  time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
@@ -1771,18 +1764,13 @@ func TestDoctorOnlineReportsRefreshFailureAsConnectionHealth(t *testing.T) {
 
 func TestDoctorOnlineValidatesRefreshWhenAccessTokenIsCurrent(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
 		accessToken:        "current-access-secret",
 		refreshToken:       "refresh-secret-value",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	testRuntime = newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
 		now:                  time.Date(2026, 5, 31, 20, 30, 0, 0, time.UTC),
 		wantRefreshToken:     "refresh-secret-value",
@@ -1822,9 +1810,7 @@ func TestDoctorOnlineReportsProviderFailureAsConnectionHealth(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
+	mustConnect(t, configPath, archivePath, testRuntime)
 	testRuntime = newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
 		now:                     time.Date(2026, 5, 31, 20, 30, 0, 0, time.UTC),
 		refreshedAccessToken:    "refreshed-access-secret",
@@ -1868,9 +1854,7 @@ func TestDoctorOnlineReportsMissingTokenAsConnectionHealth(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
+	mustConnect(t, configPath, archivePath, testRuntime)
 	store := fileCredentialStore{path: tokenStorePath}
 	if err := store.Store("googlehealth:111111256096816351", map[string]any{"refresh_token": "connect-refresh-secret"}); err != nil {
 		t.Fatalf("replace token material: %v", err)
@@ -1909,9 +1893,7 @@ func TestDoctorOnlineReportsMissingRefreshTokenBeforeProvider(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
+	mustConnect(t, configPath, archivePath, testRuntime)
 	store := fileCredentialStore{path: tokenStorePath}
 	if err := store.Store("googlehealth:111111256096816351", map[string]any{"access_token": "connect-access-secret"}); err != nil {
 		t.Fatalf("replace token material: %v", err)
@@ -1951,9 +1933,7 @@ func TestDoctorOnlineDoesNotPersistRefreshBeforeIdentityMatch(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
+	mustConnect(t, configPath, archivePath, testRuntime)
 	setConnectionTokenExpiry(t, archivePath, "2026-05-31T21:00:00Z")
 	testRuntime = newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
 		now:                     time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
@@ -2004,9 +1984,7 @@ func TestPersistDoctorOnlineRefreshedTokenRollsBackOnMetadataFailure(t *testing.
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
+	mustConnect(t, configPath, archivePath, testRuntime)
 	store := fileCredentialStore{path: tokenStorePath}
 	previousTokenMaterial, err := store.Load("googlehealth:111111256096816351")
 	if err != nil {
@@ -2057,18 +2035,13 @@ func TestPersistDoctorOnlineRefreshedTokenRollsBackOnMetadataFailure(t *testing.
 
 func TestDoctorDefaultDoesNotRefreshOrCallProvider(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC),
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	setConnectionTokenExpiry(t, archivePath, "2026-05-31T19:00:00Z")
 	testRuntime = newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
 		now:                  time.Date(2026, 5, 31, 22, 0, 0, 0, time.UTC),
@@ -2273,9 +2246,7 @@ func TestConnectRejectsDifferentGoogleIdentity(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("first connect exit code = %d, want 0", code)
-	}
+	mustConnect(t, configPath, archivePath, testRuntime)
 
 	testRuntime = newConnectFakeRuntime(t, fakeConnectConfig{
 		now:                time.Date(2026, 5, 31, 23, 0, 0, 0, time.UTC),
@@ -2344,17 +2315,12 @@ func TestConnectDoesNotResolveSecretProviderAtRuntime(t *testing.T) {
 
 func TestIdentityRefreshesArchivedGoogleIdentity(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	bindIdentityFetchFake(t, &testRuntime, "connect-access-secret", googleIdentity{
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "Z9Y8X7",
@@ -2403,17 +2369,12 @@ func TestIdentityRefreshesArchivedGoogleIdentity(t *testing.T) {
 
 func TestIdentityPlainIncludesStableIdentityFields(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	bindIdentityFetchFake(t, &testRuntime, "connect-access-secret", googleIdentity{
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
@@ -2509,9 +2470,7 @@ func TestIdentityReportsAutoRefreshFailureBeforeProviderFetch(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	testRuntime.now = func() time.Time {
 		return time.Date(2026, 5, 31, 23, 1, 0, 0, time.UTC)
 	}
@@ -2554,17 +2513,12 @@ func TestIdentityReportsAutoRefreshFailureBeforeProviderFetch(t *testing.T) {
 // happens before the upstream call, exactly like profile.
 func TestIdentityCommandFailsFastWhenScopeMissing(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
 
 	// Strip every scope the catalog ties to getIdentity from the
 	// stored Connection so AccessToken's scope pre-check fails. Using
@@ -2632,9 +2586,7 @@ func TestIdentityCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	// Ensure the stored Connection carries every scope the catalog
 	// requires for getIdentity, so this test still exercises auto-refresh
 	// after a catalog revision moves getIdentity off the default-granted
@@ -2721,17 +2673,12 @@ func TestIdentityCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 
 func TestIdentityRejectsDifferentGoogleIdentity(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	bindIdentityFetchFake(t, &testRuntime, "connect-access-secret", googleIdentity{
 		healthUserID:       "222222222222222222",
 		legacyFitbitUserID: "Z9Y8X7",
@@ -2778,18 +2725,13 @@ func TestIdentityRejectsDifferentGoogleIdentity(t *testing.T) {
 
 func TestProfileArchivesSnapshotAndPrintsSummary(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		now:                time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC),
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	bindProfileFetchFake(t, &testRuntime, "connect-access-secret", googleProfile{
 		healthUserID: "111111256096816351",
 		rawJSON:      `{"name":"users/111111256096816351/profile","profile":{"unit":"metric"}}`,
@@ -2847,18 +2789,13 @@ func TestProfileArchivesSnapshotAndPrintsSummary(t *testing.T) {
 
 func TestProfilePlainIncludesStableSnapshotFields(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		now:                time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC),
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	bindProfileFetchFake(t, &testRuntime, "connect-access-secret", googleProfile{
 		healthUserID: "111111256096816351",
 		rawJSON:      `{"name":"users/111111256096816351/profile"}`,
@@ -2885,17 +2822,12 @@ func TestProfilePlainIncludesStableSnapshotFields(t *testing.T) {
 
 func TestProfileProviderFailureDoesNotArchiveSnapshot(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	bindProfileFetchFake(t, &testRuntime, "connect-access-secret", googleProfile{}, errors.New("Google Health profile request failed with HTTP 503"))
 
 	stdout := new(bytes.Buffer)
@@ -2930,17 +2862,12 @@ func TestProfileProviderFailureDoesNotArchiveSnapshot(t *testing.T) {
 
 func TestProfileFailsBeforeProviderWhenProfileScopeMissing(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	setConnectionTokenScopes(t, archivePath, []string{googleHealthActivityReadonlyScope})
 	testRuntime.fetchProfile = func(accessToken string) (googleProfile, error) {
 		t.Fatalf("profile fetch should not be called when profile scope is missing")
@@ -2970,17 +2897,12 @@ func TestProfileFailsBeforeProviderWhenProfileScopeMissing(t *testing.T) {
 
 func TestProfileRejectsAliasProfileWhenIdentityVerificationDiffers(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	bindProfileFetchFake(t, &testRuntime, "connect-access-secret", googleProfile{
 		rawJSON: `{"name":"users/me/profile","profile":{"unit":"metric"}}`,
 	}, nil)
@@ -3013,17 +2935,12 @@ func TestProfileRejectsAliasProfileWhenIdentityVerificationDiffers(t *testing.T)
 
 func TestProfileRejectsDifferentGoogleIdentityWithoutArchiving(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	bindProfileFetchFake(t, &testRuntime, "connect-access-secret", googleProfile{
 		healthUserID: "222222222222222222",
 		rawJSON:      `{"name":"users/222222222222222222/profile"}`,
@@ -3548,17 +3465,12 @@ func TestSyncRejectsInvalidSourceFamilyOptionsBeforeSetup(t *testing.T) {
 
 func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 	firstPage := `{
 		"dataPoints": [{
@@ -3746,17 +3658,12 @@ func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 
 func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	heartRatePage := string(readTestFixture(t, "googlehealth_heart_rate_list.json"))
@@ -3894,17 +3801,12 @@ func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 
 func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 
 	weightPage := string(readTestFixture(t, "googlehealth_weight_list.json"))
 	requests := bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "weight", map[string]string{"": weightPage})
@@ -4031,17 +3933,12 @@ func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 
 func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 
 	distancePage := string(readTestFixture(t, "googlehealth_distance_list.json"))
 	requests := bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", "distance", map[string]string{"": distancePage})
@@ -4171,17 +4068,12 @@ func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing
 
 func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	restingHeartRatePage := string(readTestFixture(t, "googlehealth_daily_resting_heart_rate_list.json"))
@@ -4353,17 +4245,12 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 
 func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC) }
 
 	sleepPage := string(readTestFixture(t, "googlehealth_sleep_list.json"))
@@ -4456,17 +4343,12 @@ func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
 
 func TestSyncArchivesExerciseSessionDataPointsIdempotentlyAndTracksRevisions(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	exercisePage := string(readTestFixture(t, "googlehealth_exercise_list.json"))
@@ -4562,17 +4444,12 @@ func TestSyncArchivesExerciseSessionDataPointsIdempotentlyAndTracksRevisions(t *
 // until the user grants the scope against the live OAuth client.
 func TestSyncArchivesElectrocardiogramSessionDataPoints(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	addStoredConnectionScope(t, archivePath, googleHealthEcgReadonlyScope)
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
@@ -4618,17 +4495,12 @@ func TestSyncArchivesElectrocardiogramSessionDataPoints(t *testing.T) {
 // fixture payload.
 func TestSyncArchivesIrregularRhythmNotificationSessionDataPoints(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	addStoredConnectionScope(t, archivePath, googleHealthIrnReadonlyScope)
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
@@ -4669,17 +4541,12 @@ func TestSyncArchivesIrregularRhythmNotificationSessionDataPoints(t *testing.T) 
 
 func TestSyncArchivesWearableStepsViaReconcile(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	defaultPage := `{"dataPoints": [{
@@ -4779,17 +4646,12 @@ func TestSyncArchivesWearableStepsViaReconcile(t *testing.T) {
 
 func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 4, 0, 0, 0, 0, time.UTC) }
 
 	listRequests := bindStepSyncFetchFake(t, &testRuntime, "connect-access-secret", map[string]string{
@@ -5012,17 +4874,12 @@ func TestParseStepsDailyRollupRequiresCivilEndTime(t *testing.T) {
 
 func TestSyncProviderFailureRecordsFailedRun(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != "connect-access-secret" {
 			t.Fatalf("sync access token = %q, want stored token", accessToken)
@@ -5064,17 +4921,12 @@ func TestSyncProviderFailureRecordsFailedRun(t *testing.T) {
 
 func TestSyncRefusesDifferentProviderIdentityBeforeArchiving(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	bindIdentityFetchFake(t, &testRuntime, "connect-access-secret", googleIdentity{
 		healthUserID:       "222222222222222222",
 		legacyFitbitUserID: "DIFFERENT",
@@ -5116,17 +4968,12 @@ func TestSyncRefusesDifferentProviderIdentityBeforeArchiving(t *testing.T) {
 
 func TestSyncReportsFailedWhenCompletionRecordFails(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	bindStepSyncFetchFake(t, &testRuntime, "connect-access-secret", map[string]string{
 		"": `{
 			"dataPoints": [{
@@ -5186,17 +5033,12 @@ func TestSyncReportsFailedWhenCompletionRecordFails(t *testing.T) {
 
 func TestSyncFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	setConnectionTokenScopes(t, archivePath, []string{googleHealthProfileReadonlyScope})
 	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		t.Fatal("sync provider fetch should not run with missing scope")
@@ -5228,17 +5070,12 @@ func TestSyncFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 
 func TestSyncSampleDataTypeFailsBeforeProviderWhenHealthMetricsScopeMissing(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	setConnectionTokenScopes(t, archivePath, []string{googleHealthProfileReadonlyScope, googleHealthActivityReadonlyScope})
 	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		t.Fatal("sync provider fetch should not run with missing health metrics scope")
@@ -5271,17 +5108,12 @@ func TestSyncSampleDataTypeFailsBeforeProviderWhenHealthMetricsScopeMissing(t *t
 
 func TestRawEndpointIdentityPrintsProviderJSONWithoutArchiving(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	beforeIdentityJSON := archivedConnectionIdentityJSON(t, archivePath)
 	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(request rawProviderRequest) []byte {
 		if request.url != googleHealthIdentityURL {
@@ -5315,17 +5147,12 @@ func TestRawEndpointIdentityPrintsProviderJSONWithoutArchiving(t *testing.T) {
 
 func TestRawDataTypeStepsPrintsFixtureJSON(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	fixture := readTestFixture(t, "googlehealth_steps_list.json")
 	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(request rawProviderRequest) []byte {
 		if request.endpointName != "dataTypes.steps.list" || request.dataType != "steps" {
@@ -5408,17 +5235,12 @@ func TestDailyNamedDataTypeListRequestIsNotRollup(t *testing.T) {
 
 func TestRawProviderErrorDoesNotLeakToken(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
 		if accessToken != "connect-access-secret" {
 			t.Fatalf("raw access token = %q, want stored token", accessToken)
@@ -5446,17 +5268,12 @@ func TestRawProviderErrorDoesNotLeakToken(t *testing.T) {
 
 func TestRawDataTypeFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 	db, err := openArchive(archivePath)
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
@@ -5736,9 +5553,7 @@ func TestConnectMigratesLegacyV1ArchiveBeforeStoringIdentity(t *testing.T) {
 	createLegacyV1Archive(t, archivePath)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{})
 
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
+	mustConnect(t, configPath, archivePath, testRuntime)
 
 	db, err := openArchive(archivePath)
 	if err != nil {

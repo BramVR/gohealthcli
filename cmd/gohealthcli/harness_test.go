@@ -113,6 +113,56 @@ func runBinaryInDirWithEnv(t *testing.T, dir string, env []string, args ...strin
 	return 1, stdout, stderr
 }
 
+// connectedArchive runs the connect prologue shared by every
+// connected-state test: init a file-credential setup in a fresh temp
+// dir, run `connect` through the CLI surface with the fake OAuth
+// runtime, and fail the test if connect does not exit 0. It returns
+// the config path, archive path, and the connected runtime so tests
+// can bind provider fetch fakes onto it. Tests that need the temp dir
+// or the token-store path compose initializeFileCredentialSetup,
+// newConnectFakeRuntime, and mustConnect directly instead.
+func connectedArchive(t *testing.T, config fakeConnectConfig) (string, string, runtimeAdapters) {
+	t.Helper()
+
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, t.TempDir())
+	runtime := newConnectFakeRuntime(t, config)
+	mustConnect(t, configPath, archivePath, runtime)
+	return configPath, archivePath, runtime
+}
+
+// connectedArchiveViaSetup is connectedArchive's direct-call twin for
+// prologues that connect through connectSetupWithRuntimeAndExtraScopes
+// — the function the connect command wraps — instead of the CLI
+// surface, skipping flag parsing and result rendering.
+func connectedArchiveViaSetup(t *testing.T, config fakeConnectConfig) (string, string, runtimeAdapters) {
+	t.Helper()
+
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, t.TempDir())
+	runtime := newConnectFakeRuntime(t, config)
+	mustConnectSetup(t, configPath, archivePath, runtime)
+	return configPath, archivePath, runtime
+}
+
+// mustConnect runs `connect` through the CLI surface and fails the
+// test on a non-zero exit.
+func mustConnect(t *testing.T, configPath, archivePath string, runtime runtimeAdapters) {
+	t.Helper()
+
+	if code := runConnectCommandWithRuntime(t, configPath, archivePath, runtime); code != 0 {
+		t.Fatalf("connect exit code = %d, want 0", code)
+	}
+}
+
+// mustConnectSetup connects through connectSetupWithRuntimeAndExtraScopes
+// and fails the test on error.
+func mustConnectSetup(t *testing.T, configPath, archivePath string, runtime runtimeAdapters) {
+	t.Helper()
+
+	if _, err := connectSetupWithRuntimeAndExtraScopes(configPath, archivePath, false, nil, runtime); err != nil {
+		t.Fatalf("connect setup: %v", err)
+	}
+}
+
 type fakeConnectConfig struct {
 	now                time.Time
 	accessToken        string

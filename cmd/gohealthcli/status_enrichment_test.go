@@ -34,17 +34,12 @@ func TestStatusJSONOmitsFreshnessBlockWhenNoSnapshots(t *testing.T) {
 // snapshot.
 func TestStatusJSONReportsIdentitySnapshotsFreshnessBlock(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect: %d", code)
-	}
 
 	snapshots, err := openIdentitySnapshotArchive(archivePath)
 	if err != nil {
@@ -108,17 +103,12 @@ func TestStatusJSONReportsIdentitySnapshotsFreshnessBlock(t *testing.T) {
 // to 0 when the scopes are not granted".
 func TestStatusJSONReportsTier2CountsAsZeroWhenScopesNotGranted(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect: %d", code)
-	}
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
@@ -165,17 +155,12 @@ func TestStatusJSONReportsTier2CountsAsZeroWhenScopesNotGranted(t *testing.T) {
 // from PR #128).
 func TestStatusPlainOmitsTier2CountsWhenScopesNotGranted(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect: %d", code)
-	}
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
@@ -200,17 +185,12 @@ func TestStatusPlainOmitsTier2CountsWhenScopesNotGranted(t *testing.T) {
 // Data Type; JSON keeps both fields under `tier_2`.
 func TestStatusReportsTier2CountsWhenScopesGranted(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect: %d", code)
-	}
 	addStoredConnectionScope(t, archivePath, googleHealthEcgReadonlyScope)
 	addStoredConnectionScope(t, archivePath, googleHealthIrnReadonlyScope)
 	insertTier2DataPoint(t, archivePath, "electrocardiogram", "ecg-1")
@@ -269,17 +249,12 @@ func TestStatusReportsTier2CountsWhenScopesGranted(t *testing.T) {
 // `--plain` emits only the ECG line.
 func TestStatusReportsTier2CountsWithPartialScopeGrant(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect: %d", code)
-	}
 	// Only grant the ECG scope — IRN stays missing.
 	addStoredConnectionScope(t, archivePath, googleHealthEcgReadonlyScope)
 	insertTier2DataPoint(t, archivePath, "electrocardiogram", "ecg-1")
@@ -360,17 +335,12 @@ func insertTier2DataPoint(t *testing.T, archivePath, dataType, resourceID string
 // `identity_snapshot.<kind>.fetched_at: <ts>` line per known kind.
 func TestStatusPlainReportsSnapshotFreshnessLines(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect: %d", code)
-	}
 	snapshots, err := openIdentitySnapshotArchive(archivePath)
 	if err != nil {
 		t.Fatalf("open: %v", err)

@@ -16,17 +16,12 @@ import (
 // `--plain`. A consumer who picks `--json` must not lose this field.
 func TestStatusJSONHasTopLevelKnownDataTypes(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect: %d", code)
-	}
 	// Two Data Types so the array is non-trivial.
 	insertTier2DataPoint(t, archivePath, "steps", "steps-1")
 	insertTier2DataPoint(t, archivePath, "heart-rate", "hr-1")
@@ -72,17 +67,12 @@ func TestStatusJSONHasTopLevelKnownDataTypes(t *testing.T) {
 // matching `--plain`. The existing nested location is preserved.
 func TestStatusJSONHasTopLevelPairedDeviceCount(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect: %d", code)
-	}
 	snapshots, err := openIdentitySnapshotArchive(archivePath)
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -183,17 +173,12 @@ func TestStatusJSONOmitsKnownDataTypesWhenEmpty(t *testing.T) {
 // `--plain` line on a populated archive so any drift fails the test.
 func TestStatusPlainOutputPreservedAfterParityChange(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect: %d", code)
-	}
 	insertTier2DataPoint(t, archivePath, "steps", "steps-1")
 	insertTier2DataPoint(t, archivePath, "heart-rate", "hr-1")
 	snapshots, err := openIdentitySnapshotArchive(archivePath)
@@ -240,17 +225,12 @@ func TestStatusPlainOutputPreservedAfterParityChange(t *testing.T) {
 // confidence that the two modes stay in lockstep.
 func TestStatusPlainAndJSONKeyParity(t *testing.T) {
 	t.Parallel()
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
-		t.Fatalf("connect: %d", code)
-	}
 	insertTier2DataPoint(t, archivePath, "steps", "steps-1")
 	snapshots, err := openIdentitySnapshotArchive(archivePath)
 	if err != nil {
