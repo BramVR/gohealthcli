@@ -1,11 +1,27 @@
 ---
 title: Install
-description: Install gohealthcli with go install, the upcoming Homebrew tap, or a local source build.
+description: Install gohealthcli with Homebrew, go install, or a local source build.
 ---
 
 Pick the path that fits your setup. The CLI runs entirely on your machine — there is no service to sign up for and nothing to configure beyond your local Google OAuth client.
 
-## Go install (works today)
+## Homebrew
+
+Homebrew is the preferred install path on macOS and Linux:
+
+```bash
+brew install BramVR/tap/gohealthcli
+gohealthcli --version
+```
+
+Upgrade with:
+
+```bash
+brew update
+brew upgrade BramVR/tap/gohealthcli
+```
+
+## Go install
 
 If you have a Go toolchain installed (1.22 or later), this is the fastest path. The binary lands in `$GOPATH/bin` (or `$HOME/go/bin` if `GOPATH` is unset). Make sure that directory is on your `PATH`.
 
@@ -15,16 +31,6 @@ gohealthcli --version
 ```
 
 Upgrade with the same command — Go fetches the latest tag.
-
-## Homebrew (coming soon)
-
-A Homebrew tap is planned. Once it ships, the install command will be:
-
-```bash
-brew install BramVR/tap/gohealthcli
-```
-
-Until the tap is live, prefer `go install` above.
 
 ## From source
 

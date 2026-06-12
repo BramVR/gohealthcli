@@ -28,7 +28,7 @@ Normalised CSV or JSONL exports cover every Data Type the catalog supports. Roll
 
 ## Where to start
 
-- **Install** — pick a path that works today: `go install`, source build, or the upcoming Homebrew tap.
+- **Install** — pick a path that works today: Homebrew, `go install`, or source build.
 - **Quickstart** — walk through OAuth setup and your first sync.
 - **Reference** — every subcommand and flag at a stable URL.
 
@@ -40,6 +40,6 @@ Normalised CSV or JSONL exports cover every Data Type the catalog supports. Roll
 
 `gohealthcli` is open source and in active development under [BramVR/gohealthcli](https://github.com/BramVR/gohealthcli). First Release is in progress: the command surface and storage shape are designed as durable foundations rather than a disposable MVP, because health data is sensitive and local archives are hard to rebuild casually.
 
-**Live today** (installable with `go install`, ahead of the first tagged release): the full command surface from `init` to `describe-schema`, the Tier 1 daily + hydration catalog slice, identity / device / settings / profile snapshots, sync run observability — a per-page heartbeat, a read-only `sync --status` view, and automatic fencing of abandoned runs — stable `--plain` and `--json` read contracts for scripted and LLM consumers, and CI running gofmt, build, tests, and docs drift checks on every pull request and push to `main`.
+**Live today**: Homebrew/Go install paths, the full command surface from `init` to `describe-schema`, the Tier 1 daily + hydration catalog slice, identity / device / settings / profile snapshots, sync run observability — a per-page heartbeat, a read-only `sync --status` view, and automatic fencing of abandoned runs — stable `--plain` and `--json` read contracts for scripted and LLM consumers, and CI running gofmt, build, tests, and docs drift checks on every pull request and push to `main`.
 
-**Landing next:** a Homebrew tap (`brew install BramVR/tap/gohealthcli`) backed by GoReleaser — an open pull request on the repo.
+**Release path:** tagged releases publish GitHub Release archives and update `BramVR/homebrew-tap`, so `brew install BramVR/tap/gohealthcli` tracks the latest release.
