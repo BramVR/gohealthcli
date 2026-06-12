@@ -149,9 +149,9 @@ with owner-only POSIX permissions (`0700` dirs, `0600` files). Schema:
 `(id, data_point_id, kind, sha256, path_relative, byte_size,
 fetched_at)`.
 
-The Attachment Store module exposes `Store(dataPointID, kind, bytes)
-→ {sha256, path}` (content-addressed; same bytes → same path,
-idempotent insert) and `Walk(fn)` for
+The Attachment Store module exposes a `Store` operation
+(content-addressed; same bytes → same sidecar path, idempotent
+insert) and a `Walk` operation for
 orphan detection (row with no sidecar, sidecar with no row). `doctor`
 surfaces the orphan counts in its default report (`attachments_orphan_files`
 and `attachments_orphan_rows` in `--plain`, an `attachments` block in
