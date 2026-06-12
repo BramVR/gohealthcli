@@ -612,7 +612,7 @@ func buildGoogleHealthDailyRollupRawRequest(dataType, from, to string, pageSize 
 		return RawRequest{}, err
 	}
 	if !dailyRollupDataTypeSupported(dataType) {
-		return RawRequest{}, errors.New("daily Rollup sync currently supports only Data Type steps")
+		return RawRequest{}, fmt.Errorf("daily Rollup sync currently supports only Data Types %s", strings.Join(dailyRollupSupportedDataTypes(), ", "))
 	}
 	if from == "" {
 		return RawRequest{}, errors.New("daily Rollup calls require --from")
