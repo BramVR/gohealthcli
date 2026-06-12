@@ -9,7 +9,7 @@ A plain-language guide to every Data Type the Google Health catalog exposes thro
 
 - **Sync key** — the literal string accepted by `sync --types`.
 - **Shape** — how the upstream returns each Data Point: `sample` (point-in-time reading), `interval` (a value over a span), `session` (a user activity with start/end), `daily` (one row per civil date).
-- **Scope** — the OAuth scope required. Tier 2 keys (`ecg`, `irn`, `tcx`) are opt-in via `connect --add-scopes …`.
+- **Scope** — the OAuth scope required. Opt-in keys (`ecg`, `irn`, `nutrition`, `tcx`, plus `settings`, which gates the `settings`/`devices` identity commands rather than any sync type) are granted via `connect --add-scopes …`; none of them are part of the default `connect` grant.
 - **Rollups** — which `--rollup` kinds the catalog row supports beyond raw Data Points.
 - **Stored as** — the table the row lands in (`data_points` for raw, `rollups` for aggregates) plus the normalized view exposed for queries and `export`.
 
@@ -73,7 +73,7 @@ Distance travelled over a time interval, in metres. Reconcile-capable, so `--sou
 - **Shape:** interval
 - **Scope:** `activity_and_fitness.readonly`
 - **Rollups:** `daily`, `hourly`, `weekly`, `window=<duration>`
-- **Stored as:** `data_points` or `rollups`
+- **Stored as:** `data_points` (raw) or `rollups` (aggregated); normalized view `floors-intervals`
 
 Floors climbed over an interval. Not yet a default sync type — opt in via `--types floors` until the upstream filter shape is confirmed across multiple weeks of real data.
 
@@ -246,7 +246,7 @@ These are gated behind opt-in scopes the user grants via `gohealthcli connect --
 
 - **Sync key:** `electrocardiogram`
 - **Shape:** session
-- **Scope:** `ecg.readonly` (Tier 2 opt-in)
+- **Scope:** `electrocardiogram.readonly` (Tier 2, opt-in via `connect --add-scopes ecg`)
 - **Stored as:** `data_points`; normalized export `electrocardiogram-sessions`
 
 A user-triggered ECG measurement: start/end, classification (e.g. sinus rhythm, AFib), and the underlying samples preserved in raw JSON.
@@ -382,8 +382,8 @@ Core-temperature readings at a point in time.
 
 - **Sync key:** `hydration-log`
 - **Shape:** session
-- **Scope:** `nutrition.readonly`
-- **Stored as:** `data_points`
+- **Scope:** `nutrition.readonly` (opt-in via `connect --add-scopes nutrition` — never part of the default `connect` grant)
+- **Stored as:** `data_points`; normalized view `hydration-log-sessions`
 
 A user-logged hydration entry: volume over a civil window. The only Data Type under the nutrition scope today.
 
@@ -398,4 +398,4 @@ These ride alongside the Data Point catalog and capture per-Connection metadata.
 
 ## Rollups
 
-Most Data Types support `--rollup daily`, which calls the upstream `dailyRollUp` endpoint and writes to the `rollups` table instead of `data_points`. The catalog rows for `steps`, `heart-rate`, and `floors` additionally support the windowed `rollUp` endpoint (`--rollup hourly`, `--rollup weekly`, or `--rollup window=<duration>`) at 1h / 1d / 7d granularities. Each rollup kind carries its own Sync Cursor — syncing weekly aggregates does not disturb the hourly cursor for the same Data Type. See [`sync`](commands/sync.html) for the full flag matrix.
+Only `steps` and `floors` support `--rollup daily`, which calls the upstream `dailyRollUp` endpoint and writes to the `rollups` table instead of `data_points` — the catalog rejects `--rollup daily` for every other Data Type. The catalog rows for `steps`, `heart-rate`, and `floors` support the windowed `rollUp` endpoint (`--rollup hourly`, `--rollup weekly`, or `--rollup window=<duration>`) at 1h / 1d / 7d granularities; `heart-rate` is windowed-only, with no daily rollup. Each rollup kind carries its own Sync Cursor — syncing weekly aggregates does not disturb the hourly cursor for the same Data Type. See [`sync`](commands/sync.html) for the full flag matrix.
