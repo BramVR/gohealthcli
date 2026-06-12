@@ -234,6 +234,8 @@ func writeSyncHuman(writer *stickyWriter, result syncResult) {
 	switch result.Status {
 	case "sync_completed":
 		writer.Println("Sync Run completed")
+	case "sync_canceled":
+		writer.Println("Sync Run canceled")
 	default:
 		writer.Println("Sync Run failed")
 	}
