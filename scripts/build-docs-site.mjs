@@ -58,8 +58,10 @@ const sections = expandSections([
 ]);
 
 // Allowlist: only pages whose relative path is listed in `sections` above are
-// rendered. Internal working documents (plan.md, research.md, agents/, adr/)
-// stay in the repo, off the site.
+// rendered. Everything else stays in the repo, off the site: internal working
+// documents (plan.md, research.md, agents/, adr/) and the repo-facing pages
+// the README links on GitHub (security.md, data-model.md, release.md,
+// google-auth-setup.md, provider-google-health.md).
 const sectionAllowlist = new Set(sections.flatMap(([, files]) => files));
 function isAllowed(rel) {
   return sectionAllowlist.has(rel);
