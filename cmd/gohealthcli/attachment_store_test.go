@@ -179,7 +179,7 @@ func TestAttachmentStoreWalkReportsOrphansBothSides(t *testing.T) {
 	}
 
 	// Orphan row: insert a row whose sidecar path is never written.
-	if _, err := store.db.Exec(`INSERT INTO data_point_attachments (data_point_id, kind, sha256, path_relative, byte_size, fetched_at) VALUES (1, 'tcx', ?, ?, ?, ?)`,
+	if _, err := store.db.ExecContext(context.Background(), `INSERT INTO data_point_attachments (data_point_id, kind, sha256, path_relative, byte_size, fetched_at) VALUES (1, 'tcx', ?, ?, ?, ?)`,
 		"deadbeef00000000000000000000000000000000000000000000000000000000",
 		filepath.Join("tcx", "de", "deadbeef00000000000000000000000000000000000000000000000000000000.tcx"),
 		7, "2026-06-08T17:36:00Z"); err != nil {
@@ -276,14 +276,14 @@ func TestAttachmentStoreWalkRejectsTraversalPathRelative(t *testing.T) {
 	}
 
 	// Seed a row whose path_relative climbs out of the attachment root.
-	if _, err := store.db.Exec(`INSERT INTO data_point_attachments (data_point_id, kind, sha256, path_relative, byte_size, fetched_at) VALUES (1, 'tcx', ?, ?, 7, ?)`,
+	if _, err := store.db.ExecContext(context.Background(), `INSERT INTO data_point_attachments (data_point_id, kind, sha256, path_relative, byte_size, fetched_at) VALUES (1, 'tcx', ?, ?, 7, ?)`,
 		"cafe000000000000000000000000000000000000000000000000000000000000",
 		"../../../../etc/passwd",
 		"2026-06-08T17:35:00Z"); err != nil {
 		t.Fatalf("seed traversal row: %v", err)
 	}
 	// And a row whose path_relative is absolute.
-	if _, err := store.db.Exec(`INSERT INTO data_point_attachments (data_point_id, kind, sha256, path_relative, byte_size, fetched_at) VALUES (1, 'tcx', ?, ?, 7, ?)`,
+	if _, err := store.db.ExecContext(context.Background(), `INSERT INTO data_point_attachments (data_point_id, kind, sha256, path_relative, byte_size, fetched_at) VALUES (1, 'tcx', ?, ?, 7, ?)`,
 		"beef000000000000000000000000000000000000000000000000000000000000",
 		"/etc/passwd",
 		"2026-06-08T17:36:00Z"); err != nil {
@@ -365,7 +365,7 @@ func countAttachmentRows(t *testing.T, archivePath string) int {
 	}
 	defer db.Close()
 	var count int
-	if err := db.QueryRow(`SELECT count(*) FROM data_point_attachments`).Scan(&count); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT count(*) FROM data_point_attachments`).Scan(&count); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	return count

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 )
 
@@ -31,7 +32,7 @@ func TestDailyVo2MaxViewProjectsScalars(t *testing.T) {
 	defer db.Close()
 
 	var civilDate, vo2Max, cardioLevel, covariance string
-	if err := db.QueryRow(`SELECT civil_date, vo2_max, cardio_fitness_level, vo2_max_covariance FROM daily_vo2_max`).Scan(&civilDate, &vo2Max, &cardioLevel, &covariance); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT civil_date, vo2_max, cardio_fitness_level, vo2_max_covariance FROM daily_vo2_max`).Scan(&civilDate, &vo2Max, &cardioLevel, &covariance); err != nil {
 		t.Fatalf("query daily_vo2_max: %v", err)
 	}
 	if civilDate != "2026-06-07" {
@@ -83,7 +84,7 @@ func TestDailyHeartRateZonesViewExplodesEachZone(t *testing.T) {
 	}
 	defer db.Close()
 
-	rows, err := db.Query(`SELECT civil_date, heart_rate_zone_type, min_beats_per_minute, max_beats_per_minute FROM daily_heart_rate_zones ORDER BY heart_rate_zone_type`)
+	rows, err := db.QueryContext(context.Background(), `SELECT civil_date, heart_rate_zone_type, min_beats_per_minute, max_beats_per_minute FROM daily_heart_rate_zones ORDER BY heart_rate_zone_type`)
 	if err != nil {
 		t.Fatalf("query daily_heart_rate_zones: %v", err)
 	}
@@ -148,7 +149,7 @@ func TestDailySleepTemperatureDerivationsViewProjectsScalars(t *testing.T) {
 	defer db.Close()
 
 	var civilDate, nightly, baseline, stddev string
-	if err := db.QueryRow(`SELECT civil_date, nightly_temperature_celsius, baseline_temperature_celsius, relative_nightly_stddev_30d_celsius FROM daily_sleep_temperature_derivations`).Scan(&civilDate, &nightly, &baseline, &stddev); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT civil_date, nightly_temperature_celsius, baseline_temperature_celsius, relative_nightly_stddev_30d_celsius FROM daily_sleep_temperature_derivations`).Scan(&civilDate, &nightly, &baseline, &stddev); err != nil {
 		t.Fatalf("query daily_sleep_temperature_derivations: %v", err)
 	}
 	if civilDate != "2026-06-07" {
@@ -187,7 +188,7 @@ func TestRespiratoryRateSleepSummaryViewProjectsPerStageScalars(t *testing.T) {
 	defer db.Close()
 
 	var sampleTime, civilDate, full, deep, light, rem string
-	if err := db.QueryRow(`SELECT sample_time_utc, civil_date, full_sleep_breaths_per_minute, deep_sleep_breaths_per_minute, light_sleep_breaths_per_minute, rem_sleep_breaths_per_minute FROM respiratory_rate_sleep_summary`).Scan(&sampleTime, &civilDate, &full, &deep, &light, &rem); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT sample_time_utc, civil_date, full_sleep_breaths_per_minute, deep_sleep_breaths_per_minute, light_sleep_breaths_per_minute, rem_sleep_breaths_per_minute FROM respiratory_rate_sleep_summary`).Scan(&sampleTime, &civilDate, &full, &deep, &light, &rem); err != nil {
 		t.Fatalf("query respiratory_rate_sleep_summary: %v", err)
 	}
 	if sampleTime != "2026-06-01T05:18:30Z" {
@@ -232,7 +233,7 @@ func TestHydrationLogSessionsViewProjectsVolume(t *testing.T) {
 	defer db.Close()
 
 	var startTime, endTime, civilDate, liters, platform string
-	if err := db.QueryRow(`SELECT start_time_utc, end_time_utc, civil_date, volume_liters, source_platform FROM hydration_log_sessions`).Scan(&startTime, &endTime, &civilDate, &liters, &platform); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT start_time_utc, end_time_utc, civil_date, volume_liters, source_platform FROM hydration_log_sessions`).Scan(&startTime, &endTime, &civilDate, &liters, &platform); err != nil {
 		t.Fatalf("query hydration_log_sessions: %v", err)
 	}
 	if startTime != "2026-06-07T10:00:00Z" {

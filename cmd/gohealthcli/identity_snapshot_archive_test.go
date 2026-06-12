@@ -311,7 +311,7 @@ func TestCurrentSettingsViewProjectsLatestSnapshot(t *testing.T) {
 	}
 	defer db.Close()
 	var measurementSystem, timezone, fetchedAt string
-	err = db.QueryRow(`SELECT measurement_system, timezone, fetched_at FROM current_settings WHERE connection_id = ?`, connection.id).
+	err = db.QueryRowContext(context.Background(), `SELECT measurement_system, timezone, fetched_at FROM current_settings WHERE connection_id = ?`, connection.id).
 		Scan(&measurementSystem, &timezone, &fetchedAt)
 	if err != nil {
 		t.Fatalf("query current_settings: %v", err)
@@ -377,7 +377,7 @@ func TestIdentitySnapshotArchiveLatestUsesFetchedAtForRecency(t *testing.T) {
 	}
 	defer db.Close()
 	var measurementSystem, fetchedAt string
-	err = db.QueryRow(`SELECT measurement_system, fetched_at FROM current_settings WHERE connection_id = ?`, connection.id).
+	err = db.QueryRowContext(context.Background(), `SELECT measurement_system, fetched_at FROM current_settings WHERE connection_id = ?`, connection.id).
 		Scan(&measurementSystem, &fetchedAt)
 	if err != nil {
 		t.Fatalf("query current_settings: %v", err)
@@ -414,7 +414,7 @@ func TestV6ArchiveMigratesProfileSnapshotsWithKindDefault(t *testing.T) {
 	defer db.Close()
 
 	var version int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+	if err := db.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
 	if version != currentSchemaVersion {
@@ -425,7 +425,7 @@ func TestV6ArchiveMigratesProfileSnapshotsWithKindDefault(t *testing.T) {
 	}
 
 	var kind, rawJSON, fetchedAt string
-	err = db.QueryRow(`SELECT snapshot_kind, raw_json, fetched_at FROM identity_snapshots WHERE id = 1`).Scan(&kind, &rawJSON, &fetchedAt)
+	err = db.QueryRowContext(context.Background(), `SELECT snapshot_kind, raw_json, fetched_at FROM identity_snapshots WHERE id = 1`).Scan(&kind, &rawJSON, &fetchedAt)
 	if err != nil {
 		t.Fatalf("read migrated row: %v", err)
 	}
@@ -457,7 +457,7 @@ type identitySnapshotRow struct {
 func latestIdentitySnapshotRow(t *testing.T, db *sql.DB, connectionID, kind string) (identitySnapshotRow, bool) {
 	t.Helper()
 	var row identitySnapshotRow
-	err := db.QueryRow(`SELECT snapshot_kind, raw_json, fetched_at
+	err := db.QueryRowContext(context.Background(), `SELECT snapshot_kind, raw_json, fetched_at
 		FROM identity_snapshots
 		WHERE connection_id = ? AND snapshot_kind = ?
 		ORDER BY fetched_at DESC, id DESC
@@ -474,7 +474,7 @@ func latestIdentitySnapshotRow(t *testing.T, db *sql.DB, connectionID, kind stri
 func archiveTableExists(t *testing.T, db *sql.DB, name string) bool {
 	t.Helper()
 	var got string
-	err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&got)
+	err := db.QueryRowContext(context.Background(), `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&got)
 	if err == sql.ErrNoRows {
 		return false
 	}
@@ -502,11 +502,11 @@ func createLegacyV6ArchiveWithProfileSnapshot(t *testing.T, archivePath, connect
 	if err := applyV6SchemaForLegacyTest(db); err != nil {
 		t.Fatalf("apply legacy v6 schema: %v", err)
 	}
-	if _, err := db.Exec(`INSERT INTO connections (id, provider_name, google_health_user_id, token_metadata_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO connections (id, provider_name, google_health_user_id, token_metadata_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		connectionID, "googlehealth", "user-123", "{}", fetchedAt, fetchedAt); err != nil {
 		t.Fatalf("seed connection: %v", err)
 	}
-	if _, err := db.Exec(`INSERT INTO profile_snapshots (provider_name, connection_id, raw_json, fetched_at) VALUES (?, ?, ?, ?)`,
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO profile_snapshots (provider_name, connection_id, raw_json, fetched_at) VALUES (?, ?, ?, ?)`,
 		"googlehealth", connectionID, rawJSON, fetchedAt); err != nil {
 		t.Fatalf("seed profile_snapshot: %v", err)
 	}
@@ -518,7 +518,7 @@ func createLegacyV6ArchiveWithProfileSnapshot(t *testing.T, archivePath, connect
 }
 
 func applyV6SchemaForLegacyTest(db *sql.DB) error {
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return err
 	}
@@ -527,7 +527,7 @@ func applyV6SchemaForLegacyTest(db *sql.DB) error {
 	if err := applySchemaMigrationSteps(context.Background(), tx, 0, 6, applied); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`PRAGMA user_version = 6`); err != nil {
+	if _, err := tx.ExecContext(context.Background(), `PRAGMA user_version = 6`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -535,7 +535,7 @@ func applyV6SchemaForLegacyTest(db *sql.DB) error {
 
 func archiveColumnExists(t *testing.T, db *sql.DB, table, column string) bool {
 	t.Helper()
-	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	rows, err := db.QueryContext(context.Background(), `SELECT name FROM pragma_table_info(?)`, table)
 	if err != nil {
 		t.Fatalf("pragma_table_info(%s): %v", table, err)
 	}

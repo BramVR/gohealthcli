@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,7 +47,7 @@ func TestDocsCheckFailsOnDrift(t *testing.T) {
 		t.Fatalf("mutate %s: %v", absPath, err)
 	}
 
-	cmd := exec.Command("make", "docs-check")
+	cmd := exec.CommandContext(context.Background(), "make", "docs-check")
 	cmd.Dir = repoRoot
 	out, err := cmd.CombinedOutput()
 	if err == nil {
@@ -69,7 +70,7 @@ func TestDocsCheckPassesOnCleanTree(t *testing.T) {
 	requireDocsToolchain(t)
 	repoRoot := docsCheckRepoRoot(t)
 
-	cmd := exec.Command("make", "docs-check")
+	cmd := exec.CommandContext(context.Background(), "make", "docs-check")
 	cmd.Dir = repoRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {

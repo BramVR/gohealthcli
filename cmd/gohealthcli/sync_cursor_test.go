@@ -554,7 +554,7 @@ func TestArchiveFinalizeSyncRunRollsBackRunStatusWhenCursorUpsertFails(t *testin
 	// UPSERT inside its transaction fails. The run-status UPDATE in the
 	// same transaction must roll back.
 	sqliteWriter := archive.(*sqliteHealthArchiveWriter)
-	if _, err := sqliteWriter.db.Exec(`DROP TABLE sync_cursors`); err != nil {
+	if _, err := sqliteWriter.db.ExecContext(context.Background(), `DROP TABLE sync_cursors`); err != nil {
 		t.Fatalf("drop sync_cursors: %v", err)
 	}
 

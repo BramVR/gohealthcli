@@ -20,7 +20,7 @@ func addStoredConnectionScope(t *testing.T, archivePath, scope string) {
 	}
 	defer db.Close()
 	var metadata string
-	if err := db.QueryRow(`SELECT token_metadata_json FROM connections LIMIT 1`).Scan(&metadata); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT token_metadata_json FROM connections LIMIT 1`).Scan(&metadata); err != nil {
 		t.Fatalf("read token_metadata_json: %v", err)
 	}
 	var raw map[string]json.RawMessage
@@ -37,7 +37,7 @@ func addStoredConnectionScope(t *testing.T, archivePath, scope string) {
 	encoded, _ := json.Marshal(scopes)
 	raw["scopes"] = encoded
 	out, _ := json.Marshal(raw)
-	if _, err := db.Exec(`UPDATE connections SET token_metadata_json = ?`, string(out)); err != nil {
+	if _, err := db.ExecContext(context.Background(), `UPDATE connections SET token_metadata_json = ?`, string(out)); err != nil {
 		t.Fatalf("write token_metadata_json: %v", err)
 	}
 }
@@ -85,7 +85,7 @@ func TestCurrentIRNProfileViewProjectsLatestSnapshot(t *testing.T) {
 	}
 	defer db.Close()
 	var onboarding, enrollment, lastUpdate string
-	err = db.QueryRow(`SELECT onboarding_state, enrollment_state, last_update_time FROM current_irn_profile WHERE connection_id = ?`, connection.id).Scan(&onboarding, &enrollment, &lastUpdate)
+	err = db.QueryRowContext(context.Background(), `SELECT onboarding_state, enrollment_state, last_update_time FROM current_irn_profile WHERE connection_id = ?`, connection.id).Scan(&onboarding, &enrollment, &lastUpdate)
 	if err != nil {
 		t.Fatalf("query current_irn_profile: %v", err)
 	}

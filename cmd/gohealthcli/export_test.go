@@ -936,7 +936,7 @@ func insertExportDataPoint(t *testing.T, archivePath string, point exportDataPoi
 		t.Fatalf("open archive: %v", err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(`INSERT INTO data_points (
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO data_points (
 		provider_name,
 		connection_id,
 		data_type,

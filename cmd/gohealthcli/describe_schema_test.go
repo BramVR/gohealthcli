@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -241,7 +242,7 @@ func TestDescribeSchemaJSONHonorsExplicitDBAgainstTwoDistinctArchives(t *testing
 	if err != nil {
 		t.Fatalf("open archive B: %v", err)
 	}
-	if _, err := db.Exec(`CREATE TABLE slice1_marker (id INTEGER PRIMARY KEY)`); err != nil {
+	if _, err := db.ExecContext(context.Background(), `CREATE TABLE slice1_marker (id INTEGER PRIMARY KEY)`); err != nil {
 		db.Close()
 		t.Fatalf("create marker table on B: %v", err)
 	}
@@ -287,7 +288,7 @@ func TestDescribeSchemaJSONDriftDetectionFailsWhenViewMissingFromCatalog(t *test
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	if _, err := db.Exec(`CREATE VIEW orphan_view AS SELECT 1 AS x`); err != nil {
+	if _, err := db.ExecContext(context.Background(), `CREATE VIEW orphan_view AS SELECT 1 AS x`); err != nil {
 		db.Close()
 		t.Fatalf("create orphan view: %v", err)
 	}
@@ -402,7 +403,7 @@ func TestDescribeSchemaJSONTableColumnsUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	if _, err := db.Exec(`CREATE TABLE _slice8_blob_probe (id INTEGER PRIMARY KEY, payload BLOB)`); err != nil {
+	if _, err := db.ExecContext(context.Background(), `CREATE TABLE _slice8_blob_probe (id INTEGER PRIMARY KEY, payload BLOB)`); err != nil {
 		db.Close()
 		t.Fatalf("create probe table: %v", err)
 	}
@@ -452,7 +453,7 @@ func TestDescribeSchemaJSONTableColumnsUnchanged(t *testing.T) {
 // the Normalized Views Registry, so this raw enumeration exists solely
 // for the drift guard below.
 func listSchemaViews(db *sql.DB) ([]string, error) {
-	rows, err := db.Query(`SELECT name FROM sqlite_master
+	rows, err := db.QueryContext(context.Background(), `SELECT name FROM sqlite_master
 		WHERE type = 'view'
 			AND name NOT LIKE 'sqlite_%'
 		ORDER BY name`)

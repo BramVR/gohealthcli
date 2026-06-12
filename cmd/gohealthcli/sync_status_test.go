@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"strings"
@@ -33,7 +34,7 @@ func probeSyncRunRow(t *testing.T, archivePath string, id int64) probedSyncRunRo
 	}
 	defer db.Close()
 	var row probedSyncRunRow
-	if err := db.QueryRow(`SELECT status, seen_count, new_count, updated_count, finished_at, last_progress_at, error_summary
+	if err := db.QueryRowContext(context.Background(), `SELECT status, seen_count, new_count, updated_count, finished_at, last_progress_at, error_summary
 		FROM sync_runs WHERE id = ?`, id).Scan(
 		&row.status, &row.seenCount, &row.newCount, &row.updatedCount, &row.finishedAt, &row.lastProgressAt, &row.errorSummary,
 	); err != nil {
@@ -65,7 +66,7 @@ func insertSyncStatusFixtureRuns(t *testing.T, archivePath string, runs []syncSt
 	}
 	defer db.Close()
 	for _, run := range runs {
-		if _, err := db.Exec(`INSERT INTO sync_runs (
+		if _, err := db.ExecContext(context.Background(), `INSERT INTO sync_runs (
 			provider_name,
 			connection_id,
 			data_types_requested,

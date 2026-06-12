@@ -27,7 +27,7 @@ func TestHealthArchiveLifecycleOpensReadOnlyAndWriteHandlesThroughOnePath(t *tes
 	if readOnly.schemaVersion != currentSchemaVersion {
 		t.Fatalf("read-only schema version = %d, want %d", readOnly.schemaVersion, currentSchemaVersion)
 	}
-	if _, err := readOnly.db.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (99, 'readonly_probe', '2026-06-07T00:00:00Z')`); err == nil {
+	if _, err := readOnly.db.ExecContext(context.Background(), `INSERT INTO schema_migrations (version, name, applied_at) VALUES (99, 'readonly_probe', '2026-06-07T00:00:00Z')`); err == nil {
 		t.Fatal("read-only write error = nil, want SQLite read-only failure")
 	}
 
@@ -39,7 +39,7 @@ func TestHealthArchiveLifecycleOpensReadOnlyAndWriteHandlesThroughOnePath(t *tes
 	if write.schemaVersion != currentSchemaVersion {
 		t.Fatalf("write schema version = %d, want %d", write.schemaVersion, currentSchemaVersion)
 	}
-	if _, err := write.db.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (99, 'write_probe', '2026-06-07T00:00:00Z')`); err != nil {
+	if _, err := write.db.ExecContext(context.Background(), `INSERT INTO schema_migrations (version, name, applied_at) VALUES (99, 'write_probe', '2026-06-07T00:00:00Z')`); err != nil {
 		t.Fatalf("writable insert: %v", err)
 	}
 }
@@ -130,7 +130,7 @@ func assertSchemaMigrationStamps(t *testing.T, archivePath string, fromVersion i
 		t.Fatalf("open archive read-only: %v", err)
 	}
 	defer db.Close()
-	rows, err := db.Query(`SELECT version, applied_at FROM schema_migrations WHERE version >= ? ORDER BY version`, fromVersion)
+	rows, err := db.QueryContext(context.Background(), `SELECT version, applied_at FROM schema_migrations WHERE version >= ? ORDER BY version`, fromVersion)
 	if err != nil {
 		t.Fatalf("query schema migration stamps: %v", err)
 	}
@@ -168,13 +168,13 @@ func readArchiveSchemaFingerprint(t *testing.T, archivePath string) string {
 
 	var fingerprint strings.Builder
 	var userVersion int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+	if err := db.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&userVersion); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
 	fmt.Fprintf(&fingerprint, "user_version=%d\n", userVersion)
 
 	appendRows := func(query string, scanLine func(rows *sql.Rows) (string, error)) {
-		rows, err := db.Query(query)
+		rows, err := db.QueryContext(context.Background(), query)
 		if err != nil {
 			t.Fatalf("query %q: %v", query, err)
 		}

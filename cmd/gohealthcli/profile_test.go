@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -202,7 +203,7 @@ func TestProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	}
 	defer db.Close()
 	var snapshotCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM identity_snapshots WHERE snapshot_kind = 'profile'`).Scan(&snapshotCount); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM identity_snapshots WHERE snapshot_kind = 'profile'`).Scan(&snapshotCount); err != nil {
 		t.Fatalf("count profile snapshots: %v", err)
 	}
 	if snapshotCount != 1 {

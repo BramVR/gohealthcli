@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -33,7 +34,7 @@ func TestDoctorJSONReportsAttachmentOrphans(t *testing.T) {
 	// Seed a minimal exercise Data Point so the FK on the orphan
 	// attachment row is satisfied. Capture LastInsertId so the FK
 	// stays valid if other fixtures begin inserting data_points.
-	dpResult, err := store.db.Exec(`INSERT INTO data_points (provider_name, connection_id, data_type, upstream_resource_name, record_kind, start_time_utc, end_time_utc, data_source_json, raw_json, inserted_at, updated_at) VALUES ('googlehealth', 'googlehealth:111111256096816351', 'exercise', 'users/me/dataTypes/exercise/dataPoints/orphan-test', 'session', '2026-06-08T17:00:00Z', '2026-06-08T17:30:00Z', '{}', '{}', '2026-06-08T17:31:00Z', '2026-06-08T17:31:00Z')`)
+	dpResult, err := store.db.ExecContext(context.Background(), `INSERT INTO data_points (provider_name, connection_id, data_type, upstream_resource_name, record_kind, start_time_utc, end_time_utc, data_source_json, raw_json, inserted_at, updated_at) VALUES ('googlehealth', 'googlehealth:111111256096816351', 'exercise', 'users/me/dataTypes/exercise/dataPoints/orphan-test', 'session', '2026-06-08T17:00:00Z', '2026-06-08T17:30:00Z', '{}', '{}', '2026-06-08T17:31:00Z', '2026-06-08T17:31:00Z')`)
 	if err != nil {
 		store.Close()
 		t.Fatalf("seed data_point: %v", err)
@@ -44,7 +45,7 @@ func TestDoctorJSONReportsAttachmentOrphans(t *testing.T) {
 		t.Fatalf("LastInsertId: %v", err)
 	}
 	// Seed an orphan row (DB row, no file).
-	if _, err := store.db.Exec(`INSERT INTO data_point_attachments (data_point_id, kind, sha256, path_relative, byte_size, fetched_at) VALUES (?, 'tcx', ?, ?, 7, ?)`,
+	if _, err := store.db.ExecContext(context.Background(), `INSERT INTO data_point_attachments (data_point_id, kind, sha256, path_relative, byte_size, fetched_at) VALUES (?, 'tcx', ?, ?, 7, ?)`,
 		dataPointID,
 		"deadbeef00000000000000000000000000000000000000000000000000000000",
 		"tcx/de/deadbeef00000000000000000000000000000000000000000000000000000000.tcx",

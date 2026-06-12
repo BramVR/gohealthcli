@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	testBinaryPath = filepath.Join(dir, "gohealthcli")
-	build := exec.Command("go", "build", "-o", testBinaryPath, ".")
+	build := exec.CommandContext(context.Background(), "go", "build", "-o", testBinaryPath, ".")
 	if output, err := build.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "build command: %v\n%s", err, string(output))
 		os.Exit(1)
@@ -735,14 +735,14 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	defer db.Close()
 
 	var foreignKeys int
-	if err := db.QueryRow(`PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
+	if err := db.QueryRowContext(context.Background(), `PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
 		t.Fatalf("query foreign key pragma: %v", err)
 	}
 	if foreignKeys != 1 {
 		t.Fatalf("foreign_keys = %d, want 1", foreignKeys)
 	}
 
-	rows, err := db.Query(`SELECT version, name FROM schema_migrations ORDER BY version`)
+	rows, err := db.QueryContext(context.Background(), `SELECT version, name FROM schema_migrations ORDER BY version`)
 	if err != nil {
 		t.Fatalf("query schema migrations: %v", err)
 	}
@@ -773,27 +773,27 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 		"sync_cursors",
 	} {
 		var tableName string
-		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&tableName); err != nil {
+		if err := db.QueryRowContext(context.Background(), `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&tableName); err != nil {
 			t.Fatalf("missing table %s: %v", table, err)
 		}
 	}
 
 	db.SetMaxOpenConns(2)
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("begin transaction: %v", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	var txForeignKeys int
-	if err := tx.QueryRow(`PRAGMA foreign_keys`).Scan(&txForeignKeys); err != nil {
+	if err := tx.QueryRowContext(context.Background(), `PRAGMA foreign_keys`).Scan(&txForeignKeys); err != nil {
 		t.Fatalf("query transaction foreign key pragma: %v", err)
 	}
 	if txForeignKeys != 1 {
 		t.Fatalf("transaction foreign_keys = %d, want 1", txForeignKeys)
 	}
 
-	_, err = db.Exec(`INSERT INTO data_points (
+	_, err = db.ExecContext(context.Background(), `INSERT INTO data_points (
 		provider_name,
 		connection_id,
 		data_type,
@@ -1528,7 +1528,7 @@ func TestDoctorValidatesConnectionTokenMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	_, err = db.Exec(`INSERT INTO connections (
+	_, err = db.ExecContext(context.Background(), `INSERT INTO connections (
 		id,
 		provider_name,
 		google_health_user_id,
@@ -1573,7 +1573,7 @@ func TestDoctorValidatesConnectionTokenMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen archive: %v", err)
 	}
-	_, err = db.Exec(`UPDATE connections SET token_metadata_json = ? WHERE id = ?`,
+	_, err = db.ExecContext(context.Background(), `UPDATE connections SET token_metadata_json = ? WHERE id = ?`,
 		`{"credential_store_key":"googlehealth:123","expires_at":"2026-06-01T00:00:00Z","scopes":[""]}`,
 		"googlehealth:123",
 	)
@@ -1607,7 +1607,7 @@ func TestDoctorValidatesConnectionTokenMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen archive: %v", err)
 	}
-	_, err = db.Exec(`UPDATE connections SET token_metadata_json = ? WHERE id = ?`,
+	_, err = db.ExecContext(context.Background(), `UPDATE connections SET token_metadata_json = ? WHERE id = ?`,
 		`{"credential_store_key":"googlehealth:123","expires_at":"2026-06-01T00:00:00Z","scopes":["health.activity.read"]}`,
 		"googlehealth:123",
 	)
@@ -1658,7 +1658,7 @@ func TestDoctorDoesNotLeakTokenMetadataSecretMaterial(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	_, err = db.Exec(`INSERT INTO connections (
+	_, err = db.ExecContext(context.Background(), `INSERT INTO connections (
 		id,
 		provider_name,
 		google_health_user_id,
@@ -2043,7 +2043,7 @@ func TestPersistDoctorOnlineRefreshedTokenRollsBackOnMetadataFailure(t *testing.
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	if _, err := db.Exec(`DELETE FROM connections WHERE id = ?`, "googlehealth:111111256096816351"); err != nil {
+	if _, err := db.ExecContext(context.Background(), `DELETE FROM connections WHERE id = ?`, "googlehealth:111111256096816351"); err != nil {
 		_ = db.Close()
 		t.Fatalf("delete connection: %v", err)
 	}
@@ -2173,7 +2173,7 @@ func TestConnectStoresFileFallbackTokenAndAnchorsIdentity(t *testing.T) {
 	}
 	defer db.Close()
 	var connectionID, providerName, healthUserID, legacyUserID, tokenMetadata, identityJSON string
-	if err := db.QueryRow(`SELECT id, provider_name, google_health_user_id, legacy_fitbit_user_id, token_metadata_json, google_identity_json FROM connections`).Scan(&connectionID, &providerName, &healthUserID, &legacyUserID, &tokenMetadata, &identityJSON); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT id, provider_name, google_health_user_id, legacy_fitbit_user_id, token_metadata_json, google_identity_json FROM connections`).Scan(&connectionID, &providerName, &healthUserID, &legacyUserID, &tokenMetadata, &identityJSON); err != nil {
 		t.Fatalf("query connection: %v", err)
 	}
 	if connectionID != "googlehealth:111111256096816351" || providerName != "googlehealth" || healthUserID != "111111256096816351" || legacyUserID != "A1B2C3" {
@@ -2235,7 +2235,7 @@ func TestConnectReauthorizesSameIdentityWithoutSecondConnection(t *testing.T) {
 	}
 	defer db.Close()
 	var count int
-	if err := db.QueryRow(`SELECT count(*) FROM connections`).Scan(&count); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT count(*) FROM connections`).Scan(&count); err != nil {
 		t.Fatalf("count connections: %v", err)
 	}
 	if count != 1 {
@@ -2259,7 +2259,7 @@ func TestConnectArchiveInspectionFailureDoesNotReportCredentialStore(t *testing.
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version = ?`, currentSchemaVersion); err != nil {
+	if _, err := db.ExecContext(context.Background(), `DELETE FROM schema_migrations WHERE version = ?`, currentSchemaVersion); err != nil {
 		_ = db.Close()
 		t.Fatalf("delete schema migration: %v", err)
 	}
@@ -2417,7 +2417,7 @@ func TestIdentityRefreshesArchivedGoogleIdentity(t *testing.T) {
 	}
 	defer db.Close()
 	var legacyUserID, identityJSON string
-	if err := db.QueryRow(`SELECT legacy_fitbit_user_id, google_identity_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&legacyUserID, &identityJSON); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT legacy_fitbit_user_id, google_identity_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&legacyUserID, &identityJSON); err != nil {
 		t.Fatalf("query refreshed identity: %v", err)
 	}
 	if legacyUserID != "Z9Y8X7" {
@@ -2792,7 +2792,7 @@ func TestIdentityRejectsDifferentGoogleIdentity(t *testing.T) {
 	}
 	defer db.Close()
 	var healthUserID, legacyUserID, identityJSON string
-	if err := db.QueryRow(`SELECT google_health_user_id, legacy_fitbit_user_id, google_identity_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&healthUserID, &legacyUserID, &identityJSON); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT google_health_user_id, legacy_fitbit_user_id, google_identity_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&healthUserID, &legacyUserID, &identityJSON); err != nil {
 		t.Fatalf("query identity after mismatch: %v", err)
 	}
 	if healthUserID != "111111256096816351" || legacyUserID != "A1B2C3" {
@@ -2856,7 +2856,7 @@ func TestProfileArchivesSnapshotAndPrintsSummary(t *testing.T) {
 	}
 	defer db.Close()
 	var providerName, connectionID, rawJSON, fetchedAt string
-	if err := db.QueryRow(`SELECT provider_name, connection_id, raw_json, fetched_at FROM identity_snapshots WHERE id = ?`, 1).Scan(&providerName, &connectionID, &rawJSON, &fetchedAt); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT provider_name, connection_id, raw_json, fetched_at FROM identity_snapshots WHERE id = ?`, 1).Scan(&providerName, &connectionID, &rawJSON, &fetchedAt); err != nil {
 		t.Fatalf("query profile snapshot: %v", err)
 	}
 	if providerName != "googlehealth" || connectionID != "googlehealth:111111256096816351" {
@@ -3389,7 +3389,7 @@ func TestStatusReportsNewestElectrocardiogramEventTimestamp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	if _, err := db.Exec(`INSERT INTO data_points (
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO data_points (
 		provider_name,
 		connection_id,
 		data_type,
@@ -3480,7 +3480,7 @@ func TestStatusReportsSchemaVersionForArchiveInspectionFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version = ?`, currentSchemaVersion); err != nil {
+	if _, err := db.ExecContext(context.Background(), `DELETE FROM schema_migrations WHERE version = ?`, currentSchemaVersion); err != nil {
 		_ = db.Close()
 		t.Fatalf("delete schema migration: %v", err)
 	}
@@ -5490,7 +5490,7 @@ func TestRawDataTypeFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 	}
 	var metadata map[string]any
 	var metadataJSON string
-	if err := db.QueryRow(`SELECT token_metadata_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&metadataJSON); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT token_metadata_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&metadataJSON); err != nil {
 		t.Fatalf("query token metadata: %v", err)
 	}
 	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
@@ -5501,7 +5501,7 @@ func TestRawDataTypeFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal token metadata: %v", err)
 	}
-	_, err = db.Exec(`UPDATE connections SET token_metadata_json = ? WHERE id = ?`, string(updatedMetadataJSON), "googlehealth:111111256096816351")
+	_, err = db.ExecContext(context.Background(), `UPDATE connections SET token_metadata_json = ? WHERE id = ?`, string(updatedMetadataJSON), "googlehealth:111111256096816351")
 	if closeErr := db.Close(); closeErr != nil {
 		t.Fatalf("close archive: %v", closeErr)
 	}
@@ -5773,14 +5773,14 @@ func TestConnectMigratesLegacyV1ArchiveBeforeStoringIdentity(t *testing.T) {
 	}
 	defer db.Close()
 	var userVersion int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+	if err := db.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&userVersion); err != nil {
 		t.Fatalf("query user_version: %v", err)
 	}
 	if userVersion != currentSchemaVersion {
 		t.Fatalf("user_version = %d, want %d", userVersion, currentSchemaVersion)
 	}
 	var identityJSON string
-	if err := db.QueryRow(`SELECT google_identity_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&identityJSON); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT google_identity_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&identityJSON); err != nil {
 		t.Fatalf("query migrated connection: %v", err)
 	}
 	if !strings.Contains(identityJSON, `"healthUserId":"111111256096816351"`) {
@@ -6740,7 +6740,7 @@ func TestInitIdempotencyDoesNotRequireHealthyTokenMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	_, err = db.Exec(`INSERT INTO connections (
+	_, err = db.ExecContext(context.Background(), `INSERT INTO connections (
 		id,
 		provider_name,
 		google_health_user_id,
@@ -7013,7 +7013,7 @@ func runCommandInDirWithEnv(t *testing.T, dir string, env []string, args ...stri
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	cmd := exec.Command(testBinaryPath, args...)
+	cmd := exec.CommandContext(context.Background(), testBinaryPath, args...)
 	cmd.Dir = dir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -7536,7 +7536,7 @@ func archivedConnectionIdentityJSON(t *testing.T, archivePath string) string {
 	}
 	defer db.Close()
 	var identityJSON string
-	if err := db.QueryRow(`SELECT google_identity_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&identityJSON); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT google_identity_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&identityJSON); err != nil {
 		t.Fatalf("query archived identity JSON: %v", err)
 	}
 	return identityJSON
@@ -7551,7 +7551,7 @@ func archivedConnectionTokenMetadata(t *testing.T, archivePath string) string {
 	}
 	defer db.Close()
 	var tokenMetadata string
-	if err := db.QueryRow(`SELECT token_metadata_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&tokenMetadata); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT token_metadata_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&tokenMetadata); err != nil {
 		t.Fatalf("query archived token metadata: %v", err)
 	}
 	return tokenMetadata
@@ -7573,7 +7573,7 @@ func setConnectionTokenExpiry(t *testing.T, archivePath, expiresAt string) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	_, err = db.Exec(`UPDATE connections SET token_metadata_json = ? WHERE id = ?`, string(metadataJSON), "googlehealth:111111256096816351")
+	_, err = db.ExecContext(context.Background(), `UPDATE connections SET token_metadata_json = ? WHERE id = ?`, string(metadataJSON), "googlehealth:111111256096816351")
 	if closeErr := db.Close(); closeErr != nil {
 		t.Fatalf("close archive: %v", closeErr)
 	}
@@ -7598,7 +7598,7 @@ func setConnectionTokenScopes(t *testing.T, archivePath string, scopes []string)
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	_, err = db.Exec(`UPDATE connections SET token_metadata_json = ? WHERE id = ?`, string(metadataJSON), "googlehealth:111111256096816351")
+	_, err = db.ExecContext(context.Background(), `UPDATE connections SET token_metadata_json = ? WHERE id = ?`, string(metadataJSON), "googlehealth:111111256096816351")
 	if closeErr := db.Close(); closeErr != nil {
 		t.Fatalf("close archive: %v", closeErr)
 	}
@@ -7616,7 +7616,7 @@ func assertArchiveTableCount(t *testing.T, archivePath, table string, want int) 
 	}
 	defer db.Close()
 	var got int
-	if err := db.QueryRow(`SELECT count(*) FROM ` + table).Scan(&got); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT count(*) FROM `+table).Scan(&got); err != nil {
 		t.Fatalf("count %s: %v", table, err)
 	}
 	if got != want {
@@ -7632,7 +7632,7 @@ func insertStatusFixtureRows(t *testing.T, archivePath string) {
 		t.Fatalf("open archive: %v", err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(`INSERT INTO connections (
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO connections (
 		id,
 		provider_name,
 		google_health_user_id,
@@ -7666,7 +7666,7 @@ func insertStatusFixtureRows(t *testing.T, archivePath string) {
 		{"heart-rate", "users/me/dataTypes/heart-rate/dataPoints/a", "sample", "2026-01-03T09:00:00Z", nil, `{"heartRate":{"bpm":72}}`},
 	}
 	for _, point := range dataPoints {
-		if _, err := db.Exec(`INSERT INTO data_points (
+		if _, err := db.ExecContext(context.Background(), `INSERT INTO data_points (
 			provider_name,
 			connection_id,
 			data_type,
@@ -7694,7 +7694,7 @@ func insertStatusFixtureRows(t *testing.T, archivePath string) {
 			t.Fatalf("insert status fixture Data Point %s: %v", point.resourceName, err)
 		}
 	}
-	if _, err := db.Exec(`INSERT INTO rollups (
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO rollups (
 		provider_name,
 		connection_id,
 		data_type,
@@ -7721,10 +7721,10 @@ func insertStatusFixtureRows(t *testing.T, archivePath string) {
 	// and pre-v7 fixtures.
 	snapshotTable := "identity_snapshots"
 	var legacyName string
-	if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='profile_snapshots'`).Scan(&legacyName); err == nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT name FROM sqlite_master WHERE type='table' AND name='profile_snapshots'`).Scan(&legacyName); err == nil {
 		snapshotTable = "profile_snapshots"
 	}
-	if _, err := db.Exec(`INSERT INTO `+snapshotTable+` (
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO `+snapshotTable+` (
 		provider_name,
 		connection_id,
 		raw_json,
@@ -7754,7 +7754,7 @@ func insertStatusFixtureRows(t *testing.T, archivePath string) {
 		{"sync_failed", `{"from":"2026-01-04","to":"2026-01-05T00:00:00Z"}`, "list", nil, 0, 0, 0, "2026-01-05T00:00:00Z", "2026-01-05T00:00:05Z", "Provider timeout after 30s\nretry later"},
 	}
 	for _, run := range syncRuns {
-		if _, err := db.Exec(`INSERT INTO sync_runs (
+		if _, err := db.ExecContext(context.Background(), `INSERT INTO sync_runs (
 			provider_name,
 			connection_id,
 			data_types_requested,
@@ -7824,7 +7824,7 @@ func createLegacyArchive(t *testing.T, archivePath string, schemaVersion int) {
 		t.Fatalf("open legacy archive: %v", err)
 	}
 	defer db.Close()
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("begin legacy migration: %v", err)
 	}
@@ -7832,7 +7832,7 @@ func createLegacyArchive(t *testing.T, archivePath string, schemaVersion int) {
 		_ = tx.Rollback()
 		t.Fatalf("apply legacy schema migrations through version %d: %v", schemaVersion, err)
 	}
-	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+	if _, err := tx.ExecContext(context.Background(), fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("set legacy user_version %d: %v", schemaVersion, err)
 	}
@@ -7854,7 +7854,7 @@ func setArchiveUserVersion(t *testing.T, archivePath string, version int) {
 		t.Fatalf("open archive: %v", err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
+	if _, err := db.ExecContext(context.Background(), fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		t.Fatalf("set archive user_version %d: %v", version, err)
 	}
 }
@@ -7935,7 +7935,7 @@ func assertArchiveUserVersion(t *testing.T, archivePath string, want int) {
 	}
 	defer db.Close()
 	var got int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&got); err != nil {
+	if err := db.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&got); err != nil {
 		t.Fatalf("query user_version: %v", err)
 	}
 	if got != want {
@@ -8007,7 +8007,7 @@ func assertArchivedStepDataPoint(t *testing.T, archivePath string) {
 	defer db.Close()
 	var providerName, connectionID, dataType, resourceName, recordKind, startUTC, endUTC, startCivil, endCivil, civilDate, timezoneMetadata, dataSourceJSON, rawJSON string
 	var sourceFamilyFilter sql.NullString
-	if err := db.QueryRow(`SELECT
+	if err := db.QueryRowContext(context.Background(), `SELECT
 		provider_name,
 		connection_id,
 		data_type,
@@ -8072,7 +8072,7 @@ func assertArchivedStepDataPoint(t *testing.T, archivePath string) {
 	// so the parser cannot start inventing values for absent fields.
 	var minimalStartUTC, minimalEndUTC, minimalRecordKind, minimalDataSourceJSON string
 	var minimalStartCivil, minimalEndCivil, minimalCivilDate, minimalTimezoneMetadata sql.NullString
-	if err := db.QueryRow(`SELECT
+	if err := db.QueryRowContext(context.Background(), `SELECT
 		record_kind,
 		start_time_utc,
 		end_time_utc,
@@ -8116,7 +8116,7 @@ func assertArchivedIntervalDataPoint(t *testing.T, archivePath, resourceName, wa
 	defer db.Close()
 	var providerName, connectionID, dataType, recordKind, startUTC, endUTC, dataSourceJSON, rawJSON string
 	var startCivil, endCivil, civilDate, timezoneMetadata, sourceFamilyFilter sql.NullString
-	if err := db.QueryRow(`SELECT
+	if err := db.QueryRowContext(context.Background(), `SELECT
 		provider_name,
 		connection_id,
 		data_type,
@@ -8185,7 +8185,7 @@ func assertArchivedSampleDataPoint(t *testing.T, archivePath, resourceName, want
 	defer db.Close()
 	var dataType, recordKind, startUTC, dataSourceJSON, rawJSON string
 	var endUTC, startCivil, endCivil, civilDate, timezoneMetadata sql.NullString
-	if err := db.QueryRow(`SELECT
+	if err := db.QueryRowContext(context.Background(), `SELECT
 		data_type,
 		record_kind,
 		start_time_utc,
@@ -8242,7 +8242,7 @@ func assertArchivedDailyDataPoint(t *testing.T, archivePath, resourceName, wantD
 	defer db.Close()
 	var dataType, recordKind, dataSourceJSON, rawJSON string
 	var startUTC, endUTC, startCivil, endCivil, civilDate, timezoneMetadata sql.NullString
-	if err := db.QueryRow(`SELECT
+	if err := db.QueryRowContext(context.Background(), `SELECT
 		data_type,
 		record_kind,
 		start_time_utc,
@@ -8299,7 +8299,7 @@ func assertArchivedSessionDataPoint(t *testing.T, archivePath, resourceName, wan
 	defer db.Close()
 	var providerName, connectionID, dataType, recordKind, startUTC, endUTC, dataSourceJSON, rawJSON string
 	var startCivil, endCivil, civilDate, timezoneMetadata, sourceFamilyFilter sql.NullString
-	if err := db.QueryRow(`SELECT
+	if err := db.QueryRowContext(context.Background(), `SELECT
 		provider_name,
 		connection_id,
 		data_type,
@@ -8394,7 +8394,7 @@ func assertSyncRunForDataTypeWithSourceFamily(t *testing.T, archivePath string, 
 	var sourceFamily sql.NullString
 	var seen, newCount, updated int
 	var errorSummary sql.NullString
-	if err := db.QueryRow(`SELECT
+	if err := db.QueryRowContext(context.Background(), `SELECT
 		status,
 		data_types_requested,
 		range_requested_json,
@@ -8452,7 +8452,7 @@ func assertDataPointSourceFamilyCounts(t *testing.T, archivePath string, want ma
 		t.Fatalf("open archive: %v", err)
 	}
 	defer db.Close()
-	rows, err := db.Query(`SELECT IFNULL(source_family_filter, ''), count(*) FROM data_points GROUP BY IFNULL(source_family_filter, '')`)
+	rows, err := db.QueryContext(context.Background(), `SELECT IFNULL(source_family_filter, ''), count(*) FROM data_points GROUP BY IFNULL(source_family_filter, '')`)
 	if err != nil {
 		t.Fatalf("query Data Point source families: %v", err)
 	}
@@ -8484,7 +8484,7 @@ func assertArchivedStepsDailyRollup(t *testing.T, archivePath, wantCount string)
 	defer db.Close()
 	var providerName, connectionID, dataType, rollupKind, civilDate, rawJSON string
 	var windowStart, windowEnd, timezoneMetadata sql.NullString
-	if err := db.QueryRow(`SELECT
+	if err := db.QueryRowContext(context.Background(), `SELECT
 		provider_name,
 		connection_id,
 		data_type,
@@ -8533,7 +8533,7 @@ func assertCorrectedStepRevision(t *testing.T, archivePath string) {
 	}
 	defer db.Close()
 	var rawJSON, startUTC, startCivil string
-	if err := db.QueryRow(`SELECT raw_json, start_time_utc, start_civil_time FROM data_points WHERE upstream_resource_name = ?`, "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a").Scan(&rawJSON, &startUTC, &startCivil); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT raw_json, start_time_utc, start_civil_time FROM data_points WHERE upstream_resource_name = ?`, "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a").Scan(&rawJSON, &startUTC, &startCivil); err != nil {
 		t.Fatalf("query corrected Data Point: %v", err)
 	}
 	if !strings.Contains(rawJSON, `"count":"999"`) {
@@ -8543,7 +8543,7 @@ func assertCorrectedStepRevision(t *testing.T, archivePath string) {
 		t.Fatalf("corrected time = (%q, %q), want updated metadata", startUTC, startCivil)
 	}
 	var previousRawJSON, reason string
-	if err := db.QueryRow(`SELECT previous_raw_json, replacement_reason FROM data_point_revisions`).Scan(&previousRawJSON, &reason); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT previous_raw_json, replacement_reason FROM data_point_revisions`).Scan(&previousRawJSON, &reason); err != nil {
 		t.Fatalf("query Data Point Revision: %v", err)
 	}
 	if !strings.Contains(previousRawJSON, `"count":"512"`) || reason != "provider_correction" {

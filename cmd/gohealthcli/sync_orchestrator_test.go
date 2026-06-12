@@ -501,14 +501,14 @@ func TestSyncRunExecutorCancelMidFetchFinalizesCanceledAndKeepsCursor(t *testing
 	}
 	defer db.Close()
 	var persistedStatus string
-	if err := db.QueryRow(`SELECT status FROM sync_runs WHERE id = ?`, outcome.result.SyncRunID).Scan(&persistedStatus); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT status FROM sync_runs WHERE id = ?`, outcome.result.SyncRunID).Scan(&persistedStatus); err != nil {
 		t.Fatalf("scan sync_runs status: %v", err)
 	}
 	if persistedStatus != "sync_canceled" {
 		t.Fatalf("persisted sync_runs.status = %q, want sync_canceled", persistedStatus)
 	}
 	var cursorCount int
-	if err := db.QueryRow(`SELECT count(*) FROM sync_cursors`).Scan(&cursorCount); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT count(*) FROM sync_cursors`).Scan(&cursorCount); err != nil {
 		t.Fatalf("scan sync_cursors count: %v", err)
 	}
 	if cursorCount != 0 {

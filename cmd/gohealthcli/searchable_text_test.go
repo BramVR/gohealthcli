@@ -70,7 +70,7 @@ func TestSearchableTextViewReturnsRowsFromAllFourSources(t *testing.T) {
 	}
 	defer db.Close()
 
-	rows, err := db.Query(`SELECT kind, text FROM searchable_text ORDER BY kind, text`)
+	rows, err := db.QueryContext(context.Background(), `SELECT kind, text FROM searchable_text ORDER BY kind, text`)
 	if err != nil {
 		t.Fatalf("query searchable_text: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestSearchableTextLIKENeedleAnswersAcrossKinds(t *testing.T) {
 		t.Fatalf("open archive: %v", err)
 	}
 	defer db.Close()
-	rows, err := db.Query(`SELECT DISTINCT kind FROM searchable_text WHERE text LIKE '%Pixel%' ORDER BY kind`)
+	rows, err := db.QueryContext(context.Background(), `SELECT DISTINCT kind FROM searchable_text WHERE text LIKE '%Pixel%' ORDER BY kind`)
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
