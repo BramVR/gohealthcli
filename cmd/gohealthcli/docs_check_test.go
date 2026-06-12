@@ -11,7 +11,7 @@ import (
 )
 
 // TestDocsCheckFailsOnDrift is the issue #74 failure-path guard for
-// `make docs-check`. ADR-0008 commits the generated command-reference
+// `make docs-check`. ADR-0010 commits the generated command-reference
 // pages (docs/commands.md + docs/commands/*.md); docs-check must fail
 // with a diff naming the drifted file when a committed page disagrees
 // with a fresh regeneration from `schema --json`.

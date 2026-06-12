@@ -74,7 +74,7 @@ jobs:
       - name: Test
         run: go test ./...
 
-      # ADR-0008 drift guard (issue #74): the committed docs/commands.md and
+      # ADR-0010 drift guard (issue #74): the committed docs/commands.md and
       # docs/commands/*.md must match a fresh regeneration from the binary's
       # `schema --json`. Fails with a unified diff naming the drifted file;
       # the fix is `make docs-commands` plus committing the result.

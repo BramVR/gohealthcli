@@ -58,7 +58,7 @@ docs-site-clean:
 docs-commands:
 	@go run ./cmd/gohealthcli schema --json | node scripts/gen-command-reference.mjs
 
-# docs-check is the ADR-0008 drift guard (issue #74): regenerate the
+# docs-check is the ADR-0010 drift guard (issue #74): regenerate the
 # command-reference pages into a temp directory and byte-compare them
 # against the committed docs/commands.md + docs/commands/*.md. Exits
 # non-zero with a unified diff naming the drifted file; the fix is
