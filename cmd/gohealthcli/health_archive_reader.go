@@ -13,9 +13,9 @@ import (
 
 type healthArchiveReader interface {
 	Close() error
-	StatusSummary() (statusResult, error)
-	Query(statement string, encoder queryRowEncoder) (queryResult, error)
-	ExportRows(spec exportDatasetSpec) ([]exportRow, error)
+	StatusSummary(ctx context.Context) (statusResult, error)
+	Query(ctx context.Context, statement string, encoder queryRowEncoder) (queryResult, error)
+	ExportRows(ctx context.Context, spec exportDatasetSpec) ([]exportRow, error)
 }
 
 type sqliteHealthArchiveReader struct {
@@ -42,33 +42,33 @@ func (archive *sqliteHealthArchiveReader) Close() error {
 	return archive.db.Close()
 }
 
-func (archive *sqliteHealthArchiveReader) StatusSummary() (statusResult, error) {
+func (archive *sqliteHealthArchiveReader) StatusSummary(ctx context.Context) (statusResult, error) {
 	result := statusResult{
 		Status:        "status_failed",
 		ArchivePath:   archive.archivePath,
 		SchemaVersion: archive.schemaVersion,
 	}
 	var err error
-	if result.DataPointCount, err = countArchiveRows(archive.db, "data_points"); err != nil {
+	if result.DataPointCount, err = countArchiveRows(ctx, archive.db, "data_points"); err != nil {
 		return result, err
 	}
-	if result.RollupCount, err = countArchiveRows(archive.db, "rollups"); err != nil {
+	if result.RollupCount, err = countArchiveRows(ctx, archive.db, "rollups"); err != nil {
 		return result, err
 	}
-	if result.ProfileSnapshotCount, err = countArchiveRows(archive.db, "profile_snapshots"); err != nil {
+	if result.ProfileSnapshotCount, err = countArchiveRows(ctx, archive.db, "profile_snapshots"); err != nil {
 		return result, err
 	}
-	if result.IdentitySnapshotCount, err = countArchiveRows(archive.db, "identity_snapshots"); err != nil {
+	if result.IdentitySnapshotCount, err = countArchiveRows(ctx, archive.db, "identity_snapshots"); err != nil {
 		return result, err
 	}
-	if result.SyncRunCount, err = countArchiveRows(archive.db, "sync_runs"); err != nil {
+	if result.SyncRunCount, err = countArchiveRows(ctx, archive.db, "sync_runs"); err != nil {
 		return result, err
 	}
-	result.DataTypes, err = readStatusDataTypes(archive.db)
+	result.DataTypes, err = readStatusDataTypes(ctx, archive.db)
 	if err != nil {
 		return result, err
 	}
-	result.DataTypes, err = attachStatusSyncCursors(archive.db, result.DataTypes)
+	result.DataTypes, err = attachStatusSyncCursors(ctx, archive.db, result.DataTypes)
 	if err != nil {
 		return result, err
 	}
@@ -78,7 +78,7 @@ func (archive *sqliteHealthArchiveReader) StatusSummary() (statusResult, error) 
 	// attachStatusSyncCursors, so the flat array tracks the
 	// per-Data-Type stanza order exactly.
 	result.KnownDataTypes = statusDataTypeNames(result.DataTypes)
-	result.IdentitySnapshotsFreshness, err = readStatusSnapshotFreshness(archive.db)
+	result.IdentitySnapshotsFreshness, err = readStatusSnapshotFreshness(ctx, archive.db)
 	if err != nil {
 		return result, err
 	}
@@ -88,15 +88,15 @@ func (archive *sqliteHealthArchiveReader) StatusSummary() (statusResult, error) 
 		// slice 9). The nested field stays for back-compat.
 		result.PairedDeviceCount = result.IdentitySnapshotsFreshness.PairedDeviceCount
 	}
-	result.Tier2, err = readStatusTier2(archive.db, result.DataTypes)
+	result.Tier2, err = readStatusTier2(ctx, archive.db, result.DataTypes)
 	if err != nil {
 		return result, err
 	}
-	result.LatestSuccessfulRun, err = readStatusSyncRun(archive.db, "sync_completed")
+	result.LatestSuccessfulRun, err = readStatusSyncRun(ctx, archive.db, "sync_completed")
 	if err != nil {
 		return result, err
 	}
-	result.LatestFailedRun, err = readStatusSyncRun(archive.db, "sync_failed")
+	result.LatestFailedRun, err = readStatusSyncRun(ctx, archive.db, "sync_failed")
 	if err != nil {
 		return result, err
 	}
@@ -105,7 +105,7 @@ func (archive *sqliteHealthArchiveReader) StatusSummary() (statusResult, error) 
 	return result, nil
 }
 
-func (archive *sqliteHealthArchiveReader) Query(statement string, encoder queryRowEncoder) (queryResult, error) {
+func (archive *sqliteHealthArchiveReader) Query(ctx context.Context, statement string, encoder queryRowEncoder) (queryResult, error) {
 	result := queryResult{
 		Status:      "query_failed",
 		ArchivePath: archive.archivePath,
@@ -114,7 +114,7 @@ func (archive *sqliteHealthArchiveReader) Query(statement string, encoder queryR
 		return result, err
 	}
 
-	rows, err := archive.db.Query(statement)
+	rows, err := archive.db.QueryContext(ctx, statement)
 	if err != nil {
 		return result, err
 	}
@@ -160,9 +160,9 @@ func (archive *sqliteHealthArchiveReader) Query(statement string, encoder queryR
 	return result, nil
 }
 
-func (archive *sqliteHealthArchiveReader) ExportRows(spec exportDatasetSpec) ([]exportRow, error) {
+func (archive *sqliteHealthArchiveReader) ExportRows(ctx context.Context, spec exportDatasetSpec) ([]exportRow, error) {
 	query := fmt.Sprintf("SELECT %s FROM %s ORDER BY %s", exportSelectFields(spec), spec.view, spec.orderBy)
-	rows, err := archive.db.Query(query)
+	rows, err := archive.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +198,7 @@ func exportSelectFields(spec exportDatasetSpec) string {
 	return strings.Join(fields, ", ")
 }
 
-func statusSetup(archivePath string, now time.Time) (statusResult, error) {
+func statusSetup(ctx context.Context, archivePath string, now time.Time) (statusResult, error) {
 	result := statusResult{
 		Status:      "status_failed",
 		ArchivePath: archivePath,
@@ -222,10 +222,10 @@ func statusSetup(archivePath string, now time.Time) (statusResult, error) {
 		return result, err
 	}
 	defer reader.Close()
-	return reader.StatusSummary()
+	return reader.StatusSummary(ctx)
 }
 
-func querySetup(archivePath, statement string, encoder queryRowEncoder) (queryResult, error) {
+func querySetup(ctx context.Context, archivePath, statement string, encoder queryRowEncoder) (queryResult, error) {
 	result := queryResult{
 		Status:      "query_failed",
 		ArchivePath: archivePath,
@@ -238,16 +238,16 @@ func querySetup(archivePath, statement string, encoder queryRowEncoder) (queryRe
 		return result, err
 	}
 	defer reader.Close()
-	return reader.Query(statement, encoder)
+	return reader.Query(ctx, statement, encoder)
 }
 
-func countArchiveRows(db *sql.DB, table string) (int, error) {
+func countArchiveRows(ctx context.Context, db *sql.DB, table string) (int, error) {
 	query, ok := archiveCountQueryByTable[table]
 	if !ok {
 		return 0, fmt.Errorf("unsupported Health Archive table: %s", table)
 	}
 	var count int
-	if err := db.QueryRow(query).Scan(&count); err != nil {
+	if err := db.QueryRowContext(ctx, query).Scan(&count); err != nil {
 		return 0, err
 	}
 	return count, nil
@@ -265,8 +265,8 @@ var archiveCountQueryByTable = map[string]string{
 	"sync_runs":          `SELECT count(*) FROM sync_runs`,
 }
 
-func readStatusDataTypes(db *sql.DB) ([]statusDataType, error) {
-	rows, err := db.Query(`SELECT
+func readStatusDataTypes(ctx context.Context, db *sql.DB) ([]statusDataType, error) {
+	rows, err := db.QueryContext(ctx, `SELECT
 		data_type,
 		sum(data_point_count),
 		sum(rollup_count),
@@ -326,8 +326,8 @@ func readStatusDataTypes(db *sql.DB) ([]statusDataType, error) {
 // in status. The returned slice keeps the existing order from
 // readStatusDataTypes; cursor-only entries are appended at the end in
 // data_type-sorted order.
-func attachStatusSyncCursors(db *sql.DB, dataTypes []statusDataType) ([]statusDataType, error) {
-	rows, err := db.Query(`SELECT
+func attachStatusSyncCursors(ctx context.Context, db *sql.DB, dataTypes []statusDataType) ([]statusDataType, error) {
+	rows, err := db.QueryContext(ctx, `SELECT
 		data_type,
 		IFNULL(source_family_filter, ''),
 		rollup_kind,
@@ -385,8 +385,8 @@ func attachStatusSyncCursors(db *sql.DB, dataTypes []statusDataType) ([]statusDa
 // current_settings, both clearer and avoids O(n²) growth as snapshots
 // accumulate. Returns nil when no snapshots exist at all so the JSON
 // shape omits the block entirely.
-func readStatusSnapshotFreshness(db *sql.DB) (*statusSnapshotFreshness, error) {
-	rows, err := db.Query(`SELECT snapshot_kind, fetched_at, raw_json FROM (
+func readStatusSnapshotFreshness(ctx context.Context, db *sql.DB) (*statusSnapshotFreshness, error) {
+	rows, err := db.QueryContext(ctx, `SELECT snapshot_kind, fetched_at, raw_json FROM (
 		SELECT
 			snapshot_kind,
 			fetched_at,
@@ -453,8 +453,8 @@ func countPairedDevicesIn(rawJSON string) (int, error) {
 // instead of running fresh COUNT(*) queries — avoids extra full-table
 // scans of data_points and keeps the count source consistent with
 // the rest of `status`.
-func readStatusTier2(db *sql.DB, dataTypes []statusDataType) (*statusTier2, error) {
-	scopes, err := readCurrentConnectionScopes(db)
+func readStatusTier2(ctx context.Context, db *sql.DB, dataTypes []statusDataType) (*statusTier2, error) {
+	scopes, err := readCurrentConnectionScopes(ctx, db)
 	if err != nil {
 		return nil, err
 	}
@@ -485,9 +485,9 @@ func tier2DataPointCount(dataTypes []statusDataType, dataType string) int {
 // just because `connect` hasn't run. Returns nil when the metadata is
 // malformed for the same reason: a parse error here would mask the
 // data_point counts the rest of `status` reports.
-func readCurrentConnectionScopes(db *sql.DB) ([]string, error) {
+func readCurrentConnectionScopes(ctx context.Context, db *sql.DB) ([]string, error) {
 	var metadata string
-	err := db.QueryRow(`SELECT token_metadata_json FROM connections LIMIT 1`).Scan(&metadata)
+	err := db.QueryRowContext(ctx, `SELECT token_metadata_json FROM connections LIMIT 1`).Scan(&metadata)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -501,11 +501,11 @@ func readCurrentConnectionScopes(db *sql.DB) ([]string, error) {
 	return scopes, nil
 }
 
-func readStatusSyncRun(db *sql.DB, syncStatus string) (*statusSyncRun, error) {
+func readStatusSyncRun(ctx context.Context, db *sql.DB, syncStatus string) (*statusSyncRun, error) {
 	var item statusSyncRun
 	var dataTypesJSON, rangeJSON string
 	var sourceFamily, finishedAt, errorSummary sql.NullString
-	err := db.QueryRow(`SELECT
+	err := db.QueryRowContext(ctx, `SELECT
 		id,
 		status,
 		data_types_requested,

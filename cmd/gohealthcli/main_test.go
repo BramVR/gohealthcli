@@ -3521,7 +3521,7 @@ func TestCountArchiveRowsRejectsUnknownTable(t *testing.T) {
 	}
 	defer db.Close()
 
-	_, err = countArchiveRows(db, "data_points; DROP TABLE data_points")
+	_, err = countArchiveRows(context.Background(), db, "data_points; DROP TABLE data_points")
 	if err == nil {
 		t.Fatal("countArchiveRows error = nil, want unsupported table")
 	}

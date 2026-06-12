@@ -92,7 +92,11 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 	if err != nil {
 		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
-	if err := migrateArchiveIfNeeded(context.Background(), resolvedPath); err != nil {
+	// context.Background(): describe-schema is a synchronous read command
+	// with no cancellation path today; the context keeps the SQLite calls
+	// on the Context API (#305) without changing behavior.
+	ctx := context.Background()
+	if err := migrateArchiveIfNeeded(ctx, resolvedPath); err != nil {
 		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	db, err := openArchiveReadOnly(resolvedPath)
@@ -115,7 +119,7 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 	}
 
 	if *describeSQL {
-		if err := writeSchemaSQL(db, stdout); err != nil {
+		if err := writeSchemaSQL(ctx, db, stdout); err != nil {
 			return ReportFailure(FailureReport{Command: "describe-schema --sql", Status: StatusArchiveUnwritable, Message: err.Error(), Mode: mode}, stdout, stderr)
 		}
 		return 0
@@ -123,7 +127,7 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 	// JSON catalog is the success-mode default; --sql above is the only
 	// override. The Common Flag Set `--json` flag does not change
 	// behaviour here — it's accepted for the uniform-flag contract.
-	if err := writeSchemaJSON(db, stdout); err != nil {
+	if err := writeSchemaJSON(ctx, db, stdout); err != nil {
 		return ReportFailure(FailureReport{Command: "describe-schema --json", Status: StatusArchiveUnwritable, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	return 0
@@ -132,8 +136,8 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 // writeSchemaSQL dumps DDL from sqlite_master in name order. Internal
 // sqlite_* objects (the autoincrement sequence table, etc.) are
 // excluded so the output is what gohealthcli authored.
-func writeSchemaSQL(db *sql.DB, stdout io.Writer) error {
-	rows, err := db.Query(`SELECT type, name, sql FROM sqlite_master
+func writeSchemaSQL(ctx context.Context, db *sql.DB, stdout io.Writer) error {
+	rows, err := db.QueryContext(ctx, `SELECT type, name, sql FROM sqlite_master
 		WHERE name NOT LIKE 'sqlite_%'
 			AND sql IS NOT NULL
 		ORDER BY type DESC, name`)
@@ -185,7 +189,7 @@ const schemaCatalogVersion = 1
 // declared field list). Tables come from sqlite_master, with column
 // names and types pulled from pragma_table_info. Future #109 follow-ups
 // will merge in a hand-curated narrative file at docs/llm-schema.json.
-func writeSchemaJSON(db *sql.DB, stdout io.Writer) error {
+func writeSchemaJSON(ctx context.Context, db *sql.DB, stdout io.Writer) error {
 	catalog := schemaCatalog{Version: schemaCatalogVersion}
 
 	registry := normalizedViewsRegistry()
@@ -217,7 +221,7 @@ func writeSchemaJSON(db *sql.DB, stdout io.Writer) error {
 		// the literal "unknown" — downstream consumers treat the runtime
 		// type as opaque rather than mis-declared. Tables stay untouched
 		// so real BLOB columns on real tables still report BLOB.
-		columns, err := readPragmaTableInfo(db, spec.view)
+		columns, err := readPragmaTableInfo(ctx, db, spec.view)
 		if err == nil && len(columns) > 0 {
 			for i := range columns {
 				columns[i].Type = normalizeViewColumnType(columns[i].Type)
@@ -227,12 +231,12 @@ func writeSchemaJSON(db *sql.DB, stdout io.Writer) error {
 		catalog.Views = append(catalog.Views, view)
 	}
 
-	tableNames, err := listSchemaTables(db)
+	tableNames, err := listSchemaTables(ctx, db)
 	if err != nil {
 		return err
 	}
 	for _, name := range tableNames {
-		columns, err := readPragmaTableInfo(db, name)
+		columns, err := readPragmaTableInfo(ctx, db, name)
 		if err != nil {
 			return err
 		}
@@ -251,8 +255,8 @@ func writeSchemaJSON(db *sql.DB, stdout io.Writer) error {
 	return encoder.Encode(catalog)
 }
 
-func listSchemaTables(db *sql.DB) ([]string, error) {
-	rows, err := db.Query(`SELECT name FROM sqlite_master
+func listSchemaTables(ctx context.Context, db *sql.DB) ([]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master
 		WHERE type = 'table'
 			AND name NOT LIKE 'sqlite_%'
 		ORDER BY name`)
@@ -271,8 +275,8 @@ func listSchemaTables(db *sql.DB) ([]string, error) {
 	return names, rows.Err()
 }
 
-func readPragmaTableInfo(db *sql.DB, name string) ([]schemaCatalogColumn, error) {
-	rows, err := db.Query(`SELECT name, type FROM pragma_table_info(?)`, name)
+func readPragmaTableInfo(ctx context.Context, db *sql.DB, name string) ([]schemaCatalogColumn, error) {
+	rows, err := db.QueryContext(ctx, `SELECT name, type FROM pragma_table_info(?)`, name)
 	if err != nil {
 		return nil, err
 	}

@@ -45,7 +45,7 @@ func TestStatusSurfacesCursorOnlyDataTypeWithZeroCounts(t *testing.T) {
 		t.Fatalf("open reader: %v", err)
 	}
 	defer reader.Close()
-	summary, err := reader.StatusSummary()
+	summary, err := reader.StatusSummary(context.Background())
 	if err != nil {
 		t.Fatalf("StatusSummary: %v", err)
 	}

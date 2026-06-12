@@ -820,7 +820,10 @@ func runStatus(args []string, configPath, archivePath string, configPathExplicit
 		}
 		return 1
 	}
-	result, err := statusSetup(resolvedArchivePath, runtime.withDefaults().now().UTC())
+	// context.Background(): status is a synchronous read command with no
+	// cancellation path today; the context keeps the archive reads on the
+	// Context API (#305) without changing behavior.
+	result, err := statusSetup(context.Background(), resolvedArchivePath, runtime.withDefaults().now().UTC())
 	if err != nil {
 		if result.Status == "" {
 			result.Status = "status_failed"
