@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"github.com/BramVR/gohealthcli/internal/archived"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"strings"
 	"testing"
 	"time"
@@ -41,10 +42,16 @@ func fakeSyncPreflightContext(now time.Time, connection archived.Connection) syn
 		currentConnection: func() (archived.Connection, error) {
 			return connection, nil
 		},
-		rollupCatalogValidator: func(spec syncRollupSpec, dataType string) error {
+		rollupCatalogValidator: func(spec googlehealth.RollupSpec, dataType string) error {
 			// Only `steps` carries `daily` in the fake catalog; everything
 			// else returns the same shape the production validator emits.
-			if spec.cursorKind == "daily" && dataType != "steps" {
+			// RollupSpec is comparable, so the daily kind is recognised by
+			// equality with a freshly parsed daily spec.
+			daily, err := googlehealth.ParseRollupSpec("daily")
+			if err != nil {
+				return err
+			}
+			if spec == daily && dataType != "steps" {
 				return errors.New("sync --rollup daily: Data Type " + dataType + " does not support daily Rollups")
 			}
 			return nil
@@ -251,7 +258,7 @@ func TestSyncPreflightGateDefaultsToWhenDailyRollup(t *testing.T) {
 
 // TestSyncPreflightGateNormalizesRangePerRollupKind pins PRD #141 slice 3:
 // the gate owns the civil-vs-RFC3339 contract by routing both --from and
-// --to through syncRollupSpec.NormalizeRange. The planner downstream
+// --to through googlehealth.RollupSpec.NormalizeRange. The planner downstream
 // consumes the normalized plan.from / plan.to without re-parsing.
 func TestSyncPreflightGateNormalizesRangePerRollupKind(t *testing.T) {
 	t.Parallel()

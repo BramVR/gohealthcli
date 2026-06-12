@@ -5,10 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/BramVR/gohealthcli/internal/archived"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"io"
 )
-
-const googleHealthPairedDevicesURL = "https://health.googleapis.com/v4/users/me/pairedDevices"
 
 // googlePairedDevices is the raw response from users.pairedDevices.list.
 // Keep the JSON body verbatim so the paired_devices Normalized View can
@@ -98,12 +97,12 @@ var devicesSnapshotCommand = identitySnapshotCommandSpec[devicesResult, googlePa
 }
 
 // fetchGooglePairedDevices is a thin call site over the shared
-// Provider GET module (provider_get.go, issue #280), which owns the
+// Provider GET module (internal/googlehealth, issue #280), which owns the
 // transport behavior: bearer auth, size limit, timeout, typed labeled
 // status errors, JSON validity, and retry/Retry-After. The module
 // value carries the HTTP doer (#281).
-func fetchGooglePairedDevices(get providerGET, accessToken string) (googlePairedDevices, error) {
-	body, err := fetchProviderJSON(context.Background(), get, googleHealthPairedDevicesURL, "pairedDevices", accessToken)
+func fetchGooglePairedDevices(get googlehealth.GET, accessToken string) (googlePairedDevices, error) {
+	body, err := get.FetchJSON(context.Background(), googlehealth.PairedDevicesURL, "pairedDevices", accessToken)
 	if err != nil {
 		return googlePairedDevices{}, err
 	}

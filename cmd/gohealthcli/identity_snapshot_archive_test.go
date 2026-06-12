@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"os"
 	"path/filepath"
 	"testing"
@@ -233,7 +234,7 @@ func TestSettingsCommandArchivesSnapshotWithKindSettings(t *testing.T) {
 	// PRD #142 slice 2 / #176: getSettings now requires
 	// settings.readonly, so simulate the user having run
 	// `connect --add-scopes settings`.
-	addStoredConnectionScope(t, archivePath, googleHealthSettingsReadonlyScope)
+	addStoredConnectionScope(t, archivePath, googlehealth.ScopeSettingsReadonly)
 
 	testRuntime.fetchSettings = func(string) (googleSettings, error) {
 		return googleSettings{

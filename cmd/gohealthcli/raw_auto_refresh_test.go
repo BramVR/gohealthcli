@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"strings"
 	"testing"
 	"time"
@@ -65,10 +66,10 @@ func TestRawEndpointGetProfileAutoRefreshesExpiredAccessToken(t *testing.T) {
 
 	const providerBody = `{"name":"users/me/profile","displayName":"Rotated User"}`
 	rawCalls := 0
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		rawCalls++
-		if request.url != googleHealthProfileURL {
-			t.Fatalf("raw URL = %q, want profile URL", request.url)
+		if request.URL != googlehealth.ProfileURL {
+			t.Fatalf("raw URL = %q, want profile URL", request.URL)
 		}
 		if accessToken != "rotated-access-secret" {
 			t.Fatalf("raw access token = %q, want rotated-access-secret (post-refresh)", accessToken)

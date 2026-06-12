@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"strings"
 	"testing"
 )
@@ -151,17 +152,17 @@ func TestGoogleHealthIdentityEndpointScopesCatalog(t *testing.T) {
 		endpoint   string
 		wantScopes []string
 	}{
-		{endpoint: "getProfile", wantScopes: []string{googleHealthProfileReadonlyScope}},
-		{endpoint: "getSettings", wantScopes: []string{googleHealthSettingsReadonlyScope}},
-		{endpoint: "pairedDevices", wantScopes: []string{googleHealthSettingsReadonlyScope}},
-		{endpoint: "getIrnProfile", wantScopes: []string{googleHealthIrnReadonlyScope}},
-		{endpoint: "getIdentity", wantScopes: []string{googleHealthProfileReadonlyScope}},
+		{endpoint: "getProfile", wantScopes: []string{googlehealth.ScopeProfileReadonly}},
+		{endpoint: "getSettings", wantScopes: []string{googlehealth.ScopeSettingsReadonly}},
+		{endpoint: "pairedDevices", wantScopes: []string{googlehealth.ScopeSettingsReadonly}},
+		{endpoint: "getIrnProfile", wantScopes: []string{googlehealth.ScopeIrnReadonly}},
+		{endpoint: "getIdentity", wantScopes: []string{googlehealth.ScopeProfileReadonly}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.endpoint, func(t *testing.T) {
-			got, ok := googleHealthIdentityEndpointScopes[tt.endpoint]
-			if !ok {
-				t.Fatalf("googleHealthIdentityEndpointScopes missing entry for %q", tt.endpoint)
+			got := googlehealth.IdentityEndpointScopes(tt.endpoint)
+			if len(got) == 0 {
+				t.Fatalf("googlehealth.IdentityEndpointScopes missing entry for %q", tt.endpoint)
 			}
 			if len(got) != len(tt.wantScopes) {
 				t.Fatalf("scopes for %q = %v, want %v", tt.endpoint, got, tt.wantScopes)

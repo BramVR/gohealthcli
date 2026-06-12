@@ -5,10 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/BramVR/gohealthcli/internal/archived"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"io"
 )
-
-const googleHealthSettingsURL = "https://health.googleapis.com/v4/users/me/settings"
 
 // googleSettings is the raw payload returned by users.getSettings. We
 // keep the raw JSON so a Normalized View can project new fields without
@@ -75,12 +74,12 @@ var settingsSnapshotCommand = identitySnapshotCommandSpec[settingsResult, google
 }
 
 // fetchGoogleSettings is a thin call site over the shared Provider GET
-// module (provider_get.go, issue #280), which owns the transport
+// module (internal/googlehealth, issue #280), which owns the transport
 // behavior: bearer auth, size limit, timeout, typed labeled status
 // errors, JSON validity, and retry/Retry-After. The module value
 // carries the HTTP doer (#281).
-func fetchGoogleSettings(get providerGET, accessToken string) (googleSettings, error) {
-	body, err := fetchProviderJSON(context.Background(), get, googleHealthSettingsURL, "settings", accessToken)
+func fetchGoogleSettings(get googlehealth.GET, accessToken string) (googleSettings, error) {
+	body, err := get.FetchJSON(context.Background(), googlehealth.SettingsURL, "settings", accessToken)
 	if err != nil {
 		return googleSettings{}, err
 	}

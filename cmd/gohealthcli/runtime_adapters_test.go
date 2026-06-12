@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"net/http"
 	"strings"
 	"testing"
@@ -11,7 +12,7 @@ import (
 
 // TestRuntimeAdaptersBindSharedTimeoutClientAsHTTPDoer pins the #281
 // adapter shape: the production runtime adapters carry the one shared
-// Provider HTTP client (#271, providerHTTPTimeout) as their HTTP doer,
+// Provider HTTP client (#271, googlehealth.HTTPTimeout) as their HTTP doer,
 // and withDefaults fills a nil doer with that same client — so every
 // Provider request routed through the adapters seam keeps its deadline
 // and no code path falls back to the process-wide default client.
@@ -22,11 +23,11 @@ func TestRuntimeAdaptersBindSharedTimeoutClientAsHTTPDoer(t *testing.T) {
 	if !ok {
 		t.Fatalf("production httpDoer = %T, want the shared *http.Client", production.httpDoer)
 	}
-	if client != providerHTTPClient {
+	if client != googlehealth.HTTPClient {
 		t.Fatal("production httpDoer is not the shared Provider HTTP client")
 	}
-	if client.Timeout != providerHTTPTimeout {
-		t.Fatalf("production doer timeout = %v, want providerHTTPTimeout %v", client.Timeout, providerHTTPTimeout)
+	if client.Timeout != googlehealth.HTTPTimeout {
+		t.Fatalf("production doer timeout = %v, want googlehealth.HTTPTimeout %v", client.Timeout, googlehealth.HTTPTimeout)
 	}
 
 	defaulted := runtimeAdapters{}.withDefaults()
@@ -34,7 +35,7 @@ func TestRuntimeAdaptersBindSharedTimeoutClientAsHTTPDoer(t *testing.T) {
 		t.Fatal("withDefaults left httpDoer nil")
 	}
 	defaultedClient, ok := defaulted.httpDoer.(*http.Client)
-	if !ok || defaultedClient != providerHTTPClient {
+	if !ok || defaultedClient != googlehealth.HTTPClient {
 		t.Fatalf("defaulted httpDoer = %#v, want the shared Provider HTTP client", defaulted.httpDoer)
 	}
 }
@@ -57,8 +58,8 @@ func TestWithDefaultsRoutesNilFetchersThroughInjectedDoer(t *testing.T) {
 	if transport.request == nil {
 		t.Fatal("identity fetch bypassed the injected doer")
 	}
-	if got := transport.request.URL.String(); got != googleHealthIdentityURL {
-		t.Fatalf("identity URL = %q, want %q", got, googleHealthIdentityURL)
+	if got := transport.request.URL.String(); got != googlehealth.IdentityURL {
+		t.Fatalf("identity URL = %q, want %q", got, googlehealth.IdentityURL)
 	}
 	if got := transport.request.Header.Get("Authorization"); got != "Bearer test-access-token" {
 		t.Fatalf("Authorization = %q, want bearer token", got)
@@ -79,7 +80,7 @@ func TestWithDefaultsRoutesNilFetchersThroughInjectedDoer(t *testing.T) {
 
 	rawTransport := &stubProviderTransport{status: 200, body: `{"raw":true}`}
 	adapters = runtimeAdapters{httpDoer: providerDoer(rawTransport)}.withDefaults()
-	body, err := adapters.fetchRawProvider(context.Background(), rawProviderRequest{url: googleHealthIdentityURL}, "test-access-token")
+	body, err := adapters.fetchRawProvider(context.Background(), googlehealth.RawRequest{URL: googlehealth.IdentityURL}, "test-access-token")
 	if err != nil {
 		t.Fatalf("fetchRawProvider through injected doer: %v", err)
 	}

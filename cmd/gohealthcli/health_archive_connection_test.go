@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ func TestHealthArchiveConnectionAPIManagesConnectionIdentityMetadataAndProfileSn
 	now := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
 	token := oauthTokenResponse{
 		tokenType: "Bearer",
-		scopes:    []string{googleHealthActivityReadonlyScope, googleHealthProfileReadonlyScope},
+		scopes:    []string{googlehealth.ScopeActivityReadonly, googlehealth.ScopeProfileReadonly},
 		expiresAt: now.Add(time.Hour),
 		rawTokenMaterialObject: map[string]any{
 			"access_token":  "access-secret",

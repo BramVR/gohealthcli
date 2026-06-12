@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/BramVR/gohealthcli/internal/archived"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"io"
 	"time"
 )
@@ -68,7 +69,7 @@ type identitySnapshotCommandSpec[R, P any] struct {
 	statusScopeMissing string // scope pre-check sentinel, e.g. "devices_scope_missing"
 
 	// scopeEndpointKey selects the required scopes from the
-	// googleHealthIdentityEndpointScopes catalog (PRD #142), so a
+	// googlehealth.IdentityEndpointScopes catalog (PRD #142), so a
 	// catalog revision flows into the command automatically.
 	scopeEndpointKey string
 
@@ -232,7 +233,7 @@ func identitySnapshotSetupWithRuntime[R, P any](spec identitySnapshotCommandSpec
 	if config.oauthClient.kind == "file" {
 		connectionAccess = connectionAccess.WithAutoRefresh(config.oauthClient, archive)
 	}
-	accessToken, err := connectionAccess.AccessToken(googleHealthIdentityEndpointScopes[spec.scopeEndpointKey])
+	accessToken, err := connectionAccess.AccessToken(googlehealth.IdentityEndpointScopes(spec.scopeEndpointKey))
 	if err != nil {
 		if errors.Is(err, errCurrentConnectionScopeMissing) {
 			spec.setStatus(&result, spec.statusScopeMissing)
@@ -255,10 +256,10 @@ func identitySnapshotSetupWithRuntime[R, P any](spec identitySnapshotCommandSpec
 		// Provider outage (non-auth HTTP failure or network error) gets
 		// its own documented JSON failure status so automation can tell
 		// it apart from local misconfiguration (issue #272).
-		if isProviderUnreachableError(err) {
+		if googlehealth.IsUnreachableError(err) {
 			spec.setStatus(&result, "provider_unreachable")
 		}
-		return result, normalizeProviderError(err)
+		return result, googlehealth.NormalizeError(err)
 	}
 	if spec.decorate != nil {
 		spec.decorate(&result, payload)

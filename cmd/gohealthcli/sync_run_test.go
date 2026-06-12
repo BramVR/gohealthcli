@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"strings"
 	"testing"
 	"time"
@@ -55,11 +56,11 @@ func TestSyncRunExecutorArchivesDataPointList(t *testing.T) {
 	if result.DataPointsSeen != 1 || result.DataPointsNew != 1 || result.DataPointsUpdated != 0 {
 		t.Fatalf("Data Point counts = (%d, %d, %d), want (1, 1, 0)", result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated)
 	}
-	if len(*requests) != 1 || (*requests)[0].endpointName != "dataTypes.steps.list" {
+	if len(*requests) != 1 || (*requests)[0].EndpointName != "dataTypes.steps.list" {
 		t.Fatalf("requests = %#v, want one steps list request", *requests)
 	}
-	if strings.Contains((*requests)[0].url, "dataSourceFamily") {
-		t.Fatalf("list request unexpectedly used source-family filtering: %s", (*requests)[0].url)
+	if strings.Contains((*requests)[0].URL, "dataSourceFamily") {
+		t.Fatalf("list request unexpectedly used source-family filtering: %s", (*requests)[0].URL)
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 1)
 	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "steps", "list", 1, 1, 0, "")
@@ -111,10 +112,10 @@ func TestSyncRunExecutorArchivesDataPointReconcileForSourceFamily(t *testing.T) 
 	if result.Status != "sync_completed" || result.EndpointFamily != "reconcile" || result.SourceFamily != "wearable" {
 		t.Fatalf("Sync Run result = (%q, %q, %q), want completed reconcile wearable", result.Status, result.EndpointFamily, result.SourceFamily)
 	}
-	if len(*requests) != 1 || (*requests)[0].endpointName != "dataTypes.steps.reconcile" {
+	if len(*requests) != 1 || (*requests)[0].EndpointName != "dataTypes.steps.reconcile" {
 		t.Fatalf("requests = %#v, want one steps reconcile request", *requests)
 	}
-	if gotFamily := mustURLQuery(t, (*requests)[0].url).Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
+	if gotFamily := mustURLQuery(t, (*requests)[0].URL).Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
 		t.Fatalf("dataSourceFamily = %q, want google-wearables", gotFamily)
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 1)
@@ -165,7 +166,7 @@ func TestSyncRunExecutorArchivesDailyRollups(t *testing.T) {
 	if result.DataPointsSeen != 0 || result.RollupsSeen != 1 || result.RollupsNew != 1 || result.RollupsUpdated != 0 {
 		t.Fatalf("counts = dataPointsSeen:%d rollups:(%d, %d, %d), want dataPointsSeen:0 rollups:(1, 1, 0)", result.DataPointsSeen, result.RollupsSeen, result.RollupsNew, result.RollupsUpdated)
 	}
-	if len(*requests) != 1 || (*requests)[0].endpointName != "dataTypes.steps.dailyRollUp" {
+	if len(*requests) != 1 || (*requests)[0].EndpointName != "dataTypes.steps.dailyRollUp" {
 		t.Fatalf("requests = %#v, want one steps dailyRollUp request", *requests)
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 0)
@@ -228,7 +229,7 @@ func TestSyncRunExecutorWiresNormalizedFromIntoHourlyRollup(t *testing.T) {
 	if result.To != "2026-01-02T00:00:00Z" {
 		t.Errorf("result.To = %q, want RFC3339 normalized form 2026-01-02T00:00:00Z", result.To)
 	}
-	if len(*requests) != 1 || (*requests)[0].endpointName != "dataTypes.heart-rate.rollUp" {
+	if len(*requests) != 1 || (*requests)[0].EndpointName != "dataTypes.heart-rate.rollUp" {
 		t.Fatalf("requests = %#v, want one heart-rate rollUp request", *requests)
 	}
 }
@@ -385,15 +386,15 @@ func TestSyncRunExecutorRefreshesAccessTokenMidRunAndPersists(t *testing.T) {
 		}`
 	}
 	var fetches []string
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
-		pageToken := mustURLQuery(t, request.url).Get("pageToken")
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
+		pageToken := mustURLQuery(t, request.URL).Get("pageToken")
 		fetches = append(fetches, pageToken+":"+accessToken)
 		switch {
 		case accessToken == "connect-access-secret" && pageToken == "":
 			return []byte(dataPointPage("page-one-point", "page-2")), nil
 		case accessToken == "connect-access-secret" && pageToken == "page-2":
 			// The access token expired between pages.
-			return nil, &googleHealthHTTPError{StatusCode: 401}
+			return nil, &googlehealth.HTTPError{StatusCode: 401}
 		case accessToken == "rotated-access-secret" && pageToken == "page-2":
 			return []byte(dataPointPage("page-two-point", "")), nil
 		default:

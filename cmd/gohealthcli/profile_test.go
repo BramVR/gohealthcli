@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"strings"
 	"testing"
 	"time"
@@ -15,9 +16,9 @@ import (
 // the command exits non-zero, sets result.Status to
 // "profile_scope_missing", names the recovery `gohealthcli connect`
 // command in result.Message, and crucially does NOT issue any HTTP
-// request to googleHealthProfileURL — proving the scope pre-check
+// request to googlehealth.ProfileURL — proving the scope pre-check
 // happens before the upstream call. The test reads the required scope
-// from the same googleHealthIdentityEndpointScopes catalog the
+// from the same googlehealth.IdentityEndpointScopes catalog the
 // production code uses so a future slice-2 revision of the catalog
 // automatically updates what gets stripped from the stored Connection,
 // keeping the test honest without manual edits.
@@ -40,7 +41,7 @@ func TestProfileCommandFailsFastWhenScopeMissing(t *testing.T) {
 	// the same catalog key the production code reads means this test
 	// keeps pinning the right behaviour after slice 2 rewrites the
 	// catalog entry.
-	required := googleHealthIdentityEndpointScopes["getProfile"]
+	required := googlehealth.IdentityEndpointScopes("getProfile")
 	requiredSet := make(map[string]struct{}, len(required))
 	for _, scope := range required {
 		requiredSet[scope] = struct{}{}
@@ -120,7 +121,7 @@ func TestProfileCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// requires for getProfile, so this test still exercises auto-refresh
 	// after slice 2 (#176) revises the catalog away from the default-granted
 	// scope set.
-	for _, scope := range googleHealthIdentityEndpointScopes["getProfile"] {
+	for _, scope := range googlehealth.IdentityEndpointScopes("getProfile") {
 		addStoredConnectionScope(t, archivePath, scope)
 	}
 	// Force the stored access-token expires_at into the past so

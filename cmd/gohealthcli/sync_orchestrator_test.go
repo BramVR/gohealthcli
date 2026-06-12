@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/BramVR/gohealthcli/internal/archived"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"net/url"
 	"runtime"
 	"strings"
@@ -17,16 +18,16 @@ import (
 // per-Data-Type canned responses. Used by orchestrator tests where one
 // invocation needs to satisfy several sequential Sync Runs across
 // different Data Types.
-func installMultiTypeSyncFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, perType map[string]string) (runtimeAdapters, *[]rawProviderRequest) {
+func installMultiTypeSyncFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, perType map[string]string) (runtimeAdapters, *[]googlehealth.RawRequest) {
 	t.Helper()
-	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	var requests []googlehealth.RawRequest
+	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("multi-type sync access token = %q, want stored token", accessToken)
 		}
-		body, ok := perType[request.dataType]
+		body, ok := perType[request.DataType]
 		if !ok {
-			t.Fatalf("no fake page for dataType %q (endpoint %q)", request.dataType, request.endpointName)
+			t.Fatalf("no fake page for dataType %q (endpoint %q)", request.DataType, request.EndpointName)
 		}
 		requests = append(requests, request)
 		return []byte(body), nil
@@ -143,14 +144,14 @@ func TestSyncOrchestratorRespectsCancellationBetweenDataTypes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stepsCalled := false
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, _ string) ([]byte, error) {
-		if request.dataType == "steps" {
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, _ string) ([]byte, error) {
+		if request.DataType == "steps" {
 			stepsCalled = true
 			// Cancel after the first Data Type finishes its single page.
 			cancel()
 			return []byte(`{"dataPoints":[]}`), nil
 		}
-		t.Fatalf("orchestrator continued past cancellation: hit dataType %q", request.dataType)
+		t.Fatalf("orchestrator continued past cancellation: hit dataType %q", request.DataType)
 		return nil, nil
 	}
 
@@ -224,7 +225,7 @@ func TestSyncRunLifecycleClosesSIGINTPreFirstDataTypeRace(t *testing.T) {
 		t.Fatalf("connect setup: %v", err)
 	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, _ string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, _ string) ([]byte, error) {
 		t.Fatalf("upstream Fetch invoked despite pre-canceled context; lifecycle must short-circuit before any work")
 		return nil, nil
 	}
@@ -239,12 +240,12 @@ func TestSyncRunLifecycleClosesSIGINTPreFirstDataTypeRace(t *testing.T) {
 		from:        "2026-01-01",
 		to:          "2026-01-02T00:00:00Z",
 	})
-	// The lifecycle surfaces errSyncCanceled for consistency with the
+	// The lifecycle surfaces googlehealth.ErrSyncCanceled for consistency with the
 	// mid-pagination cancel path (the orchestrator already swallows it
 	// into the result slice). What matters for AC #1 is the structural
 	// shape: status, no SyncRunID, no audit row.
-	if err != nil && !errors.Is(err, errSyncCanceled) {
-		t.Fatalf("Execute with pre-canceled context: %v, want nil or errSyncCanceled", err)
+	if err != nil && !errors.Is(err, googlehealth.ErrSyncCanceled) {
+		t.Fatalf("Execute with pre-canceled context: %v, want nil or googlehealth.ErrSyncCanceled", err)
 	}
 	if result.Status != "sync_canceled" {
 		t.Fatalf("Status = %q, want sync_canceled (pre-first-Run cancel must surface as canceled, never the empty string)", result.Status)
@@ -294,7 +295,7 @@ func TestSyncOrchestratorCancelBetweenLoopGuardAndLifecycleWritesNoAuditRow(t *t
 		t.Fatalf("connect setup: %v", err)
 	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, _ string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, _ string) ([]byte, error) {
 		t.Fatalf("orchestrator reached upstream Fetch despite context canceled during gate.Validate")
 		return nil, nil
 	}
@@ -364,7 +365,7 @@ func TestSyncOrchestratorCancelsActiveDataTypeMidPagination(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	pageCount := 0
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, _ string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, _ string) ([]byte, error) {
 		pageCount++
 		if pageCount == 1 {
 			// First page succeeds with one Data Point and signals more pages.
@@ -446,13 +447,13 @@ func TestSyncRunExecutorCancelMidFetchFinalizesCanceledAndKeepsCursor(t *testing
 	defer cancel()
 	fetchEntered := make(chan struct{})
 	var enterOnce sync.Once
-	testRuntime.fetchRawProvider = func(ctx context.Context, request rawProviderRequest, _ string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(ctx context.Context, request googlehealth.RawRequest, _ string) ([]byte, error) {
 		enterOnce.Do(func() { close(fetchEntered) })
 		// Simulate a stalled upstream: the request only returns when the
 		// run context aborts it, exactly like net/http with a
 		// context-scoped request.
 		<-ctx.Done()
-		return nil, &url.Error{Op: "Get", URL: request.url, Err: ctx.Err()}
+		return nil, &url.Error{Op: "Get", URL: request.URL, Err: ctx.Err()}
 	}
 
 	type executeOutcome struct {
@@ -484,8 +485,8 @@ func TestSyncRunExecutorCancelMidFetchFinalizesCanceledAndKeepsCursor(t *testing
 	case <-time.After(2 * time.Second):
 		t.Fatal("Execute did not return within 2s of cancel; the in-flight fetch was not aborted")
 	}
-	if !errors.Is(outcome.err, errSyncCanceled) {
-		t.Fatalf("Execute err = %v, want errSyncCanceled", outcome.err)
+	if !errors.Is(outcome.err, googlehealth.ErrSyncCanceled) {
+		t.Fatalf("Execute err = %v, want googlehealth.ErrSyncCanceled", outcome.err)
 	}
 	if outcome.result.Status != "sync_canceled" {
 		t.Fatalf("Status = %q, want sync_canceled", outcome.result.Status)
@@ -676,7 +677,7 @@ func TestSyncOrchestratorAllExpandsToSyncableDefaultDataTypes(t *testing.T) {
 	// the --all fan-out today, otherwise every `sync --all` would book a
 	// guaranteed sync_failed row.
 	for _, dataType := range got {
-		if !syncDataPointDataTypeSupported(dataType) {
+		if !googlehealth.SupportsSyncDataPoints(dataType) {
 			t.Errorf("--all included %q which has no sync parser; would produce a guaranteed sync_failed", dataType)
 		}
 	}

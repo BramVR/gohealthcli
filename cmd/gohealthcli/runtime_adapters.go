@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"os/exec"
 	goruntime "runtime"
 	"time"
@@ -13,7 +14,7 @@ type runtimeAdapters struct {
 	// (#271), tests bind a fake. Code paths that build requests receive
 	// this doer (directly or via providerGET()) instead of reading a
 	// package-level client.
-	httpDoer           httpDoer
+	httpDoer           googlehealth.Doer
 	runOAuthFlow       func(oauthClientConfig, []string, bool) (oauthTokenResponse, error)
 	refreshOAuthToken  func(oauthClientConfig, string, []string) (oauthTokenResponse, error)
 	openBrowser        func(context.Context, string) error
@@ -22,7 +23,7 @@ type runtimeAdapters struct {
 	fetchPairedDevices func(string) (googlePairedDevices, error)
 	fetchSettings      func(string) (googleSettings, error)
 	fetchIRNProfile    func(string) (googleIRNProfile, error)
-	fetchRawProvider   func(context.Context, rawProviderRequest, string) ([]byte, error)
+	fetchRawProvider   func(context.Context, googlehealth.RawRequest, string) ([]byte, error)
 	// openHealthArchiveWriter opens the Health Archive write handle the
 	// Sync Run path uses (gate connection lookup + lifecycle). Tests
 	// wrap it to inject failing writers; production binds the real
@@ -54,15 +55,15 @@ type runtimeAdapters struct {
 // tests fake these dependencies by setting the corresponding
 // runtimeAdapters fields, never by mutating package state (#283).
 func productionFetchPairedDevices(accessToken string) (googlePairedDevices, error) {
-	return fetchGooglePairedDevices(productionProviderGET(), accessToken)
+	return fetchGooglePairedDevices(googlehealth.ProductionGET(), accessToken)
 }
 
 func productionFetchSettings(accessToken string) (googleSettings, error) {
-	return fetchGoogleSettings(productionProviderGET(), accessToken)
+	return fetchGoogleSettings(googlehealth.ProductionGET(), accessToken)
 }
 
 func productionFetchIRNProfile(accessToken string) (googleIRNProfile, error) {
-	return fetchGoogleIRNProfile(productionProviderGET(), accessToken)
+	return fetchGoogleIRNProfile(googlehealth.ProductionGET(), accessToken)
 }
 
 // productionNow is the production clock: the current UTC time. It is a
@@ -74,7 +75,7 @@ func productionNow() time.Time {
 
 func productionRuntimeAdapters() runtimeAdapters {
 	return runtimeAdapters{
-		httpDoer:                       providerHTTPClient,
+		httpDoer:                       googlehealth.HTTPClient,
 		runOAuthFlow:                   runBrowserOAuthFlow,
 		refreshOAuthToken:              refreshGoogleOAuthToken,
 		openBrowser:                    openBrowser,
@@ -101,11 +102,21 @@ func productionRuntimeAdapters() runtimeAdapters {
 // providerGET derives the shared Provider GET module from the adapters'
 // HTTP doer, so Identity Snapshot fetches ride whatever transport the
 // adapters carry (production: the shared timeout client; tests: a fake
-// doer). Retry seams stay nil — fetchWithRetry falls back to real
-// backoff sleeps; tests that need virtual sleeps construct the module
-// value directly.
-func (adapters runtimeAdapters) providerGET() providerGET {
-	return providerGET{doer: adapters.httpDoer}
+// doer). Retry seams stay nil — the module falls back to real backoff
+// sleeps; package-internal googlehealth tests that need virtual sleeps
+// construct the module value directly.
+func (adapters runtimeAdapters) providerGET() googlehealth.GET {
+	return googlehealth.NewGET(adapters.httpDoer)
+}
+
+// newGoogleHealthIngestionWithRuntime binds the Provider ingestion to
+// the runtime adapters seam: the adapters' single-attempt raw fetch
+// (production: googlehealth.FetchRaw over the shared timeout client;
+// tests: a fake) plus the adapters' clock. The googlehealth package
+// wraps the fetch in its bounded retry middleware.
+func newGoogleHealthIngestionWithRuntime(runtime runtimeAdapters) googlehealth.Ingestion {
+	runtime = runtime.withDefaults()
+	return googlehealth.NewIngestion(runtime.fetchRawProvider, runtime.now)
 }
 
 func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
@@ -166,8 +177,8 @@ func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
 		}
 	}
 	if adapters.fetchRawProvider == nil {
-		adapters.fetchRawProvider = func(ctx context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
-			return fetchGoogleHealthRaw(ctx, adapters.httpDoer, request, accessToken)
+		adapters.fetchRawProvider = func(ctx context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
+			return googlehealth.FetchRaw(ctx, adapters.httpDoer, request, accessToken)
 		}
 	}
 	if adapters.openHealthArchiveWriter == nil {
@@ -205,16 +216,16 @@ func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
 // client as the HTTP doer, #281). Plain functions, not package vars:
 // tests fake these dependencies through runtimeAdapters fields (#283).
 func productionFetchIdentity(accessToken string) (googleIdentity, error) {
-	return fetchGoogleIdentity(productionProviderGET(), accessToken)
+	return fetchGoogleIdentity(googlehealth.ProductionGET(), accessToken)
 }
 
 func productionFetchProfile(accessToken string) (googleProfile, error) {
-	return fetchGoogleProfile(productionProviderGET(), accessToken)
+	return fetchGoogleProfile(googlehealth.ProductionGET(), accessToken)
 }
 
 // productionFetchRawProvider binds the real raw Provider fetch over the
 // shared timeout client. ctx scopes the HTTP request so a canceled Sync
 // Run aborts the in-flight call (#284).
-func productionFetchRawProvider(ctx context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
-	return fetchGoogleHealthRaw(ctx, providerHTTPClient, request, accessToken)
+func productionFetchRawProvider(ctx context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
+	return googlehealth.FetchRaw(ctx, googlehealth.HTTPClient, request, accessToken)
 }

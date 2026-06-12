@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"io"
 	"net"
 	"net/http"
@@ -18,39 +19,6 @@ import (
 	"strings"
 	"time"
 )
-
-const googleHealthActivityReadonlyScope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
-
-const googleHealthHealthMetricsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
-
-const googleHealthSleepReadonlyScope = "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
-
-const googleHealthNutritionReadonlyScope = "https://www.googleapis.com/auth/googlehealth.nutrition.readonly"
-
-const googleHealthProfileReadonlyScope = "https://www.googleapis.com/auth/googlehealth.profile.readonly"
-
-// Tier 2 opt-in scopes (#104, #176). Users grant these via
-// `gohealthcli connect --add-scopes ecg,irn,settings`. String
-// literals match connectAddScopeKeywords["ecg"/"irn"/"settings"];
-// connect_add_scopes.go owns the keyword→scope mapping, this file
-// owns the constant the catalog references. `settings.readonly`
-// (#176) is what Google's `users.getSettings` and
-// `users.pairedDevices.list` actually require — `profile.readonly`
-// alone returns HTTP 403 for those.
-const googleHealthEcgReadonlyScope = "https://www.googleapis.com/auth/googlehealth.electrocardiogram.readonly"
-
-const googleHealthIrnReadonlyScope = "https://www.googleapis.com/auth/googlehealth.irn.readonly"
-
-const googleHealthSettingsReadonlyScope = "https://www.googleapis.com/auth/googlehealth.settings.readonly"
-
-// Tier 2 optional scope #140: `googlehealth.location.readonly` is the
-// scope Google requires (on top of `activity_and_fitness.readonly`) to
-// authorise `users.dataTypes.dataPoints.exportExerciseTcx`. Users opt
-// in via `gohealthcli connect --add-scopes tcx`; the exercise sync
-// then archives TCX route bytes as a `tcx`-kind Attachment per
-// ADR-0009. Without it, exercise sync skips the TCX hook cleanly (no
-// 403 round-trip) — see attachExerciseTcxIfAvailable.
-const googleHealthLocationReadonlyScope = "https://www.googleapis.com/auth/googlehealth.location.readonly"
 
 type oauthClientConfig struct {
 	kind         string
@@ -222,21 +190,21 @@ func requireGoogleOAuthHTTPS(rawURI, host string) error {
 
 func oauthScopesForDataTypes(dataTypes []string) []string {
 	needed := make(map[string]struct{})
-	needed[googleHealthProfileReadonlyScope] = struct{}{}
+	needed[googlehealth.ScopeProfileReadonly] = struct{}{}
 	for _, dataType := range dataTypes {
-		for _, scope := range googleHealthScopesForDataType(dataType) {
+		for _, scope := range googlehealth.ScopesForDataType(dataType) {
 			needed[scope] = struct{}{}
 		}
 	}
 	if len(needed) == 0 {
-		needed[googleHealthActivityReadonlyScope] = struct{}{}
+		needed[googlehealth.ScopeActivityReadonly] = struct{}{}
 	}
 	ordered := []string{
-		googleHealthActivityReadonlyScope,
-		googleHealthHealthMetricsReadonlyScope,
-		googleHealthSleepReadonlyScope,
-		googleHealthNutritionReadonlyScope,
-		googleHealthProfileReadonlyScope,
+		googlehealth.ScopeActivityReadonly,
+		googlehealth.ScopeHealthMetricsReadonly,
+		googlehealth.ScopeSleepReadonly,
+		googlehealth.ScopeNutritionReadonly,
+		googlehealth.ScopeProfileReadonly,
 	}
 	scopes := make([]string, 0, len(needed))
 	for _, scope := range ordered {
@@ -410,7 +378,7 @@ func waitForOAuthCode(listener net.Listener, wantState string) (string, error) {
 func postOAuthForm(runtime runtimeAdapters, tokenURI string, values url.Values) (*http.Response, error) {
 	doer := runtime.httpDoer
 	if doer == nil {
-		doer = providerHTTPClient
+		doer = googlehealth.HTTPClient
 	}
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost, tokenURI, strings.NewReader(values.Encode()))
 	if err != nil {

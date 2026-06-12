@@ -1,6 +1,7 @@
 package main
 
 import "context"
+import "github.com/BramVR/gohealthcli/internal/googlehealth"
 
 type syncRunExecutor struct {
 	runtime runtimeAdapters
@@ -42,13 +43,13 @@ func (executor syncRunExecutor) Execute(ctx context.Context, options syncCommand
 	return syncRunLifecycle{options: options, plan: plan, runtime: runtime}.Run(ctx)
 }
 
-func applyGoogleHealthIngestionCounts(result *syncResult, ingestionResult googleHealthIngestionResult) {
-	result.DataPointsSeen = ingestionResult.dataPointsSeen
-	result.DataPointsNew = ingestionResult.dataPointsNew
-	result.DataPointsUpdated = ingestionResult.dataPointsUpdated
-	result.RollupsSeen = ingestionResult.rollupsSeen
-	result.RollupsNew = ingestionResult.rollupsNew
-	result.RollupsUpdated = ingestionResult.rollupsUpdated
+func applyGoogleHealthIngestionCounts(result *syncResult, ingestionResult googlehealth.IngestionResult) {
+	result.DataPointsSeen = ingestionResult.DataPointsSeen
+	result.DataPointsNew = ingestionResult.DataPointsNew
+	result.DataPointsUpdated = ingestionResult.DataPointsUpdated
+	result.RollupsSeen = ingestionResult.RollupsSeen
+	result.RollupsNew = ingestionResult.RollupsNew
+	result.RollupsUpdated = ingestionResult.RollupsUpdated
 }
 
 func syncResultTotalCounts(result syncResult) (int, int, int) {

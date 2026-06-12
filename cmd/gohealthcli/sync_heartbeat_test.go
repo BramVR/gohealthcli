@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"testing"
 	"time"
 )
@@ -62,8 +63,8 @@ func TestSyncWritesHeartbeatAfterEachPage(t *testing.T) {
 	// exactly the moment a `sync --status` reader in another process
 	// would observe the in-flight row.
 	var midRun *probedSyncRunRow
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
-		pageToken := mustURLQuery(t, request.url).Get("pageToken")
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
+		pageToken := mustURLQuery(t, request.URL).Get("pageToken")
 		switch pageToken {
 		case "":
 			return []byte(firstPage), nil

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"io"
 	"os"
 	"strings"
@@ -77,7 +78,7 @@ func runInit(args []string, globals CommonFlagValues, stdout, stderr io.Writer, 
 			Status:           "already_initialized",
 			ConfigPath:       common.ConfigPath,
 			ArchivePath:      common.ArchivePath,
-			DefaultDataTypes: defaultDataTypes,
+			DefaultDataTypes: googlehealth.DefaultDataTypes(),
 			SchemaVersion:    currentSchemaVersion,
 			Message:          "local gohealthcli setup already exists",
 		}
@@ -127,7 +128,7 @@ func runInit(args []string, globals CommonFlagValues, stdout, stderr io.Writer, 
 		ConfigPath:        common.ConfigPath,
 		ArchivePath:       common.ArchivePath,
 		OAuthClientSource: source.kind,
-		DefaultDataTypes:  defaultDataTypes,
+		DefaultDataTypes:  googlehealth.DefaultDataTypes(),
 		SchemaVersion:     currentSchemaVersion,
 	}
 	if err := writeInitResult(result, mode, stdout); err != nil {

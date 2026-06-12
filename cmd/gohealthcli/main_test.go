@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/BramVR/gohealthcli/internal/archived"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"io"
 	"net/http"
 	"net/url"
@@ -1211,8 +1211,8 @@ func TestDoctorAcceptsInlineDefaultDataTypesArray(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]"
-	inlineDataTypes := "default_data_types = [\"" + strings.Join(defaultDataTypes, "\", \"") + "\"]"
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(googlehealth.DefaultDataTypes(), "\",\n  \"") + "\",\n]"
+	inlineDataTypes := "default_data_types = [\"" + strings.Join(googlehealth.DefaultDataTypes(), "\", \"") + "\"]"
 	config := strings.Replace(string(configBytes), multilineDataTypes, inlineDataTypes, 1)
 	if config == string(configBytes) {
 		t.Fatalf("config replacement failed:\n%s", string(configBytes))
@@ -1259,7 +1259,7 @@ func TestDoctorAcceptsMultivalueDefaultDataTypeRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]"
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(googlehealth.DefaultDataTypes(), "\",\n  \"") + "\",\n]"
 	config := strings.Replace(string(configBytes), multilineDataTypes, "default_data_types = [\n  \"steps\", \"weight\",\n]", 1)
 	if config == string(configBytes) {
 		t.Fatalf("config replacement failed:\n%s", string(configBytes))
@@ -1299,7 +1299,7 @@ func TestDoctorAcceptsOpeningLineMultilineDefaultDataTypesArray(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]"
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(googlehealth.DefaultDataTypes(), "\",\n  \"") + "\",\n]"
 	config := strings.Replace(string(configBytes), multilineDataTypes, "default_data_types = [\"steps\",\n  \"weight\",\n]", 1)
 	if config == string(configBytes) {
 		t.Fatalf("config replacement failed:\n%s", string(configBytes))
@@ -1339,7 +1339,7 @@ func TestDoctorAcceptsConfiguredDefaultDataTypeSubset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]"
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(googlehealth.DefaultDataTypes(), "\",\n  \"") + "\",\n]"
 	config := strings.Replace(string(configBytes), multilineDataTypes, `default_data_types = ["steps"]`, 1)
 	if config == string(configBytes) {
 		t.Fatalf("config replacement failed:\n%s", string(configBytes))
@@ -1379,7 +1379,7 @@ func TestDoctorReportsUnsupportedDefaultDataType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]"
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(googlehealth.DefaultDataTypes(), "\",\n  \"") + "\",\n]"
 	config := strings.Replace(string(configBytes), multilineDataTypes, `default_data_types = ["bogus"]`, 1)
 	if config == string(configBytes) {
 		t.Fatalf("config replacement failed:\n%s", string(configBytes))
@@ -1430,7 +1430,7 @@ func TestDoctorReportsMissingDefaultDataTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(defaultDataTypes, "\",\n  \"") + "\",\n]\n\n"
+	multilineDataTypes := "default_data_types = [\n  \"" + strings.Join(googlehealth.DefaultDataTypes(), "\",\n  \"") + "\",\n]\n\n"
 	config := strings.Replace(string(configBytes), multilineDataTypes, "", 1)
 	if config == string(configBytes) {
 		t.Fatalf("config replacement failed:\n%s", string(configBytes))
@@ -2055,13 +2055,13 @@ func TestPersistDoctorOnlineRefreshedTokenRollsBackOnMetadataFailure(t *testing.
 		accessToken:  "refreshed-access-secret",
 		refreshToken: "refresh-secret-value",
 		tokenType:    "Bearer",
-		scopes:       []string{googleHealthActivityReadonlyScope},
+		scopes:       []string{googlehealth.ScopeActivityReadonly},
 		expiresAt:    time.Date(2026, 5, 31, 23, 0, 0, 0, time.UTC),
 		rawTokenMaterialObject: map[string]any{
 			"access_token":  "refreshed-access-secret",
 			"refresh_token": "refresh-secret-value",
 			"expires_in":    float64(3600),
-			"scope":         googleHealthActivityReadonlyScope,
+			"scope":         googlehealth.ScopeActivityReadonly,
 			"token_type":    "Bearer",
 		},
 	}
@@ -2573,7 +2573,7 @@ func TestIdentityReportsAutoRefreshFailureBeforeProviderFetch(t *testing.T) {
 
 // TestIdentityCommandFailsFastWhenScopeMissing pins the second half of
 // the issue #273 parity decision: identity's scope request comes from
-// the same googleHealthIdentityEndpointScopes catalog its siblings use
+// the same googlehealth.IdentityEndpointScopes catalog its siblings use
 // (key "getIdentity") instead of the historical nil. When the stored
 // Connection's granted scopes do not cover it, the command exits
 // non-zero, sets result.Status to "identity_scope_missing", names the
@@ -2598,7 +2598,7 @@ func TestIdentityCommandFailsFastWhenScopeMissing(t *testing.T) {
 	// stored Connection so AccessToken's scope pre-check fails. Using
 	// the same catalog key the production code reads keeps this test
 	// honest across future catalog revisions.
-	required := googleHealthIdentityEndpointScopes["getIdentity"]
+	required := googlehealth.IdentityEndpointScopes("getIdentity")
 	requiredSet := make(map[string]struct{}, len(required))
 	for _, scope := range required {
 		requiredSet[scope] = struct{}{}
@@ -2667,7 +2667,7 @@ func TestIdentityCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// requires for getIdentity, so this test still exercises auto-refresh
 	// after a catalog revision moves getIdentity off the default-granted
 	// scope set.
-	for _, scope := range googleHealthIdentityEndpointScopes["getIdentity"] {
+	for _, scope := range googlehealth.IdentityEndpointScopes("getIdentity") {
 		addStoredConnectionScope(t, archivePath, scope)
 	}
 	// Force the stored access-token expires_at into the past so
@@ -2969,7 +2969,7 @@ func TestProfileFailsBeforeProviderWhenProfileScopeMissing(t *testing.T) {
 	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	setConnectionTokenScopes(t, archivePath, []string{googleHealthActivityReadonlyScope})
+	setConnectionTokenScopes(t, archivePath, []string{googlehealth.ScopeActivityReadonly})
 	testRuntime.fetchProfile = func(accessToken string) (googleProfile, error) {
 		t.Fatalf("profile fetch should not be called when profile scope is missing")
 		return googleProfile{}, nil
@@ -2989,7 +2989,7 @@ func TestProfileFailsBeforeProviderWhenProfileScopeMissing(t *testing.T) {
 		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
 	}
 	message, ok := got["message"].(string)
-	if !ok || !strings.Contains(message, googleHealthProfileReadonlyScope) || !strings.Contains(message, "connect") {
+	if !ok || !strings.Contains(message, googlehealth.ScopeProfileReadonly) || !strings.Contains(message, "connect") {
 		t.Fatalf("message = %T(%v), want profile-scope reconnect guidance", got["message"], got["message"])
 	}
 	assertArchiveTableCount(t, archivePath, "identity_snapshots", 0)
@@ -3094,7 +3094,7 @@ func TestStatusReportsHealthArchiveCountsAndSyncRunsReadOnly(t *testing.T) {
 		t.Fatal("status should not call Provider profile")
 		return googleProfile{}, nil
 	}
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		t.Fatal("status should not call Provider raw endpoints")
 		return nil, nil
 	}
@@ -3654,13 +3654,13 @@ func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 	if len(*requests) != 2 {
 		t.Fatalf("request count = %d, want 2", len(*requests))
 	}
-	if (*requests)[0].endpointName != "dataTypes.steps.list" || (*requests)[0].dataType != "steps" {
-		t.Fatalf("request target = (%q, %q), want steps list", (*requests)[0].endpointName, (*requests)[0].dataType)
+	if (*requests)[0].EndpointName != "dataTypes.steps.list" || (*requests)[0].DataType != "steps" {
+		t.Fatalf("request target = (%q, %q), want steps list", (*requests)[0].EndpointName, (*requests)[0].DataType)
 	}
-	if strings.Contains((*requests)[0].url, "source") {
-		t.Fatalf("sync URL unexpectedly includes source filtering: %s", (*requests)[0].url)
+	if strings.Contains((*requests)[0].URL, "source") {
+		t.Fatalf("sync URL unexpectedly includes source filtering: %s", (*requests)[0].URL)
 	}
-	if pageToken := mustURLQuery(t, (*requests)[1].url).Get("pageToken"); pageToken != "page-2" {
+	if pageToken := mustURLQuery(t, (*requests)[1].URL).Get("pageToken"); pageToken != "page-2" {
 		t.Fatalf("second pageToken = %q, want page-2", pageToken)
 	}
 	assertArchivedStepDataPoint(t, archivePath)
@@ -3812,7 +3812,7 @@ func TestSyncArchivesSampleDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
 	assertJSONNumber(t, got, "data_points_updated", 0)
-	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `heart_rate.sample_time.physical_time >= "2026-01-01T00:00:00Z" AND heart_rate.sample_time.physical_time < "2026-01-02T00:00:00Z"` {
+	if gotFilter := mustURLQuery(t, (*requests)[0].URL).Get("filter"); gotFilter != `heart_rate.sample_time.physical_time >= "2026-01-01T00:00:00Z" AND heart_rate.sample_time.physical_time < "2026-01-02T00:00:00Z"` {
 		t.Fatalf("heart-rate filter = %q", gotFilter)
 	}
 	assertArchivedSampleDataPoint(t, archivePath, "users/me/dataTypes/heart-rate/dataPoints/hr-2026-01-01-a", "heart-rate", "2026-01-01T07:30:00Z", "2026-01-01T08:30:00", "2026-01-01", `{"utc_offset":"3600s"}`, `"beatsPerMinute":"72"`)
@@ -3957,7 +3957,7 @@ func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
 	assertJSONNumber(t, got, "data_points_updated", 0)
-	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `weight.sample_time.physical_time >= "2026-01-01T00:00:00Z" AND weight.sample_time.physical_time < "2026-01-02T00:00:00Z"` {
+	if gotFilter := mustURLQuery(t, (*requests)[0].URL).Get("filter"); gotFilter != `weight.sample_time.physical_time >= "2026-01-01T00:00:00Z" AND weight.sample_time.physical_time < "2026-01-02T00:00:00Z"` {
 		t.Fatalf("weight filter = %q", gotFilter)
 	}
 	assertArchivedSampleDataPoint(t, archivePath, "users/me/dataTypes/weight/dataPoints/weight-2026-01-01", "weight", "2026-01-01T05:45:00Z", "2026-01-01T06:45:00", "2026-01-01", `{"utc_offset":"3600s"}`, `"weightGrams":71234.5`)
@@ -4047,7 +4047,7 @@ func TestSyncArchivesWeightDataPointsIdempotentlyAndTracksRevisions(t *testing.T
 	assertJSONString(t, got, "source_family", "wearable")
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
-	if gotFamily := mustURLQuery(t, (*reconcileRequests)[0].url).Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
+	if gotFamily := mustURLQuery(t, (*reconcileRequests)[0].URL).Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
 		t.Fatalf("weight dataSourceFamily = %q, want google-wearables", gotFamily)
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 2)
@@ -4094,7 +4094,7 @@ func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
 	assertJSONNumber(t, got, "data_points_updated", 0)
-	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `distance.interval.start_time >= "2026-01-01T00:00:00Z" AND distance.interval.start_time < "2026-01-02T00:00:00Z"` {
+	if gotFilter := mustURLQuery(t, (*requests)[0].URL).Get("filter"); gotFilter != `distance.interval.start_time >= "2026-01-01T00:00:00Z" AND distance.interval.start_time < "2026-01-02T00:00:00Z"` {
 		t.Fatalf("distance filter = %q", gotFilter)
 	}
 	assertArchivedIntervalDataPoint(t, archivePath, "users/me/dataTypes/distance/dataPoints/distance-2026-01-01", "distance", "2026-01-01T07:00:00Z", "2026-01-01T07:30:00Z", "2026-01-01T08:00:00", "2026-01-01T08:30:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, "", `"millimeters":"2450"`)
@@ -4187,7 +4187,7 @@ func TestSyncArchivesDistanceDataPointsIdempotentlyAndTracksRevisions(t *testing
 	assertJSONString(t, got, "source_family", "wearable")
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
-	if gotFamily := mustURLQuery(t, (*reconcileRequests)[0].url).Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
+	if gotFamily := mustURLQuery(t, (*reconcileRequests)[0].URL).Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
 		t.Fatalf("distance dataSourceFamily = %q, want google-wearables", gotFamily)
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 2)
@@ -4235,13 +4235,13 @@ func TestSyncArchivesDailyDataPointsIdempotentlyAndTracksRevisions(t *testing.T)
 	assertJSONString(t, got, "to", "2026-01-02")
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
-	if (*requests)[0].endpointName != "dataTypes.daily-resting-heart-rate.list" {
-		t.Fatalf("endpoint = %q, want daily Data Type list", (*requests)[0].endpointName)
+	if (*requests)[0].EndpointName != "dataTypes.daily-resting-heart-rate.list" {
+		t.Fatalf("endpoint = %q, want daily Data Type list", (*requests)[0].EndpointName)
 	}
-	if strings.Contains((*requests)[0].url, "dailyRollUp") {
-		t.Fatalf("daily Data Point sync used Rollup URL: %s", (*requests)[0].url)
+	if strings.Contains((*requests)[0].URL, "dailyRollUp") {
+		t.Fatalf("daily Data Point sync used Rollup URL: %s", (*requests)[0].URL)
 	}
-	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `daily_resting_heart_rate.date >= "2026-01-01" AND daily_resting_heart_rate.date < "2026-01-02"` {
+	if gotFilter := mustURLQuery(t, (*requests)[0].URL).Get("filter"); gotFilter != `daily_resting_heart_rate.date >= "2026-01-01" AND daily_resting_heart_rate.date < "2026-01-02"` {
 		t.Fatalf("daily resting heart-rate filter = %q", gotFilter)
 	}
 	assertArchivedDailyDataPoint(t, archivePath, "users/me/dataTypes/daily-resting-heart-rate/dataPoints/rhr-2026-01-01", "daily-resting-heart-rate", "2026-01-01", `"beatsPerMinute":"61"`)
@@ -4419,10 +4419,10 @@ func TestSyncArchivesSleepSessionDataPoints(t *testing.T) {
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
 	assertJSONNumber(t, got, "data_points_updated", 0)
-	if (*requests)[0].endpointName != "dataTypes.sleep.list" {
-		t.Fatalf("endpoint = %q, want sleep Data Type list", (*requests)[0].endpointName)
+	if (*requests)[0].EndpointName != "dataTypes.sleep.list" {
+		t.Fatalf("endpoint = %q, want sleep Data Type list", (*requests)[0].EndpointName)
 	}
-	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `sleep.interval.civil_end_time >= "2026-01-01" AND sleep.interval.civil_end_time < "2026-01-03"` {
+	if gotFilter := mustURLQuery(t, (*requests)[0].URL).Get("filter"); gotFilter != `sleep.interval.civil_end_time >= "2026-01-01" AND sleep.interval.civil_end_time < "2026-01-03"` {
 		t.Fatalf("sleep filter = %q", gotFilter)
 	}
 	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/sleep/dataPoints/sleep-2026-01-01", "sleep", "2026-01-01T21:30:00Z", "2026-01-02T05:45:00Z", "2026-01-01T22:30:00", "2026-01-02T06:45:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"type":"LIGHT"`)
@@ -4520,10 +4520,10 @@ func TestSyncArchivesExerciseSessionDataPointsIdempotentlyAndTracksRevisions(t *
 	assertJSONNumber(t, got, "data_points_new", 1)
 	assertJSONNumber(t, got, "data_points_updated", 0)
 	assertJSONString(t, got, "to", "2026-01-02")
-	if (*requests)[0].endpointName != "dataTypes.exercise.list" {
-		t.Fatalf("endpoint = %q, want exercise Data Type list", (*requests)[0].endpointName)
+	if (*requests)[0].EndpointName != "dataTypes.exercise.list" {
+		t.Fatalf("endpoint = %q, want exercise Data Type list", (*requests)[0].EndpointName)
 	}
-	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `exercise.interval.civil_start_time >= "2026-01-01" AND exercise.interval.civil_start_time < "2026-01-02"` {
+	if gotFilter := mustURLQuery(t, (*requests)[0].URL).Get("filter"); gotFilter != `exercise.interval.civil_start_time >= "2026-01-01" AND exercise.interval.civil_start_time < "2026-01-02"` {
 		t.Fatalf("exercise filter = %q", gotFilter)
 	}
 	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/exercise/dataPoints/exercise-2026-01-01", "exercise", "2026-01-01T16:15:00Z", "2026-01-01T16:45:00Z", "2026-01-01T17:15:00", "2026-01-01T17:45:00", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"exerciseType":"RUNNING"`)
@@ -4601,7 +4601,7 @@ func TestSyncArchivesElectrocardiogramSessionDataPoints(t *testing.T) {
 	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	addStoredConnectionScope(t, archivePath, googleHealthEcgReadonlyScope)
+	addStoredConnectionScope(t, archivePath, googlehealth.ScopeEcgReadonly)
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	ecgPage := string(readTestFixture(t, "googlehealth_electrocardiogram_list.json"))
@@ -4628,10 +4628,10 @@ func TestSyncArchivesElectrocardiogramSessionDataPoints(t *testing.T) {
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
 	assertJSONNumber(t, got, "data_points_updated", 0)
-	if (*requests)[0].endpointName != "dataTypes.electrocardiogram.list" {
-		t.Fatalf("endpoint = %q, want electrocardiogram Data Type list", (*requests)[0].endpointName)
+	if (*requests)[0].EndpointName != "dataTypes.electrocardiogram.list" {
+		t.Fatalf("endpoint = %q, want electrocardiogram Data Type list", (*requests)[0].EndpointName)
 	}
-	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `electrocardiogram.interval.civil_start_time >= "2026-01-01" AND electrocardiogram.interval.civil_start_time < "2026-01-02"` {
+	if gotFilter := mustURLQuery(t, (*requests)[0].URL).Get("filter"); gotFilter != `electrocardiogram.interval.civil_start_time >= "2026-01-01" AND electrocardiogram.interval.civil_start_time < "2026-01-02"` {
 		t.Fatalf("electrocardiogram filter = %q", gotFilter)
 	}
 	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/electrocardiogram/dataPoints/ecg-2026-01-01", "electrocardiogram", "2026-01-01T09:30:00Z", "2026-01-01T09:30:30Z", "2026-01-01T10:30:00", "2026-01-01T10:30:30", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"classification":"SINUS_RHYTHM"`)
@@ -4657,7 +4657,7 @@ func TestSyncArchivesIrregularRhythmNotificationSessionDataPoints(t *testing.T) 
 	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	addStoredConnectionScope(t, archivePath, googleHealthIrnReadonlyScope)
+	addStoredConnectionScope(t, archivePath, googlehealth.ScopeIrnReadonly)
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	irnPage := string(readTestFixture(t, "googlehealth_irregular_rhythm_notification_list.json"))
@@ -4683,10 +4683,10 @@ func TestSyncArchivesIrregularRhythmNotificationSessionDataPoints(t *testing.T) 
 	assertJSONString(t, got, "endpoint_family", "list")
 	assertJSONNumber(t, got, "data_points_seen", 1)
 	assertJSONNumber(t, got, "data_points_new", 1)
-	if (*requests)[0].endpointName != "dataTypes.irregular-rhythm-notification.list" {
-		t.Fatalf("endpoint = %q, want irregular-rhythm-notification Data Type list", (*requests)[0].endpointName)
+	if (*requests)[0].EndpointName != "dataTypes.irregular-rhythm-notification.list" {
+		t.Fatalf("endpoint = %q, want irregular-rhythm-notification Data Type list", (*requests)[0].EndpointName)
 	}
-	if gotFilter := mustURLQuery(t, (*requests)[0].url).Get("filter"); gotFilter != `irregular_rhythm_notification.interval.civil_start_time >= "2026-01-01" AND irregular_rhythm_notification.interval.civil_start_time < "2026-01-02"` {
+	if gotFilter := mustURLQuery(t, (*requests)[0].URL).Get("filter"); gotFilter != `irregular_rhythm_notification.interval.civil_start_time >= "2026-01-01" AND irregular_rhythm_notification.interval.civil_start_time < "2026-01-02"` {
 		t.Fatalf("irregular-rhythm-notification filter = %q", gotFilter)
 	}
 	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/irregular-rhythm-notification/dataPoints/irn-2026-01-01", "irregular-rhythm-notification", "2026-01-01T08:00:00Z", "2026-01-01T08:00:30Z", "2026-01-01T09:00:00", "2026-01-01T09:00:30", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"classification":"ATRIAL_FIBRILLATION_SUGGESTED"`)
@@ -4731,7 +4731,7 @@ func TestSyncArchivesWearableStepsViaReconcile(t *testing.T) {
 	if len(*listRequests) != 1 {
 		t.Fatalf("default request count = %d, want 1", len(*listRequests))
 	}
-	if query := mustURLQuery(t, (*listRequests)[0].url); query.Get("dataSourceFamily") != "" {
+	if query := mustURLQuery(t, (*listRequests)[0].URL); query.Get("dataSourceFamily") != "" {
 		t.Fatalf("default sync dataSourceFamily = %q, want empty", query.Get("dataSourceFamily"))
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 1)
@@ -4767,7 +4767,7 @@ func TestSyncArchivesWearableStepsViaReconcile(t *testing.T) {
 	if len(*reconcileRequests) != 1 {
 		t.Fatalf("reconcile request count = %d, want 1", len(*reconcileRequests))
 	}
-	query := mustURLQuery(t, (*reconcileRequests)[0].url)
+	query := mustURLQuery(t, (*reconcileRequests)[0].URL)
 	if gotFamily := query.Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
 		t.Fatalf("dataSourceFamily = %q, want google-wearables", gotFamily)
 	}
@@ -4846,8 +4846,8 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 	if len(*listRequests) != 1 {
 		t.Fatalf("default request count = %d, want 1", len(*listRequests))
 	}
-	if (*listRequests)[0].endpointName != "dataTypes.steps.list" {
-		t.Fatalf("default endpoint = %q, want list", (*listRequests)[0].endpointName)
+	if (*listRequests)[0].EndpointName != "dataTypes.steps.list" {
+		t.Fatalf("default endpoint = %q, want list", (*listRequests)[0].EndpointName)
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 0)
 	assertArchiveTableCount(t, archivePath, "rollups", 0)
@@ -5024,20 +5024,6 @@ func TestSyncArchivesStepsDailyRollupsOnlyWhenRequested(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
-func TestParseStepsDailyRollupRequiresCivilEndTime(t *testing.T) {
-	t.Parallel()
-	_, err := parseGoogleHealthRollup(archived.Connection{
-		ProviderName: "googlehealth",
-		ID:           "googlehealth:111111256096816351",
-	}, "steps", "dailyRollUp", json.RawMessage(`{
-		"steps": {"countSum": "1234"},
-		"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}}
-	}`))
-	if err == nil || !strings.Contains(err.Error(), "missing civilEndTime") {
-		t.Fatalf("parse error = %v, want missing civilEndTime", err)
-	}
-}
-
 func TestSyncProviderFailureRecordsFailedRun(t *testing.T) {
 	t.Parallel()
 	tempDir := t.TempDir()
@@ -5051,7 +5037,7 @@ func TestSyncProviderFailureRecordsFailedRun(t *testing.T) {
 	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != "connect-access-secret" {
 			t.Fatalf("sync access token = %q, want stored token", accessToken)
 		}
@@ -5108,7 +5094,7 @@ func TestSyncRefusesDifferentProviderIdentityBeforeArchiving(t *testing.T) {
 		legacyFitbitUserID: "DIFFERENT",
 		rawJSON:            `{"healthUserId":"222222222222222222","legacyUserId":"DIFFERENT"}`,
 	})
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		t.Fatal("sync provider fetch should not run after identity mismatch")
 		return nil, nil
 	}
@@ -5225,8 +5211,8 @@ func TestSyncFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	setConnectionTokenScopes(t, archivePath, []string{googleHealthProfileReadonlyScope})
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	setConnectionTokenScopes(t, archivePath, []string{googlehealth.ScopeProfileReadonly})
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		t.Fatal("sync provider fetch should not run with missing scope")
 		return nil, nil
 	}
@@ -5246,11 +5232,11 @@ func TestSyncFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 	if stderr.String() != "" {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
-	if !strings.Contains(stdout.String(), googleHealthActivityReadonlyScope) || !strings.Contains(stdout.String(), "connect") {
+	if !strings.Contains(stdout.String(), googlehealth.ScopeActivityReadonly) || !strings.Contains(stdout.String(), "connect") {
 		t.Fatalf("stdout = %q, want missing scope reconnect hint", stdout.String())
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 0)
-	assertSyncRun(t, archivePath, 1, "sync_failed", 0, 0, 0, googleHealthActivityReadonlyScope)
+	assertSyncRun(t, archivePath, 1, "sync_failed", 0, 0, 0, googlehealth.ScopeActivityReadonly)
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
@@ -5267,8 +5253,8 @@ func TestSyncSampleDataTypeFailsBeforeProviderWhenHealthMetricsScopeMissing(t *t
 	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	setConnectionTokenScopes(t, archivePath, []string{googleHealthProfileReadonlyScope, googleHealthActivityReadonlyScope})
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	setConnectionTokenScopes(t, archivePath, []string{googlehealth.ScopeProfileReadonly, googlehealth.ScopeActivityReadonly})
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		t.Fatal("sync provider fetch should not run with missing health metrics scope")
 		return nil, nil
 	}
@@ -5289,11 +5275,11 @@ func TestSyncSampleDataTypeFailsBeforeProviderWhenHealthMetricsScopeMissing(t *t
 	if stderr.String() != "" {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
-	if !strings.Contains(stdout.String(), googleHealthHealthMetricsReadonlyScope) || !strings.Contains(stdout.String(), "connect") {
+	if !strings.Contains(stdout.String(), googlehealth.ScopeHealthMetricsReadonly) || !strings.Contains(stdout.String(), "connect") {
 		t.Fatalf("stdout = %q, want missing health metrics scope reconnect hint", stdout.String())
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 0)
-	assertSyncRunForDataType(t, archivePath, 1, "sync_failed", "heart-rate", "list", 0, 0, 0, googleHealthHealthMetricsReadonlyScope)
+	assertSyncRunForDataType(t, archivePath, 1, "sync_failed", "heart-rate", "list", 0, 0, 0, googlehealth.ScopeHealthMetricsReadonly)
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
@@ -5311,9 +5297,9 @@ func TestRawEndpointIdentityPrintsProviderJSONWithoutArchiving(t *testing.T) {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	beforeIdentityJSON := archivedConnectionIdentityJSON(t, archivePath)
-	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(request rawProviderRequest) []byte {
-		if request.url != googleHealthIdentityURL {
-			t.Fatalf("raw URL = %q, want identity URL", request.url)
+	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(request googlehealth.RawRequest) []byte {
+		if request.URL != googlehealth.IdentityURL {
+			t.Fatalf("raw URL = %q, want identity URL", request.URL)
 		}
 		return []byte(`{"healthUserId":"999999999999999999","legacyUserId":"RAW"}`)
 	})
@@ -5355,11 +5341,11 @@ func TestRawDataTypeStepsPrintsFixtureJSON(t *testing.T) {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
 	fixture := readTestFixture(t, "googlehealth_steps_list.json")
-	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(request rawProviderRequest) []byte {
-		if request.endpointName != "dataTypes.steps.list" || request.dataType != "steps" {
-			t.Fatalf("raw request = (%q, %q), want steps list", request.endpointName, request.dataType)
+	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(request googlehealth.RawRequest) []byte {
+		if request.EndpointName != "dataTypes.steps.list" || request.DataType != "steps" {
+			t.Fatalf("raw request = (%q, %q), want steps list", request.EndpointName, request.DataType)
 		}
-		parsedURL, err := url.Parse(request.url)
+		parsedURL, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse raw URL: %v", err)
 		}
@@ -5403,37 +5389,6 @@ func TestRawDataTypeStepsPrintsFixtureJSON(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
-func TestDailyNamedDataTypeListRequestIsNotRollup(t *testing.T) {
-	t.Parallel()
-	request, err := buildGoogleHealthDataTypeListRawRequest("daily-resting-heart-rate", "2026-01-01", "2026-01-02", 0, "")
-	if err != nil {
-		t.Fatalf("build daily-named list request: %v", err)
-	}
-	if request.endpointName != "dataTypes.daily-resting-heart-rate.list" {
-		t.Fatalf("endpointName = %q, want daily Data Type list", request.endpointName)
-	}
-	if request.method != http.MethodGet {
-		t.Fatalf("method = %q, want GET", request.method)
-	}
-	if len(request.body) != 0 {
-		t.Fatalf("request body = %s, want empty list request body", string(request.body))
-	}
-	parsedURL, err := url.Parse(request.url)
-	if err != nil {
-		t.Fatalf("parse URL: %v", err)
-	}
-	if parsedURL.Path != "/v4/users/me/dataTypes/daily-resting-heart-rate/dataPoints" {
-		t.Fatalf("path = %q, want Data Points list path", parsedURL.Path)
-	}
-	if strings.Contains(request.endpointName+parsedURL.Path, "RollUp") || strings.Contains(parsedURL.Path, "rollUp") {
-		t.Fatalf("daily Data Type request used Rollup endpoint: %s %s", request.endpointName, parsedURL.Path)
-	}
-	wantFilter := `daily_resting_heart_rate.date >= "2026-01-01" AND daily_resting_heart_rate.date < "2026-01-02"`
-	if got := parsedURL.Query().Get("filter"); got != wantFilter {
-		t.Fatalf("filter = %q, want %q", got, wantFilter)
-	}
-}
-
 func TestRawProviderErrorDoesNotLeakToken(t *testing.T) {
 	t.Parallel()
 	tempDir := t.TempDir()
@@ -5447,7 +5402,7 @@ func TestRawProviderErrorDoesNotLeakToken(t *testing.T) {
 	if code := runConnectCommandWithRuntime(t, configPath, archivePath, testRuntime); code != 0 {
 		t.Fatalf("connect exit code = %d, want 0", code)
 	}
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != "connect-access-secret" {
 			t.Fatalf("raw access token = %q, want stored token", accessToken)
 		}
@@ -5497,7 +5452,7 @@ func TestRawDataTypeFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
 		t.Fatalf("unmarshal token metadata: %v", err)
 	}
-	metadata["scopes"] = []string{googleHealthActivityReadonlyScope}
+	metadata["scopes"] = []string{googlehealth.ScopeActivityReadonly}
 	updatedMetadataJSON, err := json.Marshal(metadata)
 	if err != nil {
 		t.Fatalf("marshal token metadata: %v", err)
@@ -5509,7 +5464,7 @@ func TestRawDataTypeFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update token scopes: %v", err)
 	}
-	testRuntime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		t.Fatal("raw provider fetch should not run with missing scope")
 		return nil, nil
 	}
@@ -5523,7 +5478,7 @@ func TestRawDataTypeFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 	if stdout.String() != "" {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), googleHealthHealthMetricsReadonlyScope) || !strings.Contains(stderr.String(), "connect") {
+	if !strings.Contains(stderr.String(), googlehealth.ScopeHealthMetricsReadonly) || !strings.Contains(stderr.String(), "connect") {
 		t.Fatalf("stderr = %q, want missing scope reconnect hint", stderr.String())
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
@@ -5531,11 +5486,11 @@ func TestRawDataTypeFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 
 func TestBuildGoogleHealthRawRequestUsesProviderNamingConventions(t *testing.T) {
 	t.Parallel()
-	request, err := buildGoogleHealthRawRequest([]string{"endpoint", "dataTypes.heart-rate.list"}, "2026-01-01", "", 0, "")
+	request, err := googlehealth.BuildRawRequest([]string{"endpoint", "dataTypes.heart-rate.list"}, "2026-01-01", "", 0, "")
 	if err != nil {
 		t.Fatalf("build raw request: %v", err)
 	}
-	parsedURL, err := url.Parse(request.url)
+	parsedURL, err := url.Parse(request.URL)
 	if err != nil {
 		t.Fatalf("parse raw URL: %v", err)
 	}
@@ -5550,7 +5505,7 @@ func TestBuildGoogleHealthRawRequestUsesProviderNamingConventions(t *testing.T) 
 
 func TestBuildGoogleHealthRawRequestRejectsNonListableDataTypes(t *testing.T) {
 	t.Parallel()
-	_, err := buildGoogleHealthRawRequest([]string{"data-type", "total-calories"}, "2026-01-01", "", 0, "")
+	_, err := googlehealth.BuildRawRequest([]string{"data-type", "total-calories"}, "2026-01-01", "", 0, "")
 	if err == nil {
 		t.Fatal("build raw request error = nil, want unsupported Data Type")
 	}
@@ -5561,7 +5516,7 @@ func TestBuildGoogleHealthRawRequestRejectsNonListableDataTypes(t *testing.T) {
 
 // TestBuildGoogleHealthRawRequestEndpointCatalog pins PRD #142 slice 7:
 // every identity-style endpoint exposed by `raw endpoint <name>` must
-// source its requiredScopes from googleHealthIdentityEndpointScopes so
+// source its requiredScopes from googlehealth.IdentityEndpointScopes so
 // the scope contract for `raw` and the introspection commands (devices,
 // settings, profile, irn-profile) can never drift apart. When slice 2
 // of the PRD revises pairedDevices/getSettings scopes empirically, the
@@ -5573,34 +5528,34 @@ func TestBuildGoogleHealthRawRequestEndpointCatalog(t *testing.T) {
 		name    string
 		wantURL string
 	}{
-		{name: "getIdentity", wantURL: googleHealthIdentityURL},
-		{name: "getProfile", wantURL: googleHealthProfileURL},
-		{name: "getSettings", wantURL: googleHealthSettingsURL},
-		{name: "pairedDevices", wantURL: googleHealthPairedDevicesURL},
-		{name: "getIrnProfile", wantURL: googleHealthIRNProfileURL},
+		{name: "getIdentity", wantURL: googlehealth.IdentityURL},
+		{name: "getProfile", wantURL: googlehealth.ProfileURL},
+		{name: "getSettings", wantURL: googlehealth.SettingsURL},
+		{name: "pairedDevices", wantURL: googlehealth.PairedDevicesURL},
+		{name: "getIrnProfile", wantURL: googlehealth.IRNProfileURL},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			request, err := buildGoogleHealthRawRequest([]string{"endpoint", tt.name}, "", "", 0, "")
+			request, err := googlehealth.BuildRawRequest([]string{"endpoint", tt.name}, "", "", 0, "")
 			if err != nil {
 				t.Fatalf("build raw request for %q: %v", tt.name, err)
 			}
-			if request.endpointName != tt.name {
-				t.Fatalf("endpointName = %q, want %q", request.endpointName, tt.name)
+			if request.EndpointName != tt.name {
+				t.Fatalf("endpointName = %q, want %q", request.EndpointName, tt.name)
 			}
-			if request.url != tt.wantURL {
-				t.Fatalf("url = %q, want %q", request.url, tt.wantURL)
+			if request.URL != tt.wantURL {
+				t.Fatalf("url = %q, want %q", request.URL, tt.wantURL)
 			}
-			wantScopes := googleHealthIdentityEndpointScopes[tt.name]
+			wantScopes := googlehealth.IdentityEndpointScopes(tt.name)
 			if len(wantScopes) == 0 {
 				t.Fatalf("catalog missing entry for %q — slice 1 contract violated", tt.name)
 			}
-			if len(request.requiredScopes) != len(wantScopes) {
-				t.Fatalf("requiredScopes = %v, want %v (catalog entry)", request.requiredScopes, wantScopes)
+			if len(request.RequiredScopes) != len(wantScopes) {
+				t.Fatalf("requiredScopes = %v, want %v (catalog entry)", request.RequiredScopes, wantScopes)
 			}
 			for i, want := range wantScopes {
-				if request.requiredScopes[i] != want {
-					t.Fatalf("requiredScopes[%d] = %q, want %q (catalog entry)", i, request.requiredScopes[i], want)
+				if request.RequiredScopes[i] != want {
+					t.Fatalf("requiredScopes[%d] = %q, want %q (catalog entry)", i, request.RequiredScopes[i], want)
 				}
 			}
 		})
@@ -5613,129 +5568,12 @@ func TestBuildGoogleHealthRawRequestEndpointCatalog(t *testing.T) {
 // than a nil request.
 func TestBuildGoogleHealthRawRequestUnknownEndpoint(t *testing.T) {
 	t.Parallel()
-	_, err := buildGoogleHealthRawRequest([]string{"endpoint", "nonexistent"}, "", "", 0, "")
+	_, err := googlehealth.BuildRawRequest([]string{"endpoint", "nonexistent"}, "", "", 0, "")
 	if err == nil {
 		t.Fatal("build raw request error = nil, want unsupported raw endpoint")
 	}
 	if !strings.Contains(err.Error(), `unsupported raw endpoint "nonexistent"`) {
 		t.Fatalf("error = %v, want unsupported raw endpoint %q", err, "nonexistent")
-	}
-}
-
-// TestBuildGoogleHealthRawRequestEndpointsReadFromCatalog pins PRD #142
-// slice 7 AC: no `[]string{googleHealthProfileReadonlyScope}` inline
-// literal remains in buildGoogleHealthRawRequest. The only source of
-// truth for endpoint scopes is the catalog. We verify behaviourally:
-// a catalog mutation for the duration of the test flows through to the
-// request's requiredScopes — proving the branch did a catalog lookup,
-// not a hard-coded literal.
-func TestBuildGoogleHealthRawRequestEndpointsReadFromCatalog(t *testing.T) {
-	t.Parallel()
-	for _, endpoint := range []string{"getIdentity", "getProfile", "getSettings", "pairedDevices", "getIrnProfile"} {
-		t.Run(endpoint, func(t *testing.T) {
-			original, ok := googleHealthIdentityEndpointScopes[endpoint]
-			if !ok {
-				t.Fatalf("catalog missing %q — slice 1 contract violated", endpoint)
-			}
-			sentinel := "https://example.invalid/scope/sentinel-" + endpoint
-			googleHealthIdentityEndpointScopes[endpoint] = []string{sentinel}
-			t.Cleanup(func() { googleHealthIdentityEndpointScopes[endpoint] = original })
-
-			request, err := buildGoogleHealthRawRequest([]string{"endpoint", endpoint}, "", "", 0, "")
-			if err != nil {
-				t.Fatalf("build raw request for %q: %v", endpoint, err)
-			}
-			if len(request.requiredScopes) != 1 || request.requiredScopes[0] != sentinel {
-				t.Fatalf("requiredScopes = %v, want catalog-driven %q — branch is using an inline scope literal", request.requiredScopes, sentinel)
-			}
-		})
-	}
-}
-
-func TestGoogleHealthRawFilterFieldsCoverFirstReleaseDataTypes(t *testing.T) {
-	t.Parallel()
-	for _, test := range []struct {
-		dataType string
-		from     string
-		want     string
-	}{
-		{
-			dataType: "steps",
-			from:     "2026-01-01",
-			want:     `steps.interval.start_time >= "2026-01-01T00:00:00Z"`,
-		},
-		{
-			dataType: "oxygen-saturation",
-			from:     "2026-01-01",
-			want:     `oxygen_saturation.sample_time.physical_time >= "2026-01-01T00:00:00Z"`,
-		},
-		{
-			dataType: "heart-rate-variability",
-			from:     "2026-01-01",
-			want:     `heart_rate_variability.sample_time.physical_time >= "2026-01-01T00:00:00Z"`,
-		},
-		{
-			dataType: "daily-resting-heart-rate",
-			from:     "2026-01-01",
-			want:     `daily_resting_heart_rate.date >= "2026-01-01"`,
-		},
-		{
-			dataType: "daily-heart-rate-variability",
-			from:     "2026-01-01",
-			want:     `daily_heart_rate_variability.date >= "2026-01-01"`,
-		},
-		{
-			dataType: "daily-oxygen-saturation",
-			from:     "2026-01-01",
-			want:     `daily_oxygen_saturation.date >= "2026-01-01"`,
-		},
-		{
-			dataType: "daily-respiratory-rate",
-			from:     "2026-01-01",
-			want:     `daily_respiratory_rate.date >= "2026-01-01"`,
-		},
-		{
-			dataType: "exercise",
-			from:     "2026-01-01",
-			want:     `exercise.interval.civil_start_time >= "2026-01-01"`,
-		},
-		{
-			dataType: "sleep",
-			from:     "2026-01-01",
-			want:     `sleep.interval.civil_end_time >= "2026-01-01"`,
-		},
-		{
-			dataType: "distance",
-			from:     "2026-01-01",
-			want:     `distance.interval.start_time >= "2026-01-01T00:00:00Z"`,
-		},
-		{
-			dataType: "weight",
-			from:     "2026-01-01",
-			want:     `weight.sample_time.physical_time >= "2026-01-01T00:00:00Z"`,
-		},
-	} {
-		t.Run(test.dataType, func(t *testing.T) {
-			filter, err := googleHealthDataTypeListFilter(test.dataType, test.from, "")
-			if err != nil {
-				t.Fatalf("filter: %v", err)
-			}
-			if filter != test.want {
-				t.Fatalf("filter = %q, want %q", filter, test.want)
-			}
-		})
-	}
-}
-
-func TestGoogleHealthRawFilterPreservesFractionalRFC3339Bounds(t *testing.T) {
-	t.Parallel()
-	filter, err := googleHealthDataTypeListFilter("heart-rate", "2026-01-01T00:00:00.500Z", "2026-01-01T01:02:03.123456789+02:00")
-	if err != nil {
-		t.Fatalf("filter: %v", err)
-	}
-	want := `heart_rate.sample_time.physical_time >= "2026-01-01T00:00:00.5Z" AND heart_rate.sample_time.physical_time < "2025-12-31T23:02:03.123456789Z"`
-	if filter != want {
-		t.Fatalf("filter = %q, want %q", filter, want)
 	}
 }
 
@@ -6092,12 +5930,12 @@ func TestParseOAuthClientConfigContentPinsHTTPSAndGoogleHosts(t *testing.T) {
 
 func TestOAuthScopesUseRecognizedGoogleHealthScopes(t *testing.T) {
 	t.Parallel()
-	scopes := oauthScopesForDataTypes(defaultDataTypes)
+	scopes := oauthScopesForDataTypes(googlehealth.DefaultDataTypes())
 	wantScopes := []string{
-		googleHealthActivityReadonlyScope,
-		googleHealthHealthMetricsReadonlyScope,
-		googleHealthSleepReadonlyScope,
-		googleHealthProfileReadonlyScope,
+		googlehealth.ScopeActivityReadonly,
+		googlehealth.ScopeHealthMetricsReadonly,
+		googlehealth.ScopeSleepReadonly,
+		googlehealth.ScopeProfileReadonly,
 	}
 	if !slices.Equal(scopes, wantScopes) {
 		t.Fatalf("scopes = %v, want configured Google Health readonly scopes %v", scopes, wantScopes)
@@ -6156,12 +5994,12 @@ func TestFetchGoogleIdentityUsesGetIdentityEndpoint(t *testing.T) {
 		}, nil
 	})}
 
-	identity, err := fetchGoogleIdentity(providerGET{doer: doer}, "access-secret-value")
+	identity, err := fetchGoogleIdentity(googlehealth.NewGET(doer), "access-secret-value")
 	if err != nil {
 		t.Fatalf("fetch identity: %v", err)
 	}
-	if gotURL != googleHealthIdentityURL {
-		t.Fatalf("identity URL = %q, want %q", gotURL, googleHealthIdentityURL)
+	if gotURL != googlehealth.IdentityURL {
+		t.Fatalf("identity URL = %q, want %q", gotURL, googlehealth.IdentityURL)
 	}
 	if identity.healthUserID != "111111256096816351" || identity.legacyFitbitUserID != "A1B2C3" {
 		t.Fatalf("identity = (%q, %q), want response identity", identity.healthUserID, identity.legacyFitbitUserID)
@@ -6183,12 +6021,12 @@ func TestFetchGoogleProfileUsesProfileEndpoint(t *testing.T) {
 		}, nil
 	})}
 
-	profile, err := fetchGoogleProfile(providerGET{doer: doer}, "access-secret-value")
+	profile, err := fetchGoogleProfile(googlehealth.NewGET(doer), "access-secret-value")
 	if err != nil {
 		t.Fatalf("fetch profile: %v", err)
 	}
-	if gotURL != googleHealthProfileURL {
-		t.Fatalf("profile URL = %q, want %q", gotURL, googleHealthProfileURL)
+	if gotURL != googlehealth.ProfileURL {
+		t.Fatalf("profile URL = %q, want %q", gotURL, googlehealth.ProfileURL)
 	}
 	if profile.healthUserID != "111111256096816351" || profile.resourceName != "users/111111256096816351/profile" {
 		t.Fatalf("profile = (%q, %q), want response profile", profile.healthUserID, profile.resourceName)
@@ -6201,7 +6039,7 @@ func TestFetchGoogleProfileUsesProfileEndpoint(t *testing.T) {
 func TestFetchGoogleHealthRawUsesBearerAndHidesErrorBody(t *testing.T) {
 	t.Parallel()
 	doer := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		if request.URL.String() != googleHealthIdentityURL {
+		if request.URL.String() != googlehealth.IdentityURL {
 			t.Fatalf("raw URL = %q, want identity URL", request.URL.String())
 		}
 		if request.Header.Get("Authorization") != "Bearer access-secret-value" {
@@ -6214,7 +6052,7 @@ func TestFetchGoogleHealthRawUsesBearerAndHidesErrorBody(t *testing.T) {
 		}, nil
 	})}
 
-	_, err := fetchGoogleHealthRaw(context.Background(), doer, rawProviderRequest{endpointName: "getIdentity", url: googleHealthIdentityURL}, "access-secret-value")
+	_, err := googlehealth.FetchRaw(context.Background(), doer, googlehealth.RawRequest{EndpointName: "getIdentity", URL: googlehealth.IdentityURL}, "access-secret-value")
 	if err == nil {
 		t.Fatal("fetch raw error = nil, want HTTP failure")
 	}
@@ -6223,20 +6061,6 @@ func TestFetchGoogleHealthRawUsesBearerAndHidesErrorBody(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "access-secret-value") {
 		t.Fatalf("fetch raw error leaked token/body: %v", err)
-	}
-}
-
-func TestReadLimitedBodyReportsOversize(t *testing.T) {
-	t.Parallel()
-	body, tooLarge, err := readLimitedBody(strings.NewReader("abcdef"), 5)
-	if err != nil {
-		t.Fatalf("read limited body: %v", err)
-	}
-	if !tooLarge {
-		t.Fatal("tooLarge = false, want true")
-	}
-	if body != nil {
-		t.Fatalf("body = %q, want nil when oversized", string(body))
 	}
 }
 
@@ -7200,10 +7024,10 @@ func bindProfileFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToke
 	}
 }
 
-func bindRawFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, response func(rawProviderRequest) []byte) {
+func bindRawFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, response func(googlehealth.RawRequest) []byte) {
 	t.Helper()
 
-	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("raw access token = %q, want stored token", accessToken)
 		}
@@ -7211,7 +7035,7 @@ func bindRawFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken st
 	}
 }
 
-func bindStepSyncFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, pages map[string]string) *[]rawProviderRequest {
+func bindStepSyncFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, pages map[string]string) *[]googlehealth.RawRequest {
 	t.Helper()
 
 	bound, requests := withStepSyncFetchFake(t, *runtime, wantAccessToken, pages)
@@ -7219,19 +7043,19 @@ func bindStepSyncFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessTok
 	return requests
 }
 
-func withStepSyncFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]rawProviderRequest) {
+func withStepSyncFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]googlehealth.RawRequest) {
 	t.Helper()
 
-	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	var requests []googlehealth.RawRequest
+	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("sync access token = %q, want stored token", accessToken)
 		}
-		if request.endpointName != "dataTypes.steps.list" || request.dataType != "steps" {
-			t.Fatalf("sync request = (%q, %q), want steps list", request.endpointName, request.dataType)
+		if request.EndpointName != "dataTypes.steps.list" || request.DataType != "steps" {
+			t.Fatalf("sync request = (%q, %q), want steps list", request.EndpointName, request.DataType)
 		}
 		requests = append(requests, request)
-		pageToken := mustURLQuery(t, request.url).Get("pageToken")
+		pageToken := mustURLQuery(t, request.URL).Get("pageToken")
 		body, ok := pages[pageToken]
 		if !ok {
 			t.Fatalf("no fake page for pageToken %q", pageToken)
@@ -7241,7 +7065,7 @@ func withStepSyncFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToke
 	return runtime, &requests
 }
 
-func bindStepReconcileFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, pages map[string]string) *[]rawProviderRequest {
+func bindStepReconcileFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, pages map[string]string) *[]googlehealth.RawRequest {
 	t.Helper()
 
 	bound, requests := withStepReconcileFetchFake(t, *runtime, wantAccessToken, pages)
@@ -7249,21 +7073,21 @@ func bindStepReconcileFetchFake(t *testing.T, runtime *runtimeAdapters, wantAcce
 	return requests
 }
 
-func withStepReconcileFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]rawProviderRequest) {
+func withStepReconcileFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]googlehealth.RawRequest) {
 	t.Helper()
 
-	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	var requests []googlehealth.RawRequest
+	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("reconcile sync access token = %q, want stored token", accessToken)
 		}
-		if request.endpointName != "dataTypes.steps.reconcile" || request.dataType != "steps" {
-			t.Fatalf("reconcile sync request = (%q, %q), want steps reconcile", request.endpointName, request.dataType)
+		if request.EndpointName != "dataTypes.steps.reconcile" || request.DataType != "steps" {
+			t.Fatalf("reconcile sync request = (%q, %q), want steps reconcile", request.EndpointName, request.DataType)
 		}
-		if request.sourceFamilyFilter != "wearable" {
-			t.Fatalf("source family filter = %q, want wearable", request.sourceFamilyFilter)
+		if request.SourceFamilyFilter != "wearable" {
+			t.Fatalf("source family filter = %q, want wearable", request.SourceFamilyFilter)
 		}
-		parsedURL, err := url.Parse(request.url)
+		parsedURL, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse reconcile URL: %v", err)
 		}
@@ -7281,21 +7105,21 @@ func withStepReconcileFetchFake(t *testing.T, runtime runtimeAdapters, wantAcces
 	return runtime, &requests
 }
 
-func bindDataPointReconcileFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken, dataType string, pages map[string]string) *[]rawProviderRequest {
+func bindDataPointReconcileFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken, dataType string, pages map[string]string) *[]googlehealth.RawRequest {
 	t.Helper()
 
-	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	var requests []googlehealth.RawRequest
+	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("reconcile sync access token = %q, want stored token", accessToken)
 		}
-		if request.endpointName != "dataTypes."+dataType+".reconcile" || request.dataType != dataType {
-			t.Fatalf("reconcile sync request = (%q, %q), want %s reconcile", request.endpointName, request.dataType, dataType)
+		if request.EndpointName != "dataTypes."+dataType+".reconcile" || request.DataType != dataType {
+			t.Fatalf("reconcile sync request = (%q, %q), want %s reconcile", request.EndpointName, request.DataType, dataType)
 		}
-		if request.sourceFamilyFilter != "wearable" {
-			t.Fatalf("source family filter = %q, want wearable", request.sourceFamilyFilter)
+		if request.SourceFamilyFilter != "wearable" {
+			t.Fatalf("source family filter = %q, want wearable", request.SourceFamilyFilter)
 		}
-		parsedURL, err := url.Parse(request.url)
+		parsedURL, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse reconcile URL: %v", err)
 		}
@@ -7314,7 +7138,7 @@ func bindDataPointReconcileFetchFake(t *testing.T, runtime *runtimeAdapters, wan
 	return &requests
 }
 
-func bindStepDailyRollupFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, pages map[string]string) *[]rawProviderRequest {
+func bindStepDailyRollupFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken string, pages map[string]string) *[]googlehealth.RawRequest {
 	t.Helper()
 
 	bound, requests := withStepDailyRollupFetchFake(t, *runtime, wantAccessToken, pages)
@@ -7322,21 +7146,21 @@ func bindStepDailyRollupFetchFake(t *testing.T, runtime *runtimeAdapters, wantAc
 	return requests
 }
 
-func withStepDailyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]rawProviderRequest) {
+func withStepDailyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]googlehealth.RawRequest) {
 	t.Helper()
 
-	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	var requests []googlehealth.RawRequest
+	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("rollup sync access token = %q, want stored token", accessToken)
 		}
-		if request.endpointName != "dataTypes.steps.dailyRollUp" || request.dataType != "steps" {
-			t.Fatalf("rollup sync request = (%q, %q), want steps dailyRollUp", request.endpointName, request.dataType)
+		if request.EndpointName != "dataTypes.steps.dailyRollUp" || request.DataType != "steps" {
+			t.Fatalf("rollup sync request = (%q, %q), want steps dailyRollUp", request.EndpointName, request.DataType)
 		}
-		if request.method != http.MethodPost {
-			t.Fatalf("rollup method = %q, want POST", request.method)
+		if request.Method != http.MethodPost {
+			t.Fatalf("rollup method = %q, want POST", request.Method)
 		}
-		parsedURL, err := url.Parse(request.url)
+		parsedURL, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse rollup URL: %v", err)
 		}
@@ -7363,8 +7187,8 @@ func withStepDailyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAcc
 			WindowSizeDays int    `json:"windowSizeDays"`
 			PageToken      string `json:"pageToken"`
 		}
-		if err := json.Unmarshal(request.body, &body); err != nil {
-			t.Fatalf("rollup body is not valid JSON: %v\nbody: %s", err, string(request.body))
+		if err := json.Unmarshal(request.Body, &body); err != nil {
+			t.Fatalf("rollup body is not valid JSON: %v\nbody: %s", err, string(request.Body))
 		}
 		if body.WindowSizeDays != 1 {
 			t.Fatalf("windowSizeDays = %d, want 1", body.WindowSizeDays)
@@ -7396,21 +7220,21 @@ func withStepDailyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAcc
 // the executor actually used the normalized RFC3339 form (the gate emits
 // RFC3339 for hourly per PRD #141 slice 3) rather than the raw civil
 // option.from.
-func withHeartRateHourlyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]rawProviderRequest) {
+func withHeartRateHourlyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]googlehealth.RawRequest) {
 	t.Helper()
 
-	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	var requests []googlehealth.RawRequest
+	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("rollup sync access token = %q, want stored token", accessToken)
 		}
-		if request.endpointName != "dataTypes.heart-rate.rollUp" || request.dataType != "heart-rate" {
-			t.Fatalf("rollup sync request = (%q, %q), want heart-rate rollUp", request.endpointName, request.dataType)
+		if request.EndpointName != "dataTypes.heart-rate.rollUp" || request.DataType != "heart-rate" {
+			t.Fatalf("rollup sync request = (%q, %q), want heart-rate rollUp", request.EndpointName, request.DataType)
 		}
-		if request.method != http.MethodPost {
-			t.Fatalf("rollup method = %q, want POST", request.method)
+		if request.Method != http.MethodPost {
+			t.Fatalf("rollup method = %q, want POST", request.Method)
 		}
-		parsedURL, err := url.Parse(request.url)
+		parsedURL, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse rollup URL: %v", err)
 		}
@@ -7425,8 +7249,8 @@ func withHeartRateHourlyRollupFetchFake(t *testing.T, runtime runtimeAdapters, w
 			WindowSize string `json:"windowSize"`
 			PageToken  string `json:"pageToken"`
 		}
-		if err := json.Unmarshal(request.body, &body); err != nil {
-			t.Fatalf("rollup body is not valid JSON: %v\nbody: %s", err, string(request.body))
+		if err := json.Unmarshal(request.Body, &body); err != nil {
+			t.Fatalf("rollup body is not valid JSON: %v\nbody: %s", err, string(request.Body))
 		}
 		requests = append(requests, request)
 		key := fmt.Sprintf("%s/%s/%s/%s",
@@ -7444,11 +7268,11 @@ func withHeartRateHourlyRollupFetchFake(t *testing.T, runtime runtimeAdapters, w
 	return runtime, &requests
 }
 
-func bindDataPointSyncFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken, dataType string, pages map[string]string) *[]rawProviderRequest {
+func bindDataPointSyncFetchFake(t *testing.T, runtime *runtimeAdapters, wantAccessToken, dataType string, pages map[string]string) *[]googlehealth.RawRequest {
 	t.Helper()
 
-	var requests []rawProviderRequest
-	runtime.fetchRawProvider = func(_ context.Context, request rawProviderRequest, accessToken string) ([]byte, error) {
+	var requests []googlehealth.RawRequest
+	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("sync access token = %q, want stored token", accessToken)
 		}
@@ -7457,13 +7281,13 @@ func bindDataPointSyncFetchFake(t *testing.T, runtime *runtimeAdapters, wantAcce
 		// used by existing exercise sync tests do not carry TCX, so the
 		// fake responds with 404 — the production code path treats 404
 		// as "no TCX for this Data Point" and continues.
-		if request.endpointName == "dataTypes.exercise.exportExerciseTcx" {
-			return nil, &googleHealthHTTPError{StatusCode: 404}
+		if request.EndpointName == "dataTypes.exercise.exportExerciseTcx" {
+			return nil, &googlehealth.HTTPError{StatusCode: 404}
 		}
-		if request.endpointName != "dataTypes."+dataType+".list" || request.dataType != dataType {
-			t.Fatalf("sync request = (%q, %q), want %s list", request.endpointName, request.dataType, dataType)
+		if request.EndpointName != "dataTypes."+dataType+".list" || request.DataType != dataType {
+			t.Fatalf("sync request = (%q, %q), want %s list", request.EndpointName, request.DataType, dataType)
 		}
-		parsedURL, err := url.Parse(request.url)
+		parsedURL, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse sync URL: %v", err)
 		}
