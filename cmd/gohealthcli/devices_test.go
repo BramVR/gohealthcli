@@ -132,11 +132,7 @@ func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 	}
 	archive.Close()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	rows, err := db.QueryContext(context.Background(), `SELECT name, device_type, device_version, battery_status, battery_level FROM paired_devices ORDER BY device_version`)
 	if err != nil {
 		t.Fatalf("query paired_devices: %v", err)
@@ -204,11 +200,7 @@ func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
 	}
 	archive.Close()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var count int
 	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM paired_devices`).Scan(&count); err != nil {
 		t.Fatalf("query paired_devices: %v", err)
@@ -430,11 +422,7 @@ func TestDevicesCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// A new identity_snapshots row with snapshot_kind = 'paired-devices'
 	// must exist so the auto-refresh path doesn't silently skip the
 	// archive write the AC requires.
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var snapshotCount int
 	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM identity_snapshots WHERE snapshot_kind = 'paired-devices'`).Scan(&snapshotCount); err != nil {
 		t.Fatalf("count paired-devices snapshots: %v", err)

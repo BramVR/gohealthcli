@@ -14,11 +14,7 @@ import (
 // need to simulate a Connection where --add-scopes has already run.
 func addStoredConnectionScope(t *testing.T, archivePath, scope string) {
 	t.Helper()
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var metadata string
 	if err := db.QueryRowContext(context.Background(), `SELECT token_metadata_json FROM connections LIMIT 1`).Scan(&metadata); err != nil {
 		t.Fatalf("read token_metadata_json: %v", err)
@@ -74,11 +70,7 @@ func TestCurrentIRNProfileViewProjectsLatestSnapshot(t *testing.T) {
 	}
 	archive.Close()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var onboarding, enrollment, lastUpdate string
 	err = db.QueryRowContext(context.Background(), `SELECT onboarding_state, enrollment_state, last_update_time FROM current_irn_profile WHERE connection_id = ?`, connection.id).Scan(&onboarding, &enrollment, &lastUpdate)
 	if err != nil {

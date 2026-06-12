@@ -307,11 +307,7 @@ func TestStatusReportsTier2CountsWithPartialScopeGrant(t *testing.T) {
 // (and the existing readStatusDataTypes UNION) reference are filled.
 func insertTier2DataPoint(t *testing.T, archivePath, dataType, resourceID string) {
 	t.Helper()
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	if _, err := db.ExecContext(context.Background(), `INSERT INTO data_points (
 		provider_name,
 		connection_id,

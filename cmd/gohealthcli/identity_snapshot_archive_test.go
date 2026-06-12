@@ -22,11 +22,7 @@ func TestFreshArchiveHasIdentitySnapshotsTable(t *testing.T) {
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
 	if !archiveTableExists(t, db, "identity_snapshots") {
 		t.Fatal("identity_snapshots table missing from fresh archive")
@@ -280,11 +276,7 @@ func TestCurrentSettingsViewProjectsLatestSnapshot(t *testing.T) {
 	}
 	archive.Close()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var measurementSystem, timezone, fetchedAt string
 	err = db.QueryRowContext(context.Background(), `SELECT measurement_system, timezone, fetched_at FROM current_settings WHERE connection_id = ?`, connection.id).
 		Scan(&measurementSystem, &timezone, &fetchedAt)
@@ -341,11 +333,7 @@ func TestIdentitySnapshotArchiveLatestUsesFetchedAtForRecency(t *testing.T) {
 	}
 	archive.Close()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var measurementSystem, fetchedAt string
 	err = db.QueryRowContext(context.Background(), `SELECT measurement_system, fetched_at FROM current_settings WHERE connection_id = ?`, connection.id).
 		Scan(&measurementSystem, &fetchedAt)
@@ -377,11 +365,7 @@ func TestV6ArchiveMigratesProfileSnapshotsWithKindDefault(t *testing.T) {
 		t.Fatalf("migrate legacy v6 archive to current schema version: %v", err)
 	}
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
 	var version int
 	if err := db.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&version); err != nil {
@@ -395,7 +379,7 @@ func TestV6ArchiveMigratesProfileSnapshotsWithKindDefault(t *testing.T) {
 	}
 
 	var kind, rawJSON, fetchedAt string
-	err = db.QueryRowContext(context.Background(), `SELECT snapshot_kind, raw_json, fetched_at FROM identity_snapshots WHERE id = 1`).Scan(&kind, &rawJSON, &fetchedAt)
+	err := db.QueryRowContext(context.Background(), `SELECT snapshot_kind, raw_json, fetched_at FROM identity_snapshots WHERE id = 1`).Scan(&kind, &rawJSON, &fetchedAt)
 	if err != nil {
 		t.Fatalf("read migrated row: %v", err)
 	}
@@ -464,11 +448,7 @@ func createLegacyV6ArchiveWithProfileSnapshot(t *testing.T, archivePath, connect
 	if err := ensureOwnerOnlyDir(filepath.Dir(archivePath)); err != nil {
 		t.Fatalf("create legacy archive parent: %v", err)
 	}
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open legacy archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	if err := applyV6SchemaForLegacyTest(db); err != nil {
 		t.Fatalf("apply legacy v6 schema: %v", err)
 	}

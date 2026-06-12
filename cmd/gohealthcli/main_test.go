@@ -701,11 +701,7 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 		}
 	}
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
 	var foreignKeys int
 	if err := db.QueryRowContext(context.Background(), `PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
@@ -2113,11 +2109,7 @@ func TestConnectStoresFileFallbackTokenAndAnchorsIdentity(t *testing.T) {
 	}
 	assertMode(t, tokenStorePath, 0o600)
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var connectionID, providerName, healthUserID, legacyUserID, tokenMetadata, identityJSON string
 	if err := db.QueryRowContext(context.Background(), `SELECT id, provider_name, google_health_user_id, legacy_fitbit_user_id, token_metadata_json, google_identity_json FROM connections`).Scan(&connectionID, &providerName, &healthUserID, &legacyUserID, &tokenMetadata, &identityJSON); err != nil {
 		t.Fatalf("query connection: %v", err)
@@ -2175,11 +2167,7 @@ func TestConnectReauthorizesSameIdentityWithoutSecondConnection(t *testing.T) {
 		t.Fatalf("second connect exit code = %d, want 0", code)
 	}
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var count int
 	if err := db.QueryRowContext(context.Background(), `SELECT count(*) FROM connections`).Scan(&count); err != nil {
 		t.Fatalf("count connections: %v", err)
@@ -2350,11 +2338,7 @@ func TestIdentityRefreshesArchivedGoogleIdentity(t *testing.T) {
 		t.Fatalf("identity output leaked token material:\nstdout:%s\nstderr:%s", stdout.String(), stderr.String())
 	}
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var legacyUserID, identityJSON string
 	if err := db.QueryRowContext(context.Background(), `SELECT legacy_fitbit_user_id, google_identity_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&legacyUserID, &identityJSON); err != nil {
 		t.Fatalf("query refreshed identity: %v", err)
@@ -2693,11 +2677,7 @@ func TestIdentityRejectsDifferentGoogleIdentity(t *testing.T) {
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var healthUserID, legacyUserID, identityJSON string
 	if err := db.QueryRowContext(context.Background(), `SELECT google_health_user_id, legacy_fitbit_user_id, google_identity_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&healthUserID, &legacyUserID, &identityJSON); err != nil {
 		t.Fatalf("query identity after mismatch: %v", err)
@@ -2752,11 +2732,7 @@ func TestProfileArchivesSnapshotAndPrintsSummary(t *testing.T) {
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var providerName, connectionID, rawJSON, fetchedAt string
 	if err := db.QueryRowContext(context.Background(), `SELECT provider_name, connection_id, raw_json, fetched_at FROM identity_snapshots WHERE id = ?`, 1).Scan(&providerName, &connectionID, &rawJSON, &fetchedAt); err != nil {
 		t.Fatalf("query profile snapshot: %v", err)
@@ -5542,11 +5518,7 @@ func TestConnectMigratesLegacyV1ArchiveBeforeStoringIdentity(t *testing.T) {
 
 	mustConnect(t, configPath, archivePath, testRuntime)
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var userVersion int
 	if err := db.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&userVersion); err != nil {
 		t.Fatalf("query user_version: %v", err)

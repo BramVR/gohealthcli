@@ -673,6 +673,21 @@ func bindDataPointSyncFetchFake(t *testing.T, runtime *runtimeAdapters, wantAcce
 	return &requests
 }
 
+// openArchiveForTest opens the Health Archive and registers its close
+// on test cleanup — the named form of the open/fatal/defer-close
+// boilerplate. Tests that must close the handle mid-test (to assert
+// close ordering or reopen exclusively) keep explicit openArchive calls.
+func openArchiveForTest(t *testing.T, archivePath string) *sql.DB {
+	t.Helper()
+
+	db, err := openArchive(archivePath)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
 func initializeFileCredentialSetup(t *testing.T, tempDir string) (string, string, string) {
 	t.Helper()
 
@@ -712,11 +727,7 @@ func readTestFixture(t *testing.T, name string) []byte {
 func archivedConnectionIdentityJSON(t *testing.T, archivePath string) string {
 	t.Helper()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var identityJSON string
 	if err := db.QueryRowContext(context.Background(), `SELECT google_identity_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&identityJSON); err != nil {
 		t.Fatalf("query archived identity JSON: %v", err)
@@ -727,11 +738,7 @@ func archivedConnectionIdentityJSON(t *testing.T, archivePath string) string {
 func archivedConnectionTokenMetadata(t *testing.T, archivePath string) string {
 	t.Helper()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var tokenMetadata string
 	if err := db.QueryRowContext(context.Background(), `SELECT token_metadata_json FROM connections WHERE id = ?`, "googlehealth:111111256096816351").Scan(&tokenMetadata); err != nil {
 		t.Fatalf("query archived token metadata: %v", err)
@@ -792,11 +799,7 @@ func setConnectionTokenScopes(t *testing.T, archivePath string, scopes []string)
 func assertArchiveTableCount(t *testing.T, archivePath, table string, want int) {
 	t.Helper()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var got int
 	if err := db.QueryRowContext(context.Background(), `SELECT count(*) FROM `+table).Scan(&got); err != nil {
 		t.Fatalf("count %s: %v", table, err)
@@ -809,11 +812,7 @@ func assertArchiveTableCount(t *testing.T, archivePath, table string, want int) 
 func insertStatusFixtureRows(t *testing.T, archivePath string) {
 	t.Helper()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	if _, err := db.ExecContext(context.Background(), `INSERT INTO connections (
 		id,
 		provider_name,
@@ -1001,11 +1000,7 @@ func createLegacyArchive(t *testing.T, archivePath string, schemaVersion int) {
 	if err := file.Close(); err != nil {
 		t.Fatalf("close legacy archive file: %v", err)
 	}
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open legacy archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	tx, err := db.BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("begin legacy migration: %v", err)
@@ -1031,11 +1026,7 @@ func createLegacyArchive(t *testing.T, archivePath string, schemaVersion int) {
 func setArchiveUserVersion(t *testing.T, archivePath string, version int) {
 	t.Helper()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	if _, err := db.ExecContext(context.Background(), fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		t.Fatalf("set archive user_version %d: %v", version, err)
 	}
@@ -1111,11 +1102,7 @@ func removeCredentialStoreSection(t *testing.T, config string) string {
 func assertArchiveUserVersion(t *testing.T, archivePath string, want int) {
 	t.Helper()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var got int
 	if err := db.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&got); err != nil {
 		t.Fatalf("query user_version: %v", err)
@@ -1182,11 +1169,7 @@ func mustURLQuery(t *testing.T, rawURL string) url.Values {
 func assertArchivedStepDataPoint(t *testing.T, archivePath string) {
 	t.Helper()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var providerName, connectionID, dataType, resourceName, recordKind, startUTC, endUTC, startCivil, endCivil, civilDate, timezoneMetadata, dataSourceJSON, rawJSON string
 	var sourceFamilyFilter sql.NullString
 	if err := db.QueryRowContext(context.Background(), `SELECT
@@ -1291,11 +1274,7 @@ func assertArchivedStepDataPoint(t *testing.T, archivePath string) {
 func assertArchivedIntervalDataPoint(t *testing.T, archivePath, resourceName, wantDataType, wantStartUTC, wantEndUTC, wantStartCivil, wantEndCivil, wantCivilDate, wantTimezoneMetadata, wantDataSourceJSON, wantSourceFamily, wantRawContains string) {
 	t.Helper()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var providerName, connectionID, dataType, recordKind, startUTC, endUTC, dataSourceJSON, rawJSON string
 	var startCivil, endCivil, civilDate, timezoneMetadata, sourceFamilyFilter sql.NullString
 	if err := db.QueryRowContext(context.Background(), `SELECT
@@ -1360,11 +1339,7 @@ func assertArchivedIntervalDataPoint(t *testing.T, archivePath, resourceName, wa
 func assertArchivedSampleDataPoint(t *testing.T, archivePath, resourceName, wantDataType, wantStartUTC, wantStartCivil, wantCivilDate, wantTimezoneMetadata, wantRawContains string) {
 	t.Helper()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var dataType, recordKind, startUTC, dataSourceJSON, rawJSON string
 	var endUTC, startCivil, endCivil, civilDate, timezoneMetadata sql.NullString
 	if err := db.QueryRowContext(context.Background(), `SELECT
@@ -1417,11 +1392,7 @@ func assertArchivedSampleDataPoint(t *testing.T, archivePath, resourceName, want
 func assertArchivedDailyDataPoint(t *testing.T, archivePath, resourceName, wantDataType, wantCivilDate, wantRawContains string) {
 	t.Helper()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var dataType, recordKind, dataSourceJSON, rawJSON string
 	var startUTC, endUTC, startCivil, endCivil, civilDate, timezoneMetadata sql.NullString
 	if err := db.QueryRowContext(context.Background(), `SELECT
@@ -1474,11 +1445,7 @@ func assertArchivedDailyDataPoint(t *testing.T, archivePath, resourceName, wantD
 func assertArchivedSessionDataPoint(t *testing.T, archivePath, resourceName, wantDataType, wantStartUTC, wantEndUTC, wantStartCivil, wantEndCivil, wantCivilDate, wantTimezoneMetadata, wantDataSourceJSON, wantRawContains string) {
 	t.Helper()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var providerName, connectionID, dataType, recordKind, startUTC, endUTC, dataSourceJSON, rawJSON string
 	var startCivil, endCivil, civilDate, timezoneMetadata, sourceFamilyFilter sql.NullString
 	if err := db.QueryRowContext(context.Background(), `SELECT
@@ -1567,11 +1534,7 @@ func assertSyncRunForDataType(t *testing.T, archivePath string, id int64, wantSt
 func assertSyncRunForDataTypeWithSourceFamily(t *testing.T, archivePath string, id int64, wantStatus, wantDataType, wantEndpointFamily, wantSourceFamily string, wantSeen, wantNew, wantUpdated int, wantErrorContains string) {
 	t.Helper()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var status, dataTypesJSON, rangeJSON, endpointFamily string
 	var sourceFamily sql.NullString
 	var seen, newCount, updated int
@@ -1629,11 +1592,7 @@ func assertSyncRunForDataTypeWithSourceFamily(t *testing.T, archivePath string, 
 func assertDataPointSourceFamilyCounts(t *testing.T, archivePath string, want map[string]int) {
 	t.Helper()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	rows, err := db.QueryContext(context.Background(), `SELECT IFNULL(source_family_filter, ''), count(*) FROM data_points GROUP BY IFNULL(source_family_filter, '')`)
 	if err != nil {
 		t.Fatalf("query Data Point source families: %v", err)
@@ -1659,11 +1618,7 @@ func assertDataPointSourceFamilyCounts(t *testing.T, archivePath string, want ma
 func assertArchivedStepsDailyRollup(t *testing.T, archivePath, wantCount string) {
 	t.Helper()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var providerName, connectionID, dataType, rollupKind, civilDate, rawJSON string
 	var windowStart, windowEnd, timezoneMetadata sql.NullString
 	if err := db.QueryRowContext(context.Background(), `SELECT
@@ -1709,11 +1664,7 @@ func assertArchivedStepsDailyRollup(t *testing.T, archivePath, wantCount string)
 func assertCorrectedStepRevision(t *testing.T, archivePath string) {
 	t.Helper()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var rawJSON, startUTC, startCivil string
 	if err := db.QueryRowContext(context.Background(), `SELECT raw_json, start_time_utc, start_civil_time FROM data_points WHERE upstream_resource_name = ?`, "users/me/dataTypes/steps/dataPoints/step-2026-01-01-a").Scan(&rawJSON, &startUTC, &startCivil); err != nil {
 		t.Fatalf("query corrected Data Point: %v", err)

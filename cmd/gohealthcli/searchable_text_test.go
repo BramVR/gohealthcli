@@ -59,11 +59,7 @@ func TestSearchableTextViewReturnsRowsFromAllFourSources(t *testing.T) {
 		rawJSON:      `{"exercise":{"exerciseType":"RUNNING","displayName":"Morning run"}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
 	rows, err := db.QueryContext(context.Background(), `SELECT kind, text FROM searchable_text ORDER BY kind, text`)
 	if err != nil {
@@ -138,11 +134,7 @@ func TestSearchableTextLIKENeedleAnswersAcrossKinds(t *testing.T) {
 		rawJSON:      `{"exercise":{"exerciseType":"RUNNING"}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	rows, err := db.QueryContext(context.Background(), `SELECT DISTINCT kind FROM searchable_text WHERE text LIKE '%Pixel%' ORDER BY kind`)
 	if err != nil {
 		t.Fatalf("query: %v", err)
