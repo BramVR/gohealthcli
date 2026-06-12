@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -23,7 +24,7 @@ type sqliteHealthArchiveConnectionAPI struct {
 }
 
 func openHealthArchiveConnectionAPI(archivePath string) (healthArchiveConnectionAPI, error) {
-	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(writeArchive)
+	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(context.Background(), writeArchive)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +56,7 @@ func (archive *sqliteHealthArchiveConnectionAPI) RefreshConnectionIdentity(conne
 }
 
 func (archive *sqliteHealthArchiveConnectionAPI) InspectConnectionTokenMetadata() (int, string, error) {
-	return inspectConnectionTokenMetadata(archive.db)
+	return inspectConnectionTokenMetadata(context.Background(), archive.db)
 }
 
 func ensureSameArchiveIdentity(db *sql.DB, healthUserID string) error {
@@ -208,8 +209,8 @@ func refreshConnectionIdentity(db *sql.DB, connection archivedConnection, identi
 	return err
 }
 
-func inspectConnectionTokenMetadata(db *sql.DB) (int, string, error) {
-	rows, err := db.Query(`SELECT id, token_metadata_json FROM connections ORDER BY id`)
+func inspectConnectionTokenMetadata(ctx context.Context, db *sql.DB) (int, string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT id, token_metadata_json FROM connections ORDER BY id`)
 	if err != nil {
 		return 0, "", err
 	}

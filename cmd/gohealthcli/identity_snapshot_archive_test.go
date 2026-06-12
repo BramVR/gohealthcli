@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -401,7 +402,7 @@ func TestV6ArchiveMigratesProfileSnapshotsWithKindDefault(t *testing.T) {
 	archivePath := filepath.Join(tempDir, "legacy.sqlite")
 	createLegacyV6ArchiveWithProfileSnapshot(t, archivePath, "conn_v6", `{"profile":"snapshot"}`, "2026-06-01T00:00:00Z")
 
-	if err := migrateArchiveIfNeeded(archivePath); err != nil {
+	if err := migrateArchiveIfNeeded(context.Background(), archivePath); err != nil {
 		t.Fatalf("migrate legacy v6 archive to current schema version: %v", err)
 	}
 
@@ -522,7 +523,7 @@ func applyV6SchemaForLegacyTest(db *sql.DB) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	applied := time.Date(2026, 5, 31, 21, 0, 0, 0, time.UTC).Format(time.RFC3339)
-	if err := applySchemaMigrationSteps(tx, 0, 6, applied); err != nil {
+	if err := applySchemaMigrationSteps(context.Background(), tx, 0, 6, applied); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`PRAGMA user_version = 6`); err != nil {

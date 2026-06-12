@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -129,7 +130,7 @@ type sqliteHealthArchiveWriter struct {
 }
 
 func openHealthArchiveWriter(archivePath string) (healthArchiveWriter, error) {
-	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(writeArchive)
+	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(context.Background(), writeArchive)
 	if err != nil {
 		return nil, err
 	}

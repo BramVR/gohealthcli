@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -52,7 +53,7 @@ func (err healthArchiveOpenError) Unwrap() error {
 	return err.err
 }
 
-func (lifecycle healthArchiveLifecycle) Create() (err error) {
+func (lifecycle healthArchiveLifecycle) Create(ctx context.Context) (err error) {
 	if err := ensureOwnerOnlyDir(filepath.Dir(lifecycle.path)); err != nil {
 		return err
 	}
@@ -74,7 +75,7 @@ func (lifecycle healthArchiveLifecycle) Create() (err error) {
 		return err
 	}
 	defer db.Close()
-	if err := applyMigrations(db, lifecycle.clock()); err != nil {
+	if err := applyMigrations(ctx, db, lifecycle.clock()); err != nil {
 		return err
 	}
 	if !usesPOSIXPermissions() {
@@ -83,8 +84,8 @@ func (lifecycle healthArchiveLifecycle) Create() (err error) {
 	return os.Chmod(lifecycle.path, 0o600)
 }
 
-func (lifecycle healthArchiveLifecycle) Open(mode healthArchiveOpenMode) (healthArchiveHandle, error) {
-	archive, err := lifecycle.MigrateAndInspect(false)
+func (lifecycle healthArchiveLifecycle) Open(ctx context.Context, mode healthArchiveOpenMode) (healthArchiveHandle, error) {
+	archive, err := lifecycle.MigrateAndInspect(ctx, false)
 	if err != nil {
 		return healthArchiveHandle{}, err
 	}
@@ -99,7 +100,7 @@ func (lifecycle healthArchiveLifecycle) Open(mode healthArchiveOpenMode) (health
 	}, nil
 }
 
-func (lifecycle healthArchiveLifecycle) Migrate() error {
+func (lifecycle healthArchiveLifecycle) Migrate(ctx context.Context) error {
 	if err := lifecycle.validateExistingFile(); err != nil {
 		return err
 	}
@@ -108,7 +109,7 @@ func (lifecycle healthArchiveLifecycle) Migrate() error {
 		return err
 	}
 	defer db.Close()
-	if err := applyPendingMigrations(db, lifecycle.clock()); err != nil {
+	if err := applyPendingMigrations(ctx, db, lifecycle.clock()); err != nil {
 		return err
 	}
 	// Backfill the attachment root for archives that predate #107 /
@@ -116,11 +117,11 @@ func (lifecycle healthArchiveLifecycle) Migrate() error {
 	return ensureOwnerOnlyDir(attachmentRootDirForArchive(lifecycle.path))
 }
 
-func (lifecycle healthArchiveLifecycle) MigrateAndInspect(validateTokens bool) (archiveCheck, error) {
-	if err := lifecycle.Migrate(); err != nil {
+func (lifecycle healthArchiveLifecycle) MigrateAndInspect(ctx context.Context, validateTokens bool) (archiveCheck, error) {
+	if err := lifecycle.Migrate(ctx); err != nil {
 		return archiveCheck{}, fmt.Errorf("Health Archive migration failed: %w", err)
 	}
-	archive, err := lifecycle.Inspect(validateTokens)
+	archive, err := lifecycle.Inspect(ctx, validateTokens)
 	if err != nil {
 		return archive, healthArchiveOpenError{
 			schemaVersion: archive.schemaVersion,
@@ -130,7 +131,7 @@ func (lifecycle healthArchiveLifecycle) MigrateAndInspect(validateTokens bool) (
 	return archive, nil
 }
 
-func (lifecycle healthArchiveLifecycle) Inspect(validateTokens bool) (archiveCheck, error) {
+func (lifecycle healthArchiveLifecycle) Inspect(ctx context.Context, validateTokens bool) (archiveCheck, error) {
 	if err := lifecycle.validateExistingFile(); err != nil {
 		return archiveCheck{}, err
 	}
@@ -141,7 +142,7 @@ func (lifecycle healthArchiveLifecycle) Inspect(validateTokens bool) (archiveChe
 	defer db.Close()
 
 	var userVersion int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&userVersion); err != nil {
 		return archiveCheck{}, err
 	}
 	if userVersion != currentSchemaVersion {
@@ -150,7 +151,7 @@ func (lifecycle healthArchiveLifecycle) Inspect(validateTokens bool) (archiveChe
 
 	for version, name := range expectedSchemaMigrations() {
 		var migrationCount int
-		if err := db.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version = ? AND name = ?`, version, name).Scan(&migrationCount); err != nil {
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations WHERE version = ? AND name = ?`, version, name).Scan(&migrationCount); err != nil {
 			return archiveCheck{schemaVersion: userVersion}, err
 		}
 		if migrationCount != 1 {
@@ -160,7 +161,7 @@ func (lifecycle healthArchiveLifecycle) Inspect(validateTokens bool) (archiveChe
 	if !validateTokens {
 		return archiveCheck{schemaVersion: userVersion}, nil
 	}
-	count, tokenStatus, err := inspectConnectionTokenMetadata(db)
+	count, tokenStatus, err := inspectConnectionTokenMetadata(ctx, db)
 	if err != nil {
 		return archiveCheck{}, err
 	}

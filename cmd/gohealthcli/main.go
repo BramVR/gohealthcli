@@ -691,7 +691,7 @@ func runDoctorWithRuntime(args []string, configPath, archivePath string, mode ou
 		if err != nil {
 			return runDoctorInvalid(common.ConfigPath, common.ArchivePath, fmt.Sprintf("config check failed: %v", err), mode, stdout, stderr)
 		}
-		archive, err := (healthArchiveLifecycle{path: common.ArchivePath}).MigrateAndInspect(true)
+		archive, err := (healthArchiveLifecycle{path: common.ArchivePath}).MigrateAndInspect(context.Background(), true)
 		if err != nil {
 			return runDoctorInvalid(common.ConfigPath, common.ArchivePath, err.Error(), mode, stdout, stderr)
 		}
@@ -874,7 +874,7 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 			}, stdout, stderr)
 		}
 		lifecycle := healthArchiveLifecycle{path: common.ArchivePath}
-		if err := lifecycle.Migrate(); err != nil {
+		if err := lifecycle.Migrate(context.Background()); err != nil {
 			return ReportFailure(FailureReport{
 				Command: "init",
 				Status:  StatusOperationFailed,
@@ -882,7 +882,7 @@ func runInit(args []string, configPath, archivePath string, mode outputMode, std
 				Mode:    mode,
 			}, stdout, stderr)
 		}
-		if _, err := lifecycle.Inspect(false); err != nil {
+		if _, err := lifecycle.Inspect(context.Background(), false); err != nil {
 			return ReportFailure(FailureReport{
 				Command: "init",
 				Status:  StatusOperationFailed,
@@ -1424,7 +1424,7 @@ func connectSetupWithRuntimeAndExtraScopes(configPath, archivePath string, noInp
 	if config.oauthClient.kind != "file" {
 		return connectResult{CredentialStore: config.credentialStore.kind}, errors.New("connect requires an OAuth client file source; Secret Provider references are setup-only")
 	}
-	if _, err := (healthArchiveLifecycle{path: archivePath}).MigrateAndInspect(false); err != nil {
+	if _, err := (healthArchiveLifecycle{path: archivePath}).MigrateAndInspect(context.Background(), false); err != nil {
 		var checkErr healthArchiveOpenError
 		if errors.As(err, &checkErr) {
 			return connectResult{}, err
@@ -1535,7 +1535,7 @@ func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtim
 		OAuthClientSource: config.oauthClient.kind,
 		CredentialStore:   config.credentialStore.kind,
 	}
-	archive, err := (healthArchiveLifecycle{path: archivePath}).MigrateAndInspect(true)
+	archive, err := (healthArchiveLifecycle{path: archivePath}).MigrateAndInspect(context.Background(), true)
 	if err != nil {
 		result.Status = "setup_invalid"
 		result.TokenStatus = "unknown"
@@ -1822,7 +1822,7 @@ func configContent(configPath, archivePath string, source oauthClientSource) str
 }
 
 func createArchive(archivePath string) (err error) {
-	if err := (healthArchiveLifecycle{path: archivePath}).Create(); err != nil {
+	if err := (healthArchiveLifecycle{path: archivePath}).Create(context.Background()); err != nil {
 		return err
 	}
 	// Pre-create the attachment root so users running init see the

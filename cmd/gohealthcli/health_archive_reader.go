@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -26,7 +27,7 @@ type sqliteHealthArchiveReader struct {
 type healthArchiveReaderOpenError = healthArchiveOpenError
 
 func openHealthArchiveReader(archivePath string) (healthArchiveReader, error) {
-	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(readOnlyArchive)
+	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(context.Background(), readOnlyArchive)
 	if err != nil {
 		return nil, err
 	}

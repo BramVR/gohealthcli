@@ -7,6 +7,7 @@ package main
 // one new table row plus the currentSchemaVersion bump below.
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -20,11 +21,13 @@ const currentSchemaVersion = 23
 // schemaMigration is one Health Archive schema step: the version it
 // migrates an archive *to*, the schema_migrations history name recorded
 // for it, and the DDL it applies. Steps run inside the caller's
-// transaction; the apply loop records the history row.
+// transaction and carry the caller's context (#305) so a canceled
+// migration aborts at the next statement boundary; the apply loop
+// records the history row.
 type schemaMigration struct {
 	version int
 	name    string
-	apply   func(tx *sql.Tx) error
+	apply   func(ctx context.Context, tx *sql.Tx) error
 }
 
 // schemaMigrationTable is the ordered schema history of the Health
@@ -100,11 +103,11 @@ func schemaMigrationTable() []schemaMigration {
 		// batteryPercentage paths the upstream never emits, so both views
 		// always returned zero device rows. Same follow-up shape as
 		// version 12's exercise_splits fix.
-		{version: 23, name: "fix_paired_devices_real_shape", apply: func(tx *sql.Tx) error {
-			if err := recreateRegistryViewStep("paired-devices", "paired_devices")(tx); err != nil {
+		{version: 23, name: "fix_paired_devices_real_shape", apply: func(ctx context.Context, tx *sql.Tx) error {
+			if err := recreateRegistryViewStep("paired-devices", "paired_devices")(ctx, tx); err != nil {
 				return err
 			}
-			return recreateRegistryViewStep("searchable-text", "searchable_text")(tx)
+			return recreateRegistryViewStep("searchable-text", "searchable_text")(ctx, tx)
 		}},
 	}
 }
@@ -112,18 +115,18 @@ func schemaMigrationTable() []schemaMigration {
 // applyMigrations creates the full current schema on a fresh, empty
 // Health Archive by applying every table row from version 1. The
 // caller's clock stamps schema_migrations.applied_at.
-func applyMigrations(db *sql.DB, now func() time.Time) error {
-	tx, err := db.Begin()
+func applyMigrations(ctx context.Context, db *sql.DB, now func() time.Time) error {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	// Rollback after a successful Commit returns sql.ErrTxDone; the error is
 	// deliberately ignored because this defer is only the abort path.
 	defer func() { _ = tx.Rollback() }()
-	if err := applySchemaMigrationSteps(tx, 0, currentSchemaVersion, now().UTC().Format(time.RFC3339)); err != nil {
+	if err := applySchemaMigrationSteps(ctx, tx, 0, currentSchemaVersion, now().UTC().Format(time.RFC3339)); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, currentSchemaVersion)); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, currentSchemaVersion)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -132,26 +135,26 @@ func applyMigrations(db *sql.DB, now func() time.Time) error {
 // applyPendingMigrations upgrades an existing Health Archive from its
 // recorded schema version to the current one, applying only the table
 // rows the archive has not reached yet.
-func applyPendingMigrations(db *sql.DB, now func() time.Time) error {
+func applyPendingMigrations(ctx context.Context, db *sql.DB, now func() time.Time) error {
 	var userVersion int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&userVersion); err != nil {
 		return err
 	}
 	switch {
 	case userVersion == currentSchemaVersion:
 		return nil
 	case userVersion >= 1 && userVersion < currentSchemaVersion:
-		tx, err := db.Begin()
+		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
 		// Rollback after a successful Commit returns sql.ErrTxDone; the error is
 		// deliberately ignored because this defer is only the abort path.
 		defer func() { _ = tx.Rollback() }()
-		if err := applySchemaMigrationSteps(tx, userVersion, currentSchemaVersion, now().UTC().Format(time.RFC3339)); err != nil {
+		if err := applySchemaMigrationSteps(ctx, tx, userVersion, currentSchemaVersion, now().UTC().Format(time.RFC3339)); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, currentSchemaVersion)); err != nil {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, currentSchemaVersion)); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -164,25 +167,25 @@ func applyPendingMigrations(db *sql.DB, now func() time.Time) error {
 // fromVersion < version <= toVersion, in table order, recording one
 // schema_migrations history row per applied step. The caller owns the
 // transaction and the closing PRAGMA user_version write.
-func applySchemaMigrationSteps(tx *sql.Tx, fromVersion, toVersion int, appliedAt string) error {
+func applySchemaMigrationSteps(ctx context.Context, tx *sql.Tx, fromVersion, toVersion int, appliedAt string) error {
 	for _, migration := range schemaMigrationTable() {
 		if migration.version <= fromVersion || migration.version > toVersion {
 			continue
 		}
-		if err := migration.apply(tx); err != nil {
+		if err := migration.apply(ctx, tx); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)`, migration.version, migration.name, appliedAt); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)`, migration.version, migration.name, appliedAt); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func migrateArchiveIfNeeded(archivePath string) error {
+func migrateArchiveIfNeeded(ctx context.Context, archivePath string) error {
 	// healthArchiveLifecycle.Migrate already backfills the attachment
 	// root, so this thin wrapper just forwards.
-	return (healthArchiveLifecycle{path: archivePath}).Migrate()
+	return (healthArchiveLifecycle{path: archivePath}).Migrate(ctx)
 }
 
 // expectedSchemaMigrations is the version → name history Inspect
@@ -197,17 +200,17 @@ func expectedSchemaMigrations() map[int]string {
 }
 
 // statementsStep wraps a fixed DDL statement list as a migration step.
-func statementsStep(statements func() []string) func(tx *sql.Tx) error {
-	return func(tx *sql.Tx) error {
-		return execMigrationStatements(tx, statements())
+func statementsStep(statements func() []string) func(ctx context.Context, tx *sql.Tx) error {
+	return func(ctx context.Context, tx *sql.Tx) error {
+		return execMigrationStatements(ctx, tx, statements())
 	}
 }
 
 // registryViewsStep applies the Normalized View CREATE statements the
 // registry pins to one schema version.
-func registryViewsStep(version int) func(tx *sql.Tx) error {
-	return func(tx *sql.Tx) error {
-		return execMigrationStatements(tx, normalizedViewsRegistry().MigrationStatements(version))
+func registryViewsStep(version int) func(ctx context.Context, tx *sql.Tx) error {
+	return func(ctx context.Context, tx *sql.Tx) error {
+		return execMigrationStatements(ctx, tx, normalizedViewsRegistry().MigrationStatements(version))
 	}
 }
 
@@ -215,23 +218,23 @@ func registryViewsStep(version int) func(tx *sql.Tx) error {
 // recreates it from the registry's current spec — the step shape for
 // fix-style migrations that repair a view shipped by an earlier
 // version.
-func recreateRegistryViewStep(datasetName, viewName string) func(tx *sql.Tx) error {
-	return func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`DROP VIEW IF EXISTS ` + viewName); err != nil {
+func recreateRegistryViewStep(datasetName, viewName string) func(ctx context.Context, tx *sql.Tx) error {
+	return func(ctx context.Context, tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DROP VIEW IF EXISTS `+viewName); err != nil {
 			return err
 		}
 		spec, ok := normalizedViewsRegistry().View(datasetName)
 		if !ok {
 			return fmt.Errorf("%s view missing from registry; cannot recreate", datasetName)
 		}
-		_, err := tx.Exec(exportDatasetViewMigrationStatement(spec))
+		_, err := tx.ExecContext(ctx, exportDatasetViewMigrationStatement(spec))
 		return err
 	}
 }
 
-func execMigrationStatements(tx *sql.Tx, statements []string) error {
+func execMigrationStatements(ctx context.Context, tx *sql.Tx, statements []string) error {
 	for _, statement := range statements {
-		if _, err := tx.Exec(statement); err != nil {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return err
 		}
 	}

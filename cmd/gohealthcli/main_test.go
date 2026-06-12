@@ -7828,7 +7828,7 @@ func createLegacyArchive(t *testing.T, archivePath string, schemaVersion int) {
 	if err != nil {
 		t.Fatalf("begin legacy migration: %v", err)
 	}
-	if err := applySchemaMigrationSteps(tx, 0, schemaVersion, time.Date(2026, 5, 31, 21, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
+	if err := applySchemaMigrationSteps(context.Background(), tx, 0, schemaVersion, time.Date(2026, 5, 31, 21, 0, 0, 0, time.UTC).Format(time.RFC3339)); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("apply legacy schema migrations through version %d: %v", schemaVersion, err)
 	}

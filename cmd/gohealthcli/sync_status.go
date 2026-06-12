@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"flag"
@@ -97,7 +98,7 @@ func fenceAbandonedSyncRuns(db *sql.DB, now time.Time) (int64, error) {
 // migrations first, so the fence can rely on last_progress_at
 // existing.
 func fenceAbandonedSyncRunsAtPath(archivePath string, now time.Time) (int64, error) {
-	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(writeArchive)
+	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(context.Background(), writeArchive)
 	if err != nil {
 		return 0, err
 	}
@@ -228,7 +229,7 @@ func syncStatusSetup(archivePath string, now time.Time, window time.Duration) (s
 	// SQLITE_BUSY retry budget — the worst case is one stale corpse
 	// row that the next entry point fences.
 	_, _ = fenceAbandonedSyncRunsAtPath(archivePath, now)
-	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(readOnlyArchive)
+	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(context.Background(), readOnlyArchive)
 	if err != nil {
 		return result, err
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -105,7 +106,7 @@ func openAttachmentStoreReadOnly(archivePath string) (*attachmentStore, error) {
 }
 
 func openAttachmentStoreMode(archivePath string, mode healthArchiveOpenMode) (*attachmentStore, error) {
-	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(mode)
+	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(context.Background(), mode)
 	if err != nil {
 		return nil, err
 	}

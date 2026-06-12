@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -39,7 +40,7 @@ func writeIdentitySnapshotHandoff(connectionArchive healthArchiveConnectionAPI, 
 }
 
 func openIdentitySnapshotArchive(archivePath string) (*identitySnapshotArchive, error) {
-	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(writeArchive)
+	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(context.Background(), writeArchive)
 	if err != nil {
 		return nil, err
 	}

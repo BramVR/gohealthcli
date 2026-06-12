@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,7 +19,7 @@ func TestHealthArchiveLifecycleOpensReadOnlyAndWriteHandlesThroughOnePath(t *tes
 	createLegacyV4Archive(t, archivePath)
 
 	lifecycle := healthArchiveLifecycle{path: archivePath}
-	readOnly, err := lifecycle.Open(readOnlyArchive)
+	readOnly, err := lifecycle.Open(context.Background(), readOnlyArchive)
 	if err != nil {
 		t.Fatalf("open read-only Health Archive: %v", err)
 	}
@@ -28,7 +31,7 @@ func TestHealthArchiveLifecycleOpensReadOnlyAndWriteHandlesThroughOnePath(t *tes
 		t.Fatal("read-only write error = nil, want SQLite read-only failure")
 	}
 
-	write, err := lifecycle.Open(writeArchive)
+	write, err := lifecycle.Open(context.Background(), writeArchive)
 	if err != nil {
 		t.Fatalf("open writable Health Archive: %v", err)
 	}
@@ -51,13 +54,13 @@ func TestFreshHealthArchiveSchemaMatchesFullyMigratedLegacyArchive(t *testing.T)
 	tempDir := t.TempDir()
 
 	freshPath := filepath.Join(tempDir, "fresh", "gohealthcli.sqlite")
-	if err := (healthArchiveLifecycle{path: freshPath}).Create(); err != nil {
+	if err := (healthArchiveLifecycle{path: freshPath}).Create(context.Background()); err != nil {
 		t.Fatalf("create fresh Health Archive: %v", err)
 	}
 
 	migratedPath := filepath.Join(tempDir, "legacy", "gohealthcli.sqlite")
 	createLegacyV1Archive(t, migratedPath)
-	if err := (healthArchiveLifecycle{path: migratedPath}).Migrate(); err != nil {
+	if err := (healthArchiveLifecycle{path: migratedPath}).Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate legacy v1 Health Archive: %v", err)
 	}
 
@@ -76,7 +79,7 @@ func TestCreateStampsSchemaMigrationsWithInjectedClock(t *testing.T) {
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
 	clock := func() time.Time { return time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC) }
-	if err := (healthArchiveLifecycle{path: archivePath, now: clock}).Create(); err != nil {
+	if err := (healthArchiveLifecycle{path: archivePath, now: clock}).Create(context.Background()); err != nil {
 		t.Fatalf("create fresh Health Archive: %v", err)
 	}
 
@@ -94,7 +97,7 @@ func TestMigrateStampsPendingSchemaMigrationsWithInjectedClock(t *testing.T) {
 	createLegacyV1Archive(t, archivePath)
 
 	clock := func() time.Time { return time.Date(2026, 6, 11, 13, 30, 0, 0, time.UTC) }
-	if err := (healthArchiveLifecycle{path: archivePath, now: clock}).Migrate(); err != nil {
+	if err := (healthArchiveLifecycle{path: archivePath, now: clock}).Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate legacy v1 Health Archive: %v", err)
 	}
 
@@ -111,7 +114,7 @@ func TestMigrationStampsNormalizeInjectedClockToUTC(t *testing.T) {
 
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
-	if err := (healthArchiveLifecycle{path: archivePath, now: clock}).Create(); err != nil {
+	if err := (healthArchiveLifecycle{path: archivePath, now: clock}).Create(context.Background()); err != nil {
 		t.Fatalf("create fresh Health Archive: %v", err)
 	}
 
@@ -208,11 +211,48 @@ func TestHealthArchiveLifecycleReportsInspectedSchemaVersion(t *testing.T) {
 	createLegacyV4Archive(t, archivePath)
 	setArchiveUserVersion(t, archivePath, currentSchemaVersion+1)
 
-	archive, err := (healthArchiveLifecycle{path: archivePath}).Inspect(false)
+	archive, err := (healthArchiveLifecycle{path: archivePath}).Inspect(context.Background(), false)
 	if err == nil || !strings.Contains(err.Error(), "schema version") {
 		t.Fatalf("inspect error = %v, want schema version failure", err)
 	}
 	if archive.schemaVersion != currentSchemaVersion+1 {
 		t.Fatalf("inspected schema version = %d, want %d", archive.schemaVersion, currentSchemaVersion+1)
+	}
+}
+
+// TestHealthArchiveLifecycleCreateHonorsCanceledContext pins the
+// noctx-completion slice (#305): the lifecycle's SQLite work rides the
+// caller's context, so a canceled context aborts Create before any
+// migration lands — and Create's cleanup contract still holds (no
+// half-created archive file left behind).
+func TestHealthArchiveLifecycleCreateHonorsCanceledContext(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := (healthArchiveLifecycle{path: archivePath}).Create(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Create with canceled context = %v, want context.Canceled", err)
+	}
+	if _, statErr := os.Stat(archivePath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("Create left %s behind after cancellation (stat err = %v)", archivePath, statErr)
+	}
+}
+
+// TestHealthArchiveLifecycleOpenHonorsCanceledContext: the Open path
+// (migrate + inspect) aborts under a canceled context instead of
+// silently running PRAGMA and history checks to completion.
+func TestHealthArchiveLifecycleOpenHonorsCanceledContext(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "data", "gohealthcli.sqlite")
+	createLegacyV4Archive(t, archivePath)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := (healthArchiveLifecycle{path: archivePath}).Open(ctx, readOnlyArchive); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Open with canceled context = %v, want context.Canceled", err)
 	}
 }

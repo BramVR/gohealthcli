@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	_ "embed"
 	"encoding/json"
@@ -91,7 +92,7 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 	if err != nil {
 		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
-	if err := migrateArchiveIfNeeded(resolvedPath); err != nil {
+	if err := migrateArchiveIfNeeded(context.Background(), resolvedPath); err != nil {
 		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	db, err := openArchiveReadOnly(resolvedPath)
