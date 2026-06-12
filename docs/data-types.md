@@ -9,7 +9,7 @@ A plain-language guide to every Data Type the Google Health catalog exposes thro
 
 - **Sync key** — the literal string accepted by `sync --types`.
 - **Shape** — how the upstream returns each Data Point: `sample` (point-in-time reading), `interval` (a value over a span), `session` (a user activity with start/end), `daily` (one row per civil date).
-- **Scope** — the OAuth scope required. Opt-in keys (`ecg`, `irn`, `nutrition`, `tcx`) are granted via `connect --add-scopes …`; none of them are part of the default `connect` grant.
+- **Scope** — the OAuth scope required. Opt-in keys (`ecg`, `irn`, `nutrition`, `tcx`, plus `settings`, which gates the `settings`/`devices` identity commands rather than any sync type) are granted via `connect --add-scopes …`; none of them are part of the default `connect` grant.
 - **Rollups** — which `--rollup` kinds the catalog row supports beyond raw Data Points.
 - **Stored as** — the table the row lands in (`data_points` for raw, `rollups` for aggregates) plus the normalized view exposed for queries and `export`.
 
