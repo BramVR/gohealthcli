@@ -42,5 +42,5 @@ func writeCredentialStoreFile(path string, content []byte) error {
 		return err
 	}
 	keepTemp = false
-	return os.Chmod(path, 0o600)
+	return nil
 }
