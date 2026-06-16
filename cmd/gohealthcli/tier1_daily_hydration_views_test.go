@@ -34,12 +34,11 @@ func TestDailyVo2MaxViewProjectsScalars(t *testing.T) {
 	if civilDate != "2026-06-07" {
 		t.Errorf("civil_date = %q, want 2026-06-07", civilDate)
 	}
-	// SQLite json_extract → CAST AS TEXT formats doubles with ~15
-	// significant digits of precision, which is enough for vo2Max
-	// (52.72…) and covariance (0.76…) but does trim the live API's
-	// 17-digit doubles. The raw JSON is preserved verbatim in
-	// data_points.raw_json for callers who need full precision; the
-	// view exposes the value SQLite returns.
+	// The view formats doubles with ~15 significant digits, which is
+	// enough for vo2Max (52.72...) and covariance (0.76...) but does
+	// trim the live API's 17-digit doubles. The raw JSON is preserved
+	// verbatim in data_points.raw_json for callers who need full
+	// precision; the view exposes this stable text contract.
 	if vo2Max != "52.7208421736644" {
 		t.Errorf("vo2_max = %q, want 52.7208421736644 (TEXT preserves 15-digit precision)", vo2Max)
 	}

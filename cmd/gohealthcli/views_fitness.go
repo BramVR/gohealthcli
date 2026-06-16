@@ -64,10 +64,10 @@ var runVo2MaxSamplesViewSpec = exportDatasetSpec{
 var dailyVo2MaxViewSpec = exportDatasetSpec{
 	// daily_vo2_max projects archived daily-vo2-max Data Points into
 	// one row per civil date with the principal vo2Max scalar, the
-	// cardio-fitness-level enum, and the covariance scalar. vo2Max
-	// stored as TEXT to preserve floating-point precision; the raw
-	// JSON path lives at $.dailyVo2Max.vo2Max (Google's repeated
-	// data-type name nesting).
+	// cardio-fitness-level enum, and the covariance scalar. The float
+	// scalars use explicit text formatting so exports stay stable across
+	// SQLite driver updates; the raw JSON path lives at
+	// $.dailyVo2Max.vo2Max (Google's repeated data-type name nesting).
 	name:             "daily-vo2-max",
 	view:             "daily_vo2_max",
 	migrationVersion: 19,
@@ -76,9 +76,9 @@ var dailyVo2MaxViewSpec = exportDatasetSpec{
 			provider_name,
 			connection_id,
 			provider_civil_date AS civil_date,
-			CAST(json_extract(raw_json, '$.dailyVo2Max.vo2Max') AS TEXT) AS vo2_max,
+			printf('%.15g', json_extract(raw_json, '$.dailyVo2Max.vo2Max')) AS vo2_max,
 			IFNULL(json_extract(raw_json, '$.dailyVo2Max.cardioFitnessLevel'), '') AS cardio_fitness_level,
-			CAST(json_extract(raw_json, '$.dailyVo2Max.vo2MaxCovariance') AS TEXT) AS vo2_max_covariance,
+			printf('%.15g', json_extract(raw_json, '$.dailyVo2Max.vo2MaxCovariance')) AS vo2_max_covariance,
 			IFNULL(source_family_filter, '') AS source_family_filter,
 			IFNULL(upstream_resource_name, '') AS upstream_resource_name
 		FROM data_points
