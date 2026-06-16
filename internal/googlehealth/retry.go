@@ -18,6 +18,7 @@ const (
 	googleHealthRetryMaxAttempts = 5
 	googleHealthRetryBaseDelay   = 250 * time.Millisecond
 	googleHealthRetryMaxDelay    = 30 * time.Second
+	retryProgressHeartbeatEvery  = time.Minute
 )
 
 // googleHealthRetryFetcher is the inner Fetch the middleware wraps.
@@ -27,11 +28,13 @@ const (
 // in-flight call instead of waiting for it to return (#284).
 type googleHealthRetryFetcher func(ctx context.Context, request RawRequest, accessToken string) ([]byte, error)
 
-// googleHealthRetrySleeper is the time-source seam tests inject. It
+// RetrySleeper is the time-source seam tests inject. It
 // receives the run's context so the production implementation can
 // short-circuit a backoff when SIGINT cancels it; tests typically
 // inject a no-op sleeper that records the requested duration.
-type googleHealthRetrySleeper func(ctx context.Context, d time.Duration) (canceled bool)
+type RetrySleeper func(ctx context.Context, d time.Duration) (canceled bool)
+
+type googleHealthRetrySleeper = RetrySleeper
 
 // fetchWithRetry retries 429 and 5xx responses with bounded exponential
 // backoff plus jitter. Non-transient failures (401, 403, 404, network
@@ -43,6 +46,10 @@ type googleHealthRetrySleeper func(ctx context.Context, d time.Duration) (cancel
 // SIGINT during a stalled fetch or a 30s backoff does not leave the
 // user waiting (#284).
 func fetchWithRetry(ctx context.Context, fetcher googleHealthRetryFetcher, sleeper googleHealthRetrySleeper, jitter func(time.Duration) time.Duration, request RawRequest, accessToken string) ([]byte, error) {
+	return fetchWithRetryProgress(ctx, fetcher, sleeper, jitter, nil, request, accessToken)
+}
+
+func fetchWithRetryProgress(ctx context.Context, fetcher googleHealthRetryFetcher, sleeper googleHealthRetrySleeper, jitter func(time.Duration) time.Duration, progress func(), request RawRequest, accessToken string) ([]byte, error) {
 	if sleeper == nil {
 		sleeper = sleepWithCancel
 	}
@@ -52,6 +59,9 @@ func fetchWithRetry(ctx context.Context, fetcher googleHealthRetryFetcher, sleep
 	var lastErr error
 	attempts := 0
 	for attempt := 0; attempt < googleHealthRetryMaxAttempts; attempt++ {
+		if attempt > 0 && progress != nil {
+			progress()
+		}
 		attempts++
 		body, err := fetcher(ctx, request, accessToken)
 		if err == nil {
@@ -75,11 +85,33 @@ func fetchWithRetry(ctx context.Context, fetcher googleHealthRetryFetcher, sleep
 			break
 		}
 		delay := backoffDelay(attempt, retryAfterFromError(err))
-		if canceled := sleeper(ctx, jitter(delay)); canceled {
+		if canceled := sleepRetryDelayWithProgress(ctx, sleeper, jitter(delay), progress); canceled {
 			return nil, ErrSyncCanceled
 		}
 	}
 	return nil, fmt.Errorf("Google Health request failed after %d attempts: %w", attempts, lastErr)
+}
+
+func sleepRetryDelayWithProgress(ctx context.Context, sleeper googleHealthRetrySleeper, delay time.Duration, progress func()) bool {
+	if progress == nil || delay <= retryProgressHeartbeatEvery {
+		if progress != nil {
+			progress()
+		}
+		return sleeper(ctx, delay)
+	}
+	remaining := delay
+	for remaining > 0 {
+		progress()
+		chunk := retryProgressHeartbeatEvery
+		if remaining < chunk {
+			chunk = remaining
+		}
+		if canceled := sleeper(ctx, chunk); canceled {
+			return true
+		}
+		remaining -= chunk
+	}
+	return false
 }
 
 // sleepWithCancel sleeps for d, but returns early (canceled=true) if
