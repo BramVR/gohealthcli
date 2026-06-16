@@ -96,14 +96,20 @@ func fenceAbandonedSyncRuns(ctx context.Context, db *sql.DB, now time.Time) (int
 // that do not already hold an open archive handle (`status`, the
 // `sync` write path). Opening through the lifecycle runs pending
 // migrations first, so the fence can rely on last_progress_at
-// existing.
+// existing. It deliberately does not repair the attachment root:
+// status surfaces are report-only around sidecar integrity, even when
+// they opportunistically write the abandoned-run fence.
 func fenceAbandonedSyncRunsAtPath(ctx context.Context, archivePath string, now time.Time) (int64, error) {
-	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(ctx, writeArchive)
+	lifecycle := healthArchiveLifecycle{path: archivePath}
+	if _, err := lifecycle.migrateAndInspect(ctx, false, false); err != nil {
+		return 0, err
+	}
+	db, err := lifecycle.openDB(writeArchive)
 	if err != nil {
 		return 0, err
 	}
-	defer handle.Close()
-	return fenceAbandonedSyncRuns(ctx, handle.db, now)
+	defer db.Close()
+	return fenceAbandonedSyncRuns(ctx, db, now)
 }
 
 type syncStatusRun struct {
