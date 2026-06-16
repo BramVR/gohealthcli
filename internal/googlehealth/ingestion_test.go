@@ -113,6 +113,55 @@ func TestGoogleHealthIngestionChoosesReconcileFromSourceFamily(t *testing.T) {
 	}
 }
 
+func TestGoogleHealthIngestionHeartbeatsDuringRetryStorm(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{}
+	attempts := 0
+	fetcher := func(context.Context, RawRequest, string) ([]byte, error) {
+		attempts++
+		if attempts < 3 {
+			return nil, &HTTPError{StatusCode: 429, RetryAfter: 6 * time.Minute}
+		}
+		return []byte(`{"dataPoints":[]}`), nil
+	}
+	var sleeps []time.Duration
+	ingestion := Ingestion{
+		provider: retryFetchProvider{
+			fetch:   fetcher,
+			sleeper: recordingSleeper(&sleeps),
+			jitter:  noopRetryJitter,
+		},
+		now: func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) },
+	}
+	progressCalls := 0
+	request := fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		From:     "2026-01-01",
+		To:       "2026-01-02T00:00:00Z",
+		Progress: func(IngestionResult) {
+			progressCalls++
+		},
+	})
+
+	if _, err := ingestion.Execute(context.Background(), archive, request); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
+	if len(sleeps) != 12 {
+		t.Fatalf("sleeps = %v, want twelve 1m Retry-After chunks", sleeps)
+	}
+	for _, sleep := range sleeps {
+		if sleep != time.Minute {
+			t.Fatalf("sleeps = %v, want all chunks to be 1m", sleeps)
+		}
+	}
+	if progressCalls != 15 {
+		t.Fatalf("progress calls = %d, want 15 (page boundary, per-minute retry sleep heartbeats, before each retry attempt)", progressCalls)
+	}
+}
+
 func TestGoogleHealthIngestionRejectsDefaultSyncForNonListDataType(t *testing.T) {
 	t.Parallel()
 	ingestion := fakeGoogleHealthIngestion(newFakeGoogleHealthIngestionProvider(t, "access-secret", nil))

@@ -195,6 +195,36 @@ func TestFetchWithRetryHonorsRetryAfterAsMinimum(t *testing.T) {
 	}
 }
 
+func TestFetchWithRetryReportsProgressBeforeRetryAfterSleepAndNextAttempt(t *testing.T) {
+	t.Parallel()
+	attempts := 0
+	var events []string
+	fetcher := func(context.Context, RawRequest, string) ([]byte, error) {
+		attempts++
+		events = append(events, fmt.Sprintf("fetch-%d", attempts))
+		if attempts == 1 {
+			return nil, &HTTPError{StatusCode: 429, RetryAfter: 3 * time.Second}
+		}
+		return []byte(`{}`), nil
+	}
+	sleeper := func(_ context.Context, d time.Duration) bool {
+		events = append(events, fmt.Sprintf("sleep-%s", d))
+		return false
+	}
+	progress := func() {
+		events = append(events, "progress")
+	}
+
+	_, err := fetchWithRetryProgress(context.Background(), fetcher, sleeper, noopRetryJitter, progress, RawRequest{}, "tok")
+	if err != nil {
+		t.Fatalf("err = %v, want success after retry", err)
+	}
+	want := []string{"fetch-1", "progress", "sleep-3s", "progress", "fetch-2"}
+	if strings.Join(events, ",") != strings.Join(want, ",") {
+		t.Fatalf("events = %v, want %v", events, want)
+	}
+}
+
 func TestFetchWithRetryRetryAfterIgnoredIfSmallerThanExponential(t *testing.T) {
 	t.Parallel()
 	// Force the second sleep to use exponential (500ms) rather than the smaller Retry-After (100ms).
