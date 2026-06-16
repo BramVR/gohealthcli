@@ -24,6 +24,7 @@ type runtimeAdapters struct {
 	fetchSettings      func(string) (googleSettings, error)
 	fetchIRNProfile    func(string) (googleIRNProfile, error)
 	fetchRawProvider   func(context.Context, googlehealth.RawRequest, string) ([]byte, error)
+	retrySleeper       googlehealth.RetrySleeper
 	// openHealthArchiveWriter opens the Health Archive write handle the
 	// Sync Run path uses (gate connection lookup + lifecycle). Tests
 	// wrap it to inject failing writers; production binds the real
@@ -116,7 +117,7 @@ func (adapters runtimeAdapters) providerGET() googlehealth.GET {
 // wraps the fetch in its bounded retry middleware.
 func newGoogleHealthIngestionWithRuntime(runtime runtimeAdapters) googlehealth.Ingestion {
 	runtime = runtime.withDefaults()
-	return googlehealth.NewIngestion(runtime.fetchRawProvider, runtime.now)
+	return googlehealth.NewIngestionWithRetrySeams(runtime.fetchRawProvider, runtime.now, runtime.retrySleeper, nil)
 }
 
 func (adapters runtimeAdapters) withDefaults() runtimeAdapters {

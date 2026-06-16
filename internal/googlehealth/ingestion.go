@@ -143,8 +143,12 @@ type googleHealthRollupList struct {
 // bounded retry middleware (retry.go) exactly as before the
 // extraction. now must be non-nil; main passes the adapters' clock.
 func NewIngestion(fetch func(ctx context.Context, request RawRequest, accessToken string) ([]byte, error), now func() time.Time) Ingestion {
+	return NewIngestionWithRetrySeams(fetch, now, nil, nil)
+}
+
+func NewIngestionWithRetrySeams(fetch func(ctx context.Context, request RawRequest, accessToken string) ([]byte, error), now func() time.Time, sleeper RetrySleeper, jitter func(time.Duration) time.Duration) Ingestion {
 	return Ingestion{
-		provider: retryFetchProvider{fetch: fetch},
+		provider: retryFetchProvider{fetch: fetch, sleeper: sleeper, jitter: jitter},
 		now:      now,
 	}
 }
@@ -155,10 +159,13 @@ type retryFetchProvider struct {
 	// fetchWithRetry falls back to sleepWithCancel + defaultRetryJitter.
 	sleeper googleHealthRetrySleeper
 	jitter  func(time.Duration) time.Duration
+	// progress is the per-run heartbeat hook. When present, retry backoff
+	// refreshes the same advisory Sync Run heartbeat as page boundaries.
+	progress func()
 }
 
 func (provider retryFetchProvider) Fetch(ctx context.Context, request RawRequest, accessToken string) ([]byte, error) {
-	return fetchWithRetry(ctx, provider.fetch, provider.sleeper, provider.jitter, request, accessToken)
+	return fetchWithRetryProgress(ctx, provider.fetch, provider.sleeper, provider.jitter, provider.progress, request, accessToken)
 }
 
 // midRunRefreshIngestionProvider wraps the ingestion provider when the
@@ -233,13 +240,18 @@ func (ingestion Ingestion) Execute(ctx context.Context, archive Archive, request
 	if err != nil {
 		return IngestionResult{}, err
 	}
+	result := IngestionResult{EndpointFamily: plan.EndpointFamily}
+	if request.Progress != nil {
+		ingestion.provider = ingestion.withRetryProgress(func() {
+			reportIngestionProgress(request, &result)
+		})
+	}
 	if request.RefreshAccessToken != nil {
 		ingestion.provider = &midRunRefreshIngestionProvider{
 			inner:   ingestion.provider,
 			refresh: request.RefreshAccessToken,
 		}
 	}
-	result := IngestionResult{EndpointFamily: plan.EndpointFamily}
 	switch plan.EndpointFamily {
 	case "dailyRollUp":
 		err = ingestion.executeDailyRollupPages(ctx, archive, request, &result)
@@ -249,6 +261,16 @@ func (ingestion Ingestion) Execute(ctx context.Context, archive Archive, request
 		err = ingestion.executeDataPointPages(ctx, archive, request, &result)
 	}
 	return result, err
+}
+
+func (ingestion Ingestion) withRetryProgress(progress func()) ingestionProvider {
+	switch provider := ingestion.provider.(type) {
+	case retryFetchProvider:
+		provider.progress = progress
+		return provider
+	default:
+		return ingestion.provider
+	}
 }
 
 func (ingestion Ingestion) executeDailyRollupPages(ctx context.Context, archive Archive, request IngestionRequest, result *IngestionResult) error {

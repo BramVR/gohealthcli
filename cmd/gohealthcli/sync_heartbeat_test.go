@@ -106,3 +106,71 @@ func TestSyncWritesHeartbeatAfterEachPage(t *testing.T) {
 	// still owns the final counts and status.
 	assertSyncRun(t, archivePath, 1, "sync_completed", 2, 2, 0, "")
 }
+
+func TestSyncStatusDoesNotFenceLiveRetryStorm(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	now := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
+	testRuntime.now = func() time.Time { return now }
+	attempts := 0
+	testRuntime.fetchRawProvider = func(_ context.Context, _ googlehealth.RawRequest, _ string) ([]byte, error) {
+		attempts++
+		if attempts < 3 {
+			return nil, &googlehealth.HTTPError{StatusCode: 429, RetryAfter: 6 * time.Minute, Endpoint: "steps"}
+		}
+		return []byte(`{"dataPoints":[]}`), nil
+	}
+	polledMidRetry := false
+	testRuntime.retrySleeper = func(_ context.Context, d time.Duration) bool {
+		now = now.Add(d)
+		if !polledMidRetry && !now.Before(time.Date(2026, 1, 2, 12, 6, 0, 0, time.UTC)) {
+			polledMidRetry = true
+			stdout := new(bytes.Buffer)
+			stderr := new(bytes.Buffer)
+			code := runWithRuntime([]string{
+				"sync",
+				"--status",
+				"--config", configPath,
+				"--db", archivePath,
+				"--json",
+			}, stdout, stderr, testRuntime)
+			if code != 0 {
+				t.Fatalf("sync --status mid retry exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+			}
+			midRetry := probeSyncRunRow(t, archivePath, 1)
+			if midRetry.status != "sync_running" {
+				t.Fatalf("mid-retry status = %q, want sync_running; row was fenced", midRetry.status)
+			}
+		}
+		return false
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--from", "2026-01-02",
+		"--to", "2026-01-03T00:00:00Z",
+		"--json",
+	}, stdout, stderr, testRuntime)
+	if code != 0 {
+		t.Fatalf("sync exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if !polledMidRetry {
+		t.Fatal("sync --status was never invoked during retry backoff")
+	}
+	if attempts != 3 {
+		t.Fatalf("fetch attempts = %d, want 3", attempts)
+	}
+	finished := probeSyncRunRow(t, archivePath, 1)
+	if finished.status != "sync_completed" || finished.seenCount != 0 || finished.newCount != 0 || finished.updatedCount != 0 {
+		t.Fatalf("finished row = status %q counts %d/%d/%d, want sync_completed 0/0/0", finished.status, finished.seenCount, finished.newCount, finished.updatedCount)
+	}
+}
