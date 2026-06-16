@@ -76,9 +76,15 @@ var dailyVo2MaxViewSpec = exportDatasetSpec{
 			provider_name,
 			connection_id,
 			provider_civil_date AS civil_date,
-			printf('%.15g', json_extract(raw_json, '$.dailyVo2Max.vo2Max')) AS vo2_max,
+			CASE
+				WHEN json_extract(raw_json, '$.dailyVo2Max.vo2Max') IS NULL THEN NULL
+				ELSE printf('%.15g', json_extract(raw_json, '$.dailyVo2Max.vo2Max'))
+			END AS vo2_max,
 			IFNULL(json_extract(raw_json, '$.dailyVo2Max.cardioFitnessLevel'), '') AS cardio_fitness_level,
-			printf('%.15g', json_extract(raw_json, '$.dailyVo2Max.vo2MaxCovariance')) AS vo2_max_covariance,
+			CASE
+				WHEN json_extract(raw_json, '$.dailyVo2Max.vo2MaxCovariance') IS NULL THEN NULL
+				ELSE printf('%.15g', json_extract(raw_json, '$.dailyVo2Max.vo2MaxCovariance'))
+			END AS vo2_max_covariance,
 			IFNULL(source_family_filter, '') AS source_family_filter,
 			IFNULL(upstream_resource_name, '') AS upstream_resource_name
 		FROM data_points

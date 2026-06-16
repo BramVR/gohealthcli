@@ -16,7 +16,7 @@ import (
 // currentSchemaVersion is the schema version a fully migrated Health
 // Archive reports via PRAGMA user_version. It must equal the version of
 // the last row in schemaMigrationTable.
-const currentSchemaVersion = 23
+const currentSchemaVersion = 24
 
 // schemaMigration is one Health Archive schema step: the version it
 // migrates an archive *to*, the schema_migrations history name recorded
@@ -109,6 +109,12 @@ func schemaMigrationTable() []schemaMigration {
 			}
 			return recreateRegistryViewStep("searchable-text", "searchable_text")(ctx, tx)
 		}},
+		// Version 24 drops the migration-19 daily_vo2_max view and
+		// recreates it from the registry's current spec. modernc.org/sqlite
+		// 1.52 changed implicit CAST-to-TEXT float rendering; the registry
+		// now formats VO2 max floats explicitly so existing archives keep the
+		// same stable export text as fresh archives.
+		{version: 24, name: "fix_daily_vo2_max_stable_float_text", apply: recreateRegistryViewStep("daily-vo2-max", "daily_vo2_max")},
 	}
 }
 
