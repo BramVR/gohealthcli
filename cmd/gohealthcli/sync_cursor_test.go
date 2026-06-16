@@ -53,6 +53,7 @@ func TestStatusSurfacesCursorOnlyDataTypeWithZeroCounts(t *testing.T) {
 	}
 	if found == nil {
 		t.Fatalf("blood-glucose missing from status: %+v", summary.DataTypes)
+		return
 	}
 	if found.DataPointCount != 0 || found.RollupCount != 0 {
 		t.Fatalf("blood-glucose counts = (%d, %d), want (0, 0) for cursor-only Data Type", found.DataPointCount, found.RollupCount)

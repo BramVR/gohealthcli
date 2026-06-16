@@ -80,6 +80,7 @@ func TestRunSchemaIncludesDoctor(t *testing.T) {
 	}
 	if doctor == nil {
 		t.Fatalf("schema document does not contain doctor entry")
+		return
 	}
 	if doctor.Hidden {
 		t.Errorf("doctor.hidden = true, want false")
