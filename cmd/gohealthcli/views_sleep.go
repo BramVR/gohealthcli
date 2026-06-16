@@ -52,9 +52,26 @@ var dailySleepTemperatureDerivationsViewSpec = exportDatasetSpec{
 			provider_name,
 			connection_id,
 			provider_civil_date AS civil_date,
-			CAST(json_extract(raw_json, '$.dailySleepTemperatureDerivations.nightlyTemperatureCelsius') AS TEXT) AS nightly_temperature_celsius,
-			CAST(json_extract(raw_json, '$.dailySleepTemperatureDerivations.baselineTemperatureCelsius') AS TEXT) AS baseline_temperature_celsius,
-			CAST(json_extract(raw_json, '$.dailySleepTemperatureDerivations.relativeNightlyStddev30dCelsius') AS TEXT) AS relative_nightly_stddev_30d_celsius,
+			CASE
+				WHEN json_type(raw_json, '$.dailySleepTemperatureDerivations.nightlyTemperatureCelsius') = 'real'
+					AND json_extract(raw_json, '$.dailySleepTemperatureDerivations.nightlyTemperatureCelsius') = CAST(json_extract(raw_json, '$.dailySleepTemperatureDerivations.nightlyTemperatureCelsius') AS INTEGER)
+				THEN printf('%.1f', json_extract(raw_json, '$.dailySleepTemperatureDerivations.nightlyTemperatureCelsius'))
+				ELSE printf('%.15g', json_extract(raw_json, '$.dailySleepTemperatureDerivations.nightlyTemperatureCelsius'))
+			END AS nightly_temperature_celsius,
+			CASE
+				WHEN json_extract(raw_json, '$.dailySleepTemperatureDerivations.baselineTemperatureCelsius') IS NULL THEN NULL
+				WHEN json_type(raw_json, '$.dailySleepTemperatureDerivations.baselineTemperatureCelsius') = 'real'
+					AND json_extract(raw_json, '$.dailySleepTemperatureDerivations.baselineTemperatureCelsius') = CAST(json_extract(raw_json, '$.dailySleepTemperatureDerivations.baselineTemperatureCelsius') AS INTEGER)
+				THEN printf('%.1f', json_extract(raw_json, '$.dailySleepTemperatureDerivations.baselineTemperatureCelsius'))
+				ELSE printf('%.15g', json_extract(raw_json, '$.dailySleepTemperatureDerivations.baselineTemperatureCelsius'))
+			END AS baseline_temperature_celsius,
+			CASE
+				WHEN json_extract(raw_json, '$.dailySleepTemperatureDerivations.relativeNightlyStddev30dCelsius') IS NULL THEN NULL
+				WHEN json_type(raw_json, '$.dailySleepTemperatureDerivations.relativeNightlyStddev30dCelsius') = 'real'
+					AND json_extract(raw_json, '$.dailySleepTemperatureDerivations.relativeNightlyStddev30dCelsius') = CAST(json_extract(raw_json, '$.dailySleepTemperatureDerivations.relativeNightlyStddev30dCelsius') AS INTEGER)
+				THEN printf('%.1f', json_extract(raw_json, '$.dailySleepTemperatureDerivations.relativeNightlyStddev30dCelsius'))
+				ELSE printf('%.15g', json_extract(raw_json, '$.dailySleepTemperatureDerivations.relativeNightlyStddev30dCelsius'))
+			END AS relative_nightly_stddev_30d_celsius,
 			IFNULL(source_family_filter, '') AS source_family_filter,
 			IFNULL(upstream_resource_name, '') AS upstream_resource_name
 		FROM data_points
@@ -86,10 +103,34 @@ var respiratoryRateSleepSummaryViewSpec = exportDatasetSpec{
 			start_time_utc AS sample_time_utc,
 			IFNULL(start_civil_time, '') AS sample_civil_time,
 			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
-			CAST(json_extract(raw_json, '$.respiratoryRateSleepSummary.fullSleepStats.breathsPerMinute') AS TEXT) AS full_sleep_breaths_per_minute,
-			CAST(json_extract(raw_json, '$.respiratoryRateSleepSummary.deepSleepStats.breathsPerMinute') AS TEXT) AS deep_sleep_breaths_per_minute,
-			CAST(json_extract(raw_json, '$.respiratoryRateSleepSummary.lightSleepStats.breathsPerMinute') AS TEXT) AS light_sleep_breaths_per_minute,
-			CAST(json_extract(raw_json, '$.respiratoryRateSleepSummary.remSleepStats.breathsPerMinute') AS TEXT) AS rem_sleep_breaths_per_minute,
+			CASE
+				WHEN json_extract(raw_json, '$.respiratoryRateSleepSummary.fullSleepStats.breathsPerMinute') IS NULL THEN NULL
+				WHEN json_type(raw_json, '$.respiratoryRateSleepSummary.fullSleepStats.breathsPerMinute') = 'real'
+					AND json_extract(raw_json, '$.respiratoryRateSleepSummary.fullSleepStats.breathsPerMinute') = CAST(json_extract(raw_json, '$.respiratoryRateSleepSummary.fullSleepStats.breathsPerMinute') AS INTEGER)
+				THEN printf('%.1f', json_extract(raw_json, '$.respiratoryRateSleepSummary.fullSleepStats.breathsPerMinute'))
+				ELSE printf('%.15g', json_extract(raw_json, '$.respiratoryRateSleepSummary.fullSleepStats.breathsPerMinute'))
+			END AS full_sleep_breaths_per_minute,
+			CASE
+				WHEN json_extract(raw_json, '$.respiratoryRateSleepSummary.deepSleepStats.breathsPerMinute') IS NULL THEN NULL
+				WHEN json_type(raw_json, '$.respiratoryRateSleepSummary.deepSleepStats.breathsPerMinute') = 'real'
+					AND json_extract(raw_json, '$.respiratoryRateSleepSummary.deepSleepStats.breathsPerMinute') = CAST(json_extract(raw_json, '$.respiratoryRateSleepSummary.deepSleepStats.breathsPerMinute') AS INTEGER)
+				THEN printf('%.1f', json_extract(raw_json, '$.respiratoryRateSleepSummary.deepSleepStats.breathsPerMinute'))
+				ELSE printf('%.15g', json_extract(raw_json, '$.respiratoryRateSleepSummary.deepSleepStats.breathsPerMinute'))
+			END AS deep_sleep_breaths_per_minute,
+			CASE
+				WHEN json_extract(raw_json, '$.respiratoryRateSleepSummary.lightSleepStats.breathsPerMinute') IS NULL THEN NULL
+				WHEN json_type(raw_json, '$.respiratoryRateSleepSummary.lightSleepStats.breathsPerMinute') = 'real'
+					AND json_extract(raw_json, '$.respiratoryRateSleepSummary.lightSleepStats.breathsPerMinute') = CAST(json_extract(raw_json, '$.respiratoryRateSleepSummary.lightSleepStats.breathsPerMinute') AS INTEGER)
+				THEN printf('%.1f', json_extract(raw_json, '$.respiratoryRateSleepSummary.lightSleepStats.breathsPerMinute'))
+				ELSE printf('%.15g', json_extract(raw_json, '$.respiratoryRateSleepSummary.lightSleepStats.breathsPerMinute'))
+			END AS light_sleep_breaths_per_minute,
+			CASE
+				WHEN json_extract(raw_json, '$.respiratoryRateSleepSummary.remSleepStats.breathsPerMinute') IS NULL THEN NULL
+				WHEN json_type(raw_json, '$.respiratoryRateSleepSummary.remSleepStats.breathsPerMinute') = 'real'
+					AND json_extract(raw_json, '$.respiratoryRateSleepSummary.remSleepStats.breathsPerMinute') = CAST(json_extract(raw_json, '$.respiratoryRateSleepSummary.remSleepStats.breathsPerMinute') AS INTEGER)
+				THEN printf('%.1f', json_extract(raw_json, '$.respiratoryRateSleepSummary.remSleepStats.breathsPerMinute'))
+				ELSE printf('%.15g', json_extract(raw_json, '$.respiratoryRateSleepSummary.remSleepStats.breathsPerMinute'))
+			END AS rem_sleep_breaths_per_minute,
 			IFNULL(source_family_filter, '') AS source_family_filter,
 			IFNULL(upstream_resource_name, '') AS upstream_resource_name
 		FROM data_points

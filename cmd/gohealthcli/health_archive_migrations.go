@@ -16,7 +16,7 @@ import (
 // currentSchemaVersion is the schema version a fully migrated Health
 // Archive reports via PRAGMA user_version. It must equal the version of
 // the last row in schemaMigrationTable.
-const currentSchemaVersion = 23
+const currentSchemaVersion = 24
 
 // schemaMigration is one Health Archive schema step: the version it
 // migrates an archive *to*, the schema_migrations history name recorded
@@ -109,6 +109,22 @@ func schemaMigrationTable() []schemaMigration {
 			}
 			return recreateRegistryViewStep("searchable-text", "searchable_text")(ctx, tx)
 		}},
+		// Version 24 drops every Normalized View that exposed JSON-number
+		// scalars through CAST(... AS TEXT) and recreates them from the
+		// registry's current specs. modernc.org/sqlite 1.52 changed implicit
+		// CAST-to-TEXT float rendering; the registry now formats these numeric
+		// scalars explicitly so existing archives keep the same stable export
+		// text as fresh archives. JSON-string scalars keep their casts because
+		// those preserve the upstream lexeme.
+		{version: 24, name: "fix_numeric_text_view_formatting", apply: recreateRegistryViewsStep([]registryViewRef{
+			{datasetName: "weight-samples", viewName: "weight_samples"},
+			{datasetName: "hydration-log-sessions", viewName: "hydration_log_sessions"},
+			{datasetName: "vo2-max-samples", viewName: "vo2_max_samples"},
+			{datasetName: "run-vo2-max-samples", viewName: "run_vo2_max_samples"},
+			{datasetName: "daily-vo2-max", viewName: "daily_vo2_max"},
+			{datasetName: "daily-sleep-temperature-derivations", viewName: "daily_sleep_temperature_derivations"},
+			{datasetName: "respiratory-rate-sleep-summary", viewName: "respiratory_rate_sleep_summary"},
+		})},
 	}
 }
 
@@ -229,6 +245,22 @@ func recreateRegistryViewStep(datasetName, viewName string) func(ctx context.Con
 		}
 		_, err := tx.ExecContext(ctx, exportDatasetViewMigrationStatement(spec))
 		return err
+	}
+}
+
+type registryViewRef struct {
+	datasetName string
+	viewName    string
+}
+
+func recreateRegistryViewsStep(views []registryViewRef) func(ctx context.Context, tx *sql.Tx) error {
+	return func(ctx context.Context, tx *sql.Tx) error {
+		for _, view := range views {
+			if err := recreateRegistryViewStep(view.datasetName, view.viewName)(ctx, tx); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 }
 
