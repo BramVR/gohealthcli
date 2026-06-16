@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -56,6 +57,32 @@ func TestQueryReadsArchivedStepsDataPointsReadOnly(t *testing.T) {
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 3)
 	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestQueryDoesNotRecreateMissingAttachmentRoot(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	rootDir := attachmentRootDirForArchive(archivePath)
+	movedRootDir := rootDir + ".moved"
+	if err := os.Rename(rootDir, movedRootDir); err != nil {
+		t.Fatalf("rename attachment root: %v", err)
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"query",
+		"--db", archivePath,
+		"--json",
+		"SELECT 1",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("query exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if _, err := os.Stat(rootDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("attachment root stat err = %v, want missing root", err)
+	}
 }
 
 func TestQueryPlainOutputIsStable(t *testing.T) {
