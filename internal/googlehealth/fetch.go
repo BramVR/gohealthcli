@@ -122,7 +122,11 @@ func validateRawGoogleHealthDataType(dataType string) error {
 }
 
 func googleHealthDataTypeListFilter(dataType, from, to string) (string, error) {
-	field, err := googleHealthDataTypeListFilterField(dataType)
+	return googleHealthDataTypeFilter(dataType, endpointFamilyList, from, to)
+}
+
+func googleHealthDataTypeFilter(dataType string, family endpointFamily, from, to string) (string, error) {
+	field, err := googleHealthDataTypeFilterField(dataType, family)
 	if err != nil {
 		return "", err
 	}

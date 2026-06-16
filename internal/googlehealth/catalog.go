@@ -73,6 +73,14 @@ func listReconcileAllRollupEndpoints(filterField, dailyValueType, windowValueTyp
 	}
 }
 
+func reconcileAllRollupEndpoints(filterField, dailyValueType, windowValueType string, windowGranularities []string) map[endpointFamily]endpointSupport {
+	return map[endpointFamily]endpointSupport{
+		endpointFamilyReconcile:   {FilterField: filterField},
+		endpointFamilyDailyRollUp: {RollupValueType: dailyValueType},
+		endpointFamilyRollUp:      {RollupValueType: windowValueType, WindowGranularities: windowGranularities},
+	}
+}
+
 // listReconcileWithRollupEndpoints adds only the windowed rollUp
 // family alongside list/reconcile. Used by Data Types whose upstream
 // returns sample shapes per Data Point but supports aggregated rollUp
@@ -219,8 +227,9 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		// floors is the first Tier 1 Data Type to land via the new
-		// SupportedEndpoints shape (#100). Interval-shaped, same
-		// endpoint surface as steps (list + reconcile + dailyRollUp).
+		// SupportedEndpoints shape (#100). Interval-shaped, but current
+		// Google docs list reconcile/rollUp/dailyRollUp only — no
+		// dataPoints.list operation.
 		//
 		// Not yet a DefaultConfigType: the live API returns HTTP 400
 		// against the assumed filter field, so including it in
@@ -232,7 +241,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		Parser:         "interval",
 		JSONField:      "floors",
 		RecordKind:     "interval",
-		SupportedEndpoints: listReconcileAllRollupEndpoints(
+		SupportedEndpoints: reconcileAllRollupEndpoints(
 			"floors.interval.start_time",
 			"floorsCount",
 			"floorsCount",
@@ -285,15 +294,15 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		SupportedEndpoints: listReconcileEndpoints("sedentary_period.interval.start_time"),
 	},
 	{
-		// calories-in-heart-rate-zone: live API returns HTTP 400 against
-		// the assumed filter field; deferred until the upstream shape
-		// is confirmed. Catalog row stays for future debugging.
-		DataType:           "calories-in-heart-rate-zone",
-		RequiredScopes:     []string{ScopeActivityReadonly},
-		Parser:             "interval",
-		JSONField:          "caloriesInHeartRateZone",
-		RecordKind:         "interval",
-		SupportedEndpoints: listReconcileEndpoints("calories_in_heart_rate_zone.interval.start_time"),
+		// calories-in-heart-rate-zone is rollup-only in current Google docs,
+		// but its rollup payload shape is not implemented yet. Keep the
+		// catalog row so callers get a local "not supported yet" error
+		// instead of a guessed dataPoints.list/reconcile request.
+		DataType:       "calories-in-heart-rate-zone",
+		RequiredScopes: []string{ScopeActivityReadonly},
+		Parser:         "interval",
+		JSONField:      "caloriesInHeartRateZone",
+		RecordKind:     "interval",
 	},
 	{
 		DataType:           "time-in-heart-rate-zone",
@@ -407,7 +416,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	{
 		DataType:           "respiratory-rate-sleep-summary",
-		RequiredScopes:     []string{ScopeSleepReadonly},
+		RequiredScopes:     []string{ScopeHealthMetricsReadonly},
 		Parser:             "sample",
 		JSONField:          "respiratoryRateSleepSummary",
 		RecordKind:         "sample",
@@ -516,15 +525,19 @@ func ScopesForDataType(dataType string) []string {
 	return append([]string(nil), entry.RequiredScopes...)
 }
 
-func googleHealthDataTypeListFilterField(dataType string) (string, error) {
+func googleHealthDataTypeFilterField(dataType string, family endpointFamily) (string, error) {
 	entry, ok := googleHealthDataTypes.Lookup(dataType)
 	if !ok {
 		return "", fmt.Errorf("raw Data Type %q is not in the catalog", dataType)
 	}
-	if list, ok := entry.SupportedEndpoints[endpointFamilyList]; ok && list.FilterField != "" {
-		return list.FilterField, nil
+	if support, ok := entry.SupportedEndpoints[family]; ok && support.FilterField != "" {
+		return support.FilterField, nil
 	}
-	return "", fmt.Errorf("raw Data Type %q is not supported by dataPoints.list", dataType)
+	return "", fmt.Errorf("raw Data Type %q is not supported by dataPoints.%s", dataType, family)
+}
+
+func googleHealthDataTypeListFilterField(dataType string) (string, error) {
+	return googleHealthDataTypeFilterField(dataType, endpointFamilyList)
 }
 
 func googleHealthSampleDataPointJSONField(dataType string) string {

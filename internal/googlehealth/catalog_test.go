@@ -151,6 +151,24 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantRecordKind:        "sample",
 			wantDefaultConfigType: true,
 		},
+		{
+			dataType:          "floors",
+			wantScopes:        []string{ScopeActivityReadonly},
+			wantSyncDataPoint: true,
+			wantReconcile:     true,
+			wantDailyRollup:   true,
+			wantParser:        "interval",
+			wantRecordKind:    "interval",
+		},
+		{
+			dataType:          "calories-in-heart-rate-zone",
+			wantScopes:        []string{ScopeActivityReadonly},
+			wantSyncDataPoint: false,
+			wantReconcile:     false,
+			wantDailyRollup:   false,
+			wantParser:        "interval",
+			wantRecordKind:    "interval",
+		},
 		// Tier 1 Health metrics Data Types (#102). Opt-in only via
 		// `--types <name>` — none are DefaultConfigType yet.
 		{
@@ -224,7 +242,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		},
 		{
 			dataType:            "respiratory-rate-sleep-summary",
-			wantScopes:          []string{ScopeSleepReadonly},
+			wantScopes:          []string{ScopeHealthMetricsReadonly},
 			wantListFilterField: "respiratory_rate_sleep_summary.sample_time.physical_time",
 			wantSyncDataPoint:   true,
 			wantReconcile:       true,
