@@ -113,6 +113,23 @@ func TestGoogleHealthIngestionChoosesReconcileFromSourceFamily(t *testing.T) {
 	}
 }
 
+func TestGoogleHealthIngestionRejectsDefaultSyncForNonListDataType(t *testing.T) {
+	t.Parallel()
+	ingestion := fakeGoogleHealthIngestion(newFakeGoogleHealthIngestionProvider(t, "access-secret", nil))
+	_, err := ingestion.Plan(IngestionRequest{
+		DataType: "floors",
+		From:     "2026-01-01",
+		To:       "2026-01-02T00:00:00Z",
+	})
+	if err == nil {
+		t.Fatal("Plan floors default sync: want local unsupported list error, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "floors") || !strings.Contains(msg, "dataPoints.list") || !strings.Contains(msg, "SupportedEndpoints") {
+		t.Fatalf("err = %q, want floors dataPoints.list SupportedEndpoints message", msg)
+	}
+}
+
 func TestGoogleHealthIngestionArchivesDailyRollups(t *testing.T) {
 	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{rollupStatuses: []string{"new"}}
