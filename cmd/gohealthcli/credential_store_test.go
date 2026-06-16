@@ -162,7 +162,18 @@ func TestFileCredentialStoreFirstWriteIsOwnerOnly(t *testing.T) {
 	if loaded["access_token"] != "first-access-secret" {
 		t.Fatalf("access_token = %v, want first token", loaded["access_token"])
 	}
+	if err := store.Store("googlehealth:222", map[string]any{"refresh_token": "second-refresh-secret"}); err != nil {
+		t.Fatalf("store second token: %v", err)
+	}
+	second, err := store.Load("googlehealth:222")
+	if err != nil {
+		t.Fatalf("load second token: %v", err)
+	}
+	if second["refresh_token"] != "second-refresh-secret" {
+		t.Fatalf("refresh_token = %v, want second token", second["refresh_token"])
+	}
 	assertMode(t, storePath, 0o600)
+	assertMode(t, tempDir, 0o700)
 }
 
 func TestFileCredentialStoreReplacementDoesNotMutateExistingInode(t *testing.T) {
@@ -248,5 +259,92 @@ func TestFileCredentialStoreFailedReplacementKeepsExistingMaterial(t *testing.T)
 	}
 	if loaded["access_token"] != "first-access-secret" {
 		t.Fatalf("access_token after failed replacement = %v, want first token", loaded["access_token"])
+	}
+}
+
+func TestFileCredentialStoreRejectsSymlinkOnStore(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink setup requires extra privileges on Windows")
+	}
+	t.Parallel()
+	tempDir := t.TempDir()
+	if err := os.Chmod(tempDir, 0o700); err != nil {
+		t.Fatalf("make temp dir owner-only: %v", err)
+	}
+	targetPath := filepath.Join(tempDir, "target.json")
+	if err := os.WriteFile(targetPath, []byte("do not overwrite\n"), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	storePath := filepath.Join(tempDir, "tokens.json")
+	if err := os.Symlink(targetPath, storePath); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	err := (fileCredentialStore{path: storePath}).Store("googlehealth:111", map[string]any{"access_token": "secret"})
+	assertCredentialStoreSymlinkError(t, err)
+	target, readErr := os.ReadFile(targetPath)
+	if readErr != nil {
+		t.Fatalf("read target: %v", readErr)
+	}
+	if string(target) != "do not overwrite\n" {
+		t.Fatalf("symlink target was modified: %q", string(target))
+	}
+	if info, statErr := os.Lstat(storePath); statErr != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("Credential Store path = mode %v err %v, want symlink still present", info.Mode(), statErr)
+	}
+}
+
+func TestFileCredentialStoreRejectsSymlinkOnLoad(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink setup requires extra privileges on Windows")
+	}
+	t.Parallel()
+	tempDir := t.TempDir()
+	if err := os.Chmod(tempDir, 0o700); err != nil {
+		t.Fatalf("make temp dir owner-only: %v", err)
+	}
+	targetPath := filepath.Join(tempDir, "target.json")
+	if err := os.WriteFile(targetPath, []byte(`{"googlehealth:111":{"access_token":"secret"}}`), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	storePath := filepath.Join(tempDir, "tokens.json")
+	if err := os.Symlink(targetPath, storePath); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	_, err := (fileCredentialStore{path: storePath}).Load("googlehealth:111")
+	assertCredentialStoreSymlinkError(t, err)
+}
+
+func TestValidateCredentialStoreConfigRejectsSymlinkFileStore(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink setup requires extra privileges on Windows")
+	}
+	t.Parallel()
+	tempDir := t.TempDir()
+	if err := os.Chmod(tempDir, 0o700); err != nil {
+		t.Fatalf("make temp dir owner-only: %v", err)
+	}
+	targetPath := filepath.Join(tempDir, "target.json")
+	if err := os.WriteFile(targetPath, []byte(`{}`), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	storePath := filepath.Join(tempDir, "tokens.json")
+	if err := os.Symlink(targetPath, storePath); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	err := validateCredentialStoreConfig(credentialStoreConfig{kind: "file", path: storePath})
+	assertCredentialStoreSymlinkError(t, err)
+}
+
+func assertCredentialStoreSymlinkError(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("error = nil, want symlink rejection")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "Credential Store file path") || !strings.Contains(message, "symbolic link") {
+		t.Fatalf("error = %q, want Credential Store file path symbolic link rejection", message)
 	}
 }

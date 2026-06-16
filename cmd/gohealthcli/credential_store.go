@@ -39,6 +39,9 @@ func validateCredentialStoreConfig(store credentialStoreConfig) error {
 		} else if !os.IsNotExist(err) {
 			return err
 		}
+		if err := rejectSymlinkCredentialStorePath(store.path); err != nil {
+			return err
+		}
 		if info, err := os.Stat(store.path); err == nil {
 			if info.IsDir() {
 				return fmt.Errorf("%s is a directory", store.path)
@@ -150,6 +153,9 @@ func (store fileCredentialStore) Store(key string, tokenMaterial map[string]any)
 	if err := ensureOwnerOnlyDir(filepath.Dir(store.path)); err != nil {
 		return err
 	}
+	if err := rejectSymlinkCredentialStorePath(store.path); err != nil {
+		return err
+	}
 	existing := map[string]any{}
 	if content, err := os.ReadFile(store.path); err == nil && len(content) > 0 {
 		if err := json.Unmarshal(content, &existing); err != nil {
@@ -197,6 +203,9 @@ func writeCredentialStoreFile(path string, content []byte) error {
 	if err := temp.Close(); err != nil {
 		return err
 	}
+	if err := rejectSymlinkCredentialStorePath(path); err != nil {
+		return err
+	}
 	if err := replaceCredentialStoreFile(tempPath, path); err != nil {
 		return err
 	}
@@ -208,6 +217,9 @@ func writeCredentialStoreFile(path string, content []byte) error {
 }
 
 func (store fileCredentialStore) Load(key string) (map[string]any, error) {
+	if err := rejectSymlinkCredentialStorePath(store.path); err != nil {
+		return nil, err
+	}
 	content, err := os.ReadFile(store.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -228,6 +240,20 @@ func (store fileCredentialStore) Load(key string) (map[string]any, error) {
 		return nil, errors.New("Credential Store token material is not valid JSON")
 	}
 	return tokenMaterial, nil
+}
+
+func rejectSymlinkCredentialStorePath(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("Credential Store file path %s must not be a symbolic link", path)
+	}
+	return nil
 }
 
 type osNativeCredentialStore struct {
