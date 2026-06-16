@@ -22,6 +22,9 @@ var vo2MaxSamplesViewSpec = exportDatasetSpec{
 			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
 			CASE
 				WHEN json_extract(raw_json, '$.vo2Max.vo2Max') IS NULL THEN NULL
+				WHEN json_type(raw_json, '$.vo2Max.vo2Max') = 'real'
+					AND json_extract(raw_json, '$.vo2Max.vo2Max') = CAST(json_extract(raw_json, '$.vo2Max.vo2Max') AS INTEGER)
+				THEN printf('%.1f', json_extract(raw_json, '$.vo2Max.vo2Max'))
 				ELSE printf('%.15g', json_extract(raw_json, '$.vo2Max.vo2Max'))
 			END AS vo2_max,
 			IFNULL(source_family_filter, '') AS source_family_filter,
@@ -52,6 +55,9 @@ var runVo2MaxSamplesViewSpec = exportDatasetSpec{
 			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
 			CASE
 				WHEN json_extract(raw_json, '$.runVo2Max.runVo2Max') IS NULL THEN NULL
+				WHEN json_type(raw_json, '$.runVo2Max.runVo2Max') = 'real'
+					AND json_extract(raw_json, '$.runVo2Max.runVo2Max') = CAST(json_extract(raw_json, '$.runVo2Max.runVo2Max') AS INTEGER)
+				THEN printf('%.1f', json_extract(raw_json, '$.runVo2Max.runVo2Max'))
 				ELSE printf('%.15g', json_extract(raw_json, '$.runVo2Max.runVo2Max'))
 			END AS run_vo2_max,
 			IFNULL(source_family_filter, '') AS source_family_filter,
@@ -84,11 +90,17 @@ var dailyVo2MaxViewSpec = exportDatasetSpec{
 			provider_civil_date AS civil_date,
 			CASE
 				WHEN json_extract(raw_json, '$.dailyVo2Max.vo2Max') IS NULL THEN NULL
+				WHEN json_type(raw_json, '$.dailyVo2Max.vo2Max') = 'real'
+					AND json_extract(raw_json, '$.dailyVo2Max.vo2Max') = CAST(json_extract(raw_json, '$.dailyVo2Max.vo2Max') AS INTEGER)
+				THEN printf('%.1f', json_extract(raw_json, '$.dailyVo2Max.vo2Max'))
 				ELSE printf('%.15g', json_extract(raw_json, '$.dailyVo2Max.vo2Max'))
 			END AS vo2_max,
 			IFNULL(json_extract(raw_json, '$.dailyVo2Max.cardioFitnessLevel'), '') AS cardio_fitness_level,
 			CASE
 				WHEN json_extract(raw_json, '$.dailyVo2Max.vo2MaxCovariance') IS NULL THEN NULL
+				WHEN json_type(raw_json, '$.dailyVo2Max.vo2MaxCovariance') = 'real'
+					AND json_extract(raw_json, '$.dailyVo2Max.vo2MaxCovariance') = CAST(json_extract(raw_json, '$.dailyVo2Max.vo2MaxCovariance') AS INTEGER)
+				THEN printf('%.1f', json_extract(raw_json, '$.dailyVo2Max.vo2MaxCovariance'))
 				ELSE printf('%.15g', json_extract(raw_json, '$.dailyVo2Max.vo2MaxCovariance'))
 			END AS vo2_max_covariance,
 			IFNULL(source_family_filter, '') AS source_family_filter,

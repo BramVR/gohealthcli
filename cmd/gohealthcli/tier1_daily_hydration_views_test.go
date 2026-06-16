@@ -80,6 +80,34 @@ func TestDailyVo2MaxViewKeepsMissingCovarianceEmpty(t *testing.T) {
 	}
 }
 
+func TestDailyVo2MaxViewKeepsWholeRealDecimal(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+	insertExportDataPoint(t, archivePath, exportDataPointFixture{
+		dataType:     "daily-vo2-max",
+		resourceName: "users/me/dataTypes/daily-vo2-max/dataPoints/2026-06-09",
+		recordKind:   "daily",
+		civilDate:    "2026-06-09",
+		dataSource:   `{"platform":"FITBIT"}`,
+		rawJSON:      `{"dailyVo2Max":{"date":{"year":2026,"month":6,"day":9},"vo2Max":42.0,"cardioFitnessLevel":"GOOD","vo2MaxCovariance":1.0}}`,
+	})
+
+	db := openArchiveForTest(t, archivePath)
+
+	var vo2Max, covariance string
+	if err := db.QueryRowContext(context.Background(), `SELECT vo2_max, vo2_max_covariance FROM daily_vo2_max`).Scan(&vo2Max, &covariance); err != nil {
+		t.Fatalf("query daily_vo2_max: %v", err)
+	}
+	if vo2Max != "42.0" {
+		t.Errorf("vo2_max = %q, want 42.0", vo2Max)
+	}
+	if covariance != "1.0" {
+		t.Errorf("vo2_max_covariance = %q, want 1.0", covariance)
+	}
+}
+
 // TestDailyHeartRateZonesViewExplodesEachZone pins the contract for
 // daily_heart_rate_zones: one row per zone in the daily Data Point's
 // heartRateZones[] array, exposing the enum + min/max BPM scalars.
