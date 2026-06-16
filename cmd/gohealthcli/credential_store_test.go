@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -139,5 +140,113 @@ func TestWindowsOSNativeCredentialStoreUsesCredentialManagerContent(t *testing.T
 	}
 	if !bytes.Contains(gotContent, []byte("access-secret-value")) {
 		t.Fatalf("Windows Credential Manager content missing token material: %s", string(gotContent))
+	}
+}
+
+func TestFileCredentialStoreFirstWriteIsOwnerOnly(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	if err := os.Chmod(tempDir, 0o700); err != nil {
+		t.Fatalf("make temp dir owner-only: %v", err)
+	}
+	storePath := filepath.Join(tempDir, "tokens.json")
+	store := fileCredentialStore{path: storePath}
+
+	if err := store.Store("googlehealth:111", map[string]any{"access_token": "first-access-secret"}); err != nil {
+		t.Fatalf("store token: %v", err)
+	}
+	loaded, err := store.Load("googlehealth:111")
+	if err != nil {
+		t.Fatalf("load token: %v", err)
+	}
+	if loaded["access_token"] != "first-access-secret" {
+		t.Fatalf("access_token = %v, want first token", loaded["access_token"])
+	}
+	assertMode(t, storePath, 0o600)
+}
+
+func TestFileCredentialStoreReplacementDoesNotMutateExistingInode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hard-link replacement semantics differ on Windows")
+	}
+	t.Parallel()
+	tempDir := t.TempDir()
+	if err := os.Chmod(tempDir, 0o700); err != nil {
+		t.Fatalf("make temp dir owner-only: %v", err)
+	}
+	storePath := filepath.Join(tempDir, "tokens.json")
+	previousPath := filepath.Join(tempDir, "tokens.previous.json")
+	store := fileCredentialStore{path: storePath}
+
+	if err := store.Store("googlehealth:111", map[string]any{"access_token": "first-access-secret"}); err != nil {
+		t.Fatalf("store first token: %v", err)
+	}
+	if err := os.Link(storePath, previousPath); err != nil {
+		t.Skipf("hard links unavailable: %v", err)
+	}
+	if err := store.Store("googlehealth:111", map[string]any{"access_token": "second-access-secret"}); err != nil {
+		t.Fatalf("store second token: %v", err)
+	}
+
+	current, err := store.Load("googlehealth:111")
+	if err != nil {
+		t.Fatalf("load current token: %v", err)
+	}
+	if current["access_token"] != "second-access-secret" {
+		t.Fatalf("current access_token = %v, want second token", current["access_token"])
+	}
+	previous, err := (fileCredentialStore{path: previousPath}).Load("googlehealth:111")
+	if err != nil {
+		t.Fatalf("load previous token: %v", err)
+	}
+	if previous["access_token"] != "first-access-secret" {
+		t.Fatalf("previous hard link access_token = %v, want first token", previous["access_token"])
+	}
+	assertMode(t, storePath, 0o600)
+	entries, err := os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatalf("read temp dir: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Name(), ".tokens.json.tmp-") {
+			t.Fatalf("temporary Credential Store file remains after successful write: %s", entry.Name())
+		}
+	}
+}
+
+func TestFileCredentialStoreFailedReplacementKeepsExistingMaterial(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory write permissions differ on Windows")
+	}
+	t.Parallel()
+	tempDir := t.TempDir()
+	if err := os.Chmod(tempDir, 0o700); err != nil {
+		t.Fatalf("make temp dir owner-only: %v", err)
+	}
+	storePath := filepath.Join(tempDir, "tokens.json")
+	store := fileCredentialStore{path: storePath}
+
+	if err := store.Store("googlehealth:111", map[string]any{"access_token": "first-access-secret"}); err != nil {
+		t.Fatalf("store first token: %v", err)
+	}
+	if err := os.Chmod(tempDir, 0o500); err != nil {
+		t.Fatalf("make store dir read-only: %v", err)
+	}
+	defer func() {
+		if err := os.Chmod(tempDir, 0o700); err != nil {
+			t.Fatalf("restore store dir permissions: %v", err)
+		}
+	}()
+
+	err := store.Store("googlehealth:111", map[string]any{"access_token": "second-access-secret"})
+	if err == nil {
+		t.Fatal("store second token succeeded, want replacement failure")
+	}
+	loaded, loadErr := store.Load("googlehealth:111")
+	if loadErr != nil {
+		t.Fatalf("load token after failed replacement: %v", loadErr)
+	}
+	if loaded["access_token"] != "first-access-secret" {
+		t.Fatalf("access_token after failed replacement = %v, want first token", loaded["access_token"])
 	}
 }
