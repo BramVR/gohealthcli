@@ -17,7 +17,7 @@ var weightSamplesViewSpec = exportDatasetSpec{
 			start_time_utc AS sample_time_utc,
 			IFNULL(start_civil_time, '') AS sample_civil_time,
 			IFNULL(provider_civil_date, '') AS civil_date,
-			CAST(json_extract(raw_json, '$.weight.weightGrams') AS TEXT) AS weight_grams,
+			printf('%.15g', json_extract(raw_json, '$.weight.weightGrams')) AS weight_grams,
 			IFNULL(source_family_filter, '') AS source_family_filter,
 			IFNULL(upstream_resource_name, '') AS upstream_resource_name
 		FROM data_points
@@ -58,7 +58,7 @@ var hydrationLogSessionsViewSpec = exportDatasetSpec{
 			IFNULL(start_civil_time, '') AS start_civil_time,
 			IFNULL(end_civil_time, '') AS end_civil_time,
 			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
-			CAST(json_extract(raw_json, '$.hydrationLog.volume.liters') AS TEXT) AS volume_liters,
+			printf('%.15g', json_extract(raw_json, '$.hydrationLog.volume.liters')) AS volume_liters,
 			IFNULL(json_extract(data_source_json, '$.platform'), '') AS source_platform,
 			IFNULL(source_family_filter, '') AS source_family_filter,
 			IFNULL(upstream_resource_name, '') AS upstream_resource_name

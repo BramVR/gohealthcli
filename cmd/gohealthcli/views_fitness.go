@@ -20,7 +20,10 @@ var vo2MaxSamplesViewSpec = exportDatasetSpec{
 			start_time_utc AS sample_time_utc,
 			IFNULL(start_civil_time, '') AS sample_civil_time,
 			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
-			CAST(json_extract(raw_json, '$.vo2Max.vo2Max') AS TEXT) AS vo2_max,
+			CASE
+				WHEN json_extract(raw_json, '$.vo2Max.vo2Max') IS NULL THEN NULL
+				ELSE printf('%.15g', json_extract(raw_json, '$.vo2Max.vo2Max'))
+			END AS vo2_max,
 			IFNULL(source_family_filter, '') AS source_family_filter,
 			IFNULL(upstream_resource_name, '') AS upstream_resource_name
 		FROM data_points
@@ -47,7 +50,10 @@ var runVo2MaxSamplesViewSpec = exportDatasetSpec{
 			start_time_utc AS sample_time_utc,
 			IFNULL(start_civil_time, '') AS sample_civil_time,
 			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
-			CAST(json_extract(raw_json, '$.runVo2Max.runVo2Max') AS TEXT) AS run_vo2_max,
+			CASE
+				WHEN json_extract(raw_json, '$.runVo2Max.runVo2Max') IS NULL THEN NULL
+				ELSE printf('%.15g', json_extract(raw_json, '$.runVo2Max.runVo2Max'))
+			END AS run_vo2_max,
 			IFNULL(source_family_filter, '') AS source_family_filter,
 			IFNULL(upstream_resource_name, '') AS upstream_resource_name
 		FROM data_points

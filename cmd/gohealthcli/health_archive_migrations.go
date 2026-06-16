@@ -109,12 +109,22 @@ func schemaMigrationTable() []schemaMigration {
 			}
 			return recreateRegistryViewStep("searchable-text", "searchable_text")(ctx, tx)
 		}},
-		// Version 24 drops the migration-19 daily_vo2_max view and
-		// recreates it from the registry's current spec. modernc.org/sqlite
-		// 1.52 changed implicit CAST-to-TEXT float rendering; the registry
-		// now formats VO2 max floats explicitly so existing archives keep the
-		// same stable export text as fresh archives.
-		{version: 24, name: "fix_daily_vo2_max_stable_float_text", apply: recreateRegistryViewStep("daily-vo2-max", "daily_vo2_max")},
+		// Version 24 drops every Normalized View that exposed JSON-number
+		// scalars through CAST(... AS TEXT) and recreates them from the
+		// registry's current specs. modernc.org/sqlite 1.52 changed implicit
+		// CAST-to-TEXT float rendering; the registry now formats these numeric
+		// scalars explicitly so existing archives keep the same stable export
+		// text as fresh archives. JSON-string scalars keep their casts because
+		// those preserve the upstream lexeme.
+		{version: 24, name: "fix_numeric_text_view_formatting", apply: recreateRegistryViewsStep([]registryViewRef{
+			{datasetName: "weight-samples", viewName: "weight_samples"},
+			{datasetName: "hydration-log-sessions", viewName: "hydration_log_sessions"},
+			{datasetName: "vo2-max-samples", viewName: "vo2_max_samples"},
+			{datasetName: "run-vo2-max-samples", viewName: "run_vo2_max_samples"},
+			{datasetName: "daily-vo2-max", viewName: "daily_vo2_max"},
+			{datasetName: "daily-sleep-temperature-derivations", viewName: "daily_sleep_temperature_derivations"},
+			{datasetName: "respiratory-rate-sleep-summary", viewName: "respiratory_rate_sleep_summary"},
+		})},
 	}
 }
 
@@ -235,6 +245,22 @@ func recreateRegistryViewStep(datasetName, viewName string) func(ctx context.Con
 		}
 		_, err := tx.ExecContext(ctx, exportDatasetViewMigrationStatement(spec))
 		return err
+	}
+}
+
+type registryViewRef struct {
+	datasetName string
+	viewName    string
+}
+
+func recreateRegistryViewsStep(views []registryViewRef) func(ctx context.Context, tx *sql.Tx) error {
+	return func(ctx context.Context, tx *sql.Tx) error {
+		for _, view := range views {
+			if err := recreateRegistryViewStep(view.datasetName, view.viewName)(ctx, tx); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 }
 
