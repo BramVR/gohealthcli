@@ -213,9 +213,6 @@ func (ingestion Ingestion) Plan(request IngestionRequest) (IngestionPlan, error)
 	}
 	_, hasList := entry.SupportedEndpoints[endpointFamilyList]
 	_, hasReconcile := entry.SupportedEndpoints[endpointFamilyReconcile]
-	if !hasList && !hasReconcile {
-		return IngestionPlan{}, fmt.Errorf("sync Data Type %q is not supported yet", request.DataType)
-	}
 	if request.Rollup != "" {
 		spec, err := ParseRollupSpec(request.Rollup)
 		if err != nil {
@@ -226,11 +223,18 @@ func (ingestion Ingestion) Plan(request IngestionRequest) (IngestionPlan, error)
 		}
 		return IngestionPlan{EndpointFamily: string(spec.endpointFamily), rollupSpec: spec}, nil
 	}
+	if !hasList && !hasReconcile {
+		return IngestionPlan{}, fmt.Errorf("sync Data Type %q is not supported yet", request.DataType)
+	}
 	if request.SourceFamily != "" {
 		if !hasReconcile {
 			return IngestionPlan{}, fmt.Errorf("sync Data Type %q does not support source-family filtering", request.DataType)
 		}
 		return IngestionPlan{EndpointFamily: "reconcile"}, nil
+	}
+	if !hasList {
+		return IngestionPlan{}, fmt.Errorf("sync Data Type %q does not support default dataPoints.list sync; choose a supported mode; SupportedEndpoints=%s",
+			request.DataType, formatSupportedEndpoints(entry.SupportedEndpoints))
 	}
 	return IngestionPlan{EndpointFamily: "list"}, nil
 }
@@ -768,7 +772,7 @@ func buildGoogleHealthDataTypeReconcileRawRequest(dataType, from, to, sourceFami
 		return RawRequest{}, err
 	}
 	query := url.Values{}
-	filter, err := googleHealthDataTypeListFilter(dataType, from, to)
+	filter, err := googleHealthDataTypeFilter(dataType, endpointFamilyReconcile, from, to)
 	if err != nil {
 		return RawRequest{}, err
 	}

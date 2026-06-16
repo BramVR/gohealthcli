@@ -76,6 +76,7 @@ Distance travelled over a time interval, in metres. Reconcile-capable, so `--sou
 - **Stored as:** `data_points` (raw) or `rollups` (aggregated); normalized view `floors-intervals`
 
 Floors climbed over an interval. Not yet a default sync type — opt in via `--types floors` until the upstream filter shape is confirmed across multiple weeks of real data.
+Google does not expose `floors` through `dataPoints.list`; use a Rollup mode or `--source-family wearable` so gohealthcli uses a supported provider endpoint.
 
 ### Altitude
 
@@ -136,9 +137,9 @@ Continuous spans of low movement the provider flagged as sedentary.
 - **Sync key:** `calories-in-heart-rate-zone`
 - **Shape:** interval
 - **Scope:** `activity_and_fitness.readonly`
-- **Stored as:** `data_points`
+- **Status:** catalog-known, but raw Data Point sync is not implemented because Google exposes this type only through Rollup operations.
 
-Calories burned while in each heart-rate zone over an interval. The live API currently rejects the assumed filter; the catalog row is kept for future debugging.
+Calories burned while in each heart-rate zone over an interval. The catalog row is kept for future debugging until gohealthcli pins and parses the Rollup payload shape.
 
 ### Time in heart-rate zone
 
@@ -302,7 +303,7 @@ One respiratory-rate summary per civil date.
 
 - **Sync key:** `respiratory-rate-sleep-summary`
 - **Shape:** sample
-- **Scope:** `sleep.readonly`
+- **Scope:** `health_metrics_and_measurements.readonly`
 - **Stored as:** `data_points`; normalized export `respiratory-rate-sleep-summary`
 
 Breaths-per-minute summary derived from the sleep window — emitted per sleep session, not per civil date.

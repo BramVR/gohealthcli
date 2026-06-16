@@ -88,9 +88,10 @@ func TestSupportedEndpointsCatalogConsistencyForEveryDataType(t *testing.T) {
 	}
 }
 
-// TestSupportedEndpointsAddsFloorsTier1 pins the second AC: `floors`
-// is the new interval-shaped Tier 1 Data Type and exercises the map's
-// list + reconcile + dailyRollUp endpoints.
+// TestSupportedEndpointsAddsFloorsTier1 pins the current Google operation
+// catalog: `floors` is interval-shaped, but does not expose dataPoints.list.
+// The CLI may use reconcile/source-family or rollup paths, but raw list
+// requests must reject it locally.
 func TestSupportedEndpointsAddsFloorsTier1(t *testing.T) {
 	t.Parallel()
 	entry, ok := googleHealthDataTypes.Lookup("floors")
@@ -100,13 +101,37 @@ func TestSupportedEndpointsAddsFloorsTier1(t *testing.T) {
 	if entry.Parser != "interval" {
 		t.Errorf("floors Parser = %q, want interval", entry.Parser)
 	}
+	if _, present := entry.SupportedEndpoints[endpointFamilyList]; present {
+		t.Errorf("floors SupportedEndpoints includes list, want reconcile/rollup only")
+	}
 	for _, family := range []endpointFamily{
-		endpointFamilyList,
 		endpointFamilyReconcile,
+		endpointFamilyRollUp,
 		endpointFamilyDailyRollUp,
 	} {
 		if _, present := entry.SupportedEndpoints[family]; !present {
 			t.Errorf("floors SupportedEndpoints missing %q", family)
 		}
+	}
+}
+
+func TestSupportedEndpointsRejectCaloriesInHeartRateZoneDataPointSync(t *testing.T) {
+	t.Parallel()
+	entry, ok := googleHealthDataTypes.Lookup("calories-in-heart-rate-zone")
+	if !ok {
+		t.Fatal("calories-in-heart-rate-zone not in catalog")
+	}
+	for _, family := range []endpointFamily{
+		endpointFamilyList,
+		endpointFamilyReconcile,
+		endpointFamilyRollUp,
+		endpointFamilyDailyRollUp,
+	} {
+		if _, present := entry.SupportedEndpoints[family]; present {
+			t.Errorf("calories-in-heart-rate-zone SupportedEndpoints includes %q, want no implemented sync endpoint yet", family)
+		}
+	}
+	if SupportsSyncDataPoints("calories-in-heart-rate-zone") {
+		t.Fatal("calories-in-heart-rate-zone SupportsSyncDataPoints = true, want false")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -578,6 +579,34 @@ func TestExportDailyStepsJSONLToStdout(t *testing.T) {
 		t.Fatalf("first JSONL line missing stable fields: %s", lines[0])
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestExportDoesNotRecreateMissingAttachmentRoot(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+	rootDir := attachmentRootDirForArchive(archivePath)
+	movedRootDir := rootDir + ".moved"
+	if err := os.Rename(rootDir, movedRootDir); err != nil {
+		t.Fatalf("rename attachment root: %v", err)
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"export",
+		"--db", archivePath,
+		"daily-steps",
+		"--format", "jsonl",
+		"--stdout",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("export exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if _, err := os.Stat(rootDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("attachment root stat err = %v, want missing root", err)
+	}
 }
 
 func TestWriteExportJSONLCanonicalizesIntegerFields(t *testing.T) {

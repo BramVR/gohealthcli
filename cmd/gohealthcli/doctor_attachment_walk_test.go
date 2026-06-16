@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -126,5 +127,39 @@ func TestDoctorPlainReportsAttachmentOrphanCounts(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "attachments_orphan_files: 1") {
 		t.Errorf("plain output missing attachments_orphan_files: 1\n%s", stdout.String())
+	}
+}
+
+func TestDoctorReportsMissingAttachmentRootWithoutRecreatingIt(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	rootDir := attachmentRootDirForArchive(archivePath)
+	movedRootDir := rootDir + ".moved"
+	if err := os.Rename(rootDir, movedRootDir); err != nil {
+		t.Fatalf("rename attachment root: %v", err)
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	}, stdout, stderr)
+	if code != 1 {
+		t.Fatalf("doctor exit code = %d, want 1\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	}
+	assertJSONString(t, got, "status", "setup_invalid")
+	if message, ok := got["message"].(string); !ok || !strings.Contains(message, "attachment root") || !strings.Contains(message, "missing") {
+		t.Fatalf("message = %T(%v), want missing attachment root", got["message"], got["message"])
+	}
+	if _, err := os.Stat(rootDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("attachment root stat err = %v, want missing root", err)
 	}
 }

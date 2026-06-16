@@ -71,9 +71,8 @@ Supported Data Point sync types (grouped by domain):
 
 - Activity and fitness: `steps`, `distance`, `floors`, `altitude`,
   `active-energy-burned`, `active-minutes`, `active-zone-minutes`,
-  `activity-level`, `sedentary-period`, `calories-in-heart-rate-zone`,
-  `time-in-heart-rate-zone`, `vo2-max`, `run-vo2-max`, `daily-vo2-max`,
-  `swim-lengths-data`.
+  `activity-level`, `sedentary-period`, `time-in-heart-rate-zone`,
+  `vo2-max`, `run-vo2-max`, `daily-vo2-max`, `swim-lengths-data`.
 - Heart rate: `heart-rate`, `heart-rate-variability`,
   `daily-resting-heart-rate`, `daily-heart-rate-variability`,
   `daily-heart-rate-zones`.
@@ -90,7 +89,10 @@ Supported Data Point sync types (grouped by domain):
 `sync --source-family wearable` is available for Data Types backed by the
 Google Health reconcile path. `sync --types steps --rollup daily` archives
 steps daily Rollups. `total-calories` is known to the catalog but is not
-supported by raw Data Point sync because Google exposes it as Rollup data.
+supported by raw Data Point sync because Google exposes it as Rollup data;
+`calories-in-heart-rate-zone` is also catalog-known but not yet implemented
+because Google exposes it only through Rollup operations whose payload shape
+is not pinned in gohealthcli yet.
 
 With the Tier 2 `tcx` scope granted (`gohealthcli connect --add-scopes
 tcx`), `exercise` sync also archives each session's TCX route file as a

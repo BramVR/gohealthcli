@@ -32,12 +32,16 @@ func TestBuildGoogleHealthRawRequestUsesProviderNamingConventions(t *testing.T) 
 
 func TestBuildGoogleHealthRawRequestRejectsNonListableDataTypes(t *testing.T) {
 	t.Parallel()
-	_, err := googlehealth.BuildRawRequest([]string{"data-type", "total-calories"}, "2026-01-01", "", 0, "")
-	if err == nil {
-		t.Fatal("build raw request error = nil, want unsupported Data Type")
-	}
-	if !strings.Contains(err.Error(), "not supported by dataPoints.list") {
-		t.Fatalf("error = %v, want unsupported dataPoints.list", err)
+	for _, dataType := range []string{"total-calories", "floors", "calories-in-heart-rate-zone"} {
+		t.Run(dataType, func(t *testing.T) {
+			_, err := googlehealth.BuildRawRequest([]string{"data-type", dataType}, "2026-01-01", "", 0, "")
+			if err == nil {
+				t.Fatal("build raw request error = nil, want unsupported Data Type")
+			}
+			if !strings.Contains(err.Error(), "not supported by dataPoints.list") {
+				t.Fatalf("error = %v, want unsupported dataPoints.list", err)
+			}
+		})
 	}
 }
 

@@ -88,7 +88,8 @@ func (lifecycle healthArchiveLifecycle) Create(ctx context.Context) (err error) 
 }
 
 func (lifecycle healthArchiveLifecycle) Open(ctx context.Context, mode healthArchiveOpenMode) (healthArchiveHandle, error) {
-	archive, err := lifecycle.MigrateAndInspect(ctx, false)
+	repairAttachmentRoot := mode == writeArchive
+	archive, err := lifecycle.migrateAndInspect(ctx, false, repairAttachmentRoot)
 	if err != nil {
 		return healthArchiveHandle{}, err
 	}
@@ -104,6 +105,15 @@ func (lifecycle healthArchiveLifecycle) Open(ctx context.Context, mode healthArc
 }
 
 func (lifecycle healthArchiveLifecycle) Migrate(ctx context.Context) error {
+	if err := lifecycle.migrateSchema(ctx); err != nil {
+		return err
+	}
+	// Backfill the attachment root for archives that predate #107 /
+	// migration 15. Idempotent — no-op when the dir already exists.
+	return ensureOwnerOnlyDir(attachmentRootDirForArchive(lifecycle.path))
+}
+
+func (lifecycle healthArchiveLifecycle) migrateSchema(ctx context.Context) error {
 	if err := lifecycle.validateExistingFile(); err != nil {
 		return err
 	}
@@ -115,13 +125,21 @@ func (lifecycle healthArchiveLifecycle) Migrate(ctx context.Context) error {
 	if err := applyPendingMigrations(ctx, db, lifecycle.clock()); err != nil {
 		return err
 	}
-	// Backfill the attachment root for archives that predate #107 /
-	// migration 15. Idempotent — no-op when the dir already exists.
-	return ensureOwnerOnlyDir(attachmentRootDirForArchive(lifecycle.path))
+	return nil
 }
 
 func (lifecycle healthArchiveLifecycle) MigrateAndInspect(ctx context.Context, validateTokens bool) (archiveCheck, error) {
-	if err := lifecycle.Migrate(ctx); err != nil {
+	return lifecycle.migrateAndInspect(ctx, validateTokens, false)
+}
+
+func (lifecycle healthArchiveLifecycle) migrateAndInspect(ctx context.Context, validateTokens, repairAttachmentRoot bool) (archiveCheck, error) {
+	var err error
+	if repairAttachmentRoot {
+		err = lifecycle.Migrate(ctx)
+	} else {
+		err = lifecycle.migrateSchema(ctx)
+	}
+	if err != nil {
 		return archiveCheck{}, fmt.Errorf("Health Archive migration failed: %w", err)
 	}
 	archive, err := lifecycle.Inspect(ctx, validateTokens)
