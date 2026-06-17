@@ -11,7 +11,7 @@
 [![GitHub repository](https://img.shields.io/badge/GitHub-BramVR%2Fgohealthcli-24292f?logo=github)](https://github.com/BramVR/gohealthcli)
 [![Project Site](https://img.shields.io/badge/Project%20Site-gohealthcli.bramvanrompuy.be-0b7285)](https://gohealthcli.bramvanrompuy.be)
 
-Local-first, read-only Google Health archive CLI.
+Local-first, read-only Google Health CLI — archive your Google Health data locally.
 
 `gohealthcli` connects to the Google Health API, stores raw provider JSON in a
 local SQLite archive, and provides scriptable commands for sync, status, query,
