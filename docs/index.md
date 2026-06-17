@@ -1,7 +1,7 @@
 ---
 title: gohealthcli
 permalink: /
-description: A local-first, read-only CLI that archives personal health and fitness data from the Google Health API into a queryable SQLite Health Archive on your own machine.
+description: gohealthcli is a local-first, read-only Google Health CLI that archives personal health and fitness data from the Google Health API into a queryable SQLite Health Archive on your own machine.
 ---
 
 ## What it is

@@ -18,8 +18,15 @@ const siteBase = cname ? `https://${cname}` : "https://bramvr.github.io/gohealth
 
 const productName = "gohealthcli";
 const productTagline = "Your Google Health, archived locally.";
+// SEO <title> for the home page. The visual H1 renders productTagline, which
+// reads well but omits the exact phrase searchers type ("Google Health CLI").
+// The document title leads with the brand name and that phrase so the home
+// page is relevant to the query, not just the brand.
+const homeTitle = "gohealthcli — Google Health CLI for local archiving";
+// "Google Health CLI" appears verbatim so the og/twitter/meta description and
+// the JSON-LD entity all carry the query phrase, not only the brand portmanteau.
 const productDescription =
-  "A local-first, read-only CLI that archives personal health and fitness data from the Google Health API into a queryable SQLite Health Archive on your own machine.";
+  "gohealthcli is a local-first, read-only Google Health CLI that archives personal health and fitness data from the Google Health API into a queryable SQLite Health Archive on your own machine.";
 const brewInstall = "brew install BramVR/tap/gohealthcli";
 const brewAvailable = true;
 const goInstall = "go install github.com/BramVR/gohealthcli/cmd/gohealthcli@latest";
@@ -215,8 +222,10 @@ function jsonLd({ page, home, canonicalUrl, description }) {
       "@context": "https://schema.org",
       "@type": "SoftwareApplication",
       name: productName,
+      alternateName: "Google Health CLI",
       description,
       url: homeUrl,
+      keywords: "Google Health CLI, Google Health API, health data archive, command-line, SQLite, local-first",
       applicationCategory: "DeveloperApplication",
       operatingSystem: "macOS, Linux, Windows",
       offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
@@ -608,7 +617,7 @@ function homeHero(page) {
   ].filter(Boolean).join("\n          ");
   return `<header class="home-hero">
         <div class="hero-text">
-          <p class="eyebrow">Local-first · Google Health · SQLite</p>
+          <p class="eyebrow">Local-first Google Health CLI · SQLite archive</p>
           <h1>${tagline}</h1>
           <p class="lede">${escapeHtml(description)}</p>
           <div class="home-cta">
@@ -659,7 +668,7 @@ function layout({ page, html, toc, prev, next, sectionName }) {
   const heroBlock = home ? homeHero(page) : standardHero(page, sectionName, editUrl);
   const articleClass = home ? "doc doc-home" : "doc";
   const tocBlock = home ? "" : toc;
-  const titleSuffix = home ? `${productName} — ${productTagline}` : `${page.title} — ${productName}`;
+  const titleSuffix = home ? homeTitle : `${page.title} — ${productName}`;
   const description = page.frontmatter.description || (home ? productDescription : `${page.title} — ${productName} CLI documentation.`);
   const canonicalUrl = pageCanonicalUrl(page);
   const socialCardExists = fs.existsSync(path.join(docsDir, "social-card.png"));
