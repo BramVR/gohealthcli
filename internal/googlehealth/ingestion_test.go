@@ -217,6 +217,38 @@ func TestGoogleHealthIngestionArchivesDailyRollups(t *testing.T) {
 	}
 }
 
+func TestGoogleHealthIngestionHeartRateDailyRollupUsesFourteenDayWindows(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"2026-01-01/2026-01-15/": `{"rollupDataPoints":[]}`,
+		"2026-01-15/2026-01-29/": `{"rollupDataPoints":[]}`,
+		"2026-01-29/2026-02-01/": `{"rollupDataPoints":[]}`,
+	})
+	ingestion := fakeGoogleHealthIngestion(provider)
+
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "heart-rate",
+		Rollup:   "daily",
+		From:     "2026-01-01",
+		To:       "2026-02-01",
+	}))
+	if err != nil {
+		t.Fatalf("ingest heart-rate daily Rollups: %v", err)
+	}
+	if result.EndpointFamily != "dailyRollUp" {
+		t.Fatalf("endpoint family = %q, want dailyRollUp", result.EndpointFamily)
+	}
+	if len(provider.requests) != 3 {
+		t.Fatalf("request count = %d, want 3", len(provider.requests))
+	}
+	for index, request := range provider.requests {
+		if request.EndpointName != "dataTypes.heart-rate.dailyRollUp" {
+			t.Fatalf("request[%d] endpoint = %q, want heart-rate dailyRollUp", index, request.EndpointName)
+		}
+	}
+}
+
 // TestDailyRollupGuardNamesCatalogSupportedDataTypes pins the
 // unsupported-Data-Type guard on the dailyRollUp request builder to
 // the catalog (#318): the error must name every Data Type whose

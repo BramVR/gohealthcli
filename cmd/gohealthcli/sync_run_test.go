@@ -160,6 +160,53 @@ func TestSyncRunExecutorArchivesDailyRollups(t *testing.T) {
 	assertSyncRunWithEndpointFamily(t, archivePath, 1, "sync_completed", "dailyRollUp", 1, 1, 0, "")
 }
 
+func TestSyncRunExecutorArchivesHeartRateDailyRollups(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC) }
+
+	testRuntime, requests := withHeartRateDailyRollupFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
+		"2026-01-01/2026-01-02/": `{
+			"rollupDataPoints": [{
+				"heartRate": {"bpmAvg": 68.5, "bpmMin": 49.0, "bpmMax": 122.0},
+				"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+				"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}
+			}]
+		}`,
+	})
+
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
+		configPath:  configPath,
+		archivePath: archivePath,
+		dataTypes:   []string{"heart-rate"},
+		rollup:      "daily",
+		from:        "2026-01-01",
+		to:          "2026-01-02",
+	})
+	if err != nil {
+		t.Fatalf("execute Sync Run: %v", err)
+	}
+
+	if result.Status != "sync_completed" || result.EndpointFamily != "dailyRollUp" {
+		t.Fatalf("Sync Run result = (%q, %q), want completed dailyRollUp", result.Status, result.EndpointFamily)
+	}
+	if result.DataPointsSeen != 0 || result.RollupsSeen != 1 || result.RollupsNew != 1 || result.RollupsUpdated != 0 {
+		t.Fatalf("counts = dataPointsSeen:%d rollups:(%d, %d, %d), want dataPointsSeen:0 rollups:(1, 1, 0)", result.DataPointsSeen, result.RollupsSeen, result.RollupsNew, result.RollupsUpdated)
+	}
+	if len(*requests) != 1 || (*requests)[0].EndpointName != "dataTypes.heart-rate.dailyRollUp" {
+		t.Fatalf("requests = %#v, want one heart-rate dailyRollUp request", *requests)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 0)
+	assertArchiveTableCount(t, archivePath, "rollups", 1)
+	assertArchivedHeartRateDailyRollup(t, archivePath)
+	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "heart-rate", "dailyRollUp", 1, 1, 0, "")
+}
+
 // TestSyncRunExecutorWiresNormalizedFromIntoHourlyRollup is the slice-3
 // regression test for the executor seam that the gate's NormalizeRange
 // only fixed for --to: civil `--from 2026-06-07` passed to `--rollup
