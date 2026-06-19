@@ -16,7 +16,7 @@ import (
 // currentSchemaVersion is the schema version a fully migrated Health
 // Archive reports via PRAGMA user_version. It must equal the version of
 // the last row in schemaMigrationTable.
-const currentSchemaVersion = 24
+const currentSchemaVersion = 25
 
 // schemaMigration is one Health Archive schema step: the version it
 // migrates an archive *to*, the schema_migrations history name recorded
@@ -125,6 +125,12 @@ func schemaMigrationTable() []schemaMigration {
 			{datasetName: "daily-sleep-temperature-derivations", viewName: "daily_sleep_temperature_derivations"},
 			{datasetName: "respiratory-rate-sleep-summary", viewName: "respiratory_rate_sleep_summary"},
 		})},
+		// Version 25 adds non-unique lookup indexes that match the
+		// Data Point and Rollup identity predicates used by sync upserts
+		// (#355). They speed large Initial Backfills without changing
+		// duplicate detection, Data Point Revision creation, Rollup
+		// updates, provider corrections, or Sync Cursor advancement.
+		{version: 25, name: "add_sync_upsert_lookup_indexes", apply: statementsStep(syncUpsertLookupIndexMigrationStatements)},
 	}
 }
 
@@ -422,5 +428,41 @@ func dataPointAttachmentsMigrationStatements() []string {
 func syncRunHeartbeatMigrationStatements() []string {
 	return []string{
 		`ALTER TABLE sync_runs ADD COLUMN last_progress_at TEXT`,
+	}
+}
+
+func syncUpsertLookupIndexMigrationStatements() []string {
+	return []string{
+		`CREATE INDEX data_points_upstream_resource_lookup ON data_points (
+			provider_name,
+			connection_id,
+			data_type,
+			upstream_resource_name,
+			IFNULL(source_family_filter, '')
+		)`,
+		`CREATE INDEX data_points_time_metadata_lookup ON data_points (
+			provider_name,
+			connection_id,
+			data_type,
+			IFNULL(upstream_resource_name, ''),
+			record_kind,
+			IFNULL(start_time_utc, ''),
+			IFNULL(end_time_utc, ''),
+			IFNULL(start_civil_time, ''),
+			IFNULL(end_civil_time, ''),
+			IFNULL(provider_civil_date, ''),
+			IFNULL(timezone_metadata, ''),
+			data_source_json,
+			IFNULL(source_family_filter, '')
+		)`,
+		`CREATE INDEX rollups_identity_lookup ON rollups (
+			provider_name,
+			connection_id,
+			data_type,
+			rollup_kind,
+			IFNULL(window_start_utc, ''),
+			IFNULL(window_end_utc, ''),
+			IFNULL(civil_date, '')
+		)`,
 	}
 }
