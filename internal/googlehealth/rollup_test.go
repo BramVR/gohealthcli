@@ -71,6 +71,40 @@ func TestGenericRollupParserDispatchHeartRate(t *testing.T) {
 	}
 }
 
+// TestGenericRollupParserDispatchDailyHeartRate pins issue #356: a
+// daily heart-rate Rollup uses the dailyRollUp civil-date identity
+// path, while keeping the same heartRate value payload as windowed
+// heart-rate Rollups.
+func TestGenericRollupParserDispatchDailyHeartRate(t *testing.T) {
+	t.Parallel()
+	conn := archived.Connection{
+		ProviderName: "googlehealth",
+		ID:           "googlehealth:111111256096816351",
+	}
+	rawRollup := json.RawMessage(`{
+		"heartRate": {"bpmAvg": 68.5, "bpmMin": 49.0, "bpmMax": 122.0},
+		"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+		"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}
+	}`)
+
+	rollup, err := parseGoogleHealthRollup(conn, "heart-rate", "dailyRollUp", rawRollup)
+	if err != nil {
+		t.Fatalf("parseGoogleHealthRollup heart-rate daily: %v", err)
+	}
+	if rollup.DataType != "heart-rate" {
+		t.Errorf("dataType = %q, want heart-rate", rollup.DataType)
+	}
+	if rollup.RollupKind != "dailyRollUp" {
+		t.Errorf("rollupKind = %q, want dailyRollUp", rollup.RollupKind)
+	}
+	if rollup.CivilDate != "2026-01-01" {
+		t.Errorf("civilDate = %q, want 2026-01-01", rollup.CivilDate)
+	}
+	if rollup.WindowStartUTC != "" || rollup.WindowEndUTC != "" {
+		t.Errorf("UTC window = (%q, %q), want empty for daily civil Rollup", rollup.WindowStartUTC, rollup.WindowEndUTC)
+	}
+}
+
 // TestGenericRollupParserDispatchFloors pins the third value-type
 // dispatch the #106 AC names ("parser dispatch for at least three
 // rollup value types"). Floors carries RollupValueType="floorsCount".

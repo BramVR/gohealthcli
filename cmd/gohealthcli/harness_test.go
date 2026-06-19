@@ -518,13 +518,25 @@ func bindStepDailyRollupFetchFake(t *testing.T, runtime *runtimeAdapters, wantAc
 func withStepDailyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]googlehealth.RawRequest) {
 	t.Helper()
 
+	return withDailyRollupFetchFake(t, runtime, wantAccessToken, "steps", pages)
+}
+
+func withHeartRateDailyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]googlehealth.RawRequest) {
+	t.Helper()
+
+	return withDailyRollupFetchFake(t, runtime, wantAccessToken, "heart-rate", pages)
+}
+
+func withDailyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken, dataType string, pages map[string]string) (runtimeAdapters, *[]googlehealth.RawRequest) {
+	t.Helper()
+
 	var requests []googlehealth.RawRequest
 	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
 		if accessToken != wantAccessToken {
 			t.Fatalf("rollup sync access token = %q, want stored token", accessToken)
 		}
-		if request.EndpointName != "dataTypes.steps.dailyRollUp" || request.DataType != "steps" {
-			t.Fatalf("rollup sync request = (%q, %q), want steps dailyRollUp", request.EndpointName, request.DataType)
+		if request.EndpointName != "dataTypes."+dataType+".dailyRollUp" || request.DataType != dataType {
+			t.Fatalf("rollup sync request = (%q, %q), want %s dailyRollUp", request.EndpointName, request.DataType, dataType)
 		}
 		if request.Method != http.MethodPost {
 			t.Fatalf("rollup method = %q, want POST", request.Method)
@@ -533,7 +545,8 @@ func withStepDailyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAcc
 		if err != nil {
 			t.Fatalf("parse rollup URL: %v", err)
 		}
-		if parsedURL.Path != "/v4/users/me/dataTypes/steps/dataPoints:dailyRollUp" {
+		wantPath := "/v4/users/me/dataTypes/" + dataType + "/dataPoints:dailyRollUp"
+		if parsedURL.Path != wantPath {
 			t.Fatalf("rollup path = %q, want dailyRollUp path", parsedURL.Path)
 		}
 		var body struct {
@@ -1660,6 +1673,54 @@ func assertArchivedStepsDailyRollup(t *testing.T, archivePath, wantCount string)
 	}
 	if !strings.Contains(rawJSON, `"countSum":"`+wantCount+`"`) {
 		t.Fatalf("raw_json = %s, want countSum %s", rawJSON, wantCount)
+	}
+}
+
+func assertArchivedHeartRateDailyRollup(t *testing.T, archivePath string) {
+	t.Helper()
+
+	db := openArchiveForTest(t, archivePath)
+	var providerName, connectionID, dataType, rollupKind, civilDate, rawJSON string
+	var windowStart, windowEnd, timezoneMetadata sql.NullString
+	if err := db.QueryRowContext(context.Background(), `SELECT
+		provider_name,
+		connection_id,
+		data_type,
+		rollup_kind,
+		window_start_utc,
+		window_end_utc,
+		civil_date,
+		timezone_metadata,
+		raw_json
+	FROM rollups`).Scan(
+		&providerName,
+		&connectionID,
+		&dataType,
+		&rollupKind,
+		&windowStart,
+		&windowEnd,
+		&civilDate,
+		&timezoneMetadata,
+		&rawJSON,
+	); err != nil {
+		t.Fatalf("query Rollup: %v", err)
+	}
+	if providerName != "googlehealth" || connectionID != "googlehealth:111111256096816351" || dataType != "heart-rate" || rollupKind != "dailyRollUp" {
+		t.Fatalf("Rollup identity = (%q, %q, %q, %q), want googlehealth heart-rate dailyRollUp", providerName, connectionID, dataType, rollupKind)
+	}
+	if windowStart.Valid || windowEnd.Valid {
+		t.Fatalf("Rollup UTC window = (%v, %v), want NULL for civil daily Rollup", windowStart, windowEnd)
+	}
+	if civilDate != "2026-01-01" {
+		t.Fatalf("civil_date = %q, want 2026-01-01", civilDate)
+	}
+	if !timezoneMetadata.Valid || !strings.Contains(timezoneMetadata.String, "civil_start_time") || !strings.Contains(timezoneMetadata.String, "civil_end_time") {
+		t.Fatalf("timezone_metadata = %v(%q), want provider civil time metadata", timezoneMetadata.Valid, timezoneMetadata.String)
+	}
+	for _, want := range []string{`"bpmAvg":68.5`, `"bpmMin":49`, `"bpmMax":122`} {
+		if !strings.Contains(rawJSON, want) {
+			t.Fatalf("raw_json = %s, want %s", rawJSON, want)
+		}
 	}
 }
 
