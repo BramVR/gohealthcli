@@ -136,6 +136,11 @@ type googleHealthRollupList struct {
 	nextPageToken string
 }
 
+const (
+	googleHealthMaxDataPointPageSize     int64 = 10000
+	googleHealthSessionDataPointPageSize int64 = 25
+)
+
 // NewIngestion builds the production-shaped ingestion over a
 // single-attempt fetch and a clock. Main's runtime adapters bind fetch
 // to their fetchRawProvider seam (production: FetchRaw over the shared
@@ -407,7 +412,7 @@ func (ingestion Ingestion) executeDataPointPages(ctx context.Context, archive Ar
 			return ErrSyncCanceled
 		}
 		reportIngestionProgress(request, result)
-		rawRequest, err := buildGoogleHealthSyncDataPointRawRequest(request.DataType, request.From, request.To, request.SourceFamily, 0, pageToken)
+		rawRequest, err := buildGoogleHealthSyncDataPointRawRequest(request.DataType, request.From, request.To, request.SourceFamily, syncDataPointPageSize(request.DataType), pageToken)
 		if err != nil {
 			return err
 		}
@@ -758,6 +763,18 @@ func buildGoogleHealthSyncDataPointRawRequest(dataType, from, to, sourceFamily s
 		return buildGoogleHealthDataTypeListRawRequest(dataType, from, to, pageSize, pageToken)
 	}
 	return buildGoogleHealthDataTypeReconcileRawRequest(dataType, from, to, sourceFamily, pageSize, pageToken)
+}
+
+func syncDataPointPageSize(dataType string) int64 {
+	// Google Health documents the smaller raw Data Point cap for sleep
+	// and exercise specifically; other syncable Data Types use the
+	// maximum Data Point page size.
+	switch dataType {
+	case "sleep", "exercise":
+		return googleHealthSessionDataPointPageSize
+	default:
+		return googleHealthMaxDataPointPageSize
+	}
 }
 
 func buildGoogleHealthDataTypeReconcileRawRequest(dataType, from, to, sourceFamily string, pageSize int64, pageToken string) (RawRequest, error) {
