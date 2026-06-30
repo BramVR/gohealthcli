@@ -36,6 +36,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantListFilterField:   "heart_rate.sample_time.physical_time",
 			wantSyncDataPoint:     true,
 			wantReconcile:         true,
+			wantDailyRollup:       true,
 			wantParser:            "sample",
 			wantRecordKind:        "sample",
 			wantDefaultConfigType: true,

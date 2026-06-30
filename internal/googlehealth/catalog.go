@@ -116,8 +116,9 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		JSONField:         "heartRate",
 		RecordKind:        "sample",
 		DefaultConfigType: true,
-		SupportedEndpoints: listReconcileWithRollupEndpoints(
+		SupportedEndpoints: listReconcileAllRollupEndpoints(
 			"heart_rate.sample_time.physical_time",
+			"heartRate",
 			"heartRate",
 			[]string{"1h", "1d", "7d"},
 		),
