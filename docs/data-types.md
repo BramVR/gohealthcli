@@ -198,10 +198,11 @@ Per-length swim metrics (stroke type, length, duration) captured by waterproof w
 - **Sync key:** `heart-rate`
 - **Shape:** sample
 - **Scope:** `health_metrics_and_measurements.readonly`
-- **Rollups:** `hourly`, `weekly`, `window=<duration>` (1h / 1d / 7d granularities)
+- **Rollups:** `daily`, `hourly`, `weekly`, `window=<duration>` (1h / 1d / 7d granularities)
 - **Stored as:** `data_points` or `rollups`; normalized view `heart-rate-samples`
 
 Beats-per-minute readings at a point in time. The high-volume Data Type for any wearable, typically arriving at one sample per few seconds to minutes.
+Daily heart-rate Rollups are summary-history records in the `rollups` table and do not replace or imply a backfill of raw heart-rate samples.
 
 ### Heart-rate variability
 
@@ -399,4 +400,4 @@ These ride alongside the Data Point catalog and capture per-Connection metadata.
 
 ## Rollups
 
-Only `steps` and `floors` support `--rollup daily`, which calls the upstream `dailyRollUp` endpoint and writes to the `rollups` table instead of `data_points` — the catalog rejects `--rollup daily` for every other Data Type. The catalog rows for `steps`, `heart-rate`, and `floors` support the windowed `rollUp` endpoint (`--rollup hourly`, `--rollup weekly`, or `--rollup window=<duration>`) at 1h / 1d / 7d granularities; `heart-rate` is windowed-only, with no daily rollup. Each rollup kind carries its own Sync Cursor — syncing weekly aggregates does not disturb the hourly cursor for the same Data Type. See [`sync`](commands/sync.html) for the full flag matrix.
+`steps`, `heart-rate`, and `floors` support `--rollup daily`, which calls the upstream `dailyRollUp` endpoint and writes to the `rollups` table instead of `data_points` — the catalog rejects `--rollup daily` for every other Data Type. The same three catalog rows support the windowed `rollUp` endpoint (`--rollup hourly`, `--rollup weekly`, or `--rollup window=<duration>`) at 1h / 1d / 7d granularities. Heart-rate daily Rollups are a fast daily summary-history path, not a replacement for raw heart-rate samples. Each rollup kind carries its own Sync Cursor — syncing daily aggregates does not disturb raw or hourly cursors for the same Data Type. See [`sync`](commands/sync.html) for the full flag matrix.

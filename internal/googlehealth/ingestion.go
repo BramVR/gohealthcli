@@ -136,6 +136,11 @@ type googleHealthRollupList struct {
 	nextPageToken string
 }
 
+const (
+	googleHealthMaxDataPointPageSize     int64 = 10000
+	googleHealthSessionDataPointPageSize int64 = 25
+)
+
 // NewIngestion builds the production-shaped ingestion over a
 // single-attempt fetch and a clock. Main's runtime adapters bind fetch
 // to their fetchRawProvider seam (production: FetchRaw over the shared
@@ -278,7 +283,7 @@ func (ingestion Ingestion) withRetryProgress(progress func()) ingestionProvider 
 }
 
 func (ingestion Ingestion) executeDailyRollupPages(ctx context.Context, archive Archive, request IngestionRequest, result *IngestionResult) error {
-	windows, err := googleHealthDailyRollupDateWindows(request.From, request.To)
+	windows, err := googleHealthDailyRollupDateWindows(request.DataType, request.From, request.To)
 	if err != nil {
 		return err
 	}
@@ -407,7 +412,7 @@ func (ingestion Ingestion) executeDataPointPages(ctx context.Context, archive Ar
 			return ErrSyncCanceled
 		}
 		reportIngestionProgress(request, result)
-		rawRequest, err := buildGoogleHealthSyncDataPointRawRequest(request.DataType, request.From, request.To, request.SourceFamily, 0, pageToken)
+		rawRequest, err := buildGoogleHealthSyncDataPointRawRequest(request.DataType, request.From, request.To, request.SourceFamily, syncDataPointPageSize(request.DataType), pageToken)
 		if err != nil {
 			return err
 		}
@@ -697,7 +702,7 @@ func googleHealthCivilTimeIntervalJSON(from, to string) (json.RawMessage, error)
 	return content, nil
 }
 
-func googleHealthDailyRollupDateWindows(from, to string) ([]googleHealthDateRange, error) {
+func googleHealthDailyRollupDateWindows(dataType, from, to string) ([]googleHealthDateRange, error) {
 	start, err := time.Parse("2006-01-02", from)
 	if err != nil {
 		return nil, fmt.Errorf("--from: expected YYYY-MM-DD")
@@ -709,9 +714,10 @@ func googleHealthDailyRollupDateWindows(from, to string) ([]googleHealthDateRang
 	if !end.After(start) {
 		return nil, errors.New("--to must be after --from for daily Rollup sync")
 	}
+	maxDays := googleHealthDailyRollupMaxRangeDays(dataType)
 	var windows []googleHealthDateRange
 	for current := start; current.Before(end); {
-		next := current.AddDate(0, 0, 90)
+		next := current.AddDate(0, 0, maxDays)
 		if next.After(end) {
 			next = end
 		}
@@ -722,6 +728,15 @@ func googleHealthDailyRollupDateWindows(from, to string) ([]googleHealthDateRang
 		current = next
 	}
 	return windows, nil
+}
+
+func googleHealthDailyRollupMaxRangeDays(dataType string) int {
+	switch dataType {
+	case "active-minutes", "calories-in-heart-rate-zone", "heart-rate", "total-calories":
+		return 14
+	default:
+		return 90
+	}
 }
 
 func googleHealthCivilDateJSON(value string) (json.RawMessage, error) {
@@ -758,6 +773,18 @@ func buildGoogleHealthSyncDataPointRawRequest(dataType, from, to, sourceFamily s
 		return buildGoogleHealthDataTypeListRawRequest(dataType, from, to, pageSize, pageToken)
 	}
 	return buildGoogleHealthDataTypeReconcileRawRequest(dataType, from, to, sourceFamily, pageSize, pageToken)
+}
+
+func syncDataPointPageSize(dataType string) int64 {
+	// Google Health documents the smaller raw Data Point cap for sleep
+	// and exercise specifically; other syncable Data Types use the
+	// maximum Data Point page size.
+	switch dataType {
+	case "sleep", "exercise":
+		return googleHealthSessionDataPointPageSize
+	default:
+		return googleHealthMaxDataPointPageSize
+	}
 }
 
 func buildGoogleHealthDataTypeReconcileRawRequest(dataType, from, to, sourceFamily string, pageSize int64, pageToken string) (RawRequest, error) {

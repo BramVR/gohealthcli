@@ -118,8 +118,8 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("schema migration rows: %v", err)
 	}
-	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter,4:add_daily_steps_view,5:add_first_release_normalized_views,6:add_sync_cursors,7:rename_profile_snapshots_to_identity_snapshots,8:add_current_settings_view,9:add_paired_devices_view,10:add_current_irn_profile_view,11:add_sleep_stages_and_exercise_splits_views,12:fix_exercise_splits_real_shape,13:add_searchable_text_view,14:fix_searchable_text_latest_profile_and_empty_filter,15:add_data_point_attachments,16:add_floors_intervals_view,17:add_tier1_activity_views,18:add_tier1_health_metrics_views,19:add_tier1_daily_hydration_views,20:add_tier2_ecg_irn_views,21:add_hydration_log_sessions_view,22:add_sync_run_heartbeat,23:fix_paired_devices_real_shape,24:fix_numeric_text_view_formatting" {
-		t.Fatalf("migrations = %v, want all migrations 1..24", migrations)
+	if strings.Join(migrations, ",") != "1:initial_archive_schema,2:add_google_identity_json,3:add_source_family_filter,4:add_daily_steps_view,5:add_first_release_normalized_views,6:add_sync_cursors,7:rename_profile_snapshots_to_identity_snapshots,8:add_current_settings_view,9:add_paired_devices_view,10:add_current_irn_profile_view,11:add_sleep_stages_and_exercise_splits_views,12:fix_exercise_splits_real_shape,13:add_searchable_text_view,14:fix_searchable_text_latest_profile_and_empty_filter,15:add_data_point_attachments,16:add_floors_intervals_view,17:add_tier1_activity_views,18:add_tier1_health_metrics_views,19:add_tier1_daily_hydration_views,20:add_tier2_ecg_irn_views,21:add_hydration_log_sessions_view,22:add_sync_run_heartbeat,23:fix_paired_devices_real_shape,24:fix_numeric_text_view_formatting,25:add_sync_upsert_lookup_indexes" {
+		t.Fatalf("migrations = %v, want all migrations 1..25", migrations)
 	}
 
 	for _, table := range []string{

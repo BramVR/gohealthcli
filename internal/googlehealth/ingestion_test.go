@@ -113,6 +113,69 @@ func TestGoogleHealthIngestionChoosesReconcileFromSourceFamily(t *testing.T) {
 	}
 }
 
+func TestGoogleHealthIngestionUsesSafeDataPointPageSize(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		dataType     string
+		sourceFamily string
+		wantEndpoint string
+		wantPageSize string
+	}{
+		{
+			name:         "steps list",
+			dataType:     "steps",
+			wantEndpoint: "dataTypes.steps.list",
+			wantPageSize: "10000",
+		},
+		{
+			name:         "heart-rate reconcile",
+			dataType:     "heart-rate",
+			sourceFamily: "wearable",
+			wantEndpoint: "dataTypes.heart-rate.reconcile",
+			wantPageSize: "10000",
+		},
+		{
+			name:         "sleep list",
+			dataType:     "sleep",
+			wantEndpoint: "dataTypes.sleep.list",
+			wantPageSize: "25",
+		},
+		{
+			name:         "exercise list",
+			dataType:     "exercise",
+			wantEndpoint: "dataTypes.exercise.list",
+			wantPageSize: "25",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			archive := &fakeGoogleHealthIngestionArchive{}
+			provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+				"": `{"dataPoints":[]}`,
+			})
+			ingestion := fakeGoogleHealthIngestion(provider)
+
+			if _, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+				DataType:     tt.dataType,
+				SourceFamily: tt.sourceFamily,
+				From:         "2026-01-01",
+				To:           "2026-01-02",
+			})); err != nil {
+				t.Fatalf("ingest %s: %v", tt.name, err)
+			}
+
+			if len(provider.requests) != 1 || provider.requests[0].EndpointName != tt.wantEndpoint {
+				t.Fatalf("requests = %#v, want one %s request", provider.requests, tt.wantEndpoint)
+			}
+			if got := mustURLQuery(t, provider.requests[0].URL).Get("pageSize"); got != tt.wantPageSize {
+				t.Fatalf("pageSize = %q, want %q in %s", got, tt.wantPageSize, provider.requests[0].URL)
+			}
+		})
+	}
+}
+
 func TestGoogleHealthIngestionHeartbeatsDuringRetryStorm(t *testing.T) {
 	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}
@@ -214,6 +277,38 @@ func TestGoogleHealthIngestionArchivesDailyRollups(t *testing.T) {
 	}
 	if archive.rollups[0].RollupKind != "dailyRollUp" || archive.rollups[0].CivilDate != "2026-01-01" {
 		t.Fatalf("archived Rollup = (%q, %q), want daily 2026-01-01", archive.rollups[0].RollupKind, archive.rollups[0].CivilDate)
+	}
+}
+
+func TestGoogleHealthIngestionHeartRateDailyRollupUsesFourteenDayWindows(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"2026-01-01/2026-01-15/": `{"rollupDataPoints":[]}`,
+		"2026-01-15/2026-01-29/": `{"rollupDataPoints":[]}`,
+		"2026-01-29/2026-02-01/": `{"rollupDataPoints":[]}`,
+	})
+	ingestion := fakeGoogleHealthIngestion(provider)
+
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "heart-rate",
+		Rollup:   "daily",
+		From:     "2026-01-01",
+		To:       "2026-02-01",
+	}))
+	if err != nil {
+		t.Fatalf("ingest heart-rate daily Rollups: %v", err)
+	}
+	if result.EndpointFamily != "dailyRollUp" {
+		t.Fatalf("endpoint family = %q, want dailyRollUp", result.EndpointFamily)
+	}
+	if len(provider.requests) != 3 {
+		t.Fatalf("request count = %d, want 3", len(provider.requests))
+	}
+	for index, request := range provider.requests {
+		if request.EndpointName != "dataTypes.heart-rate.dailyRollUp" {
+			t.Fatalf("request[%d] endpoint = %q, want heart-rate dailyRollUp", index, request.EndpointName)
+		}
 	}
 }
 

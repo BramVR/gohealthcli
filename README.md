@@ -88,7 +88,9 @@ Supported Data Point sync types (grouped by domain):
 
 `sync --source-family wearable` is available for Data Types backed by the
 Google Health reconcile path. `sync --types steps --rollup daily` archives
-steps daily Rollups. `total-calories` is known to the catalog but is not
+steps daily Rollups, and `sync --types heart-rate --rollup daily` archives
+daily heart-rate summary Rollups without replacing raw heart-rate samples.
+`total-calories` is known to the catalog but is not
 supported by raw Data Point sync because Google exposes it as Rollup data;
 `calories-in-heart-rate-zone` is also catalog-known but not yet implemented
 because Google exposes it only through Rollup operations whose payload shape
@@ -290,10 +292,11 @@ Watch long runs from another terminal with `sync --status`. The full
 per-type table covering every measured Data Type is in
 [docs/data-types.md](./docs/data-types.md).
 
-Archive daily step Rollups or wearable-filtered Data Points when needed:
+Archive daily Rollups or wearable-filtered Data Points when needed:
 
 ```bash
 gohealthcli sync --types steps --rollup daily --from 2026-01-01 --to 2026-01-31 --plain
+gohealthcli sync --types heart-rate --rollup daily --from 2026-01-01 --to 2026-01-31 --plain
 gohealthcli sync --types heart-rate --source-family wearable --from 2026-01-01 --to 2026-01-02 --plain
 ```
 
