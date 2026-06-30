@@ -108,6 +108,45 @@ func TestRawDataTypeStepsPrintsFixtureJSON(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestRawDataTypeDoesNotSetPageSizeUnlessFlagPassed(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(request googlehealth.RawRequest) []byte {
+		if got := mustURLQuery(t, request.URL).Get("pageSize"); got != "" {
+			t.Fatalf("pageSize = %q, want unset unless --page-size is passed; URL: %s", got, request.URL)
+		}
+		return []byte(`{"dataPoints":[]}`)
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{
+		"raw",
+		"data-type", "steps",
+		"--from", "2026-01-01",
+		"--to", "2026-01-02",
+		"--config", configPath,
+		"--db", archivePath,
+	}, stdout, stderr, testRuntime)
+	if code != 0 {
+		t.Fatalf("raw exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stdout.String() != `{"dataPoints":[]}` {
+		t.Fatalf("stdout = %q, want raw provider JSON", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 0)
+	assertArchiveTableCount(t, archivePath, "sync_runs", 0)
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestRawProviderErrorDoesNotLeakToken(t *testing.T) {
 	t.Parallel()
 	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
