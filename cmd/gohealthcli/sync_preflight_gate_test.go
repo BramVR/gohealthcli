@@ -43,15 +43,16 @@ func fakeSyncPreflightContext(now time.Time, connection archived.Connection) syn
 			return connection, nil
 		},
 		rollupCatalogValidator: func(spec googlehealth.RollupSpec, dataType string) error {
-			// Only `steps` carries `daily` in the fake catalog; everything
-			// else returns the same shape the production validator emits.
+			// Only summary-history Data Types carry `daily` in the fake
+			// catalog; everything else returns the same shape the
+			// production validator emits.
 			// RollupSpec is comparable, so the daily kind is recognised by
 			// equality with a freshly parsed daily spec.
 			daily, err := googlehealth.ParseRollupSpec("daily")
 			if err != nil {
 				return err
 			}
-			if spec == daily && dataType != "steps" {
+			if spec == daily && dataType != "steps" && dataType != "heart-rate" {
 				return errors.New("sync --rollup daily: Data Type " + dataType + " does not support daily Rollups")
 			}
 			return nil
@@ -104,7 +105,7 @@ func TestSyncPreflightGateRulesTable(t *testing.T) {
 		},
 		{
 			name:       "rollup catalog mismatch",
-			options:    syncCommandOptions{dataTypes: []string{"heart-rate"}, rollup: "daily"},
+			options:    syncCommandOptions{dataTypes: []string{"sleep"}, rollup: "daily"},
 			wantRule:   preflightRuleRollupCatalog,
 			wantErrSub: "does not support daily Rollups",
 		},
@@ -286,7 +287,7 @@ func TestSyncPreflightGateNormalizesRangePerRollupKind(t *testing.T) {
 		{
 			name:     "daily RFC3339 normalized to civil",
 			rollup:   "daily",
-			dataType: "steps",
+			dataType: "heart-rate",
 			from:     "2026-06-07T03:00:00Z",
 			to:       "2026-06-08T00:00:00Z",
 			wantFrom: "2026-06-07",

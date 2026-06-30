@@ -168,6 +168,39 @@ func TestSyncRollupSpecValidateAgainstDataTypeAcceptsHeartRateHourly(t *testing.
 	}
 }
 
+// TestSyncRollupSpecValidateAgainstDataTypeAcceptsHeartRateDaily pins
+// issue #356: heart-rate supports the dailyRollUp endpoint family as a
+// fast daily summary-history path distinct from raw heart-rate samples.
+func TestSyncRollupSpecValidateAgainstDataTypeAcceptsHeartRateDaily(t *testing.T) {
+	t.Parallel()
+	spec, err := ParseRollupSpec("daily")
+	if err != nil {
+		t.Fatalf("ParseRollupSpec daily: %v", err)
+	}
+	if err := ValidateRollupAgainstDataType(spec, "heart-rate"); err != nil {
+		t.Errorf("ValidateRollupAgainstDataType heart-rate+daily: %v", err)
+	}
+}
+
+func TestSyncRollupSpecValidateAgainstDataTypeRejectsSleepDailyWithSupportedEndpoints(t *testing.T) {
+	t.Parallel()
+	spec, err := ParseRollupSpec("daily")
+	if err != nil {
+		t.Fatalf("ParseRollupSpec daily: %v", err)
+	}
+	err = ValidateRollupAgainstDataType(spec, "sleep")
+	if err == nil {
+		t.Fatal("ValidateRollupAgainstDataType sleep+daily: want error, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "sleep") || !strings.Contains(msg, "daily") {
+		t.Errorf("err = %q, want sleep and daily mentions", msg)
+	}
+	if !strings.Contains(msg, "SupportedEndpoints=[list]") {
+		t.Errorf("err = %q, want sleep's supported endpoint families", msg)
+	}
+}
+
 // TestSyncRollupSpecValidateAgainstDataTypeAcceptsStepsDaily pins the
 // regression guard: steps + daily must still validate. The pre-#106
 // behaviour and this widened validator agree on the canonical case.

@@ -79,3 +79,55 @@ func TestSyncCursorRollupKindIndependence(t *testing.T) {
 		}
 	}
 }
+
+func TestSyncCursorHeartRateDailyRollupIndependentFromRawAndWindowed(t *testing.T) {
+	t.Parallel()
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+
+	archive, err := openHealthArchiveWriter(archivePath)
+	if err != nil {
+		t.Fatalf("open writer: %v", err)
+	}
+	defer archive.Close()
+	connection, err := archive.CurrentConnection(context.Background())
+	if err != nil {
+		t.Fatalf("CurrentConnection: %v", err)
+	}
+
+	wantTo := map[syncCursorRollupKind]string{
+		"none":   "2026-01-01T00:00:00Z",
+		"daily":  "2026-02-01",
+		"hourly": "2026-03-01T00:00:00Z",
+	}
+	for kind, cursorTime := range wantTo {
+		key := syncCursorKey{connectionID: connection.ID, dataType: "heart-rate", rollupKind: kind}
+		if err := archive.CommitSyncCursor(context.Background(), key, syncRunOutcomeCompleted, cursorTime, "2026-06-01T00:00:00Z"); err != nil {
+			t.Fatalf("CommitSyncCursor %s: %v", kind, err)
+		}
+	}
+
+	daily := syncCursorKey{connectionID: connection.ID, dataType: "heart-rate", rollupKind: "daily"}
+	if err := archive.CommitSyncCursor(context.Background(), daily, syncRunOutcomeCompleted, "2026-04-01", "2026-06-02T00:00:00Z"); err != nil {
+		t.Fatalf("advance daily: %v", err)
+	}
+	wantTo["daily"] = "2026-04-01"
+
+	for kind, want := range wantTo {
+		key := syncCursorKey{connectionID: connection.ID, dataType: "heart-rate", rollupKind: kind}
+		got, found, err := archive.ResolveSyncCursor(context.Background(), key)
+		if err != nil {
+			t.Fatalf("ResolveSyncCursor %s: %v", kind, err)
+		}
+		if !found {
+			t.Fatalf("ResolveSyncCursor %s: not found", kind)
+		}
+		if got != want {
+			t.Errorf("ResolveSyncCursor %s = %q, want %q", kind, got, want)
+		}
+	}
+}

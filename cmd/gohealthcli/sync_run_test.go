@@ -113,6 +113,94 @@ func TestSyncRunExecutorArchivesDataPointReconcileForSourceFamily(t *testing.T) 
 	assertSyncRunWithEndpointFamilyAndSourceFamily(t, archivePath, 1, "sync_completed", "reconcile", "wearable", 1, 1, 0, "")
 }
 
+func TestSyncRunExecutorListRequestsUseSafeDataPointPageSize(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		dataType     string
+		wantPageSize string
+	}{
+		{dataType: "steps", wantPageSize: "10000"},
+		{dataType: "heart-rate", wantPageSize: "10000"},
+		{dataType: "sleep", wantPageSize: "25"},
+		{dataType: "exercise", wantPageSize: "25"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.dataType, func(t *testing.T) {
+			t.Parallel()
+			configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
+				accessToken:        "connect-access-secret",
+				refreshToken:       "connect-refresh-secret",
+				healthUserID:       "111111256096816351",
+				legacyFitbitUserID: "A1B2C3",
+			})
+			testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
+			requests := bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", tt.dataType, map[string]string{
+				"": `{"dataPoints":[]}`,
+			})
+
+			result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
+				configPath:  configPath,
+				archivePath: archivePath,
+				dataTypes:   []string{tt.dataType},
+				from:        "2026-01-01",
+				to:          "2026-01-02",
+			})
+			if err != nil {
+				t.Fatalf("execute Sync Run: %v", err)
+			}
+			if result.Status != "sync_completed" || result.EndpointFamily != "list" {
+				t.Fatalf("Sync Run result = (%q, %q), want completed list", result.Status, result.EndpointFamily)
+			}
+			if len(*requests) != 1 {
+				t.Fatalf("request count = %d, want 1", len(*requests))
+			}
+			if got := mustURLQuery(t, (*requests)[0].URL).Get("pageSize"); got != tt.wantPageSize {
+				t.Fatalf("pageSize = %q, want %q in %s", got, tt.wantPageSize, (*requests)[0].URL)
+			}
+		})
+	}
+}
+
+func TestSyncRunExecutorReconcileRequestsUseSafeDataPointPageSize(t *testing.T) {
+	t.Parallel()
+	for _, dataType := range []string{"steps", "heart-rate"} {
+		t.Run(dataType, func(t *testing.T) {
+			t.Parallel()
+			configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
+				accessToken:        "connect-access-secret",
+				refreshToken:       "connect-refresh-secret",
+				healthUserID:       "111111256096816351",
+				legacyFitbitUserID: "A1B2C3",
+			})
+			testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
+			requests := bindDataPointReconcileFetchFake(t, &testRuntime, "connect-access-secret", dataType, map[string]string{
+				"": `{"dataPoints":[]}`,
+			})
+
+			result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
+				configPath:   configPath,
+				archivePath:  archivePath,
+				dataTypes:    []string{dataType},
+				sourceFamily: "wearable",
+				from:         "2026-01-01",
+				to:           "2026-01-02",
+			})
+			if err != nil {
+				t.Fatalf("execute Sync Run: %v", err)
+			}
+			if result.Status != "sync_completed" || result.EndpointFamily != "reconcile" {
+				t.Fatalf("Sync Run result = (%q, %q), want completed reconcile", result.Status, result.EndpointFamily)
+			}
+			if len(*requests) != 1 {
+				t.Fatalf("request count = %d, want 1", len(*requests))
+			}
+			if got := mustURLQuery(t, (*requests)[0].URL).Get("pageSize"); got != "10000" {
+				t.Fatalf("pageSize = %q, want 10000 in %s", got, (*requests)[0].URL)
+			}
+		})
+	}
+}
+
 func TestSyncRunExecutorArchivesDailyRollups(t *testing.T) {
 	t.Parallel()
 	configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
@@ -158,6 +246,53 @@ func TestSyncRunExecutorArchivesDailyRollups(t *testing.T) {
 	assertArchiveTableCount(t, archivePath, "rollups", 1)
 	assertArchivedStepsDailyRollup(t, archivePath, "1234")
 	assertSyncRunWithEndpointFamily(t, archivePath, 1, "sync_completed", "dailyRollUp", 1, 1, 0, "")
+}
+
+func TestSyncRunExecutorArchivesHeartRateDailyRollups(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC) }
+
+	testRuntime, requests := withHeartRateDailyRollupFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
+		"2026-01-01/2026-01-02/": `{
+			"rollupDataPoints": [{
+				"heartRate": {"bpmAvg": 68.5, "bpmMin": 49.0, "bpmMax": 122.0},
+				"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+				"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}
+			}]
+		}`,
+	})
+
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
+		configPath:  configPath,
+		archivePath: archivePath,
+		dataTypes:   []string{"heart-rate"},
+		rollup:      "daily",
+		from:        "2026-01-01",
+		to:          "2026-01-02",
+	})
+	if err != nil {
+		t.Fatalf("execute Sync Run: %v", err)
+	}
+
+	if result.Status != "sync_completed" || result.EndpointFamily != "dailyRollUp" {
+		t.Fatalf("Sync Run result = (%q, %q), want completed dailyRollUp", result.Status, result.EndpointFamily)
+	}
+	if result.DataPointsSeen != 0 || result.RollupsSeen != 1 || result.RollupsNew != 1 || result.RollupsUpdated != 0 {
+		t.Fatalf("counts = dataPointsSeen:%d rollups:(%d, %d, %d), want dataPointsSeen:0 rollups:(1, 1, 0)", result.DataPointsSeen, result.RollupsSeen, result.RollupsNew, result.RollupsUpdated)
+	}
+	if len(*requests) != 1 || (*requests)[0].EndpointName != "dataTypes.heart-rate.dailyRollUp" {
+		t.Fatalf("requests = %#v, want one heart-rate dailyRollUp request", *requests)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 0)
+	assertArchiveTableCount(t, archivePath, "rollups", 1)
+	assertArchivedHeartRateDailyRollup(t, archivePath)
+	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "heart-rate", "dailyRollUp", 1, 1, 0, "")
 }
 
 // TestSyncRunExecutorWiresNormalizedFromIntoHourlyRollup is the slice-3
