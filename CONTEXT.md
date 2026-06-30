@@ -44,6 +44,9 @@ _Avoid_: profile snapshot, profile, settings, account data, device record
 **Sync Run**: One attempt to fetch and archive Data Points or Rollups for **one selected Data Type** and time range. Multi-Data-Type CLI invocations (`sync --all`, `sync --types a,b,c`) fan out into one Sync Run per Data Type so per-type counts and failure status stay isolated.
 _Avoid_: import, scrape, download, batch
 
+**Initial Backfill**: The first explicit historical Sync Run range for a Data Type or Rollup kind, usually run with `--from` and `--to` before future cursor-resumed syncs.
+_Avoid_: initial import, bulk download, migration
+
 **Sync Cursor**: The durable highwater mark of successfully archived Data Points or Rollups for one (Connection, Data Type, source-family filter, rollup kind) tuple. Endpoint family is derived by the planner from the source-family filter and rollup kind, so it is not part of the key. A Sync Cursor advances only when a Sync Run finishes with status `sync_completed`; it is not `max(timestamp)` over archived rows and may legitimately trail it after a partial run.
 _Avoid_: watermark, checkpoint, offset, last-sync
 

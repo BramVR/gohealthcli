@@ -93,9 +93,36 @@ gohealthcli status --plain
 gohealthcli sync --types heart-rate,sleep --from 2026-01-01 --to 2026-01-07 --plain
 ```
 
+## Choose an Initial Backfill path
+
+An Initial Backfill is the first historical range you archive for a Data Type or Rollup kind. For low-density Data Types, a raw Data Point Initial Backfill is usually fine. For continuous wearable heart-rate history, choose deliberately:
+
+- Exact raw samples: use raw Data Points when you need every point-in-time BPM reading in `data_points` and the `heart_rate_samples` Normalized View.
+- Fast summary history: use heart-rate Rollups when daily or hourly trends are enough. Rollups store separate records in `rollups`; they do not replace raw heart-rate Data Points or prove raw sample history is complete.
+
+Raw heart-rate samples:
+
+```bash
+gohealthcli sync --types heart-rate --from 2026-01-01 --to 2026-01-15 --plain
+```
+
+Fast daily heart-rate summary history:
+
+```bash
+gohealthcli sync --types heart-rate --rollup daily --from 2026-01-01 --to 2026-03-01 --plain
+```
+
+Hourly summary history:
+
+```bash
+gohealthcli sync --types heart-rate --rollup hourly --from 2026-01-01 --to 2026-01-15 --plain
+```
+
+Each raw or Rollup path has its own Sync Cursor key. A successful daily Rollup Sync Run advances the `heart-rate` daily Rollup cursor, not the raw `heart-rate` cursor; a later raw Data Point sync still needs its own successful Initial Backfill before cursor-resumed raw syncs can omit `--from`.
+
 ## How long will a sync take?
 
-Cursor-resumed incremental syncs (no `--from`) finish in seconds. An explicit backfill window costs time in proportion to how many Data Points it covers, and that depends on the Data Type's density. Sustained throughput measures roughly 2,000–5,000 Data Points per minute on real runs; the table plans with the conservative ~2,000/min, using densities measured 2026-06-10 from a real archive backed by a Pixel Watch 4 (continuous heart-rate sampling). A Data Point is the upstream record unit, which is why the counts differ so wildly per type: a heart-rate point is a single reading (every ~3 seconds on the watch), a steps point is a one-minute bucket, and a sleep point is an entire night with its stage breakdown.
+Cursor-resumed incremental syncs (no `--from`) finish in seconds. An explicit Initial Backfill window costs time in proportion to how many Data Points it covers, and that depends on the Data Type's density. `sync` uses the largest safe raw Data Point page size automatically — `pageSize=10000` for Data Types such as `heart-rate` and `steps`, and the provider's smaller `pageSize=25` cap for `sleep` and `exercise` — but page size only reduces provider round-trips. It does not reduce the number of raw Data Points that must be parsed and archived. Sustained throughput measures roughly 2,000–5,000 Data Points per minute on real runs; the table plans with the conservative ~2,000/min, using densities measured 2026-06-10 from a real archive backed by a Pixel Watch 4 (continuous heart-rate sampling). A Data Point is the upstream record unit, which is why the counts differ so wildly per type: a heart-rate point is a single reading (every ~3 seconds on the watch), a steps point is a one-minute bucket, and a sleep point is an entire night with its stage breakdown.
 
 | Data Type | Density (points/day) | Two weeks ≈ | Sync time ≈ |
 | --- | --- | --- | --- |
@@ -118,10 +145,11 @@ gohealthcli sync --status
 
 ## Daily Rollups and wearable-only filtering
 
-Daily Rollups summarise raw Data Points over a day — useful for time-series charting without re-aggregating in your own code. Wearable-only filtering returns Data Points whose Data Source is a watch or tracker.
+Daily Rollups summarise raw Data Points over a day — useful for time-series charting without re-aggregating in your own code. They write Rollups and carry Rollup Sync Cursors, separate from raw Data Points and raw Sync Cursors. Wearable-only filtering returns Data Points whose Data Source is a watch or tracker.
 
 ```bash
 gohealthcli sync --types steps --rollup daily --from 2026-01-01 --to 2026-01-31 --plain
+gohealthcli sync --types heart-rate --rollup daily --from 2026-01-01 --to 2026-01-31 --plain
 gohealthcli sync --types heart-rate --source-family wearable --from 2026-01-01 --to 2026-01-02 --plain
 ```
 
