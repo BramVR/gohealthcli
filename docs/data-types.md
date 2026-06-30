@@ -19,6 +19,8 @@ The catalog is authoritative in `internal/googlehealth/catalog.go`; this page is
 
 Sync cost is proportional to Data Point count. Sustained throughput measures roughly 2,000–5,000 Data Points per minute on real runs; the table plans with the conservative ~2,000/min. Densities were measured 2026-06-10 from one real account backed by a Pixel Watch 4 (continuous heart-rate sampling) — your numbers scale with what your devices record. Cursor-resumed incremental syncs cover only the gap since the last run and finish in seconds regardless of type; Rollup syncs land one row per day or window and are always trivial.
 
+For a raw Data Point Initial Backfill, `sync` requests the largest safe provider page size automatically: `pageSize=10000` for `heart-rate`, `steps`, and other ordinary raw Data Types, with the documented smaller `pageSize=25` cap for `sleep` and `exercise`. This lowers page count and retry surface, but it cannot make continuous heart-rate history small: a high-density account still has hundreds of thousands of raw Data Points over weeks. The `raw` debugging command remains explicit — it sends no page size unless you pass `gohealthcli raw --page-size`.
+
 Points-per-day spans orders of magnitude because a Data Point is the upstream record unit, and that unit varies by shape: a `sample` point is a single reading (the watch emits a heart-rate sample every ~3 seconds), an `interval` point is one time-bucket (a steps point covers about a minute of walking), a `session` point is one whole activity (a sleep point is an entire night, stage breakdown included), and a `daily` point is one row per civil date.
 
 Each sync key links to its full description further down this page.
@@ -203,6 +205,14 @@ Per-length swim metrics (stroke type, length, duration) captured by waterproof w
 
 Beats-per-minute readings at a point in time. The high-volume Data Type for any wearable, typically arriving at one sample per few seconds to minutes.
 Daily heart-rate Rollups are summary-history records in the `rollups` table and do not replace or imply a backfill of raw heart-rate samples.
+
+Choose the Initial Backfill path by the question you need to answer:
+
+- Exact sample history: `gohealthcli sync --types heart-rate --from 2026-01-01 --to 2026-01-15 --plain`
+- Fast daily summary history: `gohealthcli sync --types heart-rate --rollup daily --from 2026-01-01 --to 2026-03-01 --plain`
+- Fast hourly summary history: `gohealthcli sync --types heart-rate --rollup hourly --from 2026-01-01 --to 2026-01-15 --plain`
+
+Raw heart-rate Data Points and heart-rate Rollups write separate archive records and carry separate Sync Cursors. Running the daily Rollup path first is a good way to get trend history quickly, but a later raw sample sync still needs its own raw Initial Backfill.
 
 ### Heart-rate variability
 
