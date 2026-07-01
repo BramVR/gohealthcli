@@ -4,6 +4,7 @@ gohealthcli is a local-first, read-only Google Health archive CLI for personal h
 
 ## Merge by Default
 
+These are default triage rules for agent work and review; they do not override branch protections, required reviews, or CI gates on `main`.
 - Bug fixes with clear cause in provider, connection, archive, sync, cursor, export, or command behavior.
 - New Data Type support that follows the catalog, scope, raw JSON, normalized view, and docs patterns.
 - Read-only CLI, JSON/plain output, docs, and Project Site improvements that match command registry behavior.
