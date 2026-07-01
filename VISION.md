@@ -12,6 +12,7 @@ gohealthcli is a local-first, read-only Google Health archive CLI for personal h
 
 ## Needs Sign-Off
 
+These changes require explicit maintainer sign-off before implementation or merge.
 - Write/delete/upload/share behavior for health data or exports.
 - New providers, scopes, OAuth flows, or credential storage strategies.
 - Multi-identity archive support, schema migrations, cursor semantics, or sidecar attachment rules.
