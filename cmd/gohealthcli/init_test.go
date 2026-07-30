@@ -722,6 +722,9 @@ func TestInitRemovesCreatedConfigWhenArchiveCreationFails(t *testing.T) {
 
 func TestInitRejectsExistingUnsafeDirectory(t *testing.T) {
 	t.Parallel()
+	if !usesPOSIXPermissions() {
+		t.Skip("owner-only mode enforcement is POSIX-only")
+	}
 	tempDir := t.TempDir()
 	configDir := filepath.Join(tempDir, "config")
 	if err := os.Mkdir(configDir, 0o755); err != nil {

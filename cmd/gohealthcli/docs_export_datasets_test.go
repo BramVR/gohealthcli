@@ -90,7 +90,7 @@ func TestREADMEExportDatasetsBlockMatchesCatalog(t *testing.T) {
 		t.Fatalf("read README: %v", err)
 	}
 	want := renderExportDatasetsBlock(exportDatasetCatalogSingleton.Names())
-	gotBlock, err := extractREADMEExportDatasetsBlock(string(content))
+	gotBlock, err := extractREADMEExportDatasetsBlock(strings.ReplaceAll(string(content), "\r\n", "\n"))
 	if err != nil {
 		t.Fatalf("extract committed block: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestREADMEExportDatasetsBlockListsEveryRegistryName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read README: %v", err)
 	}
-	block, err := extractREADMEExportDatasetsBlock(string(content))
+	block, err := extractREADMEExportDatasetsBlock(strings.ReplaceAll(string(content), "\r\n", "\n"))
 	if err != nil {
 		t.Fatalf("extract block: %v", err)
 	}

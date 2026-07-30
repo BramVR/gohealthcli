@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -208,9 +209,11 @@ func TestDispatchCarriesGlobalSlotFlagsIntoRunners(t *testing.T) {
 		if !strings.HasPrefix(strings.TrimSpace(out), "{") {
 			t.Fatalf("global --json did not reach status; stdout: %s", out)
 		}
-		if !strings.Contains(out, archivePath) {
-			t.Fatalf("global --db did not reach status; stdout: %s", out)
+		var got map[string]any
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("status stdout is not valid JSON: %v\nstdout: %s", err, out)
 		}
+		assertJSONString(t, got, "archive_path", archivePath)
 	})
 
 	t.Run("query sees global --db and --json", func(t *testing.T) {

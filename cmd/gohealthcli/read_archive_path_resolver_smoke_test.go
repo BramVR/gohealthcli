@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,11 +113,13 @@ func TestReadCommandsExplicitDBWinsOverDefaultConfig(t *testing.T) {
 		t.Fatalf("status --db <other> exit code = %d, want 0 (--db must win over default config)\nstdout: %s\nstderr: %s",
 			code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), otherArchive) {
-		t.Fatalf("status stdout did not mention the --db archive path %q; got:\n%s", otherArchive, stdout.String())
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("status stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
 	}
-	if strings.Contains(stdout.String(), configArchive) {
-		t.Fatalf("status stdout mentioned the config's archive path %q; --db should have won. stdout:\n%s", configArchive, stdout.String())
+	assertJSONString(t, got, "archive_path", otherArchive)
+	if got["archive_path"] == configArchive {
+		t.Fatalf("status used the config archive path %q; --db should have won", configArchive)
 	}
 }
 

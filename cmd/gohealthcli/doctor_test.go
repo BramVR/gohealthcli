@@ -242,7 +242,7 @@ func TestDoctorDefaultPathsAreUsable(t *testing.T) {
 	if got["archive_path"] != filepath.Join(xdgData, "gohealthcli", "gohealthcli.sqlite") {
 		t.Fatalf("archive_path = %v, want XDG data path", got["archive_path"])
 	}
-	if strings.Contains(stdout.String(), "~") {
+	if usesPOSIXPermissions() && strings.Contains(stdout.String(), "~") {
 		t.Fatalf("stdout contains unexpanded home path: %s", stdout.String())
 	}
 }
@@ -326,7 +326,11 @@ func TestDoctorPlainReportsOfflineHealthCheck(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 
-	want := fmt.Sprintf("status: ok\nconfig_path: %s\narchive_path: %s\noauth_client_source: file\ncredential_store: %s\nschema_version: %d\nconnection_count: 0\ntoken_status: not_connected\nattachment_root_path: %s.attachments\nattachment_root_mode: 0700\nmessage: local gohealthcli setup is initialized\n", configPath, archivePath, expectedDefaultCredentialStoreKind(), currentSchemaVersion, archivePath)
+	attachmentRootMode := "0777"
+	if usesPOSIXPermissions() {
+		attachmentRootMode = "0700"
+	}
+	want := fmt.Sprintf("status: ok\nconfig_path: %s\narchive_path: %s\noauth_client_source: file\ncredential_store: %s\nschema_version: %d\nconnection_count: 0\ntoken_status: not_connected\nattachment_root_path: %s.attachments\nattachment_root_mode: %s\nmessage: local gohealthcli setup is initialized\n", configPath, archivePath, expectedDefaultCredentialStoreKind(), currentSchemaVersion, archivePath, attachmentRootMode)
 	if stdout.String() != want {
 		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 	}
@@ -499,12 +503,23 @@ func TestDoctorAcceptsRelativeOAuthClientFileAfterInitFromDifferentDirectory(t *
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	oauthClientPath, err := filepath.EvalSymlinks(filepath.Join(initDir, "client_secret.json"))
+	config, err := parseConfig(string(configBytes))
 	if err != nil {
-		t.Fatalf("resolve OAuth client path: %v", err)
+		t.Fatalf("parse config: %v", err)
 	}
-	if want := "path = " + tomlQuotedString(oauthClientPath); !strings.Contains(string(configBytes), want) {
-		t.Fatalf("config missing absolute OAuth client path %q:\n%s", want, string(configBytes))
+	if !filepath.IsAbs(config.oauthClient.path) {
+		t.Fatalf("OAuth client path = %q, want absolute path", config.oauthClient.path)
+	}
+	gotInfo, err := os.Stat(config.oauthClient.path)
+	if err != nil {
+		t.Fatalf("stat configured OAuth client path: %v", err)
+	}
+	wantInfo, err := os.Stat(filepath.Join(initDir, "client_secret.json"))
+	if err != nil {
+		t.Fatalf("stat expected OAuth client path: %v", err)
+	}
+	if !os.SameFile(gotInfo, wantInfo) {
+		t.Fatalf("configured OAuth client path %q does not identify init-cwd client file", config.oauthClient.path)
 	}
 
 	code, stdout, stderr := runBinaryInDir(t,
