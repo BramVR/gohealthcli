@@ -162,6 +162,37 @@ func (lifecycle healthArchiveLifecycle) Inspect(ctx context.Context, validateTok
 	}
 	defer db.Close()
 
+	return inspectOpenArchive(ctx, db, validateTokens)
+}
+
+// openInspectionOnly validates and returns the same SQLite mode=ro
+// handle. Unlike Open, it never runs migrations or repairs the
+// Attachment root; stale and missing archives fail before a caller can
+// issue planning reads.
+func (lifecycle healthArchiveLifecycle) openInspectionOnly(ctx context.Context) (healthArchiveHandle, error) {
+	if err := lifecycle.validateExistingFile(); err != nil {
+		return healthArchiveHandle{}, err
+	}
+	db, err := openArchiveReadOnly(lifecycle.path)
+	if err != nil {
+		return healthArchiveHandle{}, err
+	}
+	archive, err := inspectOpenArchive(ctx, db, false)
+	if err != nil {
+		_ = db.Close()
+		return healthArchiveHandle{}, healthArchiveOpenError{
+			schemaVersion: archive.schemaVersion,
+			err:           fmt.Errorf("Health Archive check failed: %w", err),
+		}
+	}
+	return healthArchiveHandle{
+		path:          lifecycle.path,
+		db:            db,
+		schemaVersion: archive.schemaVersion,
+	}, nil
+}
+
+func inspectOpenArchive(ctx context.Context, db *sql.DB, validateTokens bool) (archiveCheck, error) {
 	var userVersion int
 	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&userVersion); err != nil {
 		return archiveCheck{}, err

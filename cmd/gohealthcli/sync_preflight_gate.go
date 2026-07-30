@@ -304,10 +304,9 @@ func validatePreflightRangeOrder(from, to string) error {
 }
 
 // productionSyncPreflightContext wires the gate to the real catalog +
-// archive openers. The archivePath/configPath round-trip the same way
-// the executor used to call inspectIdentityConfig + openHealthArchiveWriter;
-// the gate exposes that as one closure so call sites do not duplicate
-// the open-then-close dance.
+// strict planning archive opener. The archivePath/configPath
+// round-trip the same way the executor used to inspect them, but the
+// gate can only read the current Connection.
 func productionSyncPreflightContext(ctx context.Context, options syncCommandOptions, runtime runtimeAdapters) syncPreflightContext {
 	return syncPreflightContext{
 		now:                   runtime.now,
@@ -322,7 +321,7 @@ func productionSyncPreflightContext(ctx context.Context, options syncCommandOpti
 			if _, err := inspectIdentityConfig(options.configPath, options.archivePath); err != nil {
 				return archived.Connection{}, fmt.Errorf("config check failed: %w", err)
 			}
-			archive, err := runtime.openHealthArchiveWriter(options.archivePath)
+			archive, err := runtime.openSyncPlanningArchive(context.WithoutCancel(ctx), options.archivePath)
 			if err != nil {
 				return archived.Connection{}, err
 			}

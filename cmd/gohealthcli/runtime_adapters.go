@@ -26,10 +26,13 @@ type runtimeAdapters struct {
 	fetchRawProvider   func(context.Context, googlehealth.RawRequest, string) ([]byte, error)
 	retrySleeper       googlehealth.RetrySleeper
 	// openHealthArchiveWriter opens the Health Archive write handle the
-	// Sync Run path uses (gate connection lookup + lifecycle). Tests
-	// wrap it to inject failing writers; production binds the real
+	// Sync Run lifecycle uses after inspection-only planning succeeds.
+	// Tests wrap it to inject failing writers; production binds the real
 	// opener.
 	openHealthArchiveWriter func(string) (healthArchiveWriter, error)
+	// openSyncPlanningArchive opens the strict mode=ro archive used for
+	// the preflight Connection and Sync Cursor reads.
+	openSyncPlanningArchive func(context.Context, string) (syncPlanningArchive, error)
 	now                     func() time.Time
 	// sleep is the blocking-wait seam the Sync Run finalize retry loop
 	// rides between SQLITE_BUSY attempts. Production binds time.Sleep;
@@ -87,6 +90,7 @@ func productionRuntimeAdapters() runtimeAdapters {
 		fetchIRNProfile:                productionFetchIRNProfile,
 		fetchRawProvider:               productionFetchRawProvider,
 		openHealthArchiveWriter:        openHealthArchiveWriter,
+		openSyncPlanningArchive:        openSyncPlanningArchive,
 		now:                            productionNow,
 		sleep:                          time.Sleep,
 		currentOS:                      goruntime.GOOS,
@@ -184,6 +188,9 @@ func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
 	}
 	if adapters.openHealthArchiveWriter == nil {
 		adapters.openHealthArchiveWriter = openHealthArchiveWriter
+	}
+	if adapters.openSyncPlanningArchive == nil {
+		adapters.openSyncPlanningArchive = openSyncPlanningArchive
 	}
 	if adapters.currentOS == "" {
 		adapters.currentOS = production.currentOS

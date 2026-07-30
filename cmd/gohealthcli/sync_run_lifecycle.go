@@ -22,12 +22,9 @@ import (
 // structurally impossible because every return path goes through
 // syncResultFromOutcome (AC #2 of PRD #141 slice 4).
 //
-// Future deferral note (slice 1 architecture seam): the gate currently
-// opens the archive once for currentConnection lookup, and Run reopens
-// it. Threading the open handle through preflightPlan would remove the
-// double-open but widens the gate interface and the orchestrator's
-// per-Data-Type loop. Slice 4 keeps the double-open and addresses it
-// in a future slice (see PRD #141 slice 4 design notes).
+// Planning reads the Connection and optional Sync Cursor through a
+// separate strict mode=ro archive. Run opens the writer only after that
+// plan succeeds.
 type syncRunLifecycle struct {
 	options syncCommandOptions
 	plan    preflightPlan
@@ -72,6 +69,39 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 		options.from = plan.from
 	}
 	connection := plan.connection
+	cursorKey := plan.cursorKeys[0]
+	resumedFromCursor := false
+	if options.from == "" {
+		planningArchive, err := runtime.openSyncPlanningArchive(ctx, options.archivePath)
+		if err != nil {
+			return syncRunFailure(syncResult{
+				DataTypes: options.dataTypes,
+				To:        options.to,
+			}, err)
+		}
+		cursorTime, found, cursorErr := planningArchive.ResolveSyncCursor(ctx, cursorKey)
+		closeErr := planningArchive.Close()
+		if cursorErr != nil {
+			return syncRunFailure(syncResult{
+				DataTypes: options.dataTypes,
+				To:        options.to,
+			}, fmt.Errorf("resolve Sync Cursor: %w", cursorErr))
+		}
+		if closeErr != nil {
+			return syncRunFailure(syncResult{
+				DataTypes: options.dataTypes,
+				To:        options.to,
+			}, fmt.Errorf("close planning Health Archive: %w", closeErr))
+		}
+		if !found {
+			return syncRunFailure(syncResult{
+				DataTypes: options.dataTypes,
+				To:        options.to,
+			}, errors.New("sync has no Sync Cursor for this Data Type yet; set --from for the initial backfill"))
+		}
+		options.from = cursorTime
+		resumedFromCursor = true
+	}
 	archive, err := runtime.openHealthArchiveWriter(options.archivePath)
 	if err != nil {
 		return syncRunFailure(syncResult{
@@ -97,25 +127,6 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 			From:      options.from,
 			To:        options.to,
 		}, fmt.Errorf("config check failed: %w", err))
-	}
-	cursorKey := plan.cursorKeys[0]
-	resumedFromCursor := false
-	if options.from == "" {
-		cursorTime, found, err := archive.ResolveSyncCursor(ctx, cursorKey)
-		if err != nil {
-			return syncRunFailure(syncResult{
-				DataTypes: options.dataTypes,
-				To:        options.to,
-			}, fmt.Errorf("resolve Sync Cursor: %w", err))
-		}
-		if !found {
-			return syncRunFailure(syncResult{
-				DataTypes: options.dataTypes,
-				To:        options.to,
-			}, errors.New("sync has no Sync Cursor for this Data Type yet; set --from for the initial backfill"))
-		}
-		options.from = cursorTime
-		resumedFromCursor = true
 	}
 	ingestion := newGoogleHealthIngestionWithRuntime(runtime)
 	_, grantedScopes, err := connectionTokenExpiryAndScopes(connection.TokenMetadataJSON)
