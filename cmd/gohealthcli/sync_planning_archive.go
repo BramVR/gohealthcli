@@ -10,9 +10,10 @@ import (
 )
 
 // syncPlanningArchive exposes only the local reads needed to build a
-// Sync Run plan. Its production implementation opens current-schema
-// SQLite in mode=ro and cannot migrate, repair sidecars, fence runs, or
-// create an archive.
+// Sync Run plan. Its production implementation opens current-schema,
+// rollback-journal SQLite in mode=ro and cannot migrate, repair
+// sidecars, fence runs, or create an archive. WAL is rejected because
+// its reader coordination writes shared-memory state.
 type syncPlanningArchive interface {
 	Close() error
 	CurrentConnection(ctx context.Context) (archived.Connection, error)

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -86,6 +87,54 @@ func TestInspectionOnlyOpenErrorPreservesInspectionAndCloseFailures(t *testing.T
 	var openErr healthArchiveOpenError
 	if !errors.As(err, &openErr) || openErr.schemaVersion != 4 {
 		t.Fatalf("inspection-only open error = %#v, want schema version 4", err)
+	}
+}
+
+func TestSyncPlanningArchiveRejectsLiveWALWithoutSidecarMutation(t *testing.T) {
+	t.Parallel()
+	_, archivePath, _ := connectedArchiveViaSetup(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+
+	walDB, err := sql.Open("sqlite", archivePath+"?_pragma=journal_mode(wal)&_pragma=wal_autocheckpoint(0)")
+	if err != nil {
+		t.Fatalf("open WAL writer: %v", err)
+	}
+	defer walDB.Close()
+	if _, err := walDB.ExecContext(context.Background(), `UPDATE connections SET legacy_fitbit_user_id = 'WAL-UPDATED'`); err != nil {
+		t.Fatalf("write live WAL frame: %v", err)
+	}
+	walPath := archivePath + "-wal"
+	shmPath := archivePath + "-shm"
+	for _, sidecarPath := range []string{walPath, shmPath} {
+		if _, err := os.Stat(sidecarPath); err != nil {
+			t.Fatalf("stat live WAL sidecar %s: %v", sidecarPath, err)
+		}
+	}
+	beforeMain := capturePlanningArchiveState(t, archivePath)
+	beforeWAL := capturePlanningArchiveState(t, walPath)
+	beforeSHM := capturePlanningArchiveState(t, shmPath)
+
+	archive, err := openSyncPlanningArchive(context.Background(), archivePath)
+	if archive != nil {
+		archive.Close()
+		t.Fatal("live WAL planning archive returned a handle")
+	}
+	if err == nil || !strings.Contains(err.Error(), "WAL mode") {
+		t.Fatalf("live WAL planning archive error = %v, want WAL mode rejection", err)
+	}
+
+	afterMain := capturePlanningArchiveState(t, archivePath)
+	afterWAL := capturePlanningArchiveState(t, walPath)
+	afterSHM := capturePlanningArchiveState(t, shmPath)
+	if afterMain != beforeMain || afterWAL != beforeWAL || afterSHM != beforeSHM {
+		t.Fatalf(
+			"planning archive mutated live WAL state:\nmain: before=%+v after=%+v\nwal:  before=%+v after=%+v\nshm:  before=%+v after=%+v",
+			beforeMain, afterMain, beforeWAL, afterWAL, beforeSHM, afterSHM,
+		)
 	}
 }
 

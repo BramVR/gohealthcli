@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -167,11 +168,15 @@ func (lifecycle healthArchiveLifecycle) Inspect(ctx context.Context, validateTok
 }
 
 // openInspectionOnly validates and returns the same SQLite mode=ro
-// handle. Unlike Open, it never runs migrations or repairs the
-// Attachment root; stale and missing archives fail before a caller can
-// issue planning reads.
+// handle. WAL mode is rejected before SQLite opens the file because
+// WAL readers necessarily update shared-memory reader marks. Unlike
+// Open, it never runs migrations or repairs the Attachment root; stale
+// and missing archives fail before a caller can issue planning reads.
 func (lifecycle healthArchiveLifecycle) openInspectionOnly(ctx context.Context) (healthArchiveHandle, error) {
 	if err := lifecycle.validateExistingFile(); err != nil {
+		return healthArchiveHandle{}, err
+	}
+	if err := validateInspectionOnlyJournalMode(lifecycle.path); err != nil {
 		return healthArchiveHandle{}, err
 	}
 	db, err := openArchiveReadOnly(lifecycle.path)
@@ -187,6 +192,26 @@ func (lifecycle healthArchiveLifecycle) openInspectionOnly(ctx context.Context) 
 		db:            db,
 		schemaVersion: archive.schemaVersion,
 	}, nil
+}
+
+func validateInspectionOnlyJournalMode(archivePath string) error {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return err
+	}
+	header := make([]byte, 20)
+	_, readErr := io.ReadFull(file, header)
+	closeErr := file.Close()
+	if closeErr != nil {
+		closeErr = fmt.Errorf("close SQLite header: %w", closeErr)
+	}
+	if err := errors.Join(readErr, closeErr); err != nil {
+		return fmt.Errorf("read SQLite header: %w", err)
+	}
+	if string(header[:16]) == "SQLite format 3\x00" && (header[18] == 2 || header[19] == 2) {
+		return errors.New("inspection-only planning does not support SQLite WAL mode")
+	}
+	return nil
 }
 
 func inspectionOnlyOpenError(archive archiveCheck, inspectionErr, closeErr error) error {
