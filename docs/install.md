@@ -58,8 +58,8 @@ if (($UserPath -split ";") -notcontains $InstallDir) {
     "User"
   )
 }
-$env:Path += ";$InstallDir"
-gohealthcli.exe --version
+$env:Path = "$InstallDir;$env:Path"
+& (Join-Path $InstallDir "gohealthcli.exe") --version
 ```
 
 The ZIP contains `gohealthcli.exe`, `LICENSE`, and `README.md`. Windows
