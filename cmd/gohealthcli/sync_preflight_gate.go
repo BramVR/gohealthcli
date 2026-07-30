@@ -325,14 +325,14 @@ func productionSyncPreflightContext(ctx context.Context, options syncCommandOpti
 			if err != nil {
 				return archived.Connection{}, err
 			}
-			defer archive.Close()
 			// WithoutCancel: the gate's connection lookup is a fast local
 			// read, not a cancellation point — the lifecycle entry check
 			// owns the pre-start SIGINT contract (no-audit-row +
 			// sync_canceled envelope, PRD #141 slice 5). Aborting this
 			// read on a canceled context would misreport a pre-start
 			// cancel as a preflight sync_failed (#305).
-			return archive.CurrentConnection(context.WithoutCancel(ctx))
+			connection, readErr := archive.CurrentConnection(context.WithoutCancel(ctx))
+			return connection, syncPlanningResultError(readErr, archive.Close())
 		},
 		rollupCatalogValidator: googlehealth.ValidateRollupAgainstDataType,
 	}

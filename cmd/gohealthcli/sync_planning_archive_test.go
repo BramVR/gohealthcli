@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +12,67 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BramVR/gohealthcli/internal/archived"
 )
+
+func TestSyncPlanningReportsReadAndCloseErrors(t *testing.T) {
+	t.Parallel()
+
+	readErr := errors.New("planning read failed")
+	closeErr := errors.New("planning close failed")
+	fakeArchive := &failingSyncPlanningArchive{
+		connectionErr: readErr,
+		cursorErr:     readErr,
+		closeErr:      closeErr,
+	}
+
+	t.Run("preflight Connection", func(t *testing.T) {
+		configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
+			accessToken:        "connect-access-secret",
+			refreshToken:       "connect-refresh-secret",
+			healthUserID:       "111111256096816351",
+			legacyFitbitUserID: "A1B2C3",
+		})
+		testRuntime.openSyncPlanningArchive = func(context.Context, string) (syncPlanningArchive, error) {
+			return fakeArchive, nil
+		}
+
+		_, err := productionSyncPreflightContext(context.Background(), syncCommandOptions{
+			configPath:  configPath,
+			archivePath: archivePath,
+		}, testRuntime).currentConnection()
+		if !errors.Is(err, readErr) || !errors.Is(err, closeErr) {
+			t.Fatalf("currentConnection error = %v, want read and close errors", err)
+		}
+	})
+
+	t.Run("Sync Cursor", func(t *testing.T) {
+		testRuntime := (runtimeAdapters{
+			openSyncPlanningArchive: func(context.Context, string) (syncPlanningArchive, error) {
+				return fakeArchive, nil
+			},
+			openHealthArchiveWriter: func(string) (healthArchiveWriter, error) {
+				t.Fatal("writer opened after failed planning")
+				return nil, nil
+			},
+		}).withDefaults()
+		_, err := (syncRunLifecycle{
+			options: syncCommandOptions{
+				archivePath: "unused.sqlite",
+				dataTypes:   []string{"steps"},
+			},
+			plan: preflightPlan{
+				dataTypes:  []string{"steps"},
+				cursorKeys: []syncCursorKey{{dataType: "steps"}},
+			},
+			runtime: testRuntime,
+		}).Run(context.Background())
+		if !errors.Is(err, readErr) || !errors.Is(err, closeErr) {
+			t.Fatalf("Run error = %v, want read and close errors", err)
+		}
+	})
+}
 
 func TestSyncPlanningArchiveReadsConnectionAndCursorWithoutMutation(t *testing.T) {
 	t.Parallel()
@@ -267,6 +328,24 @@ type planningArchiveState struct {
 	mode        os.FileMode
 	modTime     time.Time
 	dirEntries  string
+}
+
+type failingSyncPlanningArchive struct {
+	connectionErr error
+	cursorErr     error
+	closeErr      error
+}
+
+func (archive *failingSyncPlanningArchive) Close() error {
+	return archive.closeErr
+}
+
+func (archive *failingSyncPlanningArchive) CurrentConnection(context.Context) (archived.Connection, error) {
+	return archived.Connection{}, archive.connectionErr
+}
+
+func (archive *failingSyncPlanningArchive) ResolveSyncCursor(context.Context, syncCursorKey) (string, bool, error) {
+	return "", false, archive.cursorErr
 }
 
 func capturePlanningArchiveState(t *testing.T, archivePath string) planningArchiveState {

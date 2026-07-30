@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 
 	"github.com/BramVR/gohealthcli/internal/archived"
 )
@@ -44,4 +45,15 @@ func (archive *sqliteSyncPlanningArchive) CurrentConnection(ctx context.Context)
 
 func (archive *sqliteSyncPlanningArchive) ResolveSyncCursor(ctx context.Context, key syncCursorKey) (string, bool, error) {
 	return resolveSyncCursor(ctx, archive.db, key)
+}
+
+func syncPlanningResultError(readErr, closeErr error) error {
+	if closeErr == nil {
+		return readErr
+	}
+	closeErr = fmt.Errorf("close planning Health Archive: %w", closeErr)
+	if readErr == nil {
+		return closeErr
+	}
+	return errors.Join(readErr, closeErr)
 }

@@ -82,16 +82,13 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 		cursorTime, found, cursorErr := planningArchive.ResolveSyncCursor(ctx, cursorKey)
 		closeErr := planningArchive.Close()
 		if cursorErr != nil {
-			return syncRunFailure(syncResult{
-				DataTypes: options.dataTypes,
-				To:        options.to,
-			}, fmt.Errorf("resolve Sync Cursor: %w", cursorErr))
+			cursorErr = fmt.Errorf("resolve Sync Cursor: %w", cursorErr)
 		}
-		if closeErr != nil {
+		if planningErr := syncPlanningResultError(cursorErr, closeErr); planningErr != nil {
 			return syncRunFailure(syncResult{
 				DataTypes: options.dataTypes,
 				To:        options.to,
-			}, fmt.Errorf("close planning Health Archive: %w", closeErr))
+			}, planningErr)
 		}
 		if !found {
 			return syncRunFailure(syncResult{
