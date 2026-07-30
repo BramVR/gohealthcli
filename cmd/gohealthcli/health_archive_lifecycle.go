@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -179,17 +180,24 @@ func (lifecycle healthArchiveLifecycle) openInspectionOnly(ctx context.Context) 
 	}
 	archive, err := inspectOpenArchive(ctx, db, false)
 	if err != nil {
-		_ = db.Close()
-		return healthArchiveHandle{}, healthArchiveOpenError{
-			schemaVersion: archive.schemaVersion,
-			err:           fmt.Errorf("Health Archive check failed: %w", err),
-		}
+		return healthArchiveHandle{}, inspectionOnlyOpenError(archive, err, db.Close())
 	}
 	return healthArchiveHandle{
 		path:          lifecycle.path,
 		db:            db,
 		schemaVersion: archive.schemaVersion,
 	}, nil
+}
+
+func inspectionOnlyOpenError(archive archiveCheck, inspectionErr, closeErr error) error {
+	if closeErr != nil {
+		closeErr = fmt.Errorf("close inspection-only Health Archive: %w", closeErr)
+		inspectionErr = errors.Join(inspectionErr, closeErr)
+	}
+	return healthArchiveOpenError{
+		schemaVersion: archive.schemaVersion,
+		err:           fmt.Errorf("Health Archive check failed: %w", inspectionErr),
+	}
 }
 
 func inspectOpenArchive(ctx context.Context, db *sql.DB, validateTokens bool) (archiveCheck, error) {

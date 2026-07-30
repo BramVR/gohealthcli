@@ -74,6 +74,21 @@ func TestSyncPlanningReportsReadAndCloseErrors(t *testing.T) {
 	})
 }
 
+func TestInspectionOnlyOpenErrorPreservesInspectionAndCloseFailures(t *testing.T) {
+	t.Parallel()
+
+	inspectionErr := errors.New("inspection failed")
+	closeErr := errors.New("inspection handle close failed")
+	err := inspectionOnlyOpenError(archiveCheck{schemaVersion: 4}, inspectionErr, closeErr)
+	if !errors.Is(err, inspectionErr) || !errors.Is(err, closeErr) {
+		t.Fatalf("inspection-only open error = %v, want inspection and close errors", err)
+	}
+	var openErr healthArchiveOpenError
+	if !errors.As(err, &openErr) || openErr.schemaVersion != 4 {
+		t.Fatalf("inspection-only open error = %#v, want schema version 4", err)
+	}
+}
+
 func TestSyncPlanningArchiveReadsConnectionAndCursorWithoutMutation(t *testing.T) {
 	t.Parallel()
 	_, archivePath, _ := connectedArchiveViaSetup(t, fakeConnectConfig{
