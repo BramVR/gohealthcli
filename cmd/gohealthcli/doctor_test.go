@@ -400,7 +400,7 @@ func TestDoctorReportsMalformedOAuthClientReference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	config := strings.Replace(string(configBytes), `path = "`+filepath.Join(tempDir, "client_secret.json")+`"`+"\n", "", 1)
+	config := strings.Replace(string(configBytes), "path = "+tomlQuotedString(filepath.Join(tempDir, "client_secret.json"))+"\n", "", 1)
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -503,7 +503,7 @@ func TestDoctorAcceptsRelativeOAuthClientFileAfterInitFromDifferentDirectory(t *
 	if err != nil {
 		t.Fatalf("resolve OAuth client path: %v", err)
 	}
-	if want := `path = "` + oauthClientPath + `"`; !strings.Contains(string(configBytes), want) {
+	if want := "path = " + tomlQuotedString(oauthClientPath); !strings.Contains(string(configBytes), want) {
 		t.Fatalf("config missing absolute OAuth client path %q:\n%s", want, string(configBytes))
 	}
 
@@ -591,7 +591,7 @@ func TestDoctorAcceptsInlineConfigComments(t *testing.T) {
 		t.Fatalf("read config: %v", err)
 	}
 	config := string(configBytes)
-	config = strings.Replace(config, `archive_path = "`+archivePath+`"`, `archive_path = "`+archivePath+`" # local Health Archive`, 1)
+	config = strings.Replace(config, "archive_path = "+tomlQuotedString(archivePath), "archive_path = "+tomlQuotedString(archivePath)+" # local Health Archive", 1)
 	config = strings.Replace(config, `"steps",`, `"steps", # default Data Type`, 1)
 	storeType := `type = "` + expectedDefaultCredentialStoreKind() + `"`
 	config = strings.Replace(config, storeType, storeType+` # default Credential Store`, 1)

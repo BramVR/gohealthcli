@@ -98,7 +98,7 @@ func TestReadCommandsExplicitDBWinsOverDefaultConfig(t *testing.T) {
 	if err := createArchive(configArchive); err != nil {
 		t.Fatalf("create config archive: %v", err)
 	}
-	writeOwnerOnlyTOML(t, defaultConfig, "archive_path = \""+configArchive+"\"\n")
+	writeOwnerOnlyTOML(t, defaultConfig, "archive_path = "+tomlQuotedString(configArchive)+"\n")
 
 	otherArchive := filepath.Join(tempDir, "other", "other.sqlite")
 	if err := createArchive(otherArchive); err != nil {

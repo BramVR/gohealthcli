@@ -1,3 +1,5 @@
+//go:build !windows
+
 package main
 
 import (
@@ -127,7 +129,7 @@ func TestExplicitFlagsUnaffectedByUnsetHome(t *testing.T) {
 		t.Fatalf("create archive: %v", err)
 	}
 	configPath := filepath.Join(tempDir, "explicit", "config.toml")
-	writeOwnerOnlyTOML(t, configPath, "archive_path = \""+archivePath+"\"\n")
+	writeOwnerOnlyTOML(t, configPath, "archive_path = "+tomlQuotedString(archivePath)+"\n")
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)

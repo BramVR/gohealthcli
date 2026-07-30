@@ -20,6 +20,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +46,9 @@ func TestMain(m *testing.M) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	testBinaryPath = filepath.Join(dir, "gohealthcli")
+	if runtime.GOOS == "windows" {
+		testBinaryPath += ".exe"
+	}
 	build := exec.CommandContext(context.Background(), "go", "build", "-o", testBinaryPath, ".")
 	if output, err := build.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "build command: %v\n%s", err, string(output))
@@ -722,7 +727,7 @@ func initializeFileCredentialSetup(t *testing.T, tempDir string) (string, string
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	config := removeCredentialStoreSection(t, string(configBytes)) + "\n[credential_store]\ntype = \"file\"\npath = \"" + tokenStorePath + "\"\n"
+	config := removeCredentialStoreSection(t, string(configBytes)) + "\n[credential_store]\ntype = \"file\"\npath = " + tomlQuotedString(tokenStorePath) + "\n"
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -1096,6 +1101,10 @@ func ensureTestOAuthClientFiles(t *testing.T, dir string, args []string) {
 
 func expectedDefaultCredentialStoreKind() string {
 	return "os_native"
+}
+
+func tomlQuotedString(value string) string {
+	return strconv.Quote(value)
 }
 
 func removeCredentialStoreSection(t *testing.T, config string) string {

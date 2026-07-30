@@ -66,9 +66,9 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	}
 	config := string(configBytes)
 	for _, want := range []string{
-		`archive_path = "` + archivePath + `"`,
+		"archive_path = " + tomlQuotedString(archivePath),
 		`source = "file"`,
-		`path = "` + oauthClientPath + `"`,
+		"path = " + tomlQuotedString(oauthClientPath),
 		`[credential_store]`,
 		`"steps"`,
 		`"weight"`,
@@ -84,7 +84,7 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 			}
 		}
 	} else {
-		for _, want := range []string{`type = "file"`, `path = "` + filepath.Join(filepath.Dir(configPath), "tokens.json") + `"`} {
+		for _, want := range []string{`type = "file"`, "path = " + tomlQuotedString(filepath.Join(filepath.Dir(configPath), "tokens.json"))} {
 			if !strings.Contains(config, want) {
 				t.Fatalf("config missing %q:\n%s", want, config)
 			}
