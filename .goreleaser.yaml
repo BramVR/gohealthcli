@@ -17,12 +17,17 @@ builds:
       - darwin_arm64
       - linux_amd64
       - linux_arm64
+      - windows_amd64
 
 archives:
   - ids:
       - gohealthcli
     formats:
       - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE

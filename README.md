@@ -176,6 +176,9 @@ go install github.com/BramVR/gohealthcli/cmd/gohealthcli@latest
 gohealthcli --version
 ```
 
+On Windows amd64, install the checksummed release ZIP with the
+[PowerShell instructions](./docs/install.md#windows).
+
 For local development:
 
 ```bash

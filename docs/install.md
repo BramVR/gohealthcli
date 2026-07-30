@@ -21,6 +21,53 @@ brew update
 brew upgrade BramVR/tap/gohealthcli
 ```
 
+## Windows
+
+Windows releases are unsigned amd64 ZIP archives. In PowerShell, replace
+`vX.Y.Z` with the release tag:
+
+```powershell
+$Tag = "vX.Y.Z"
+$ReleaseVersion = $Tag.TrimStart("v")
+$Archive = "gohealthcli_${ReleaseVersion}_windows_amd64.zip"
+$ReleaseBase = "https://github.com/BramVR/gohealthcli/releases/download/$Tag"
+
+Invoke-WebRequest "$ReleaseBase/$Archive" -OutFile $Archive
+Invoke-WebRequest "$ReleaseBase/checksums.txt" -OutFile checksums.txt
+
+$ChecksumLine = Get-Content checksums.txt |
+  Where-Object { $_ -match "  $([regex]::Escape($Archive))$" } |
+  Select-Object -First 1
+if (-not $ChecksumLine) { throw "No checksum found for $Archive" }
+$ExpectedHash = ($ChecksumLine -split "\s+")[0]
+$ActualHash = (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($ActualHash -ne $ExpectedHash.ToLowerInvariant()) {
+  throw "Checksum mismatch for $Archive"
+}
+
+$InstallDir = Join-Path $HOME "bin\gohealthcli"
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+Expand-Archive $Archive -DestinationPath $InstallDir -Force
+
+$UserPath = [string][Environment]::GetEnvironmentVariable("Path", "User")
+if (($UserPath -split ";") -notcontains $InstallDir) {
+  $NewUserPath = ($UserPath.TrimEnd(";") + ";" + $InstallDir).TrimStart(";")
+  [Environment]::SetEnvironmentVariable(
+    "Path",
+    $NewUserPath,
+    "User"
+  )
+}
+$env:Path = "$InstallDir;$env:Path"
+& (Join-Path $InstallDir "gohealthcli.exe") --version
+```
+
+The ZIP contains `gohealthcli.exe`, `LICENSE`, and `README.md`. Windows
+SmartScreen may warn because the executable is not code-signed. After verifying
+the SHA-256 checksum above, choose **More info** and **Run anyway** if you trust
+this release. The warning does not prevent installation; the checksum verifies
+the downloaded bytes but does not establish a signed publisher identity.
+
 ## Go install
 
 If you have a Go toolchain installed (1.22 or later), this is the fastest path. The binary lands in `$GOPATH/bin` (or `$HOME/go/bin` if `GOPATH` is unset). Make sure that directory is on your `PATH`.

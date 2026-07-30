@@ -30,7 +30,12 @@ Expected archive names:
 - `gohealthcli_<version>_darwin_arm64.tar.gz`
 - `gohealthcli_<version>_linux_amd64.tar.gz`
 - `gohealthcli_<version>_linux_arm64.tar.gz`
+- `gohealthcli_<version>_windows_amd64.zip`
 - `checksums.txt`
+
+Every archive contains the platform binary, `LICENSE`, and `README.md`. The
+Windows archive contains `gohealthcli.exe`; the macOS and Linux archives remain
+`tar.gz` files.
 
 GoReleaser stamps the binary with:
 
@@ -44,6 +49,10 @@ The release workflow dispatches `update-formula.yml` in
 `BramVR/homebrew-tap`. That tap workflow owns the formula-editing logic and
 updates the target-specific archive URLs and SHA256 values in
 `Formula/gohealthcli.rb`.
+
+The Homebrew handoff remains limited to the existing macOS and Linux
+`tar.gz` artifacts. The Windows ZIP is an additional GitHub Release artifact
+and does not change the formula artifact template.
 
 Repository secret:
 
