@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
@@ -33,6 +35,8 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
@@ -55,6 +59,8 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       # Reachability-based vulnerability proof (issue #336): keep this as
       # called-vulnerability checking, not dependency update automation.
@@ -66,13 +72,15 @@ jobs:
           go-package: ./...
           output-format: text
 
-  test:
-    name: build and test
+  linux-test:
+    name: Linux build and test
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Check out
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
@@ -111,3 +119,48 @@ jobs:
         run: |
           test -s dist/docs-site/index.html
           grep -q "gohealthcli" dist/docs-site/index.html
+
+  windows-test:
+    name: Windows amd64 build and test
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      GOARCH: amd64
+    steps:
+      - name: Check out
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./...
+
+  # Branch protection requires this exact name; always run so either platform
+  # failure is reflected by the protected aggregate instead of skipping it.
+  test:
+    name: build and test
+    if: ${{ always() }}
+    needs:
+      - linux-test
+      - windows-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require Linux and Windows proof
+        env:
+          LINUX_RESULT: ${{ needs.linux-test.result }}
+          WINDOWS_RESULT: ${{ needs.windows-test.result }}
+        run: |
+          if [ "$LINUX_RESULT" != "success" ] || [ "$WINDOWS_RESULT" != "success" ]; then
+            echo "Linux result: $LINUX_RESULT"
+            echo "Windows result: $WINDOWS_RESULT"
+            exit 1
+          fi

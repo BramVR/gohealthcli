@@ -379,7 +379,7 @@ func TestConnectRejectsFileCredentialStoreCollisionsBeforeOAuth(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read config: %v", err)
 			}
-			config := removeCredentialStoreSection(t, string(configBytes)) + "\n[credential_store]\ntype = \"file\"\npath = \"" + collisionPath + "\"\n"
+			config := removeCredentialStoreSection(t, string(configBytes)) + "\n[credential_store]\ntype = \"file\"\npath = " + tomlQuotedString(collisionPath) + "\n"
 			if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 				t.Fatalf("write config: %v", err)
 			}
