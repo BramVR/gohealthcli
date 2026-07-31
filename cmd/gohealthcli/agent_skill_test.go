@@ -198,6 +198,7 @@ func TestAgentSkillPinsSafetyBoundaries(t *testing.T) {
 		"user-approved private destination",
 		"umask 077",
 		"set -o noclobber",
+		"ACL-protected local application-data directory",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(content, phrase) {
@@ -205,7 +206,8 @@ func TestAgentSkillPinsSafetyBoundaries(t *testing.T) {
 		}
 	}
 	for _, invocation := range agentSkillInvocations(readAgentSkill(t)) {
-		if strings.HasPrefix(invocation, "gohealthcli raw ") && !strings.Contains(invocation, ">") {
+		redirected := strings.Contains(invocation, ">") || strings.Contains(invocation, "| Set-Content ")
+		if strings.HasPrefix(invocation, "gohealthcli raw ") && !redirected {
 			t.Errorf("raw Provider invocation must redirect sensitive stdout: %q", invocation)
 		}
 	}

@@ -115,12 +115,21 @@ file local and report its path and row count without quoting records.
 Use raw reads only when local status, schema, and archived data cannot answer
 the question. Choose a fresh, user-approved private destination. Set
 owner-only file creation and no-clobber in the same shell before redirecting
-stdout:
+stdout. On a POSIX shell:
 
 ```bash
 umask 077
 set -o noclobber
 gohealthcli raw data-type steps --from 2026-01-01 --to 2026-01-02 > ./raw-health-response.json
+```
+
+On PowerShell, create a unique file inside the current user's ACL-protected
+local application-data directory:
+
+```powershell
+$rawPath = Join-Path $env:LOCALAPPDATA ("gohealthcli-raw-{0}.json" -f [guid]::NewGuid())
+New-Item -ItemType File -Path $rawPath -ErrorAction Stop | Out-Null
+gohealthcli raw data-type steps --from 2026-01-01 --to 2026-01-02 | Set-Content -LiteralPath $rawPath -Encoding utf8
 ```
 
 This example reads Data Type `steps` from the Provider and redirects its raw
