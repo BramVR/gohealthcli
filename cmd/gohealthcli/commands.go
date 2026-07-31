@@ -33,14 +33,15 @@ import "io"
 // build-time verbs (schema, docs-export-datasets) that ignore the common
 // flags entirely.
 type commandDef struct {
-	Name           string                                                                                              `json:"name"`
-	Short          string                                                                                              `json:"short"`
-	Long           string                                                                                              `json:"long"`
-	Hidden         bool                                                                                                `json:"hidden"`
-	PositionalArgs string                                                                                              `json:"positional_args,omitempty"`
-	Flags          []flagSpec                                                                                          `json:"flags"`
-	CommonFlags    []string                                                                                            `json:"common_flags,omitempty"`
-	Run            func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int `json:"-"`
+	Name                 string                                                                                              `json:"name"`
+	Short                string                                                                                              `json:"short"`
+	Long                 string                                                                                              `json:"long"`
+	Hidden               bool                                                                                                `json:"hidden"`
+	PositionalArgs       string                                                                                              `json:"positional_args,omitempty"`
+	Flags                []flagSpec                                                                                          `json:"flags"`
+	CommonFlags          []string                                                                                            `json:"common_flags,omitempty"`
+	Run                  func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int `json:"-"`
+	PositionalCompletion valueCompletionPolicy                                                                               `json:"-"`
 }
 
 // flagSpec describes one flag accepted by a subcommand. The string-typed
@@ -52,11 +53,27 @@ type commandDef struct {
 // other machines. Document the resolved location in prose (long descriptions,
 // README, install page) rather than baking a per-host value into the schema.
 type flagSpec struct {
-	Name    string `json:"name"`
-	Type    string `json:"type"`
-	Default string `json:"default"`
-	Usage   string `json:"usage"`
+	Name            string                `json:"name"`
+	Type            string                `json:"type"`
+	Default         string                `json:"default"`
+	Usage           string                `json:"usage"`
+	ValueCompletion valueCompletionPolicy `json:"-"`
 }
+
+type valueCompletionPolicy uint8
+
+const (
+	valueCompletionUnspecified valueCompletionPolicy = iota
+	valueCompletionFile
+	valueCompletionNone
+	valueCompletionExportDataset
+	valueCompletionSyncDataTypesCSV
+	valueCompletionAddScopesCSV
+	valueCompletionRollup
+	valueCompletionSourceFamily
+	valueCompletionRawPositionals
+	valueCompletionShell
+)
 
 // schemaVersion is the version of the schema --json payload's outer shape.
 // Bump when a backwards-incompatible field change ships; the Node generator
@@ -251,9 +268,9 @@ var commands = []commandDef{
 		Short: "Create local config and an empty Health Archive.",
 		Long:  "Initialise a fresh `gohealthcli` install: write the config file, create the Health Archive on disk, and run the initial schema migration. After `init` finishes the binary is ready for `connect`.\n\n`--oauth-client-file` points at a Google OAuth Desktop-app client JSON downloaded from the Google Cloud console (see the [Install](../install.html) page). `--secret-provider` and `--oauth-client-item` are an alternative path that pulls the client from a Secret Provider (for example, 1Password) instead of a file.\n\n`init` never overwrites an existing Health Archive; rerun with a different `--db` to create a second archive in a separate location.",
 		Flags: withCommon(
-			flagSpec{Name: "oauth-client-file", Type: "string", Default: "", Usage: "OAuth client JSON file reference"},
-			flagSpec{Name: "secret-provider", Type: "string", Default: "", Usage: "Secret Provider name for OAuth client setup"},
-			flagSpec{Name: "oauth-client-item", Type: "string", Default: "", Usage: "Secret Provider item name for OAuth client setup"},
+			flagSpec{Name: "oauth-client-file", Type: "string", Default: "", Usage: "OAuth client JSON file reference", ValueCompletion: valueCompletionFile},
+			flagSpec{Name: "secret-provider", Type: "string", Default: "", Usage: "Secret Provider name for OAuth client setup", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "oauth-client-item", Type: "string", Default: "", Usage: "Secret Provider item name for OAuth client setup", ValueCompletion: valueCompletionNone},
 		),
 		CommonFlags: commonFlagNames(),
 		// init runs entirely against the local filesystem (config + archive);
@@ -280,7 +297,7 @@ var commands = []commandDef{
 			// error) so the schema --json contract and the generated
 			// docs/commands/connect.md page cannot drift from the
 			// accepted keyword set (#148).
-			flagSpec{Name: "add-scopes", Type: "string", Default: "", Usage: connectAddScopesUsage()},
+			flagSpec{Name: "add-scopes", Type: "string", Default: "", Usage: connectAddScopesUsage(), ValueCompletion: valueCompletionAddScopesCSV},
 		),
 		CommonFlags: commonFlagNames(),
 		Run:         runConnectWithRuntime,
@@ -352,14 +369,14 @@ var commands = []commandDef{
 		Short: "Archive Google Health Data Points and supported Rollups.",
 		Long:  "Pull raw Data Points for the requested Data Types within an inclusive `--from` / exclusive `--to` window and append them to the Health Archive. Sync is the primary write path; everything else in the binary either reads from the archive or refreshes metadata.\n\n`--types` accepts a comma-separated list (for example `steps,heart-rate,sleep`); multi-type invocations fan out into one Sync Run per Data Type, each with its own outcome and Sync Cursor. When neither `--types` nor `--all` is set, `sync` falls back to a single-type run against `steps`. `--all` is shorthand for every default Data Type in the catalog. Per-type failures stay isolated: one Data Type erroring does not stop the others. `--rollup` switches the sync from raw Data Points to upstream Rollup records: `daily` calls the `dailyRollUp` endpoint (civil-time windows), `hourly` / `weekly` / `window=<duration>` call the windowed `rollUp` endpoint (RFC3339 windows) with a 1h / 7d / parsed-duration window size respectively. Daily heart-rate Rollups are summary-history records and do not replace or imply a backfill of raw heart-rate samples. Unsupported combinations error with the Data Type's actual `SupportedEndpoints` quoted in the message. `--source-family wearable` restricts the result set to Data Points whose Data Source family is a watch or tracker.\n\n`--from` and `--to` accept both civil dates (`YYYY-MM-DD`, interpreted as start-of-UTC-day) and RFC3339 timestamps. The emitted shape is per rollup kind:\n\n- `daily`: emits civil dates (`YYYY-MM-DD`). RFC3339 inputs are projected to their UTC calendar day so the upstream `dailyRollUp` body carries the catalog-required civil interval.\n- `hourly` / `weekly` / `window=<duration>`: emits RFC3339 so the windowed `rollUp` body carries the upstream-required RFC3339 range.\n\nShape-rejection messages name both supported forms per rollup kind so operators no longer see an opaque upstream HTTP 400 for civil-on-hourly or similar.\n\n`--from` is optional once an initial backfill has succeeded — subsequent runs read the durable Sync Cursor for the same `(connection_id, data_type, source_family_filter, rollup_kind)` key and resume from it. Each rollup kind (`daily` / `hourly` / `weekly` / `window=<duration>`) carries its own cursor, so syncing weekly aggregates does not disturb the hourly cursor for the same Data Type. The cursor advances only when a Sync Run finishes with `sync_completed`, so failed or cancelled runs re-read the same window on the next attempt (ADR-0008). The terminal Sync Run status and the cursor advance are written in one SQLite transaction, so a crash between them cannot leave the audit trail and the cursor disagreeing.\n\nA Sync Run row is recorded for every invocation that reaches upstream — succeeded, failed, or cancelled — so the archive carries an audit trail of attempts as well as records. Every `--json` envelope carries a non-empty `status` from the enum `sync_completed | sync_failed | sync_canceled`; the empty string is structurally impossible because every code path emits a non-empty status.\n\nPreflight failures exit before contacting the provider and do NOT write a `sync_runs` audit row. The full list of no-audit-row rejections is:\n\n- Unparseable `--from` or `--to` (range parse).\n- Inverted range (`--from > --to`).\n- Zero-width range (`--from == --to`).\n- Unsupported `--rollup` kind (parse failure).\n- `--rollup <kind>` requested for a Data Type whose catalog entry does not support that kind (e.g. `--rollup hourly --types daily-resting-heart-rate`).\n- Unsupported Data Type (not syncable yet).\n- Source-family vs Data Type mismatch.\n- `--rollup` combined with `--source-family` (mutually exclusive).\n- No Connection on file (connection lookup failure).\n- `--all` combined with `--types` (mutually exclusive).\n- Duplicate entries in `--types`.\n- `--all` expanding to zero supported Data Types.\n- SIGINT received before any Data Type has started its audit row (no run is in flight to mark).\n\nSIGINT (Ctrl-C) aborts the in-flight Provider request (every request is scoped to the run's context, and a Retry-After backoff sleep is cut short the same way), marks the in-flight Sync Run `sync_canceled`, leaves its Sync Cursor un-advanced, and stops cleanly; prior Data Types remain `sync_completed` and later ones are skipped.\n\nTerminal writes are resilient to SQLite contention: on `SQLITE_BUSY`, the terminal write retries with bounded exponential backoff plus full jitter. If the retry budget is exhausted, the run surfaces as `sync_failed` with a contention-aware message and a separate short-transaction recovery write drives the row to a terminal state under the same retry budget so a `sync_running` row never lingers. `sync_canceled` outcomes are preserved through the recovery path — they are never reclassified as `sync_failed`.\n\nLive progress (#236): before every page fetch the Sync Run heartbeats — the counts archived so far plus a `last_progress_at` timestamp land on the `sync_runs` row as a best-effort autocommit write — so a concurrent reader can watch progress from another terminal while the run is in flight, and a slow first page (large backfill, 429 retry backoff) still shows a live heartbeat from second zero. Heartbeats are advisory; the finalize transaction's terminal counts stay authoritative, and a heartbeat write failure never fails the sync.\n\n`sync --status` is that concurrent reader, packaged: it lists recent Sync Runs from the local archive — one row per run with id, Data Types, status, counts, duration, heartbeat age, and a truncated error summary — and performs no provider I/O. Finished runs are listed when they finished inside `--window` (Go duration, default `15m`, max `24h`); `sync_running` rows are window-exempt, so a long in-flight run never ages out of the default view. `--status` cannot be combined with `--types`, `--all`, `--from`, `--to`, `--rollup`, or `--source-family`, and `--window` requires `--status`. The shared `--json` / `--plain` flags shape the output like every other read command.\n\nAbandoned-run fencing: on entry to `sync`, `sync --status`, and `status`, any `sync_running` row whose heartbeat (or `started_at`, for rows that died before their first page) is older than 5 minutes is flipped to `sync_failed` with `error_summary` `abandoned (no heartbeat for 5m)` and `finished_at` set — so orphans from killed processes stop reading as alive without manual SQL. The fence is idempotent and never touches the Sync Cursor (ADR-0008: only a completed finalize advances it). Because it keys on heartbeat staleness rather than wall-clock age, a multi-hour backfill with a fresh heartbeat is never mis-flagged; and if a fenced process turns out to be alive after all, its eventual finalize overwrites the fence so the row converges to its true terminal status.\n\nHow long does a sync take? A cursor-resumed incremental sync finishes in seconds — a steps delta covering ~7 hours archived 97 Data Points in 7s. An explicit backfill window costs time in proportion to how many Data Points it covers: sustained throughput on large completed runs measures roughly 2,000–5,000 Data Points per minute (plan with ~2,000/min), so the Data Type's density per day decides the wall-clock. Densities measured 2026-06-10 from a real archive backed by a Pixel Watch 4 (continuous heart-rate sampling), and what two weeks of data costs at the conservative rate: heart-rate ~27,500 points/day, so two weeks is ~385,000 points and 1.5–3 hours of syncing; time-in-heart-rate-zone ~960/day, ~13,400 points, ~5 minutes; active-energy-burned ~630/day, ~8,800 points, ~4 minutes; oxygen-saturation ~480/day, ~6,700 points, ~3 minutes; steps ~260/day, ~3,600 points, ~2 minutes; sleep and the daily-* types are a point or so per day and finish in seconds. Density is account-specific — a phone-only account with no continuously-sampling wearable runs far lower across the board. Runs longer than an access token's ~1-hour lifetime survive it: a mid-run upstream 401 triggers a single token refresh and a retry of the failed request, and the refreshed token carries the rest of the run — at most one refresh per fetch, so a revoked grant still fails, and 403 is never retried because a fresh token cannot fix a missing scope. Mid-run refresh requires a Connection that supports auto-refresh (the standard `init --oauth-client-file` setup does); without it, a run that outlives its token keeps the historical behavior — it fails with `Google Health rejected stored Connection token` and leaves the Sync Cursor un-advanced — so chunk such backfills into `--from`/`--to` windows under ~100,000 points (2–3 days of continuously-sampled heart-rate). While a long run is in flight, `sync --status` from a second terminal shows the live counts and heartbeat age.",
 		Flags: withCommon(
-			flagSpec{Name: "types", Type: "string", Default: "", Usage: "comma-separated Data Types; defaults to \"steps\" when neither --types nor --all is set"},
+			flagSpec{Name: "types", Type: "string", Default: "", Usage: "comma-separated Data Types; defaults to \"steps\" when neither --types nor --all is set", ValueCompletion: valueCompletionSyncDataTypesCSV},
 			flagSpec{Name: "all", Type: "bool", Default: "false", Usage: "sync every default Data Type"},
-			flagSpec{Name: "from", Type: "string", Default: "", Usage: "inclusive sync range start; optional once a Sync Cursor exists"},
-			flagSpec{Name: "to", Type: "string", Default: "", Usage: "exclusive sync range end"},
-			flagSpec{Name: "rollup", Type: "string", Default: "", Usage: "rollup kind to sync; supported: daily | hourly | weekly | window=<duration>"},
-			flagSpec{Name: "source-family", Type: "string", Default: "", Usage: "source family filter; supported: wearable"},
+			flagSpec{Name: "from", Type: "string", Default: "", Usage: "inclusive sync range start; optional once a Sync Cursor exists", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "to", Type: "string", Default: "", Usage: "exclusive sync range end", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "rollup", Type: "string", Default: "", Usage: syncRollupUsage(), ValueCompletion: valueCompletionRollup},
+			flagSpec{Name: "source-family", Type: "string", Default: "", Usage: syncSourceFamilyUsage(), ValueCompletion: valueCompletionSourceFamily},
 			flagSpec{Name: "status", Type: "bool", Default: "false", Usage: "list recent Sync Runs from the local archive instead of syncing"},
-			flagSpec{Name: "window", Type: "string", Default: "", Usage: "with --status: how far back to list finished Sync Runs (Go duration, default 15m, max 24h)"},
+			flagSpec{Name: "window", Type: "string", Default: "", Usage: "with --status: how far back to list finished Sync Runs (Go duration, default 15m, max 24h)", ValueCompletion: valueCompletionNone},
 		),
 		CommonFlags: commonFlagNames(),
 		Run:         runSyncWithRuntime,
@@ -377,10 +394,11 @@ var commands = []commandDef{
 		Run: runStatus,
 	},
 	{
-		Name:           "query",
-		Short:          "Run guarded read-only SQL over the Health Archive.",
-		Long:           "Execute a single SQL statement against the Health Archive. The binary refuses anything that would write or alter the archive — `query` is for inspection, not maintenance.\n\nFlags must appear **before** the SQL argument because Go's `flag` parser stops at the first positional argument. To explore the schema, query the `sqlite_master` table or run `gohealthcli export` for the canonical normalised datasets.\n\nThe default no-flag output is the `--plain` key/value shape: every cell appears on its own `row.<row>.<column>: <value>` line, with `\\n` / `\\t` / `\\r` / `\\\\` escaped so a downstream parser can split on the first `: ` and recover the value verbatim. The legacy `Row N: column=value column=value` shape — which silently broke on values containing spaces or `=` — was removed in PRD #144 slice 7; the default now produces byte-identical output to `--plain`, with no stderr warning, so scripted and LLM consumers get a parseable shape by default.\n\nIn `--json` mode, JSON-typed columns pass through as nested JSON objects so downstream consumers can read them with one parse instead of two. The recognised columns are `raw_json`, `data_source_json`, `timezone_metadata`, `token_metadata_json`, `google_identity_json`, and any column whose name ends in `_json`. Pass `--raw-text` to opt out and receive the literal stored string instead. NULL JSON-typed cells stay `null`; invalid JSON payloads fall back to the stored string so no row ever fails the query.\n\nBLOB columns in `--json` mode are wrapped in a `{\"__blob_base64__\": \"<base64>\"}` marker object so raw bytes survive the JSON path without UTF-8 replacement-character corruption. Detection covers both schema-declared BLOB columns (`sql.ColumnType.DatabaseTypeName() == \"BLOB\"`) and typeless expressions whose scan result is a byte slice (e.g. `SELECT randomblob(8)`). Decode the payload with any base64 decoder (`jq -r '.rows[0][0].__blob_base64__' | base64 -d`). The BLOB marker takes precedence over the JSON-typed allowlist, so a `raw_json` column that comes back as a BLOB is base64-encoded, never double-parsed. NULL BLOB cells stay `null`.\n\nBLOB columns in `--plain` mode are emitted as a `<blob:base64><payload>` string so the `row.N.M:` line stays parseable; without the prefix today's path emits the raw bytes and prints `\\ufffd` replacement characters wherever the bytes are not valid UTF-8.",
-		PositionalArgs: "<sql>",
+		Name:                 "query",
+		Short:                "Run guarded read-only SQL over the Health Archive.",
+		Long:                 "Execute a single SQL statement against the Health Archive. The binary refuses anything that would write or alter the archive — `query` is for inspection, not maintenance.\n\nFlags must appear **before** the SQL argument because Go's `flag` parser stops at the first positional argument. To explore the schema, query the `sqlite_master` table or run `gohealthcli export` for the canonical normalised datasets.\n\nThe default no-flag output is the `--plain` key/value shape: every cell appears on its own `row.<row>.<column>: <value>` line, with `\\n` / `\\t` / `\\r` / `\\\\` escaped so a downstream parser can split on the first `: ` and recover the value verbatim. The legacy `Row N: column=value column=value` shape — which silently broke on values containing spaces or `=` — was removed in PRD #144 slice 7; the default now produces byte-identical output to `--plain`, with no stderr warning, so scripted and LLM consumers get a parseable shape by default.\n\nIn `--json` mode, JSON-typed columns pass through as nested JSON objects so downstream consumers can read them with one parse instead of two. The recognised columns are `raw_json`, `data_source_json`, `timezone_metadata`, `token_metadata_json`, `google_identity_json`, and any column whose name ends in `_json`. Pass `--raw-text` to opt out and receive the literal stored string instead. NULL JSON-typed cells stay `null`; invalid JSON payloads fall back to the stored string so no row ever fails the query.\n\nBLOB columns in `--json` mode are wrapped in a `{\"__blob_base64__\": \"<base64>\"}` marker object so raw bytes survive the JSON path without UTF-8 replacement-character corruption. Detection covers both schema-declared BLOB columns (`sql.ColumnType.DatabaseTypeName() == \"BLOB\"`) and typeless expressions whose scan result is a byte slice (e.g. `SELECT randomblob(8)`). Decode the payload with any base64 decoder (`jq -r '.rows[0][0].__blob_base64__' | base64 -d`). The BLOB marker takes precedence over the JSON-typed allowlist, so a `raw_json` column that comes back as a BLOB is base64-encoded, never double-parsed. NULL BLOB cells stay `null`.\n\nBLOB columns in `--plain` mode are emitted as a `<blob:base64><payload>` string so the `row.N.M:` line stays parseable; without the prefix today's path emits the raw bytes and prints `\\ufffd` replacement characters wherever the bytes are not valid UTF-8.",
+		PositionalArgs:       "<sql>",
+		PositionalCompletion: valueCompletionNone,
 		Flags: withCommon(
 			// --raw-text registered on the runtime FlagSet inside
 			// runQuery; mirrored here so docs-commands regen + the
@@ -397,14 +415,15 @@ var commands = []commandDef{
 		Run: runQuery,
 	},
 	{
-		Name:           "export",
-		Short:          "Write a normalised dataset to CSV or JSONL.",
-		Long:           "Render one of the curated normalised datasets (daily-steps, heart-rate-samples, resting-heart-rate-by-day, sleep-sessions, exercise-sessions, weight-samples, and many more) from the Health Archive. Exports are read-only; nothing in the archive is mutated.\n\nRun `gohealthcli export --help` to see the full list of supported datasets, sorted alphabetically. If you pass a name that does not exist, the error message includes the closest matches (Levenshtein ≤ 3, top 3) and a pointer back to `export --help`.\n\nExactly one of `--output PATH` or `--stdout` must be supplied — the explicit destination prevents an accidental terminal dump of a long export.\n\n`--json` is a Common Flag Set synonym for `--format jsonl`; `--plain` is a synonym for `--format csv`. Passing a synonym alongside a contradictory `--format` value (`--json --format csv`, `--plain --format jsonl`) fails with a `--<synonym> conflicts with --format <value>` error. `--plain --json` together fails with the documented mutual-exclusion error from the Common Flag Set seam.",
-		PositionalArgs: "<dataset>",
+		Name:                 "export",
+		Short:                "Write a normalised dataset to CSV or JSONL.",
+		Long:                 "Render one of the curated normalised datasets (daily-steps, heart-rate-samples, resting-heart-rate-by-day, sleep-sessions, exercise-sessions, weight-samples, and many more) from the Health Archive. Exports are read-only; nothing in the archive is mutated.\n\nRun `gohealthcli export --help` to see the full list of supported datasets, sorted alphabetically. If you pass a name that does not exist, the error message includes the closest matches (Levenshtein ≤ 3, top 3) and a pointer back to `export --help`.\n\nExactly one of `--output PATH` or `--stdout` must be supplied — the explicit destination prevents an accidental terminal dump of a long export.\n\n`--json` is a Common Flag Set synonym for `--format jsonl`; `--plain` is a synonym for `--format csv`. Passing a synonym alongside a contradictory `--format` value (`--json --format csv`, `--plain --format jsonl`) fails with a `--<synonym> conflicts with --format <value>` error. `--plain --json` together fails with the documented mutual-exclusion error from the Common Flag Set seam.",
+		PositionalArgs:       "<dataset>",
+		PositionalCompletion: valueCompletionExportDataset,
 		Flags: withCommonOverrides(
 			exportCommonFlagUsageOverrides,
-			flagSpec{Name: "format", Type: "string", Default: "csv", Usage: "export format: csv or jsonl (synonyms: --json → jsonl, --plain → csv)"},
-			flagSpec{Name: "output", Type: "string", Default: "", Usage: "write export to path"},
+			flagSpec{Name: "format", Type: "string", Default: "csv", Usage: "export format: csv or jsonl (synonyms: --json → jsonl, --plain → csv)", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "output", Type: "string", Default: "", Usage: "write export to path", ValueCompletion: valueCompletionFile},
 			flagSpec{Name: "stdout", Type: "bool", Default: "false", Usage: "write export data to stdout"},
 		),
 		CommonFlags: commonFlagNames(),
@@ -418,15 +437,16 @@ var commands = []commandDef{
 		Run: runExport,
 	},
 	{
-		Name:           "raw",
-		Short:          "Print raw provider JSON for endpoint exploration.",
-		Long:           "Fetch a single upstream Google Health API response and print the raw body to stdout. Useful for endpoint exploration without committing the response to the Health Archive.\n\nFirst positional argument is `endpoint <name>` (for example `endpoint getIdentity`) or `data-type <data-type>` (for example `data-type steps --from 2026-01-01 --to 2026-01-02`). `--from` and `--to` constrain time ranges where the endpoint supports them; `--page-size` and `--page-token` drive pagination.\n\n`raw` is provider-shaped on purpose — the JSON you see is what the provider returns, not the normalised shape the archive stores.\n\nFailures route through the unified Failure Reporter: a Provider outage (network failure or non-auth upstream HTTP error) reports status `provider_unreachable`, while other operation errors — including an upstream HTTP 401 auth rejection, which carries the `Google Health rejected stored Connection token` message — report `operation_failed`.",
-		PositionalArgs: "<target> [<args>...]",
+		Name:                 "raw",
+		Short:                "Print raw provider JSON for endpoint exploration.",
+		Long:                 "Fetch a single upstream Google Health API response and print the raw body to stdout. Useful for endpoint exploration without committing the response to the Health Archive.\n\nFirst positional argument is `endpoint <name>` (for example `endpoint getIdentity`) or `data-type <data-type>` (for example `data-type steps --from 2026-01-01 --to 2026-01-02`). `--from` and `--to` constrain time ranges where the endpoint supports them; `--page-size` and `--page-token` drive pagination.\n\n`raw` is provider-shaped on purpose — the JSON you see is what the provider returns, not the normalised shape the archive stores.\n\nFailures route through the unified Failure Reporter: a Provider outage (network failure or non-auth upstream HTTP error) reports status `provider_unreachable`, while other operation errors — including an upstream HTTP 401 auth rejection, which carries the `Google Health rejected stored Connection token` message — report `operation_failed`.",
+		PositionalArgs:       "<target> [<args>...]",
+		PositionalCompletion: valueCompletionRawPositionals,
 		Flags: withCommonSubset(rawCommonFlagNames(),
-			flagSpec{Name: "from", Type: "string", Default: "", Usage: "inclusive time-range start (where supported by the endpoint)"},
-			flagSpec{Name: "to", Type: "string", Default: "", Usage: "exclusive time-range end (where supported by the endpoint)"},
-			flagSpec{Name: "page-size", Type: "int", Default: "", Usage: "pagination page size (positive integer; where supported by the endpoint)"},
-			flagSpec{Name: "page-token", Type: "string", Default: "", Usage: "pagination page token from a prior response"},
+			flagSpec{Name: "from", Type: "string", Default: "", Usage: "inclusive time-range start (where supported by the endpoint)", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "to", Type: "string", Default: "", Usage: "exclusive time-range end (where supported by the endpoint)", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "page-size", Type: "int", Default: "", Usage: "pagination page size (positive integer; where supported by the endpoint)", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "page-token", Type: "string", Default: "", Usage: "pagination page token from a prior response", ValueCompletion: valueCompletionNone},
 		),
 		// raw's success output is the provider's raw bytes on stdout, so
 		// --plain / --json / --no-input would have no useful effect. Its
@@ -454,10 +474,11 @@ var commands = []commandDef{
 		Run:         runDescribeSchemaWithRuntime,
 	},
 	{
-		Name:           "completion",
-		Short:          "Generate a shell completion script.",
-		Long:           "Generate a shell-native completion script from the Command Registry for Bash, Zsh, Fish, or PowerShell. The output is deterministic and can be redirected to the shell's completion directory; generation does not read configuration, the Health Archive, a Connection, credentials, or the Provider.\n\nPass `--no-descriptions` to omit command and flag descriptions from shells that display them. See the [Install](../install.html#shell-completion) page for current-session and persistent setup commands for all four shells.",
-		PositionalArgs: "<shell>",
+		Name:                 "completion",
+		Short:                "Generate a shell completion script.",
+		Long:                 "Generate a shell-native completion script from the Command Registry for Bash, Zsh, Fish, or PowerShell. The output is deterministic and can be redirected to the shell's completion directory; generation does not read configuration, the Health Archive, a Connection, credentials, or the Provider.\n\nThe generated script completes catalog-backed values such as export datasets, Data Types, raw targets, scope keywords, Rollup modes, and source families. Comma-separated values preserve the part already typed and omit duplicates. SQL, dates, credentials, tokens, profiles, users, and providers are never suggested; native filesystem completion remains enabled only for path values.\n\nPass `--no-descriptions` to omit command and flag descriptions from shells that display them. See the [Install](../install.html#shell-completion) page for current-session and persistent setup commands for all four shells.",
+		PositionalArgs:       "<shell>",
+		PositionalCompletion: valueCompletionShell,
 		Flags: []flagSpec{
 			{Name: "no-descriptions", Type: "bool", Default: "false", Usage: "disable completion descriptions"},
 		},
@@ -492,7 +513,7 @@ var commands = []commandDef{
 		Long:   "Rewrite the auto-generated bullet list in `README.md` between the `<!-- export-datasets:start -->` and `<!-- export-datasets:end -->` markers from `exportDatasetCatalogSingleton.Names()`.\n\nInvoked by `make docs-export-datasets`; the drift guard in `docs_export_datasets_test.go` fails CI when the committed README does not match a fresh regeneration. Pass `--readme PATH` to point at the file to rewrite (no default — an empty path is rejected so a misconfigured target cannot silently overwrite the wrong file).",
 		Hidden: true,
 		Flags: []flagSpec{
-			{Name: "readme", Type: "string", Default: "", Usage: "path to README.md to rewrite in place"},
+			{Name: "readme", Type: "string", Default: "", Usage: "path to README.md to rewrite in place", ValueCompletion: valueCompletionFile},
 		},
 		// docs-export-datasets reads / writes one file and has no
 		// archive or provider dependency; the CommonFlagValues block is

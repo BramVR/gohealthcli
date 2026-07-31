@@ -129,6 +129,12 @@ generation does not read your config, Health Archive, Connection, credentials,
 or the Provider. Add `--no-descriptions` after the shell name when you want
 shorter candidates.
 
+The generated script completes canonical export datasets, Data Types, raw
+targets, scope keywords, Rollup modes, and source families. It preserves typed
+comma-separated prefixes and omits duplicates. SQL, dates, credentials,
+tokens, profiles, users, and providers are not completed; native filesystem
+completion remains available only for path values.
+
 ### Bash
 
 Load completion in the current session:

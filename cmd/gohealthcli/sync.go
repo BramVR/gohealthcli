@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 )
 
 type syncResult struct {
@@ -42,6 +44,14 @@ type syncCommandOptions struct {
 	sourceFamily string
 }
 
+func syncRollupUsage() string {
+	return "rollup kind to sync; supported: " + strings.Join(googlehealth.SupportedRollupKinds(), " | ")
+}
+
+func syncSourceFamilyUsage() string {
+	return "source family filter; supported: " + strings.Join(googlehealth.SupportedSourceFamilies(), " | ")
+}
+
 func runSyncWithRuntime(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("sync", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -56,8 +66,8 @@ func runSyncWithRuntime(args []string, globals CommonFlagValues, stdout, stderr 
 	syncAll := flags.Bool("all", false, "sync every default Data Type")
 	syncFrom := flags.String("from", "", "inclusive sync range start; optional once a Sync Cursor exists")
 	syncTo := flags.String("to", "", "exclusive sync range end")
-	syncRollup := flags.String("rollup", "", "rollup kind to sync; supported: daily | hourly | weekly | window=<duration>")
-	syncSourceFamily := flags.String("source-family", "", "source family filter; supported: wearable")
+	syncRollup := flags.String("rollup", "", syncRollupUsage())
+	syncSourceFamily := flags.String("source-family", "", syncSourceFamilyUsage())
 	syncStatus := flags.Bool("status", false, "list recent Sync Runs from the local archive instead of syncing")
 	syncWindow := flags.String("window", "", "with --status: how far back to list finished Sync Runs (Go duration, default 15m, max 24h)")
 

@@ -1,5 +1,7 @@
 package googlehealth
 
+import "sort"
+
 // OAuth scope URLs for the Google Health API. The Data Type catalog
 // (catalog.go) references these per entry; main's OAuth flow composes
 // its requested-scope set from them via ScopesForDataType and the
@@ -94,4 +96,19 @@ var identityEndpointURLs = map[string]string{
 // endpoint` dispatcher's catalog (PRD #142).
 func IdentityEndpointScopes(endpoint string) []string {
 	return append([]string(nil), identityEndpointScopes[endpoint]...)
+}
+
+// RawEndpointNames returns the sorted endpoint identifiers accepted by
+// `raw endpoint`, projected from the identity and Data Type catalogs.
+func RawEndpointNames() []string {
+	listableDataTypes := ListableDataTypes()
+	endpoints := make([]string, 0, len(identityEndpointURLs)+len(listableDataTypes))
+	for endpoint := range identityEndpointURLs {
+		endpoints = append(endpoints, endpoint)
+	}
+	for _, dataType := range listableDataTypes {
+		endpoints = append(endpoints, "dataTypes."+dataType+".list")
+	}
+	sort.Strings(endpoints)
+	return endpoints
 }

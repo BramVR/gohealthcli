@@ -2,6 +2,7 @@ package googlehealth
 
 import (
 	"slices"
+	"sort"
 	"testing"
 )
 
@@ -361,6 +362,57 @@ func TestGoogleHealthDataTypeCatalogDefaultDataTypes(t *testing.T) {
 	}
 	if !slices.Equal(googleHealthDataTypes.DefaultDataTypes(), want) {
 		t.Fatalf("catalog defaults = %v, want %v", googleHealthDataTypes.DefaultDataTypes(), want)
+	}
+}
+
+func TestGoogleHealthDataTypeCatalogCompletionViews(t *testing.T) {
+	t.Parallel()
+
+	var wantSyncable []string
+	var wantListable []string
+	for _, dataType := range googleHealthDataTypes.order {
+		entry, ok := googleHealthDataTypes.Lookup(dataType)
+		if !ok {
+			t.Fatalf("catalog order contains missing Data Type %q", dataType)
+		}
+		if _, ok := entry.SupportedEndpoints[endpointFamilyList]; ok {
+			wantListable = append(wantListable, dataType)
+		}
+		if _, listable := entry.SupportedEndpoints[endpointFamilyList]; listable {
+			wantSyncable = append(wantSyncable, dataType)
+			continue
+		}
+		if _, reconcilable := entry.SupportedEndpoints[endpointFamilyReconcile]; reconcilable {
+			wantSyncable = append(wantSyncable, dataType)
+		}
+	}
+	sort.Strings(wantSyncable)
+	sort.Strings(wantListable)
+
+	if got := SyncableDataTypes(); !slices.Equal(got, wantSyncable) {
+		t.Fatalf("SyncableDataTypes = %v, want catalog projection %v", got, wantSyncable)
+	}
+	if got := ListableDataTypes(); !slices.Equal(got, wantListable) {
+		t.Fatalf("ListableDataTypes = %v, want catalog projection %v", got, wantListable)
+	}
+
+	got := SyncableDataTypes()
+	got[0] = "mutated"
+	if fresh := SyncableDataTypes(); fresh[0] == "mutated" {
+		t.Fatal("SyncableDataTypes returned shared catalog state")
+	}
+}
+
+func TestGoogleHealthSourceFamilyCompletionView(t *testing.T) {
+	t.Parallel()
+
+	got := SupportedSourceFamilies()
+	if !slices.Equal(got, []string{"wearable"}) {
+		t.Fatalf("SupportedSourceFamilies = %v, want [wearable]", got)
+	}
+	got[0] = "mutated"
+	if fresh := SupportedSourceFamilies(); !slices.Equal(fresh, []string{"wearable"}) {
+		t.Fatalf("SupportedSourceFamilies returned shared state: %v", fresh)
 	}
 }
 

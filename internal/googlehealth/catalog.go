@@ -1,6 +1,10 @@
 package googlehealth
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
 
 // endpointFamily identifies the Google Health API endpoint family a
 // Data Type catalog entry supports. Per the architecture review on
@@ -481,6 +485,14 @@ func IsDefaultConfigDataType(dataType string) bool {
 
 const googleHealthWearableSourceFamilyFilterName = "users/me/dataSourceFamilies/google-wearables"
 
+type sourceFamilyCatalogEntry struct {
+	FilterName string
+}
+
+var sourceFamilyCatalog = map[string]sourceFamilyCatalogEntry{
+	"wearable": {FilterName: googleHealthWearableSourceFamilyFilterName},
+}
+
 func newGoogleHealthDataTypeCatalog(entries []googleHealthDataTypeCatalogEntry) googleHealthDataTypeCatalog {
 	catalog := googleHealthDataTypeCatalog{
 		entries: make(map[string]googleHealthDataTypeCatalogEntry, len(entries)),
@@ -516,6 +528,47 @@ func (catalog googleHealthDataTypeCatalog) DefaultDataTypes() []string {
 		}
 	}
 	return dataTypes
+}
+
+// SyncableDataTypes returns the sorted Data Types whose canonical catalog
+// entry supports a list or reconcile endpoint.
+func SyncableDataTypes() []string {
+	var dataTypes []string
+	for _, dataType := range googleHealthDataTypes.order {
+		if SupportsSyncDataPoints(dataType) {
+			dataTypes = append(dataTypes, dataType)
+		}
+	}
+	sort.Strings(dataTypes)
+	return dataTypes
+}
+
+// ListableDataTypes returns the sorted Data Types whose canonical catalog
+// entry supports the raw list endpoint.
+func ListableDataTypes() []string {
+	var dataTypes []string
+	for _, dataType := range googleHealthDataTypes.order {
+		entry, ok := googleHealthDataTypes.Lookup(dataType)
+		if !ok {
+			continue
+		}
+		if _, ok := entry.SupportedEndpoints[endpointFamilyList]; ok {
+			dataTypes = append(dataTypes, dataType)
+		}
+	}
+	sort.Strings(dataTypes)
+	return dataTypes
+}
+
+// SupportedSourceFamilies returns the sorted source-family keywords accepted
+// by SourceFamilyFilterName.
+func SupportedSourceFamilies() []string {
+	sourceFamilies := make([]string, 0, len(sourceFamilyCatalog))
+	for sourceFamily := range sourceFamilyCatalog {
+		sourceFamilies = append(sourceFamilies, sourceFamily)
+	}
+	sort.Strings(sourceFamilies)
+	return sourceFamilies
 }
 
 func ScopesForDataType(dataType string) []string {
@@ -614,12 +667,15 @@ func SourceFamilyFilterName(dataType, sourceFamily string) (string, error) {
 	if !reconcileDataTypeSupported(dataType) {
 		return "", fmt.Errorf("sync --source-family is not supported for Data Type %s", dataType)
 	}
-	switch sourceFamily {
-	case "wearable":
-		return googleHealthWearableSourceFamilyFilterName, nil
-	default:
-		return "", fmt.Errorf("sync --source-family currently supports only wearable")
+	entry, ok := sourceFamilyCatalog[sourceFamily]
+	if !ok {
+		return "", fmt.Errorf("sync --source-family currently supports only %s", supportedSourceFamilyList())
 	}
+	return entry.FilterName, nil
+}
+
+func supportedSourceFamilyList() string {
+	return strings.Join(SupportedSourceFamilies(), ", ")
 }
 
 func dailyRollupDataTypeSupported(dataType string) bool {

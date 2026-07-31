@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -34,12 +35,34 @@ type RawRequest struct {
 	SourceFamilyFilter string
 }
 
+// RawTargetKind is the first positional discriminator accepted by
+// BuildRawRequest.
+type RawTargetKind string
+
+const (
+	RawTargetEndpoint RawTargetKind = "endpoint"
+	RawTargetDataType RawTargetKind = "data-type"
+)
+
+var rawTargetKinds = []RawTargetKind{RawTargetDataType, RawTargetEndpoint}
+
+// RawTargetNames returns the sorted first positional values accepted by
+// BuildRawRequest.
+func RawTargetNames() []string {
+	targets := make([]string, 0, len(rawTargetKinds))
+	for _, target := range rawTargetKinds {
+		targets = append(targets, string(target))
+	}
+	sort.Strings(targets)
+	return targets
+}
+
 func BuildRawRequest(target []string, from, to string, pageSize int64, pageToken string) (RawRequest, error) {
 	if len(target) < 2 {
 		return RawRequest{}, errors.New("requires `endpoint <name>` or `data-type <name>`")
 	}
-	switch target[0] {
-	case "endpoint":
+	switch RawTargetKind(target[0]) {
+	case RawTargetEndpoint:
 		if len(target) != 2 {
 			return RawRequest{}, errors.New("endpoint mode requires exactly one endpoint name")
 		}
@@ -66,7 +89,7 @@ func BuildRawRequest(target []string, from, to string, pageSize int64, pageToken
 			return buildGoogleHealthDataTypeListRawRequest(dataType, from, to, pageSize, pageToken)
 		}
 		return RawRequest{}, fmt.Errorf("unsupported raw endpoint %q", target[1])
-	case "data-type":
+	case RawTargetDataType:
 		if len(target) != 2 {
 			return RawRequest{}, errors.New("data-type mode requires exactly one Data Type")
 		}
