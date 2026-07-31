@@ -454,6 +454,16 @@ var commands = []commandDef{
 		Run:         runDescribeSchemaWithRuntime,
 	},
 	{
+		Name:  "completion",
+		Short: "Generate a shell completion script.",
+		Long:  "Generate a shell-native completion script from the Command Registry for Bash, Zsh, Fish, or PowerShell. The output is deterministic and can be redirected to the shell's completion directory; generation does not read configuration, the Health Archive, a Connection, credentials, or the Provider.\n\nPass `--no-descriptions` to omit command and flag descriptions from shells that display them. See the [Install](../install.html#shell-completion) page for current-session and persistent setup commands for all four shells.",
+		Flags: []flagSpec{
+			{Name: "no-descriptions", Type: "bool", Default: "false", Usage: "disable completion descriptions"},
+		},
+		// completion's Run adapter is wired below in init() because it
+		// projects the complete registry, including this entry.
+	},
+	{
 		Name:   "schema",
 		Short:  "Emit the command registry as JSON (hidden — used by the Project Site build).",
 		Long:   "Emit the binary's command registry as a stable JSON document. The Project Site's command-reference pages are generated from this output, so the JSON shape is part of the published contract.\n\nThe subcommand is hidden from `gohealthcli --help` because it is a build-time tool, not an end-user surface. Pass `--json` (the default and only mode) to receive the document on stdout.",
@@ -499,13 +509,23 @@ var commands = []commandDef{
 // a reorder of `commands` does not break this binding.
 func init() {
 	for i := range commands {
-		if commands[i].Name != "schema" {
-			continue
+		switch commands[i].Name {
+		case "completion":
+			commands[i].Run = func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+				return runCompletionWithRegistry(
+					args,
+					commands,
+					commonOutputMode(common),
+					stdout,
+					stderr,
+					runtime.observeSubcommandFlagSet,
+				)
+			}
+		case "schema":
+			commands[i].Run = func(args []string, _ CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+				return runSchemaWithRegistry(args, commands, stdout, stderr, runtime.observeSubcommandFlagSet)
+			}
 		}
-		commands[i].Run = func(args []string, _ CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runSchemaWithRegistry(args, commands, stdout, stderr, runtime.observeSubcommandFlagSet)
-		}
-		return
 	}
 }
 

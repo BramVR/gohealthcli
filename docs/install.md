@@ -121,6 +121,82 @@ registry's long-form prose to the standard flag block.
 The first thing to run next is `gohealthcli init` — see the
 [Quickstart](quickstart.html).
 
+## Shell completion
+
+`gohealthcli completion` generates a deterministic script from the same
+Command Registry that drives dispatch, help, and the command reference. Script
+generation does not read your config, Health Archive, Connection, credentials,
+or the Provider. Add `--no-descriptions` after the shell name when you want
+shorter candidates.
+
+### Bash
+
+Load completion in the current session:
+
+```bash
+source <(gohealthcli completion bash)
+```
+
+For persistent completion with Homebrew's `bash-completion`:
+
+```bash
+gohealthcli completion bash > "$(brew --prefix)/etc/bash_completion.d/gohealthcli"
+```
+
+On Linux, write the script to the system completion directory instead:
+
+```bash
+gohealthcli completion bash | sudo tee /etc/bash_completion.d/gohealthcli >/dev/null
+```
+
+### Zsh
+
+Load completion in the current session:
+
+```zsh
+autoload -Uz compinit && compinit
+source <(gohealthcli completion zsh)
+```
+
+For persistent completion with Homebrew:
+
+```zsh
+gohealthcli completion zsh > "$(brew --prefix)/share/zsh/site-functions/_gohealthcli"
+```
+
+If you manage `fpath` yourself, write `_gohealthcli` to any directory already
+listed there, then run `autoload -Uz compinit && compinit`.
+
+### Fish
+
+Load completion in the current session:
+
+```fish
+gohealthcli completion fish | source
+```
+
+For persistent completion:
+
+```fish
+mkdir -p ~/.config/fish/completions
+gohealthcli completion fish > ~/.config/fish/completions/gohealthcli.fish
+```
+
+### PowerShell
+
+Load completion in the current session:
+
+```powershell
+gohealthcli completion powershell | Out-String | Invoke-Expression
+```
+
+For persistent completion, add that line to your PowerShell profile:
+
+```powershell
+New-Item -ItemType Directory -Force (Split-Path $PROFILE) | Out-Null
+Add-Content $PROFILE 'gohealthcli completion powershell | Out-String | Invoke-Expression'
+```
+
 ## What gets installed
 
 The binary is statically linked and self-contained. It does not install a daemon, a launch agent, or a background service. Running `gohealthcli` only reads or writes when you ask it to.

@@ -45,6 +45,9 @@ func printTopLevelUsage(flags *flag.FlagSet, w io.Writer) {
 }
 
 func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+	if handled, code := runCompletionProtocol(args, commands, stdout, stderr); handled {
+		return code
+	}
 	runtime = runtime.withDefaults()
 	flags := flag.NewFlagSet("gohealthcli", flag.ContinueOnError)
 	flags.SetOutput(stderr)
