@@ -77,6 +77,7 @@ type rawRequestTarget struct {
 	endpointURL    string
 	requiredScopes []string
 	dataType       string
+	rangeTarget    RangeTarget
 	list           bool
 }
 
@@ -102,11 +103,7 @@ func BuildRawRequest(options RawRequestOptions) (RawRequest, error) {
 	if options.ResolvedAt.IsZero() {
 		return RawRequest{}, errors.New("raw Data Type range resolution requires a captured clock")
 	}
-	rangeTarget, err := SyncRangeTarget(target.dataType, nil, false)
-	if err != nil {
-		return RawRequest{}, err
-	}
-	resolved, err := ResolveRawRange(options.From, options.To, options.Timezone, options.ResolvedAt, rangeTarget)
+	resolved, err := ResolveRawRange(options.From, options.To, options.Timezone, options.ResolvedAt, target.rangeTarget)
 	if err != nil {
 		return RawRequest{}, err
 	}
@@ -151,17 +148,25 @@ func parseRawRequestTarget(options RawRequestOptions) (rawRequestTarget, error) 
 		}
 		if strings.HasPrefix(target[1], "dataTypes.") && strings.HasSuffix(target[1], ".list") {
 			dataType := strings.TrimSuffix(strings.TrimPrefix(target[1], "dataTypes."), ".list")
-			return rawRequestTarget{dataType: dataType, list: true}, nil
+			return parseRawDataTypeTarget(dataType)
 		}
 		return rawRequestTarget{}, fmt.Errorf("unsupported raw endpoint %q", target[1])
 	case RawTargetDataType:
 		if len(target) != 2 {
 			return rawRequestTarget{}, errors.New("data-type mode requires exactly one Data Type")
 		}
-		return rawRequestTarget{dataType: target[1], list: true}, nil
+		return parseRawDataTypeTarget(target[1])
 	default:
 		return rawRequestTarget{}, fmt.Errorf("unsupported raw target %q", target[0])
 	}
+}
+
+func parseRawDataTypeTarget(dataType string) (rawRequestTarget, error) {
+	rangeTarget, err := SyncRangeTarget(dataType, nil, false)
+	if err != nil {
+		return rawRequestTarget{}, err
+	}
+	return rawRequestTarget{dataType: dataType, rangeTarget: rangeTarget, list: true}, nil
 }
 
 func buildGoogleHealthDataTypeListRawRequest(dataType, from, to string, pageSize int64, pageToken string) (RawRequest, error) {

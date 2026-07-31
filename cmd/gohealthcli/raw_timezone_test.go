@@ -329,3 +329,42 @@ func TestRawRejectsEmptyTimezoneBeforeSetup(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty timezone validation", stderr.String())
 	}
 }
+
+func TestRawRejectsNonListableDataTypesBeforeConfigIO(t *testing.T) {
+	t.Parallel()
+	for _, target := range [][]string{
+		{"data-type", "total-calories"},
+		{"endpoint", "dataTypes.total-calories.list"},
+	} {
+		target := target
+		t.Run(strings.Join(target, "_"), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			configPath := filepath.Join(root, "missing", "config.toml")
+			archivePath := filepath.Join(root, "missing", "health.db")
+			runtime := runtimeAdapters{
+				now: func() time.Time {
+					t.Fatal("clock must not run for a non-listable Data Type")
+					return time.Time{}
+				},
+				fetchRawProvider: func(context.Context, googlehealth.RawRequest, string) ([]byte, error) {
+					t.Fatal("provider must not run for a non-listable Data Type")
+					return nil, nil
+				},
+			}
+			args := append([]string{"raw"}, target...)
+			args = append(args, "--from", "today", "--config", configPath, "--db", archivePath)
+			stdout := new(bytes.Buffer)
+			stderr := new(bytes.Buffer)
+			if code := runWithRuntime(args, stdout, stderr, runtime); code != 1 {
+				t.Fatalf("raw exit code = %d, want 1", code)
+			}
+			if !strings.Contains(stderr.String(), "not supported by dataPoints.list") {
+				t.Fatalf("stderr = %q, want canonical listability error", stderr.String())
+			}
+			if _, err := os.Stat(filepath.Dir(configPath)); !os.IsNotExist(err) {
+				t.Fatalf("invalid Data Type touched setup path: %v", err)
+			}
+		})
+	}
+}
