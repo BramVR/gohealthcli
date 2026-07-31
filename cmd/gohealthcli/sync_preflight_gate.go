@@ -160,7 +160,10 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 	}
 	to := options.to
 	if to == "" && options.timezone == "" && !googlehealth.IsNamedRangeBoundary(options.from) {
-		to = gate.legacyDefaultTo(options, dataTypes, resolvedAt)
+		to, err = gate.legacyDefaultTo(options, dataTypes, resolvedAt, timezone)
+		if err != nil {
+			return preflightPlan{}, newPreflightFailure(preflightRuleRangeParse, err)
+		}
 	}
 	if rollupSpec != nil {
 		if _, _, err := rollupSpec.NormalizeRange(options.from, to, resolvedAt); err != nil {
@@ -236,19 +239,26 @@ func (gate syncPreflightGate) normalizeRange(spec *googlehealth.RollupSpec, from
 }
 
 // legacyDefaultTo preserves the pre-relative-range cursor/backfill default
-// when an invocation supplies neither a named boundary nor --timezone.
-// Relative or explicitly zoned invocations leave --to empty so ResolveRange
-// can render target-aware local now.
-func (gate syncPreflightGate) legacyDefaultTo(options syncCommandOptions, dataTypes []string, resolvedAt time.Time) string {
+// shape when an invocation supplies neither a named boundary nor --timezone.
+// The resolved config timezone still selects its calendar date. Relative or
+// explicitly flag-zoned invocations leave --to empty so ResolveRange can
+// render target-aware local now.
+func (gate syncPreflightGate) legacyDefaultTo(options syncCommandOptions, dataTypes []string, resolvedAt time.Time, timezone string) (string, error) {
+	target := googlehealth.RangeTargetPhysical
 	if options.rollup == "daily" {
-		return resolvedAt.UTC().Format("2006-01-02")
+		target = googlehealth.RangeTargetDaily
 	}
 	for _, dataType := range dataTypes {
 		if gate.ctx.dataTypeUsesDateRange(dataType) {
-			return resolvedAt.UTC().Format("2006-01-02")
+			target = googlehealth.RangeTargetDaily
+			break
 		}
 	}
-	return resolvedAt.UTC().Format(time.RFC3339)
+	resolved, err := googlehealth.ResolveRange("", "now", timezone, resolvedAt, target)
+	if err != nil {
+		return "", err
+	}
+	return resolved.To, nil
 }
 
 // expandDataTypes resolves --all / --types into the concrete ordered list
