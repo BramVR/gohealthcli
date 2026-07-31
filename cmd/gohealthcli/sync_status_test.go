@@ -404,6 +404,7 @@ func TestSyncStatusRejectsSyncExecutionFlags(t *testing.T) {
 		{"all", []string{"--status", "--all"}, "--all cannot be combined with --status"},
 		{"from", []string{"--status", "--from", "2026-01-01"}, "--from cannot be combined with --status"},
 		{"to", []string{"--status", "--to", "2026-01-02"}, "--to cannot be combined with --status"},
+		{"timezone", []string{"--status", "--timezone", "Europe/Brussels"}, "--timezone cannot be combined with --status"},
 		{"rollup", []string{"--status", "--rollup", "daily"}, "--rollup cannot be combined with --status"},
 		{"source-family", []string{"--status", "--source-family", "wearable"}, "--source-family cannot be combined with --status"},
 		{"window without status", []string{"--window", "15m"}, "--window requires --status"},

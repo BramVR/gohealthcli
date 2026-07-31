@@ -355,6 +355,7 @@ func TestCompletionProtocolFilesystemFallbackIsPathOnly(t *testing.T) {
 		{name: "export output path", args: []string{"__completeNoDesc", "export", "--output", ""}, wantDirective: 0},
 		{name: "query SQL", args: []string{"__completeNoDesc", "query", "SEL"}, wantDirective: 4},
 		{name: "sync date", args: []string{"__completeNoDesc", "sync", "--from", ""}, wantDirective: 4},
+		{name: "sync timezone", args: []string{"__completeNoDesc", "sync", "--timezone", ""}, wantDirective: 4},
 		{name: "secret provider", args: []string{"__completeNoDesc", "init", "--secret-provider", ""}, wantDirective: 4},
 		{name: "secret item", args: []string{"__completeNoDesc", "init", "--oauth-client-item", ""}, wantDirective: 4},
 		{name: "page size", args: []string{"__completeNoDesc", "raw", "--page-size", ""}, wantDirective: 4},

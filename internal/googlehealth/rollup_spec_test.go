@@ -277,6 +277,14 @@ func TestSyncRollupSpecNormalizeRange(t *testing.T) {
 			wantTo:   "2026-06-07T04:30:00Z",
 		},
 		{
+			name:     "hourly preserves RFC3339 fractional precision",
+			rollup:   "hourly",
+			from:     "2026-06-07T03:30:00.5Z",
+			to:       "2026-06-07T04:30:00.9Z",
+			wantFrom: "2026-06-07T03:30:00.5Z",
+			wantTo:   "2026-06-07T04:30:00.9Z",
+		},
+		{
 			name:     "hourly mixed civil-RFC3339 normalizes to RFC3339",
 			rollup:   "hourly",
 			from:     "2026-06-07",

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 
 	"github.com/BramVR/gohealthcli/internal/googlehealth"
 )
@@ -40,6 +41,8 @@ type syncCommandOptions struct {
 	allTypes     bool
 	from         string
 	to           string
+	timezone     string
+	resolvedAt   time.Time
 	rollup       string
 	sourceFamily string
 }
@@ -66,6 +69,7 @@ func runSyncWithRuntime(args []string, globals CommonFlagValues, stdout, stderr 
 	syncAll := flags.Bool("all", false, "sync every default Data Type")
 	syncFrom := flags.String("from", "", "inclusive sync range start; optional once a Sync Cursor exists")
 	syncTo := flags.String("to", "", "exclusive sync range end")
+	syncTimezone := flags.String("timezone", "", "IANA timezone for now, today, and yesterday (default UTC)")
 	syncRollup := flags.String("rollup", "", syncRollupUsage())
 	syncSourceFamily := flags.String("source-family", "", syncSourceFamilyUsage())
 	syncStatus := flags.Bool("status", false, "list recent Sync Runs from the local archive instead of syncing")
@@ -98,6 +102,14 @@ func runSyncWithRuntime(args []string, globals CommonFlagValues, stdout, stderr 
 	if *syncStatus {
 		return runSyncStatusWithRuntime(*common, *syncWindow, mode, stdout, stderr, runtime)
 	}
+	if flagWasProvided(flags, "timezone") && *syncTimezone == "" {
+		return ReportFailure(FailureReport{
+			Command: "sync",
+			Status:  StatusFlagInvalid,
+			Message: "--timezone requires a non-empty IANA timezone",
+			Mode:    mode,
+		}, stdout, stderr)
+	}
 
 	dataTypes := parseCommaList(*syncTypes)
 	if !*syncAll && len(dataTypes) == 0 {
@@ -112,6 +124,7 @@ func runSyncWithRuntime(args []string, globals CommonFlagValues, stdout, stderr 
 		allTypes:     *syncAll,
 		from:         *syncFrom,
 		to:           *syncTo,
+		timezone:     *syncTimezone,
 		rollup:       *syncRollup,
 		sourceFamily: *syncSourceFamily,
 	}

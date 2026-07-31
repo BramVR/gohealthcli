@@ -126,6 +126,11 @@ func (spec RollupSpec) normalizeBoundary(value, flag string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
+	if IsNamedRangeBoundary(value) {
+		// Named boundaries only pass through normalization for preflight;
+		// ResolveRange must resolve them before any provider request.
+		return value, nil
+	}
 	parsed, ok := ParseRangeBoundary(value)
 	if !ok {
 		return "", fmt.Errorf(
@@ -136,7 +141,7 @@ func (spec RollupSpec) normalizeBoundary(value, flag string) (string, error) {
 	if spec.endpointFamily == endpointFamilyDailyRollUp {
 		return parsed.UTC().Format("2006-01-02"), nil
 	}
-	return parsed.UTC().Format(time.RFC3339), nil
+	return parsed.UTC().Format(time.RFC3339Nano), nil
 }
 
 // ParseRangeBoundary accepts either civil-date (YYYY-MM-DD,
