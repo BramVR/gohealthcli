@@ -39,6 +39,9 @@ func fakeSyncPreflightContext(now time.Time, connection archived.Connection) syn
 		defaultAllDataTypes: func() []string {
 			return []string{"steps", "heart-rate", "sleep"}
 		},
+		configuredTimezone: func() (string, error) {
+			return "UTC", nil
+		},
 		currentConnection: func() (archived.Connection, error) {
 			return connection, nil
 		},
@@ -283,6 +286,27 @@ func TestSyncPreflightGateResolvesOmittedToAsLocalNow(t *testing.T) {
 	}
 	if plan.from != "2026-06-08T00:00:00" || plan.to != "2026-06-08T12:00:00" {
 		t.Fatalf("implicit UTC plan range = %q..%q, want today..now", plan.from, plan.to)
+	}
+}
+
+func TestSyncPreflightGateConfigTimezoneResolvesLegacyOmittedToCalendar(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	ctx := fakeSyncPreflightContext(now, archived.Connection{ID: "googlehealth:111"})
+	ctx.configuredTimezone = func() (string, error) {
+		return "Pacific/Kiritimati", nil
+	}
+	gate := syncPreflightGate{ctx: ctx}
+
+	plan, err := gate.Validate(syncCommandOptions{
+		dataTypes: []string{"sleep"},
+		from:      "2026-06-01",
+	})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if plan.to != "2026-06-09" {
+		t.Fatalf("plan.to = %q, want configured local calendar date", plan.to)
 	}
 }
 

@@ -35,6 +35,7 @@ type syncPreflightContext struct {
 	dataTypeUsesDateRange  func(dataType string) bool
 	sourceFamilyFilter     func(dataType, sourceFamily string) (string, error)
 	defaultAllDataTypes    func() []string
+	configuredTimezone     func() (string, error)
 	currentConnection      func() (archived.Connection, error)
 	rollupCatalogValidator func(spec googlehealth.RollupSpec, dataType string) error
 }
@@ -143,13 +144,26 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 			}
 		}
 	}
+	timezone := options.timezone
+	if timezone == "" && gate.ctx.configuredTimezone != nil {
+		timezone, err = gate.ctx.configuredTimezone()
+		if err != nil {
+			return preflightPlan{}, newPreflightFailure(
+				preflightRuleConnectionLookup,
+				fmt.Errorf("config check failed: %w", err),
+			)
+		}
+	}
 	resolvedAt := options.resolvedAt
 	if resolvedAt.IsZero() {
 		resolvedAt = gate.ctx.now()
 	}
 	to := options.to
 	if to == "" && options.timezone == "" && !googlehealth.IsNamedRangeBoundary(options.from) {
-		to = gate.legacyDefaultTo(options, dataTypes, resolvedAt)
+		to, err = gate.legacyDefaultTo(options, dataTypes, resolvedAt, timezone)
+		if err != nil {
+			return preflightPlan{}, newPreflightFailure(preflightRuleRangeParse, err)
+		}
 	}
 	if rollupSpec != nil {
 		if _, _, err := rollupSpec.NormalizeRange(options.from, to, resolvedAt); err != nil {
@@ -160,7 +174,7 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 	if err != nil {
 		return preflightPlan{}, newPreflightFailure(preflightRuleRangeParse, err)
 	}
-	resolved, err := googlehealth.ResolveRange(options.from, to, options.timezone, resolvedAt, target)
+	resolved, err := googlehealth.ResolveRange(options.from, to, timezone, resolvedAt, target)
 	if err != nil {
 		return preflightPlan{}, newPreflightFailure(preflightRuleRangeParse, err)
 	}
@@ -225,19 +239,26 @@ func (gate syncPreflightGate) normalizeRange(spec *googlehealth.RollupSpec, from
 }
 
 // legacyDefaultTo preserves the pre-relative-range cursor/backfill default
-// when an invocation supplies neither a named boundary nor --timezone.
-// Relative or explicitly zoned invocations leave --to empty so ResolveRange
-// can render target-aware local now.
-func (gate syncPreflightGate) legacyDefaultTo(options syncCommandOptions, dataTypes []string, resolvedAt time.Time) string {
+// shape when an invocation supplies neither a named boundary nor --timezone.
+// The resolved config timezone still selects its calendar date. Relative or
+// explicitly flag-zoned invocations leave --to empty so ResolveRange can
+// render target-aware local now.
+func (gate syncPreflightGate) legacyDefaultTo(options syncCommandOptions, dataTypes []string, resolvedAt time.Time, timezone string) (string, error) {
+	target := googlehealth.RangeTargetPhysical
 	if options.rollup == "daily" {
-		return resolvedAt.UTC().Format("2006-01-02")
+		target = googlehealth.RangeTargetDaily
 	}
 	for _, dataType := range dataTypes {
 		if gate.ctx.dataTypeUsesDateRange(dataType) {
-			return resolvedAt.UTC().Format("2006-01-02")
+			target = googlehealth.RangeTargetDaily
+			break
 		}
 	}
-	return resolvedAt.UTC().Format(time.RFC3339)
+	resolved, err := googlehealth.ResolveRange("", "now", timezone, resolvedAt, target)
+	if err != nil {
+		return "", err
+	}
+	return resolved.To, nil
 }
 
 // expandDataTypes resolves --all / --types into the concrete ordered list
@@ -338,6 +359,16 @@ func validatePreflightRangeOrder(
 // round-trip the same way the executor used to inspect them, but the
 // gate can only read the current Connection.
 func productionSyncPreflightContext(ctx context.Context, options syncCommandOptions, runtime runtimeAdapters) syncPreflightContext {
+	var config fullConfigCheck
+	var configErr error
+	configLoaded := false
+	loadConfig := func() (fullConfigCheck, error) {
+		if !configLoaded {
+			config, configErr = inspectIdentityConfig(options.configPath, options.archivePath)
+			configLoaded = true
+		}
+		return config, configErr
+	}
 	return syncPreflightContext{
 		now:                   runtime.now,
 		dataTypeSupported:     googlehealth.SupportsSyncDataPoints,
@@ -347,8 +378,15 @@ func productionSyncPreflightContext(ctx context.Context, options syncCommandOpti
 		// slice; the gate only ranges over it and other readers also treat
 		// it as read-only, so no defensive copy is made per Validate call.
 		defaultAllDataTypes: func() []string { return googlehealth.DefaultDataTypes() },
+		configuredTimezone: func() (string, error) {
+			config, err := loadConfig()
+			if err != nil {
+				return "", err
+			}
+			return config.timezone, nil
+		},
 		currentConnection: func() (archived.Connection, error) {
-			if _, err := inspectIdentityConfig(options.configPath, options.archivePath); err != nil {
+			if _, err := loadConfig(); err != nil {
 				return archived.Connection{}, fmt.Errorf("config check failed: %w", err)
 			}
 			archive, err := runtime.openSyncPlanningArchive(context.WithoutCancel(ctx), options.archivePath)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	_ "time/tzdata"
 )
 
 // RangeTarget describes the timestamp shape required by the selected
@@ -63,16 +64,9 @@ func SyncRangeTarget(dataType string, rollup *RollupSpec, reconcile bool) (Range
 // An empty --to is the historical "now" default and an empty --from remains
 // the cursor-resume signal.
 func ResolveRange(from, to, timezone string, resolvedAt time.Time, target RangeTarget) (ResolvedRange, error) {
-	locationName := timezone
-	if locationName == "" {
-		locationName = "UTC"
-	}
-	if locationName == "Local" {
-		return ResolvedRange{}, fmt.Errorf("sync --timezone %q is not an explicit IANA timezone", locationName)
-	}
-	location, err := time.LoadLocation(locationName)
+	locationName, location, err := loadTimezone(timezone)
 	if err != nil {
-		return ResolvedRange{}, fmt.Errorf("sync --timezone %q: load IANA timezone: %w", locationName, err)
+		return ResolvedRange{}, fmt.Errorf("sync --%w", err)
 	}
 	if to == "" {
 		to = "now"
@@ -95,6 +89,29 @@ func ResolveRange(from, to, timezone string, resolvedAt time.Time, target RangeT
 		FromInstant: fromInstant,
 		ToInstant:   toInstant,
 	}, nil
+}
+
+// ValidateTimezone validates the shared config/flag timezone contract without
+// consulting the machine's local timezone. An empty value is the implicit UTC
+// fallback; callers that distinguish an explicitly empty value reject it first.
+func ValidateTimezone(timezone string) error {
+	_, _, err := loadTimezone(timezone)
+	return err
+}
+
+func loadTimezone(timezone string) (string, *time.Location, error) {
+	locationName := timezone
+	if locationName == "" {
+		locationName = "UTC"
+	}
+	if locationName == "Local" {
+		return "", nil, fmt.Errorf("timezone %q is not an explicit IANA timezone", locationName)
+	}
+	location, err := time.LoadLocation(locationName)
+	if err != nil {
+		return "", nil, fmt.Errorf("timezone %q: load IANA timezone: %w", locationName, err)
+	}
+	return locationName, location, nil
 }
 
 func resolveRangeBoundary(

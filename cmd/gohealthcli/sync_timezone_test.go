@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -140,6 +141,207 @@ func TestSyncTimezonePreservesExplicitRFC3339(t *testing.T) {
 	}
 	if plan.from != from || plan.to != to {
 		t.Fatalf("plan range = %q..%q, want explicit RFC3339 unchanged", plan.from, plan.to)
+	}
+}
+
+func TestSyncTimezoneUsesConfigWhenFlagIsAbsent(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, runtime := connectedArchiveViaSetup(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	config := strings.Replace(string(configBytes), `timezone = "UTC"`, `timezone = "Europe/Brussels"`, 1)
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	runtime.now = func() time.Time { return time.Date(2026, 3, 30, 10, 15, 30, 0, time.UTC) }
+	var requests []googlehealth.RawRequest
+	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, _ string) ([]byte, error) {
+		requests = append(requests, request)
+		return []byte(`{"dataPoints":[]}`), nil
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "steps",
+		"--from", "yesterday",
+		"--to", "today",
+		"--json",
+	}, stdout, stderr, runtime)
+	if code != 0 {
+		t.Fatalf("sync exit code = %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+	if len(requests) != 1 {
+		t.Fatalf("provider requests = %d, want 1", len(requests))
+	}
+	want := `steps.interval.start_time >= "2026-03-28T23:00:00Z" AND steps.interval.start_time < "2026-03-29T22:00:00Z"`
+	if got := mustURLQuery(t, requests[0].URL).Get("filter"); got != want {
+		t.Fatalf("filter = %q, want configured timezone filter %q", got, want)
+	}
+}
+
+func TestSyncTimezoneFlagOverridesConfig(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, runtime := connectedArchiveViaSetup(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	config := strings.Replace(string(configBytes), `timezone = "UTC"`, `timezone = "Europe/Brussels"`, 1)
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	runtime.now = func() time.Time { return time.Date(2026, 3, 30, 10, 15, 30, 0, time.UTC) }
+	var requests []googlehealth.RawRequest
+	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, _ string) ([]byte, error) {
+		requests = append(requests, request)
+		return []byte(`{"dataPoints":[]}`), nil
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "steps",
+		"--from", "yesterday",
+		"--to", "today",
+		"--timezone", "America/New_York",
+		"--json",
+	}, stdout, stderr, runtime)
+	if code != 0 {
+		t.Fatalf("sync exit code = %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+	if len(requests) != 1 {
+		t.Fatalf("provider requests = %d, want 1", len(requests))
+	}
+	want := `steps.interval.start_time >= "2026-03-29T04:00:00Z" AND steps.interval.start_time < "2026-03-30T04:00:00Z"`
+	if got := mustURLQuery(t, requests[0].URL).Get("filter"); got != want {
+		t.Fatalf("filter = %q, want flag-overridden filter %q", got, want)
+	}
+}
+
+func TestSyncLegacyConfigUsesUTCWithoutMachineTimezoneInference(t *testing.T) {
+	t.Setenv("TZ", "Pacific/Kiritimati")
+	configPath, archivePath, runtime := connectedArchiveViaSetup(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	legacyConfig := strings.Replace(string(configBytes), `timezone = "UTC"`+"\n", "", 1)
+	if err := os.WriteFile(configPath, []byte(legacyConfig), 0o600); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+	runtime.now = func() time.Time { return time.Date(2026, 3, 30, 10, 15, 30, 0, time.UTC) }
+	var requests []googlehealth.RawRequest
+	runtime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, _ string) ([]byte, error) {
+		requests = append(requests, request)
+		return []byte(`{"dataPoints":[]}`), nil
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "steps",
+		"--from", "today",
+		"--to", "now",
+		"--json",
+	}, stdout, stderr, runtime)
+	if code != 0 {
+		t.Fatalf("sync exit code = %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+	if len(requests) != 1 {
+		t.Fatalf("provider requests = %d, want 1", len(requests))
+	}
+	want := `steps.interval.start_time >= "2026-03-30T00:00:00Z" AND steps.interval.start_time < "2026-03-30T10:15:30Z"`
+	if got := mustURLQuery(t, requests[0].URL).Get("filter"); got != want {
+		t.Fatalf("filter = %q, want UTC filter %q", got, want)
+	}
+}
+
+func TestSyncRejectsInvalidConfigTimezoneBeforeProviderOrArchiveWrites(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		timezone string
+	}{
+		{name: "empty", timezone: ""},
+		{name: "invalid", timezone: "Mars/Olympus_Mons"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			configPath, archivePath, runtime := connectedArchiveViaSetup(t, fakeConnectConfig{
+				accessToken:        "connect-access-secret",
+				refreshToken:       "connect-refresh-secret",
+				healthUserID:       "111111256096816351",
+				legacyFitbitUserID: "A1B2C3",
+			})
+			configBytes, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatalf("read config: %v", err)
+			}
+			config := strings.Replace(string(configBytes), `timezone = "UTC"`, `timezone = "`+test.timezone+`"`, 1)
+			if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			providerCalls := 0
+			runtime.fetchRawProvider = func(_ context.Context, _ googlehealth.RawRequest, _ string) ([]byte, error) {
+				providerCalls++
+				return []byte(`{"dataPoints":[]}`), nil
+			}
+
+			stdout := new(bytes.Buffer)
+			stderr := new(bytes.Buffer)
+			code := runWithRuntime([]string{
+				"sync",
+				"--config", configPath,
+				"--db", archivePath,
+				"--types", "steps",
+				"--from", "today",
+				"--to", "now",
+				"--json",
+			}, stdout, stderr, runtime)
+			if code == 0 {
+				t.Fatalf("sync exit code = 0, want config timezone failure\nstdout: %s", stdout.String())
+			}
+			if providerCalls != 0 {
+				t.Fatalf("provider calls = %d, want 0", providerCalls)
+			}
+			db := openArchiveForTest(t, archivePath)
+			var runCount int
+			if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM sync_runs`).Scan(&runCount); err != nil {
+				t.Fatalf("count Sync Runs: %v", err)
+			}
+			if runCount != 0 {
+				t.Fatalf("Sync Run rows = %d, want 0", runCount)
+			}
+		})
 	}
 }
 

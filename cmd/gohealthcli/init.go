@@ -34,6 +34,7 @@ func runInit(args []string, globals CommonFlagValues, stdout, stderr io.Writer, 
 	oauthClientFile := flags.String("oauth-client-file", "", "OAuth client JSON file reference")
 	secretProvider := flags.String("secret-provider", "", "Secret Provider name for OAuth client setup")
 	oauthClientItem := flags.String("oauth-client-item", "", "Secret Provider item name for OAuth client setup")
+	timezone := flags.String("timezone", "UTC", "IANA timezone for named sync ranges")
 
 	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
@@ -46,6 +47,12 @@ func runInit(args []string, globals CommonFlagValues, stdout, stderr io.Writer, 
 			Message: fmt.Sprintf("unexpected init argument: %s", flags.Arg(0)),
 			Mode:    mode,
 		}, stdout, stderr)
+	}
+	if *timezone == "" {
+		return ReportFailure(FailureReport{Command: "init", Status: StatusFlagInvalid, Message: "--timezone requires a non-empty IANA timezone", Mode: mode}, stdout, stderr)
+	}
+	if err := googlehealth.ValidateTimezone(*timezone); err != nil {
+		return ReportFailure(FailureReport{Command: "init", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 
 	if fileExists(common.ConfigPath) && fileExists(common.ArchivePath) {
@@ -104,7 +111,7 @@ func runInit(args []string, globals CommonFlagValues, stdout, stderr io.Writer, 
 		return ReportFailure(FailureReport{Command: "init", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 
-	if err := createConfigFile(common.ConfigPath, common.ArchivePath, source); err != nil {
+	if err := createConfigFile(common.ConfigPath, common.ArchivePath, *timezone, source); err != nil {
 		return ReportFailure(FailureReport{
 			Command: "init",
 			Status:  StatusArchiveUnwritable,

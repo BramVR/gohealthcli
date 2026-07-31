@@ -311,6 +311,7 @@ func doctorWriterFixtureRich() doctorResult {
 		ArchivePath:        "/home/bram/.local/share/gohealthcli/gohealthcli.sqlite",
 		OAuthClientSource:  "file:client_secret.json",
 		CredentialStore:    "os_native",
+		Timezone:           "Europe/Brussels",
 		SchemaVersion:      &schemaVersion,
 		ConnectionCount:    &connectionCount,
 		TokenStatus:        "ok",
@@ -340,6 +341,7 @@ const doctorWriterRichJSON = `{
   "archive_path": "/home/bram/.local/share/gohealthcli/gohealthcli.sqlite",
   "oauth_client_source": "file:client_secret.json",
   "credential_store": "os_native",
+  "timezone": "Europe/Brussels",
   "schema_version": 21,
   "connection_count": 1,
   "token_status": "ok",
@@ -368,6 +370,7 @@ config_path: /home/bram/.config/gohealthcli/config.toml
 archive_path: /home/bram/.local/share/gohealthcli/gohealthcli.sqlite
 oauth_client_source: file:client_secret.json
 credential_store: os_native
+timezone: Europe/Brussels
 schema_version: 21
 connection_count: 1
 token_status: ok
@@ -383,6 +386,7 @@ Config: /home/bram/.config/gohealthcli/config.toml
 Health Archive: /home/bram/.local/share/gohealthcli/gohealthcli.sqlite
 OAuth client source: file:client_secret.json
 Credential Store: os_native
+Timezone: Europe/Brussels
 Schema version: 21
 Connections: 1
 Token status: ok
