@@ -31,8 +31,8 @@ import (
 // runtime defaults are seeded per-invocation via RegisterCommon's
 // defaults argument instead.
 var commonFlagsSpec = []flagSpec{
-	{Name: "config", Type: "string", Default: "", Usage: "config file path"},
-	{Name: "db", Type: "string", Default: "", Usage: "SQLite Health Archive path"},
+	{Name: "config", Type: "string", Default: "", Usage: "config file path", ValueCompletion: valueCompletionFile},
+	{Name: "db", Type: "string", Default: "", Usage: "SQLite Health Archive path", ValueCompletion: valueCompletionFile},
 	{Name: "json", Type: "bool", Default: "false", Usage: "write stable JSON to stdout"},
 	{Name: "plain", Type: "bool", Default: "false", Usage: "write plain key/value output to stdout"},
 	{Name: "no-input", Type: "bool", Default: "false", Usage: "never prompt, never wait for browser input"},

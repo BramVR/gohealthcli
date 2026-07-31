@@ -8,8 +8,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 )
 
 func TestCompletionBashEmitsShellScript(t *testing.T) {
@@ -155,6 +158,274 @@ func TestCompletionProtocolSuggestsSupportedShells(t *testing.T) {
 	sort.Strings(want)
 	if got := completionCandidates(stdout.String()); !reflect.DeepEqual(got, want) {
 		t.Fatalf("completion shell candidates = %v, want %v", got, want)
+	}
+}
+
+func TestCompletionProtocolSuggestsExportDatasets(t *testing.T) {
+	t.Parallel()
+
+	code, stdout, stderr := runCommand(t, "__completeNoDesc", "export", "")
+	if code != 0 {
+		t.Fatalf("export dataset completion exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	want := exportDatasetCatalogSingleton.Names()
+	if got := completionCandidates(stdout.String()); !reflect.DeepEqual(got, want) {
+		t.Fatalf("export dataset candidates = %v, want catalog %v", got, want)
+	}
+}
+
+func TestCompletionProtocolSuggestsCatalogFlagValues(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		args          []string
+		want          []string
+		wantDirective int
+	}{
+		{
+			name:          "sync Data Types",
+			args:          []string{"__completeNoDesc", "sync", "--types", ""},
+			want:          googlehealth.SyncableDataTypes(),
+			wantDirective: 6,
+		},
+		{
+			name:          "connect scope keywords",
+			args:          []string{"__completeNoDesc", "connect", "--add-scopes", ""},
+			want:          strings.Split(supportedAddScopeKeywords(), ", "),
+			wantDirective: 6,
+		},
+		{
+			name:          "sync source family",
+			args:          []string{"__completeNoDesc", "sync", "--source-family", ""},
+			want:          googlehealth.SupportedSourceFamilies(),
+			wantDirective: 4,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			code, stdout, stderr := runCommand(t, test.args...)
+			if code != 0 {
+				t.Fatalf("completion exit code = %d, want 0\nstderr: %s", code, stderr.String())
+			}
+			sort.Strings(test.want)
+			if got := completionCandidates(stdout.String()); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("candidates = %v, want canonical catalog %v", got, test.want)
+			}
+			if got := completionDirective(stdout.String()); got != test.wantDirective {
+				t.Fatalf("directive = %d, want %d", got, test.wantDirective)
+			}
+		})
+	}
+}
+
+func TestCompletionProtocolPreservesCSVPREFIXAndSuppressesDuplicates(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "sync Data Type prefix",
+			args: []string{"__completeNoDesc", "sync", "--types", "steps,he"},
+			want: []string{"steps,heart-rate", "steps,heart-rate-variability", "steps,height"},
+		},
+		{
+			name: "scope keyword prefix",
+			args: []string{"__completeNoDesc", "connect", "--add-scopes", "ecg,i"},
+			want: []string{"ecg,irn"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			code, stdout, stderr := runCommand(t, test.args...)
+			if code != 0 {
+				t.Fatalf("completion exit code = %d, want 0\nstderr: %s", code, stderr.String())
+			}
+			if got := completionCandidates(stdout.String()); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("candidates = %v, want prefix-preserving values %v", got, test.want)
+			}
+			if got := completionDirective(stdout.String()); got != 6 {
+				t.Fatalf("directive = %d, want no-space + no-file", got)
+			}
+		})
+	}
+}
+
+func TestCompletionProtocolSuggestsRollupModes(t *testing.T) {
+	t.Parallel()
+
+	code, stdout, stderr := runCommand(t, "__completeNoDesc", "sync", "--rollup", "")
+	if code != 0 {
+		t.Fatalf("rollup completion exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	if got, want := completionCandidates(stdout.String()), []string{"daily", "hourly", "weekly"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("rollup candidates = %v, want fixed canonical modes %v", got, want)
+	}
+	if got := completionDirective(stdout.String()); got != 4 {
+		t.Fatalf("directive = %d, want ShellCompDirectiveNoFileComp", got)
+	}
+
+	code, stdout, stderr = runCommand(t, "__completeNoDesc", "sync", "--rollup", "wind")
+	if code != 0 {
+		t.Fatalf("window rollup completion exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	if got, want := completionCandidates(stdout.String()), []string{"window="}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("window rollup candidates = %v, want %v", got, want)
+	}
+	if got := completionDirective(stdout.String()); got != 6 {
+		t.Fatalf("directive = %d, want no-space + no-file", got)
+	}
+
+	code, stdout, stderr = runCommand(t, "__completeNoDesc", "sync", "--rollup", "window=")
+	if code != 0 {
+		t.Fatalf("window duration completion exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	if got := completionCandidates(stdout.String()); len(got) != 0 {
+		t.Fatalf("window duration candidates = %v, want free-form duration", got)
+	}
+	if got := completionDirective(stdout.String()); got != 4 {
+		t.Fatalf("directive = %d, want no-file for duration", got)
+	}
+}
+
+func TestCompletionProtocolSuggestsRawTargetsAndValues(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "targets",
+			args: []string{"__completeNoDesc", "raw", ""},
+			want: googlehealth.RawTargetNames(),
+		},
+		{
+			name: "Data Types",
+			args: []string{"__completeNoDesc", "raw", "data-type", ""},
+			want: googlehealth.ListableDataTypes(),
+		},
+		{
+			name: "endpoints",
+			args: []string{"__completeNoDesc", "raw", "endpoint", ""},
+			want: googlehealth.RawEndpointNames(),
+		},
+		{
+			name: "endpoint prefix",
+			args: []string{"__completeNoDesc", "raw", "endpoint", "dataTypes.he"},
+			want: []string{
+				"dataTypes.heart-rate-variability.list",
+				"dataTypes.heart-rate.list",
+				"dataTypes.height.list",
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			code, stdout, stderr := runCommand(t, test.args...)
+			if code != 0 {
+				t.Fatalf("completion exit code = %d, want 0\nstderr: %s", code, stderr.String())
+			}
+			sort.Strings(test.want)
+			if got := completionCandidates(stdout.String()); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("candidates = %v, want canonical catalog %v", got, test.want)
+			}
+			if got := completionDirective(stdout.String()); got != 4 {
+				t.Fatalf("directive = %d, want ShellCompDirectiveNoFileComp", got)
+			}
+		})
+	}
+}
+
+func TestCompletionProtocolFilesystemFallbackIsPathOnly(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		args          []string
+		wantDirective int
+	}{
+		{name: "config path", args: []string{"__completeNoDesc", "status", "--config", ""}, wantDirective: 0},
+		{name: "archive path", args: []string{"__completeNoDesc", "status", "--db", ""}, wantDirective: 0},
+		{name: "OAuth client path", args: []string{"__completeNoDesc", "init", "--oauth-client-file", ""}, wantDirective: 0},
+		{name: "export output path", args: []string{"__completeNoDesc", "export", "--output", ""}, wantDirective: 0},
+		{name: "query SQL", args: []string{"__completeNoDesc", "query", "SEL"}, wantDirective: 4},
+		{name: "sync date", args: []string{"__completeNoDesc", "sync", "--from", ""}, wantDirective: 4},
+		{name: "secret provider", args: []string{"__completeNoDesc", "init", "--secret-provider", ""}, wantDirective: 4},
+		{name: "secret item", args: []string{"__completeNoDesc", "init", "--oauth-client-item", ""}, wantDirective: 4},
+		{name: "page size", args: []string{"__completeNoDesc", "raw", "--page-size", ""}, wantDirective: 4},
+		{name: "page token", args: []string{"__completeNoDesc", "raw", "--page-token", ""}, wantDirective: 4},
+		{name: "command without positionals", args: []string{"__completeNoDesc", "status", ""}, wantDirective: 4},
+		{name: "export after dataset", args: []string{"__completeNoDesc", "export", "daily-steps", ""}, wantDirective: 4},
+		{name: "completion after shell", args: []string{"__completeNoDesc", "completion", "bash", ""}, wantDirective: 4},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			code, stdout, stderr := runCommand(t, test.args...)
+			if code != 0 {
+				t.Fatalf("completion exit code = %d, want 0\nstderr: %s", code, stderr.String())
+			}
+			if got := completionCandidates(stdout.String()); len(got) != 0 {
+				t.Fatalf("candidates = %v, want none", got)
+			}
+			if got := completionDirective(stdout.String()); got != test.wantDirective {
+				t.Fatalf("directive = %d, want %d", got, test.wantDirective)
+			}
+		})
+	}
+}
+
+func TestCompletionRegistryClassifiesEveryValueSurface(t *testing.T) {
+	t.Parallel()
+
+	for _, spec := range commonFlagsSpec {
+		if (spec.Type == "string" || spec.Type == "int") && spec.ValueCompletion == valueCompletionUnspecified {
+			t.Errorf("common flag --%s has no value completion policy", spec.Name)
+		}
+	}
+	for _, command := range commands {
+		if command.PositionalArgs != "" && command.PositionalCompletion == valueCompletionUnspecified {
+			t.Errorf("%s positional %s has no value completion policy", command.Name, command.PositionalArgs)
+		}
+		for _, spec := range command.Flags {
+			if (spec.Type == "string" || spec.Type == "int") && spec.ValueCompletion == valueCompletionUnspecified {
+				t.Errorf("%s flag --%s has no value completion policy", command.Name, spec.Name)
+			}
+		}
+	}
+}
+
+func TestCompletionProtocolCatalogCandidatesAreStableAndSorted(t *testing.T) {
+	t.Parallel()
+
+	tests := [][]string{
+		{"__completeNoDesc", "export", ""},
+		{"__completeNoDesc", "sync", "--types", ""},
+		{"__completeNoDesc", "connect", "--add-scopes", ""},
+		{"__completeNoDesc", "raw", "endpoint", ""},
+	}
+	for _, args := range tests {
+		code, first, stderr := runCommand(t, append([]string(nil), args...)...)
+		if code != 0 {
+			t.Fatalf("%v first completion exit code = %d, want 0\nstderr: %s", args, code, stderr.String())
+		}
+		code, second, stderr := runCommand(t, append([]string(nil), args...)...)
+		if code != 0 {
+			t.Fatalf("%v second completion exit code = %d, want 0\nstderr: %s", args, code, stderr.String())
+		}
+		if first.String() != second.String() {
+			t.Fatalf("%v completion changed between identical requests", args)
+		}
+		got := completionCandidatesInOrder(first.String())
+		want := append([]string(nil), got...)
+		sort.Strings(want)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("%v candidates = %v, want lexical order %v", args, got, want)
+		}
 	}
 }
 
@@ -470,6 +741,12 @@ func snapshotCompletionSandbox(t *testing.T, root string) map[string]string {
 }
 
 func completionCandidates(output string) []string {
+	candidates := completionCandidatesInOrder(output)
+	sort.Strings(candidates)
+	return candidates
+}
+
+func completionCandidatesInOrder(output string) []string {
 	var candidates []string
 	for _, line := range strings.Split(output, "\n") {
 		if line == "" || strings.HasPrefix(line, ":") {
@@ -478,8 +755,21 @@ func completionCandidates(output string) []string {
 		candidate, _, _ := strings.Cut(line, "\t")
 		candidates = append(candidates, candidate)
 	}
-	sort.Strings(candidates)
 	return candidates
+}
+
+func completionDirective(output string) int {
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.HasPrefix(line, ":") {
+			continue
+		}
+		value, err := strconv.Atoi(strings.TrimPrefix(line, ":"))
+		if err != nil {
+			return -1
+		}
+		return value
+	}
+	return -1
 }
 
 func containsString(values []string, want string) bool {

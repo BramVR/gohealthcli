@@ -87,12 +87,16 @@ func connectAddScopesUsage() string {
 }
 
 func supportedAddScopeKeywords() string {
+	return strings.Join(connectAddScopeKeywordNames(), ", ")
+}
+
+func connectAddScopeKeywordNames() []string {
 	keywords := make([]string, 0, len(connectAddScopeKeywords))
 	for keyword := range connectAddScopeKeywords {
 		keywords = append(keywords, keyword)
 	}
 	sort.Strings(keywords)
-	return strings.Join(keywords, ", ")
+	return keywords
 }
 
 // addScopeKeywordsForScopes reverses connectAddScopeKeywords for the

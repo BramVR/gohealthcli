@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -167,6 +169,36 @@ func TestGoogleHealthRawFilterFieldsCoverFirstReleaseDataTypes(t *testing.T) {
 				t.Fatalf("filter = %q, want %q", filter, test.want)
 			}
 		})
+	}
+}
+
+func TestRawEndpointNamesProjectCanonicalCatalogs(t *testing.T) {
+	t.Parallel()
+
+	want := make([]string, 0, len(identityEndpointURLs)+len(ListableDataTypes()))
+	for endpoint := range identityEndpointURLs {
+		want = append(want, endpoint)
+	}
+	for _, dataType := range ListableDataTypes() {
+		want = append(want, "dataTypes."+dataType+".list")
+	}
+	sort.Strings(want)
+
+	if got := RawEndpointNames(); !slices.Equal(got, want) {
+		t.Fatalf("RawEndpointNames = %v, want canonical projection %v", got, want)
+	}
+}
+
+func TestRawTargetNamesProjectAcceptedKinds(t *testing.T) {
+	t.Parallel()
+
+	got := RawTargetNames()
+	if !slices.Equal(got, []string{"data-type", "endpoint"}) {
+		t.Fatalf("RawTargetNames = %v, want [data-type endpoint]", got)
+	}
+	got[0] = "mutated"
+	if fresh := RawTargetNames(); !slices.Equal(fresh, []string{"data-type", "endpoint"}) {
+		t.Fatalf("RawTargetNames returned shared state: %v", fresh)
 	}
 }
 

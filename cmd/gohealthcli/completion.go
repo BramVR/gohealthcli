@@ -5,9 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"github.com/spf13/cobra"
 )
 
@@ -124,6 +126,9 @@ func reportCompletionGenerationFailure(err error, mode outputMode, stdout, stder
 }
 
 func completionCommandTree(registry []commandDef) (*cobra.Command, error) {
+	if err := validateCompletionRegistry(registry); err != nil {
+		return nil, err
+	}
 	root := &cobra.Command{
 		Use:              "gohealthcli",
 		Short:            "Local-first, read-only Google Health archive CLI.",
@@ -136,6 +141,9 @@ func completionCommandTree(registry []commandDef) (*cobra.Command, error) {
 	}
 	for _, spec := range commonFlagsSpec {
 		if err := addCompletionFlag(root.Flags(), spec); err != nil {
+			return nil, fmt.Errorf("project root flag --%s: %w", spec.Name, err)
+		}
+		if err := registerCompletionFlag(root, spec); err != nil {
 			return nil, fmt.Errorf("project root flag --%s: %w", spec.Name, err)
 		}
 	}
@@ -159,14 +167,161 @@ func completionCommandTree(registry []commandDef) (*cobra.Command, error) {
 			if err := addCompletionFlag(cmd.Flags(), spec); err != nil {
 				return nil, fmt.Errorf("%s flag --%s: %w", def.Name, spec.Name, err)
 			}
+			if err := registerCompletionFlag(cmd, spec); err != nil {
+				return nil, fmt.Errorf("%s flag --%s: %w", def.Name, spec.Name, err)
+			}
 		}
-		if def.Name == "completion" {
-			cmd.ValidArgs = append([]string(nil), completionShells...)
+		policy := def.PositionalCompletion
+		if policy == valueCompletionUnspecified {
+			policy = valueCompletionNone
+		}
+		cmd.ValidArgsFunction = func(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return completeValues(policy, args, toComplete)
 		}
 		root.AddCommand(cmd)
 	}
 	root.InitDefaultHelpCmd()
 	return root, nil
+}
+
+func validateCompletionRegistry(registry []commandDef) error {
+	validateFlag := func(owner string, spec flagSpec) error {
+		hasValue := spec.Type == "string" || spec.Type == "int"
+		if hasValue && spec.ValueCompletion == valueCompletionUnspecified {
+			return fmt.Errorf("%s flag --%s has no value completion policy", owner, spec.Name)
+		}
+		if !hasValue && spec.ValueCompletion != valueCompletionUnspecified {
+			return fmt.Errorf("%s flag --%s declares a value completion policy for type %s", owner, spec.Name, spec.Type)
+		}
+		if spec.Type != "string" && spec.ValueCompletion == valueCompletionFile {
+			return fmt.Errorf("%s non-string flag --%s declares native file completion", owner, spec.Name)
+		}
+		return nil
+	}
+	for _, spec := range commonFlagsSpec {
+		if err := validateFlag("root", spec); err != nil {
+			return err
+		}
+	}
+	for _, def := range registry {
+		if def.PositionalArgs != "" && def.PositionalCompletion == valueCompletionUnspecified {
+			return fmt.Errorf("%s positional %s has no value completion policy", def.Name, def.PositionalArgs)
+		}
+		if def.PositionalArgs == "" && def.PositionalCompletion != valueCompletionUnspecified {
+			return fmt.Errorf("%s declares positional completion without positional arguments", def.Name)
+		}
+		for _, spec := range def.Flags {
+			if err := validateFlag(def.Name, spec); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func registerCompletionFlag(cmd *cobra.Command, spec flagSpec) error {
+	if (spec.Type != "string" && spec.Type != "int") || spec.ValueCompletion == valueCompletionFile {
+		return nil
+	}
+	policy := spec.ValueCompletion
+	return cmd.RegisterFlagCompletionFunc(spec.Name, func(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return completeValues(policy, args, toComplete)
+	})
+}
+
+func completeValues(policy valueCompletionPolicy, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	switch policy {
+	case valueCompletionNone:
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	case valueCompletionExportDataset:
+		if len(args) != 0 {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		return completeCatalog(exportDatasetCatalogSingleton.Names(), toComplete), cobra.ShellCompDirectiveNoFileComp
+	case valueCompletionSyncDataTypesCSV:
+		return completeCSV(googlehealth.SyncableDataTypes(), toComplete), cobra.ShellCompDirectiveNoSpace | cobra.ShellCompDirectiveNoFileComp
+	case valueCompletionAddScopesCSV:
+		return completeCSV(connectAddScopeKeywordNames(), toComplete), cobra.ShellCompDirectiveNoSpace | cobra.ShellCompDirectiveNoFileComp
+	case valueCompletionRollup:
+		return completeRollups(toComplete)
+	case valueCompletionSourceFamily:
+		return completeCatalog(googlehealth.SupportedSourceFamilies(), toComplete), cobra.ShellCompDirectiveNoFileComp
+	case valueCompletionRawPositionals:
+		return completeRawPositionals(args, toComplete), cobra.ShellCompDirectiveNoFileComp
+	case valueCompletionShell:
+		if len(args) != 0 {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		return completeCatalog(completionShells, toComplete), cobra.ShellCompDirectiveNoFileComp
+	default:
+		return nil, cobra.ShellCompDirectiveDefault
+	}
+}
+
+func completeCatalog(values []string, prefix string) []string {
+	candidates := append([]string(nil), values...)
+	sort.Strings(candidates)
+	out := candidates[:0]
+	for _, candidate := range candidates {
+		if strings.HasPrefix(candidate, prefix) {
+			out = append(out, candidate)
+		}
+	}
+	return out
+}
+
+func completeCSV(values []string, toComplete string) []string {
+	completedPrefix := ""
+	fragment := toComplete
+	if comma := strings.LastIndexByte(toComplete, ','); comma >= 0 {
+		completedPrefix = toComplete[:comma+1]
+		fragment = toComplete[comma+1:]
+	}
+	selected := make(map[string]struct{})
+	for _, value := range strings.Split(strings.TrimSuffix(completedPrefix, ","), ",") {
+		if value = strings.TrimSpace(value); value != "" {
+			selected[value] = struct{}{}
+		}
+	}
+	var candidates []string
+	for _, value := range completeCatalog(values, fragment) {
+		if _, duplicate := selected[value]; duplicate {
+			continue
+		}
+		candidates = append(candidates, completedPrefix+value)
+	}
+	return candidates
+}
+
+func completeRollups(toComplete string) ([]string, cobra.ShellCompDirective) {
+	var fixed []string
+	windowPrefix := ""
+	for _, kind := range googlehealth.SupportedRollupKinds() {
+		if strings.HasSuffix(kind, "<duration>") {
+			windowPrefix = strings.TrimSuffix(kind, "<duration>")
+			continue
+		}
+		fixed = append(fixed, kind)
+	}
+	if windowPrefix != "" && len(toComplete) >= 2 && toComplete != windowPrefix && strings.HasPrefix(windowPrefix, toComplete) {
+		return []string{windowPrefix}, cobra.ShellCompDirectiveNoSpace | cobra.ShellCompDirectiveNoFileComp
+	}
+	return completeCatalog(fixed, toComplete), cobra.ShellCompDirectiveNoFileComp
+}
+
+func completeRawPositionals(args []string, toComplete string) []string {
+	switch len(args) {
+	case 0:
+		return completeCatalog(googlehealth.RawTargetNames(), toComplete)
+	case 1:
+		switch args[0] {
+		case string(googlehealth.RawTargetDataType):
+			return completeCatalog(googlehealth.ListableDataTypes(), toComplete)
+		case string(googlehealth.RawTargetEndpoint):
+			return completeCatalog(googlehealth.RawEndpointNames(), toComplete)
+		}
+	}
+	return nil
 }
 
 type completionFlagSet interface {
