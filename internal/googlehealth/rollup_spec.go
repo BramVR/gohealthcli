@@ -127,6 +127,8 @@ func (spec RollupSpec) normalizeBoundary(value, flag string) (string, error) {
 		return "", nil
 	}
 	if IsNamedRangeBoundary(value) {
+		// Named boundaries only pass through normalization for preflight;
+		// ResolveRange must resolve them before any provider request.
 		return value, nil
 	}
 	parsed, ok := ParseRangeBoundary(value)
