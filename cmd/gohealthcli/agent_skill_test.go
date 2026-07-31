@@ -223,13 +223,26 @@ func TestREADMEIncludesAgentSkillInstallCommand(t *testing.T) {
 	}
 }
 
+func TestNormalizeAgentSkillTextHandlesCRLF(t *testing.T) {
+	t.Parallel()
+	const input = "---\r\nname: gohealthcli\r\n---\r\n"
+	const want = "---\nname: gohealthcli\n---\n"
+	if got := normalizeAgentSkillText([]byte(input)); got != want {
+		t.Fatalf("normalizeAgentSkillText() = %q, want %q", got, want)
+	}
+}
+
 func readAgentSkill(t *testing.T) string {
 	t.Helper()
 	content, err := os.ReadFile(agentSkillRelativePath)
 	if err != nil {
 		t.Fatalf("read %s: %v", agentSkillRelativePath, err)
 	}
-	return string(content)
+	return normalizeAgentSkillText(content)
+}
+
+func normalizeAgentSkillText(content []byte) string {
+	return strings.ReplaceAll(string(content), "\r\n", "\n")
 }
 
 func agentSkillInvocations(content string) []string {
