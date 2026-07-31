@@ -67,6 +67,7 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	config := string(configBytes)
 	for _, want := range []string{
 		"archive_path = " + tomlQuotedString(archivePath),
+		`timezone = "UTC"`,
 		`source = "file"`,
 		"path = " + tomlQuotedString(oauthClientPath),
 		`[credential_store]`,
@@ -176,6 +177,86 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "FOREIGN KEY") {
 		t.Fatalf("insert orphan Data Point error = %v, want foreign key failure", err)
+	}
+}
+
+func TestInitPersistsExplicitTimezone(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "archive.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--timezone", "Europe/Brussels",
+		"--secret-provider", "1password",
+		"--oauth-client-item", "Google Health OAuth",
+	)
+	if code != 0 {
+		t.Fatalf("init exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(configBytes), `timezone = "Europe/Brussels"`) {
+		t.Fatalf("config missing explicit timezone:\n%s", configBytes)
+	}
+}
+
+func TestInitRejectsInvalidTimezoneBeforeCreatingSetup(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "archive.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--timezone", "Mars/Olympus_Mons",
+		"--secret-provider", "1password",
+		"--oauth-client-item", "Google Health OAuth",
+	)
+	if code == 0 {
+		t.Fatal("init exit code = 0, want invalid timezone failure")
+	}
+	if !strings.Contains(stderr.String(), `timezone "Mars/Olympus_Mons"`) {
+		t.Fatalf("stderr missing timezone error: %q", stderr.String())
+	}
+	for _, path := range []string{configPath, archivePath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("%s stat error = %v, want not exist", path, err)
+		}
+	}
+}
+
+func TestInitRejectsEmptyTimezoneBeforeCreatingSetup(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config", "config.toml")
+	archivePath := filepath.Join(tempDir, "data", "archive.sqlite")
+
+	code, _, stderr := runCommand(t,
+		"init",
+		"--config", configPath,
+		"--db", archivePath,
+		"--timezone", "",
+		"--secret-provider", "1password",
+		"--oauth-client-item", "Google Health OAuth",
+	)
+	if code == 0 {
+		t.Fatal("init exit code = 0, want empty timezone failure")
+	}
+	if !strings.Contains(stderr.String(), "--timezone requires a non-empty IANA timezone") {
+		t.Fatalf("stderr missing empty timezone error: %q", stderr.String())
+	}
+	for _, path := range []string{configPath, archivePath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("%s stat error = %v, want not exist", path, err)
+		}
 	}
 }
 

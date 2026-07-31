@@ -39,6 +39,9 @@ func fakeSyncPreflightContext(now time.Time, connection archived.Connection) syn
 		defaultAllDataTypes: func() []string {
 			return []string{"steps", "heart-rate", "sleep"}
 		},
+		configuredTimezone: func() (string, error) {
+			return "UTC", nil
+		},
 		currentConnection: func() (archived.Connection, error) {
 			return connection, nil
 		},

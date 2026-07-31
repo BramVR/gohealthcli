@@ -15,6 +15,7 @@ type doctorResult struct {
 	ArchivePath        string                  `json:"archive_path"`
 	OAuthClientSource  string                  `json:"oauth_client_source"`
 	CredentialStore    string                  `json:"credential_store"`
+	Timezone           string                  `json:"timezone,omitempty"`
 	SchemaVersion      *int                    `json:"schema_version"`
 	ConnectionCount    *int                    `json:"connection_count"`
 	TokenStatus        string                  `json:"token_status"`
@@ -86,6 +87,7 @@ func runDoctorWithRuntime(args []string, globals CommonFlagValues, stdout, stder
 			ArchivePath:       common.ArchivePath,
 			OAuthClientSource: config.oauthClientSource,
 			CredentialStore:   config.credentialStore,
+			Timezone:          config.timezone,
 			SchemaVersion:     &archive.schemaVersion,
 			ConnectionCount:   &archive.connectionCount,
 			TokenStatus:       archive.tokenStatus,
@@ -177,6 +179,7 @@ func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtim
 		ArchivePath:       archivePath,
 		OAuthClientSource: config.oauthClient.kind,
 		CredentialStore:   config.credentialStore.kind,
+		Timezone:          config.timezone,
 	}
 	archive, err := (healthArchiveLifecycle{path: archivePath}).MigrateAndInspect(context.Background(), true)
 	if err != nil {
@@ -296,6 +299,9 @@ func writeDoctorPlain(writer *stickyWriter, result doctorResult) {
 	if result.CredentialStore != "" {
 		writer.Printf("credential_store: %s\n", result.CredentialStore)
 	}
+	if result.Timezone != "" {
+		writer.Printf("timezone: %s\n", result.Timezone)
+	}
 	if result.SchemaVersion != nil {
 		writer.Printf("schema_version: %d\n", *result.SchemaVersion)
 	}
@@ -340,6 +346,9 @@ func writeDoctorHuman(writer *stickyWriter, result doctorResult) {
 	}
 	if result.CredentialStore != "" {
 		writer.Printf("Credential Store: %s\n", result.CredentialStore)
+	}
+	if result.Timezone != "" {
+		writer.Printf("Timezone: %s\n", result.Timezone)
 	}
 	if result.SchemaVersion != nil {
 		writer.Printf("Schema version: %d\n", *result.SchemaVersion)

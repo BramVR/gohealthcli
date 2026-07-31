@@ -19,6 +19,8 @@ type oauthClientSource struct {
 
 type parsedConfig struct {
 	archivePath         string
+	timezone            string
+	timezoneSeen        bool
 	defaultDataTypes    []string
 	oauthClient         oauthClientSource
 	credentialStore     credentialStoreConfig
@@ -28,10 +30,12 @@ type parsedConfig struct {
 type configCheck struct {
 	oauthClientSource string
 	credentialStore   string
+	timezone          string
 }
 
 type fullConfigCheck struct {
 	archivePath      string
+	timezone         string
 	defaultDataTypes []string
 	oauthClient      oauthClientSource
 	credentialStore  credentialStoreConfig
@@ -106,7 +110,7 @@ func parseOAuthClientSource(oauthClientFile, secretProvider, oauthClientItem str
 	return oauthClientSource{}, errors.New("requires --oauth-client-file or --secret-provider with --oauth-client-item")
 }
 
-func createConfigFile(configPath, archivePath string, source oauthClientSource) (err error) {
+func createConfigFile(configPath, archivePath, timezone string, source oauthClientSource) (err error) {
 	if err := ensureOwnerOnlyDir(filepath.Dir(configPath)); err != nil {
 		return err
 	}
@@ -121,7 +125,7 @@ func createConfigFile(configPath, archivePath string, source oauthClientSource) 
 		}
 	}()
 
-	if _, err := fmt.Fprint(file, configContent(configPath, archivePath, source)); err != nil {
+	if _, err := fmt.Fprint(file, configContent(configPath, archivePath, timezone, source)); err != nil {
 		_ = file.Close()
 		return err
 	}
@@ -134,11 +138,14 @@ func createConfigFile(configPath, archivePath string, source oauthClientSource) 
 	return os.Chmod(configPath, 0o600)
 }
 
-func configContent(configPath, archivePath string, source oauthClientSource) string {
+func configContent(configPath, archivePath, timezone string, source oauthClientSource) string {
 	var builder strings.Builder
 	builder.WriteString("# gohealthcli config\n\n")
 	builder.WriteString("archive_path = ")
 	builder.WriteString(strconv.Quote(archivePath))
+	builder.WriteString("\n")
+	builder.WriteString("timezone = ")
+	builder.WriteString(strconv.Quote(timezone))
 	builder.WriteString("\n")
 	builder.WriteString("default_data_types = [\n")
 	for _, dataType := range googlehealth.DefaultDataTypes() {
@@ -192,6 +199,7 @@ func inspectConfig(configPath, archivePath string) (configCheck, error) {
 	return configCheck{
 		oauthClientSource: config.oauthClient.kind,
 		credentialStore:   config.credentialStore.kind,
+		timezone:          config.timezone,
 	}, nil
 }
 
@@ -228,6 +236,10 @@ func inspectFullConfig(configPath, archivePath string) (fullConfigCheck, error) 
 	if err := validateDefaultDataTypes(config.defaultDataTypes); err != nil {
 		return fullConfigCheck{}, err
 	}
+	config.timezone, err = resolveConfigTimezone(config)
+	if err != nil {
+		return fullConfigCheck{}, err
+	}
 	if err := validateOAuthClientConfig(config.oauthClient); err != nil {
 		return fullConfigCheck{}, err
 	}
@@ -239,6 +251,7 @@ func inspectFullConfig(configPath, archivePath string) (fullConfigCheck, error) 
 	}
 	return fullConfigCheck{
 		archivePath:      config.archivePath,
+		timezone:         config.timezone,
 		defaultDataTypes: config.defaultDataTypes,
 		oauthClient:      config.oauthClient,
 		credentialStore:  config.credentialStore,
@@ -278,6 +291,10 @@ func inspectIdentityConfig(configPath, archivePath string) (fullConfigCheck, err
 	if err := validateDefaultDataTypes(config.defaultDataTypes); err != nil {
 		return fullConfigCheck{}, err
 	}
+	config.timezone, err = resolveConfigTimezone(config)
+	if err != nil {
+		return fullConfigCheck{}, err
+	}
 	if !config.credentialStoreSeen && config.credentialStore.kind == "" {
 		config.credentialStore = defaultCredentialStoreConfig()
 	}
@@ -286,6 +303,7 @@ func inspectIdentityConfig(configPath, archivePath string) (fullConfigCheck, err
 	}
 	return fullConfigCheck{
 		archivePath:      config.archivePath,
+		timezone:         config.timezone,
 		defaultDataTypes: config.defaultDataTypes,
 		// oauthClient is returned without parsing/shape validation so the
 		// sync auto-refresh path can reach it without forcing every
@@ -340,8 +358,12 @@ func parseConfig(content string) (parsedConfig, error) {
 		}
 		switch section {
 		case "":
-			if key == "archive_path" {
+			switch key {
+			case "archive_path":
 				config.archivePath = parsedValue
+			case "timezone":
+				config.timezone = parsedValue
+				config.timezoneSeen = true
 			}
 		case "oauth_client":
 			switch key {
@@ -366,6 +388,19 @@ func parseConfig(content string) (parsedConfig, error) {
 		}
 	}
 	return config, nil
+}
+
+func resolveConfigTimezone(config parsedConfig) (string, error) {
+	if !config.timezoneSeen {
+		return "UTC", nil
+	}
+	if config.timezone == "" {
+		return "", errors.New("timezone requires a non-empty IANA timezone")
+	}
+	if err := googlehealth.ValidateTimezone(config.timezone); err != nil {
+		return "", err
+	}
+	return config.timezone, nil
 }
 
 func parseStringArray(lines []string, startIndex int, firstValue string) ([]string, int, error) {

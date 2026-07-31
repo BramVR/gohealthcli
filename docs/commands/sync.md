@@ -7,7 +7,7 @@ Pull raw Data Points for the requested Data Types within an inclusive `--from` /
 
 `--types` accepts a comma-separated list (for example `steps,heart-rate,sleep`); multi-type invocations fan out into one Sync Run per Data Type, each with its own outcome and Sync Cursor. When neither `--types` nor `--all` is set, `sync` falls back to a single-type run against `steps`. `--all` is shorthand for every default Data Type in the catalog. Per-type failures stay isolated: one Data Type erroring does not stop the others. `--rollup` switches the sync from raw Data Points to upstream Rollup records: `daily` calls the `dailyRollUp` endpoint (civil-time windows), `hourly` / `weekly` / `window=<duration>` call the windowed `rollUp` endpoint (RFC3339 windows) with a 1h / 7d / parsed-duration window size respectively. Daily heart-rate Rollups are summary-history records and do not replace or imply a backfill of raw heart-rate samples. Unsupported combinations error with the Data Type's actual `SupportedEndpoints` quoted in the message. `--source-family wearable` restricts the result set to Data Points whose Data Source family is a watch or tracker.
 
-`--from` and `--to` accept `now`, `today`, `yesterday`, civil dates (`YYYY-MM-DD`, interpreted as start-of-UTC-day), and RFC3339 timestamps. `--timezone <IANA-zone>` selects the calendar used only for named boundaries; it defaults to UTC and never reinterprets explicit dates or RFC3339 instants. Named physical boundaries emit UTC RFC3339, civil boundaries emit local `YYYY-MM-DDTHH:mm:ss`, and daily boundaries emit `YYYY-MM-DD`. Yesterday is calendar-based, so a physical `yesterday` to `today` window can span 23 or 25 hours across daylight-saving transitions; a timezone that skipped the resolved civil date fails locally.
+`--from` and `--to` accept `now`, `today`, `yesterday`, civil dates (`YYYY-MM-DD`, interpreted as start-of-UTC-day), and RFC3339 timestamps. The named-boundary timezone resolves by precedence: `sync --timezone`, root config `timezone`, then UTC for legacy configs. It never comes from the machine timezone, Provider settings, Data Point metadata, locale, or IP, and never reinterprets explicit dates or RFC3339 instants. Named physical boundaries emit UTC RFC3339, civil boundaries emit local `YYYY-MM-DDTHH:mm:ss`, and daily boundaries emit `YYYY-MM-DD`. Yesterday is calendar-based, so a physical `yesterday` to `today` window can span 23 or 25 hours across daylight-saving transitions; a timezone that skipped the resolved civil date fails locally.
 
 The emitted shape for explicit rollup inputs remains per rollup kind:
 
@@ -22,7 +22,7 @@ A Sync Run row is recorded for every invocation that reaches upstream — succee
 
 Preflight failures exit before contacting the provider and do NOT write a `sync_runs` audit row. The full list of no-audit-row rejections is:
 
-- Invalid `--timezone`, an unsupported named boundary, a skipped civil date, or an otherwise unparseable `--from` / `--to`.
+- Invalid or empty flag/config timezone, an unsupported named boundary, a skipped civil date, or an otherwise unparseable `--from` / `--to`.
 - Inverted range (`--from > --to`).
 - Zero-width range (`--from == --to`).
 - Unsupported `--rollup` kind (parse failure).

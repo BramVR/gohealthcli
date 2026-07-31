@@ -287,6 +287,7 @@ func TestDoctorReportsInitializedSetup(t *testing.T) {
 	assertJSONString(t, got, "archive_path", archivePath)
 	assertJSONString(t, got, "oauth_client_source", "file")
 	assertJSONString(t, got, "credential_store", expectedDefaultCredentialStoreKind())
+	assertJSONString(t, got, "timezone", "UTC")
 	assertJSONString(t, got, "token_status", "not_connected")
 	if got["schema_version"] != float64(currentSchemaVersion) {
 		t.Fatalf("schema_version = %v, want %d", got["schema_version"], currentSchemaVersion)
@@ -295,6 +296,35 @@ func TestDoctorReportsInitializedSetup(t *testing.T) {
 		t.Fatalf("connection_count = %v, want 0", got["connection_count"])
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestDoctorReportsImplicitUTCForLegacyConfig(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	legacyConfig := strings.Replace(string(configBytes), `timezone = "UTC"`+"\n", "", 1)
+	if err := os.WriteFile(configPath, []byte(legacyConfig), 0o600); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+
+	code, stdout, stderr := runCommand(t,
+		"doctor",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	)
+	if code != 0 {
+		t.Fatalf("doctor exit code = %d, want 0\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("decode doctor JSON: %v", err)
+	}
+	assertJSONString(t, got, "timezone", "UTC")
 }
 
 func TestDoctorPlainReportsOfflineHealthCheck(t *testing.T) {
@@ -330,7 +360,7 @@ func TestDoctorPlainReportsOfflineHealthCheck(t *testing.T) {
 	if usesPOSIXPermissions() {
 		attachmentRootMode = "0700"
 	}
-	want := fmt.Sprintf("status: ok\nconfig_path: %s\narchive_path: %s\noauth_client_source: file\ncredential_store: %s\nschema_version: %d\nconnection_count: 0\ntoken_status: not_connected\nattachment_root_path: %s.attachments\nattachment_root_mode: %s\nmessage: local gohealthcli setup is initialized\n", configPath, archivePath, expectedDefaultCredentialStoreKind(), currentSchemaVersion, archivePath, attachmentRootMode)
+	want := fmt.Sprintf("status: ok\nconfig_path: %s\narchive_path: %s\noauth_client_source: file\ncredential_store: %s\ntimezone: UTC\nschema_version: %d\nconnection_count: 0\ntoken_status: not_connected\nattachment_root_path: %s.attachments\nattachment_root_mode: %s\nmessage: local gohealthcli setup is initialized\n", configPath, archivePath, expectedDefaultCredentialStoreKind(), currentSchemaVersion, archivePath, attachmentRootMode)
 	if stdout.String() != want {
 		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 	}
