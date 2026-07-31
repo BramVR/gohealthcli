@@ -50,6 +50,7 @@ sync with `gohealthcli --help`.
 - `export`: Write a normalised dataset to CSV or JSONL.
 - `raw`: Print raw provider JSON for endpoint exploration.
 - `describe-schema`: Self-describe the Health Archive for LLM consumption.
+- `completion`: Generate a shell completion script.
 
 The discoverability verbs added by PRD #143 cover the rest of the surface:
 
