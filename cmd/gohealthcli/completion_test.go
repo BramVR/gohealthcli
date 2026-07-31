@@ -72,6 +72,18 @@ func TestCompletionPowerShellEmitsShellScript(t *testing.T) {
 	}
 }
 
+func TestCompletionRegistryDeclaresShellOperand(t *testing.T) {
+	t.Parallel()
+
+	def, ok := lookupCommand("completion")
+	if !ok {
+		t.Fatal("completion missing from registry")
+	}
+	if def.PositionalArgs != "<shell>" {
+		t.Fatalf("completion positional args = %q, want %q", def.PositionalArgs, "<shell>")
+	}
+}
+
 func TestCompletionProtocolProjectsVisibleRegistryAndHelp(t *testing.T) {
 	t.Parallel()
 
@@ -143,6 +155,43 @@ func TestCompletionProtocolSuggestsSupportedShells(t *testing.T) {
 	sort.Strings(want)
 	if got := completionCandidates(stdout.String()); !reflect.DeepEqual(got, want) {
 		t.Fatalf("completion shell candidates = %v, want %v", got, want)
+	}
+}
+
+func TestCompletionProtocolTraversesGlobalFlags(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		args      []string
+		candidate string
+	}{
+		{
+			name:      "subcommand after boolean global",
+			args:      []string{"__completeNoDesc", "--json", ""},
+			candidate: "status",
+		},
+		{
+			name:      "command flag after valued global",
+			args:      []string{"__completeNoDesc", "--config", "/tmp/config.toml", "status", "--"},
+			candidate: "--db",
+		},
+		{
+			name:      "shell after global",
+			args:      []string{"__completeNoDesc", "--plain", "completion", ""},
+			candidate: "bash",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			code, stdout, stderr := runCommand(t, test.args...)
+			if code != 0 {
+				t.Fatalf("completion protocol exit code = %d, want 0\nstderr: %s", code, stderr.String())
+			}
+			if got := completionCandidates(stdout.String()); !containsString(got, test.candidate) {
+				t.Fatalf("candidates = %v, want %q", got, test.candidate)
+			}
+		})
 	}
 }
 
@@ -431,4 +480,13 @@ func completionCandidates(output string) []string {
 	}
 	sort.Strings(candidates)
 	return candidates
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

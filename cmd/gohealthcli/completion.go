@@ -125,10 +125,11 @@ func reportCompletionGenerationFailure(err error, mode outputMode, stdout, stder
 
 func completionCommandTree(registry []commandDef) (*cobra.Command, error) {
 	root := &cobra.Command{
-		Use:           "gohealthcli",
-		Short:         "Local-first, read-only Google Health archive CLI.",
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:              "gohealthcli",
+		Short:            "Local-first, read-only Google Health archive CLI.",
+		SilenceErrors:    true,
+		SilenceUsage:     true,
+		TraverseChildren: true,
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
 		},

@@ -7,6 +7,12 @@ Generate a shell-native completion script from the Command Registry for Bash, Zs
 
 Pass `--no-descriptions` to omit command and flag descriptions from shells that display them. See the [Install](../install.html#shell-completion) page for current-session and persistent setup commands for all four shells.
 
+## Usage
+
+```
+gohealthcli completion <shell>
+```
+
 ## Flags
 
 | Flag | Type | Default | Description |

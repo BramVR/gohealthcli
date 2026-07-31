@@ -454,9 +454,10 @@ var commands = []commandDef{
 		Run:         runDescribeSchemaWithRuntime,
 	},
 	{
-		Name:  "completion",
-		Short: "Generate a shell completion script.",
-		Long:  "Generate a shell-native completion script from the Command Registry for Bash, Zsh, Fish, or PowerShell. The output is deterministic and can be redirected to the shell's completion directory; generation does not read configuration, the Health Archive, a Connection, credentials, or the Provider.\n\nPass `--no-descriptions` to omit command and flag descriptions from shells that display them. See the [Install](../install.html#shell-completion) page for current-session and persistent setup commands for all four shells.",
+		Name:           "completion",
+		Short:          "Generate a shell completion script.",
+		Long:           "Generate a shell-native completion script from the Command Registry for Bash, Zsh, Fish, or PowerShell. The output is deterministic and can be redirected to the shell's completion directory; generation does not read configuration, the Health Archive, a Connection, credentials, or the Provider.\n\nPass `--no-descriptions` to omit command and flag descriptions from shells that display them. See the [Install](../install.html#shell-completion) page for current-session and persistent setup commands for all four shells.",
+		PositionalArgs: "<shell>",
 		Flags: []flagSpec{
 			{Name: "no-descriptions", Type: "bool", Default: "false", Usage: "disable completion descriptions"},
 		},
