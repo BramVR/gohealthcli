@@ -246,7 +246,8 @@ func TestSyncRunLifecycleClosesSIGINTPreFirstDataTypeRace(t *testing.T) {
 // and break out before any executor call — that scenario passes pre-fix
 // and post-fix identically, so it does not exercise the race window the
 // slice actually closes. To exercise that window we cancel DURING
-// gate.Validate (specifically, inside the gate's currentConnection()
+// gate.Validate (specifically, inside the planning archive's
+// CurrentConnection()
 // lookup, which runs after the orchestrator's loop-top guard observed a
 // live context and before lifecycle.Run gets a chance to check it).
 // Without slice 5's check at syncRunLifecycle.Run's first line, this
@@ -254,7 +255,7 @@ func TestSyncRunLifecycleClosesSIGINTPreFirstDataTypeRace(t *testing.T) {
 // row; with slice 5 in place, the lifecycle catches the now-canceled
 // context and returns sync_canceled with zero audit rows.
 //
-// The seam used here — the runtime adapters' openHealthArchiveWriter —
+// The seam used here — the runtime adapters' openSyncPlanningArchive —
 // is called from productionSyncPreflightContext.currentConnection
 // during gate.Validate. Wrapping it lets us deterministically slot a
 // close() into the validate-then-lifecycle handoff without introducing
@@ -276,7 +277,7 @@ func TestSyncOrchestratorCancelBetweenLoopGuardAndLifecycleWritesNoAuditRow(t *t
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Wrap the archive opener so that the FIRST open (which happens
+	// Wrap the planning archive opener so that the FIRST open (which happens
 	// inside gate.Validate's currentConnection lookup) cancels the run
 	// context. That places the cancel strictly AFTER the orchestrator's
 	// loop-top guard observed a live context (the guard runs before
@@ -284,12 +285,12 @@ func TestSyncOrchestratorCancelBetweenLoopGuardAndLifecycleWritesNoAuditRow(t *t
 	// pre-StartSyncRun cancel check fires (which is the first thing
 	// lifecycle.Run does). This is the exact race window slice 5 closes.
 	opens := 0
-	testRuntime.openHealthArchiveWriter = func(path string) (healthArchiveWriter, error) {
+	testRuntime.openSyncPlanningArchive = func(openCtx context.Context, path string) (syncPlanningArchive, error) {
 		opens++
 		if opens == 1 {
 			cancel()
 		}
-		return openHealthArchiveWriter(path)
+		return openSyncPlanningArchive(openCtx, path)
 	}
 
 	orchestrator := newSyncOrchestrator(testRuntime)
