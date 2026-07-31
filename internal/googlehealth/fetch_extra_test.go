@@ -86,7 +86,7 @@ func TestBuildGoogleHealthRawRequestEndpointsReadFromCatalog(t *testing.T) {
 			identityEndpointScopes[endpoint] = []string{sentinel}
 			t.Cleanup(func() { identityEndpointScopes[endpoint] = original })
 
-			request, err := BuildRawRequest([]string{"endpoint", endpoint}, "", "", 0, "")
+			request, err := BuildRawRequest(RawRequestOptions{Target: []string{"endpoint", endpoint}})
 			if err != nil {
 				t.Fatalf("build raw request for %q: %v", endpoint, err)
 			}

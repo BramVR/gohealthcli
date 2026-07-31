@@ -35,6 +35,21 @@ type RawRequest struct {
 	SourceFamilyFilter string
 }
 
+// RawRequestOptions carries the complete raw request contract, including the
+// flag provenance needed to reject range options on identity endpoints.
+type RawRequestOptions struct {
+	Target           []string
+	From             string
+	To               string
+	Timezone         string
+	FromProvided     bool
+	ToProvided       bool
+	TimezoneProvided bool
+	ResolvedAt       time.Time
+	PageSize         int64
+	PageToken        string
+}
+
 // RawTargetKind is the first positional discriminator accepted by
 // BuildRawRequest.
 type RawTargetKind string
@@ -57,14 +72,56 @@ func RawTargetNames() []string {
 	return targets
 }
 
-func BuildRawRequest(target []string, from, to string, pageSize int64, pageToken string) (RawRequest, error) {
+type rawRequestTarget struct {
+	endpointName   string
+	endpointURL    string
+	requiredScopes []string
+	dataType       string
+	list           bool
+}
+
+// ValidateRawRequestOptions performs target/flag validation that must happen
+// before raw inspects config or opens the Health Archive.
+func ValidateRawRequestOptions(options RawRequestOptions) error {
+	_, err := parseRawRequestTarget(options)
+	return err
+}
+
+func BuildRawRequest(options RawRequestOptions) (RawRequest, error) {
+	target, err := parseRawRequestTarget(options)
+	if err != nil {
+		return RawRequest{}, err
+	}
+	if !target.list {
+		return RawRequest{
+			EndpointName:   target.endpointName,
+			URL:            target.endpointURL,
+			RequiredScopes: target.requiredScopes,
+		}, nil
+	}
+	if options.ResolvedAt.IsZero() {
+		return RawRequest{}, errors.New("raw Data Type range resolution requires a captured clock")
+	}
+	rangeTarget, err := SyncRangeTarget(target.dataType, nil, false)
+	if err != nil {
+		return RawRequest{}, err
+	}
+	resolved, err := ResolveRawRange(options.From, options.To, options.Timezone, options.ResolvedAt, rangeTarget)
+	if err != nil {
+		return RawRequest{}, err
+	}
+	return buildGoogleHealthDataTypeListRawRequest(target.dataType, resolved.From, resolved.To, options.PageSize, options.PageToken)
+}
+
+func parseRawRequestTarget(options RawRequestOptions) (rawRequestTarget, error) {
+	target := options.Target
 	if len(target) < 2 {
-		return RawRequest{}, errors.New("requires `endpoint <name>` or `data-type <name>`")
+		return rawRequestTarget{}, errors.New("requires `endpoint <name>` or `data-type <name>`")
 	}
 	switch RawTargetKind(target[0]) {
 	case RawTargetEndpoint:
 		if len(target) != 2 {
-			return RawRequest{}, errors.New("endpoint mode requires exactly one endpoint name")
+			return rawRequestTarget{}, errors.New("endpoint mode requires exactly one endpoint name")
 		}
 		// Identity-style endpoints route through the catalog: URL
 		// lookup comes from identityEndpointURLs, scopes
@@ -76,26 +133,34 @@ func BuildRawRequest(target []string, from, to string, pageSize int64, pageToken
 		if endpointURL, ok := identityEndpointURLs[target[1]]; ok {
 			requiredScopes, hasScopes := identityEndpointScopes[target[1]]
 			if !hasScopes || len(requiredScopes) == 0 {
-				return RawRequest{}, fmt.Errorf("internal: identity endpoint %q present in URL catalog but missing from scope catalog", target[1])
+				return rawRequestTarget{}, fmt.Errorf("internal: identity endpoint %q present in URL catalog but missing from scope catalog", target[1])
 			}
-			return RawRequest{
-				EndpointName:   target[1],
-				URL:            endpointURL,
-				RequiredScopes: requiredScopes,
-			}, nil
+			for _, provided := range []struct {
+				name string
+				set  bool
+			}{
+				{name: "--from", set: options.FromProvided},
+				{name: "--to", set: options.ToProvided},
+				{name: "--timezone", set: options.TimezoneProvided},
+			} {
+				if provided.set {
+					return rawRequestTarget{}, fmt.Errorf("raw endpoint %s does not support %s", target[1], provided.name)
+				}
+			}
+			return rawRequestTarget{endpointName: target[1], endpointURL: endpointURL, requiredScopes: requiredScopes}, nil
 		}
 		if strings.HasPrefix(target[1], "dataTypes.") && strings.HasSuffix(target[1], ".list") {
 			dataType := strings.TrimSuffix(strings.TrimPrefix(target[1], "dataTypes."), ".list")
-			return buildGoogleHealthDataTypeListRawRequest(dataType, from, to, pageSize, pageToken)
+			return rawRequestTarget{dataType: dataType, list: true}, nil
 		}
-		return RawRequest{}, fmt.Errorf("unsupported raw endpoint %q", target[1])
+		return rawRequestTarget{}, fmt.Errorf("unsupported raw endpoint %q", target[1])
 	case RawTargetDataType:
 		if len(target) != 2 {
-			return RawRequest{}, errors.New("data-type mode requires exactly one Data Type")
+			return rawRequestTarget{}, errors.New("data-type mode requires exactly one Data Type")
 		}
-		return buildGoogleHealthDataTypeListRawRequest(target[1], from, to, pageSize, pageToken)
+		return rawRequestTarget{dataType: target[1], list: true}, nil
 	default:
-		return RawRequest{}, fmt.Errorf("unsupported raw target %q", target[0])
+		return rawRequestTarget{}, fmt.Errorf("unsupported raw target %q", target[0])
 	}
 }
 

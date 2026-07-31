@@ -120,7 +120,7 @@ stdout. On a POSIX shell:
 ```bash
 umask 077
 set -o noclobber
-gohealthcli raw data-type steps --from 2026-01-01 --to 2026-01-02 > ./raw-health-response.json
+gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels > ./raw-health-response.json
 ```
 
 On PowerShell, create a unique file inside the current user's ACL-protected
@@ -129,12 +129,13 @@ local application-data directory:
 ```powershell
 $rawPath = Join-Path $env:LOCALAPPDATA ("gohealthcli-raw-{0}.json" -f [guid]::NewGuid())
 New-Item -ItemType File -Path $rawPath -ErrorAction Stop | Out-Null
-gohealthcli raw data-type steps --from 2026-01-01 --to 2026-01-02 | Set-Content -LiteralPath $rawPath -Encoding utf8
+gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels | Set-Content -LiteralPath $rawPath -Encoding utf8
 ```
 
-This example reads Data Type `steps` from the Provider and redirects its raw
-JSON without archiving the response. It may refresh Connection token metadata
-locally. If the destination already exists, choose another path instead of
+This example reads Data Type `steps` from the Provider using the same named
+range and timezone resolution as `sync`, then redirects its raw JSON without
+archiving the response. It may refresh Connection token metadata locally. If
+the destination already exists, choose another path instead of
 overwriting it. Keep the file private, minimize the time range, and never paste
 the payload into chat or logs.
 

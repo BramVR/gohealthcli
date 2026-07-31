@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BramVR/gohealthcli/internal/googlehealth"
 )
@@ -120,7 +121,12 @@ func TestAgentSkillDataTypesMatchGoogleHealthCatalog(t *testing.T) {
 	for _, match := range rawTarget.FindAllStringSubmatch(content, -1) {
 		name := match[1]
 		references[name] = true
-		if _, err := googlehealth.BuildRawRequest([]string{"data-type", name}, "2026-01-01", "2026-01-02", 0, ""); err != nil {
+		if _, err := googlehealth.BuildRawRequest(googlehealth.RawRequestOptions{
+			Target:     []string{"data-type", name},
+			From:       "2026-01-01",
+			To:         "2026-01-02",
+			ResolvedAt: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
+		}); err != nil {
 			t.Errorf("SKILL.md raw Data Type %q is absent from the canonical raw request catalog: %v", name, err)
 		}
 	}
