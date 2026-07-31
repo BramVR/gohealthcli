@@ -176,6 +176,12 @@ go install github.com/BramVR/gohealthcli/cmd/gohealthcli@latest
 gohealthcli --version
 ```
 
+Install the Agent Skill:
+
+```bash
+npx skills add BramVR/gohealthcli --skill gohealthcli
+```
+
 On Windows amd64, install the checksummed release ZIP with the
 [PowerShell instructions](./docs/install.md#windows).
 
