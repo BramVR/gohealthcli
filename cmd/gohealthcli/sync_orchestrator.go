@@ -37,6 +37,9 @@ func newSyncOrchestrator(runtime runtimeAdapters) syncOrchestrator {
 // nil + a non-nil error instead. The CLI translates the empty case
 // into a sync_canceled result via fanOutStatus.
 func (orchestrator syncOrchestrator) Sync(ctx context.Context, options syncCommandOptions) ([]syncResult, error) {
+	if options.resolvedAt.IsZero() {
+		options.resolvedAt = orchestrator.executor.runtime.withDefaults().now()
+	}
 	dataTypes, err := orchestrator.expandDataTypes(options)
 	if err != nil {
 		return nil, err

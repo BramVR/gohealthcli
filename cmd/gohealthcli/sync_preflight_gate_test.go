@@ -19,13 +19,13 @@ func fakeSyncPreflightContext(now time.Time, connection archived.Connection) syn
 		now: func() time.Time { return now },
 		dataTypeSupported: func(dataType string) bool {
 			switch dataType {
-			case "steps", "heart-rate", "weight", "sleep", "active-energy-burned":
+			case "steps", "heart-rate", "weight", "sleep", "active-energy-burned", "daily-resting-heart-rate":
 				return true
 			}
 			return false
 		},
 		dataTypeUsesDateRange: func(dataType string) bool {
-			return dataType == "weight"
+			return dataType == "weight" || dataType == "sleep"
 		},
 		sourceFamilyFilter: func(dataType, sourceFamily string) (string, error) {
 			if dataType != "steps" && dataType != "heart-rate" {
@@ -254,6 +254,312 @@ func TestSyncPreflightGateDefaultsToWhenDailyRollup(t *testing.T) {
 	}
 	if want := now.UTC().Format("2006-01-02"); plan.to != want {
 		t.Errorf("plan.to = %q, want %q (daily rollup defaults to civil date)", plan.to, want)
+	}
+}
+
+func TestSyncPreflightGateResolvesOmittedToAsLocalNow(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, archived.Connection{ID: "googlehealth:111"})}
+
+	plan, err := gate.Validate(syncCommandOptions{
+		dataTypes: []string{"sleep"},
+		from:      "today",
+		timezone:  "Pacific/Kiritimati",
+	})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if plan.from != "2026-06-09T00:00:00" || plan.to != "2026-06-09T02:00:00" {
+		t.Fatalf("plan range = %q..%q, want local today..now", plan.from, plan.to)
+	}
+
+	plan, err = gate.Validate(syncCommandOptions{
+		dataTypes: []string{"sleep"},
+		from:      "today",
+	})
+	if err != nil {
+		t.Fatalf("Validate implicit UTC: %v", err)
+	}
+	if plan.from != "2026-06-08T00:00:00" || plan.to != "2026-06-08T12:00:00" {
+		t.Fatalf("implicit UTC plan range = %q..%q, want today..now", plan.from, plan.to)
+	}
+}
+
+func TestSyncPreflightGateDoesNotReinterpretExplicitDateForOrdering(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, archived.Connection{ID: "googlehealth:111"})}
+
+	plan, err := gate.Validate(syncCommandOptions{
+		dataTypes: []string{"sleep"},
+		from:      "2026-01-01",
+		to:        "2026-01-01T07:00:00Z",
+		timezone:  "America/Los_Angeles",
+	})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if plan.from != "2026-01-01" || plan.to != "2026-01-01T07:00:00Z" {
+		t.Fatalf("plan changed explicit inputs: %q..%q", plan.from, plan.to)
+	}
+}
+
+func TestSyncPreflightGateRejectsNormalizedDailyZeroWidth(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC)
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, archived.Connection{ID: "googlehealth:111"})}
+
+	_, err := gate.Validate(syncCommandOptions{
+		dataTypes: []string{"steps"},
+		from:      "today",
+		to:        "2026-03-30T12:00:00Z",
+		timezone:  "Europe/Brussels",
+		rollup:    "daily",
+	})
+	if err == nil {
+		t.Fatal("Validate: want normalized zero-width rejection")
+	}
+	var failure *preflightFailure
+	if !errors.As(err, &failure) || failure.Rule() != preflightRuleRangeZeroWidth {
+		t.Fatalf("error = %v, want range_zero_width", err)
+	}
+}
+
+func TestSyncPreflightGateComparesRawDailyRFC3339ByInstant(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, archived.Connection{ID: "googlehealth:111"})}
+
+	_, err := gate.Validate(syncCommandOptions{
+		dataTypes: []string{"daily-resting-heart-rate"},
+		from:      "2025-12-31T19:00:00-05:00",
+		to:        "2026-01-01T00:00:00Z",
+	})
+	if err == nil {
+		t.Fatal("Validate: want equivalent RFC3339 instants rejected as zero-width")
+	}
+	var failure *preflightFailure
+	if !errors.As(err, &failure) || failure.Rule() != preflightRuleRangeZeroWidth {
+		t.Fatalf("error = %v, want range_zero_width", err)
+	}
+}
+
+func TestSyncPreflightGateUsesExactNamedDailyStartAtMidnightTransition(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2018, 11, 4, 12, 0, 0, 0, time.UTC)
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, archived.Connection{ID: "googlehealth:111"})}
+
+	_, err := gate.Validate(syncCommandOptions{
+		dataTypes: []string{"daily-resting-heart-rate"},
+		from:      "today",
+		to:        "2018-11-04T03:00:00Z",
+		timezone:  "America/Sao_Paulo",
+	})
+	if err == nil {
+		t.Fatal("Validate: want equivalent named day start and RFC3339 rejected as zero-width")
+	}
+	var failure *preflightFailure
+	if !errors.As(err, &failure) || failure.Rule() != preflightRuleRangeZeroWidth {
+		t.Fatalf("error = %v, want range_zero_width", err)
+	}
+}
+
+func TestSyncPreflightGateUsesExactNamedCivilInstantDuringFold(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 25, 0, 30, 0, 0, time.UTC)
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, archived.Connection{ID: "googlehealth:111"})}
+
+	_, err := gate.Validate(syncCommandOptions{
+		dataTypes: []string{"sleep"},
+		from:      "2026-10-25T00:30:00Z",
+		to:        "now",
+		timezone:  "Europe/Brussels",
+	})
+	if err == nil {
+		t.Fatal("Validate: want exact first-fold instant rejected as zero-width")
+	}
+	var failure *preflightFailure
+	if !errors.As(err, &failure) || failure.Rule() != preflightRuleRangeZeroWidth {
+		t.Fatalf("error = %v, want range_zero_width", err)
+	}
+}
+
+func TestSyncPreflightGatePreservesPhysicalNowPrecision(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 1, 12, 0, 0, 900_000_000, time.UTC)
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, archived.Connection{ID: "googlehealth:111"})}
+
+	plan, err := gate.Validate(syncCommandOptions{
+		dataTypes: []string{"steps"},
+		from:      "2026-01-01T12:00:00.5Z",
+		to:        "now",
+	})
+	if err != nil {
+		t.Fatalf("Validate fractional range: %v", err)
+	}
+	if plan.to != "2026-01-01T12:00:00.9Z" {
+		t.Fatalf("plan.to = %q, want nanosecond-preserving now", plan.to)
+	}
+
+	plan, err = gate.Validate(syncCommandOptions{
+		dataTypes: []string{"steps"},
+		from:      "2026-01-01T12:00:00.5Z",
+		to:        "now",
+		rollup:    "hourly",
+	})
+	if err != nil {
+		t.Fatalf("Validate fractional rollup range: %v", err)
+	}
+	if plan.to != "2026-01-01T12:00:00.9Z" {
+		t.Fatalf("rollup plan.to = %q, want nanosecond-preserving now", plan.to)
+	}
+
+	_, err = gate.Validate(syncCommandOptions{
+		dataTypes: []string{"steps"},
+		from:      "2026-01-01T12:00:00.9Z",
+		to:        "now",
+	})
+	if err == nil {
+		t.Fatal("Validate: want exact fractional now rejected as zero-width")
+	}
+	var failure *preflightFailure
+	if !errors.As(err, &failure) || failure.Rule() != preflightRuleRangeZeroWidth {
+		t.Fatalf("error = %v, want range_zero_width", err)
+	}
+}
+
+func TestSyncPreflightGateRejectsYearOneZeroWidth(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(now, archived.Connection{ID: "googlehealth:111"})}
+
+	_, err := gate.Validate(syncCommandOptions{
+		dataTypes: []string{"steps"},
+		from:      "0001-01-01",
+		to:        "0001-01-01",
+	})
+	if err == nil {
+		t.Fatal("Validate: want year-one zero-width rejection")
+	}
+	var failure *preflightFailure
+	if !errors.As(err, &failure) || failure.Rule() != preflightRuleRangeZeroWidth {
+		t.Fatalf("error = %v, want range_zero_width", err)
+	}
+}
+
+func TestSyncPreflightGateResolvesNamedRangesOncePerPlan(t *testing.T) {
+	resolvedAt := time.Date(2026, 3, 30, 10, 15, 30, 0, time.UTC)
+	conn := archived.Connection{ID: "googlehealth:111"}
+	ctx := fakeSyncPreflightContext(resolvedAt, conn)
+	clockCalls := 0
+	ctx.now = func() time.Time {
+		clockCalls++
+		return resolvedAt
+	}
+	gate := syncPreflightGate{ctx: ctx}
+
+	tests := []struct {
+		name     string
+		options  syncCommandOptions
+		wantFrom string
+		wantTo   string
+	}{
+		{
+			name: "physical list",
+			options: syncCommandOptions{
+				dataTypes: []string{"steps"},
+				from:      "yesterday",
+				to:        "today",
+				timezone:  "Europe/Brussels",
+			},
+			wantFrom: "2026-03-28T23:00:00Z",
+			wantTo:   "2026-03-29T22:00:00Z",
+		},
+		{
+			name: "civil list",
+			options: syncCommandOptions{
+				dataTypes: []string{"sleep"},
+				from:      "today",
+				to:        "now",
+				timezone:  "Europe/Brussels",
+			},
+			wantFrom: "2026-03-30T00:00:00",
+			wantTo:   "2026-03-30T12:15:30",
+		},
+		{
+			name: "daily list",
+			options: syncCommandOptions{
+				dataTypes: []string{"daily-resting-heart-rate"},
+				from:      "yesterday",
+				to:        "today",
+				timezone:  "Europe/Brussels",
+			},
+			wantFrom: "2026-03-29",
+			wantTo:   "2026-03-30",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			plan, err := gate.Validate(test.options)
+			if err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+			if plan.from != test.wantFrom || plan.to != test.wantTo {
+				t.Errorf("plan range = %q..%q, want %q..%q", plan.from, plan.to, test.wantFrom, test.wantTo)
+			}
+			if plan.timezone != "Europe/Brussels" {
+				t.Errorf("plan.timezone = %q, want Europe/Brussels", plan.timezone)
+			}
+			if !plan.resolvedAt.Equal(resolvedAt) {
+				t.Errorf("plan.resolvedAt = %s, want %s", plan.resolvedAt, resolvedAt)
+			}
+		})
+	}
+	if clockCalls != len(tests) {
+		t.Fatalf("clock calls = %d, want one per plan (%d)", clockCalls, len(tests))
+	}
+}
+
+func TestSyncPreflightGateRejectsTimezoneResolutionFailuresBeforeArchiveLookup(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	ctx := fakeSyncPreflightContext(now, archived.Connection{ID: "unused"})
+	connectionLookups := 0
+	ctx.currentConnection = func() (archived.Connection, error) {
+		connectionLookups++
+		return archived.Connection{}, errors.New("must not be reached")
+	}
+	gate := syncPreflightGate{ctx: ctx}
+
+	tests := []syncCommandOptions{
+		{
+			dataTypes: []string{"steps"},
+			from:      "today",
+			to:        "now",
+			timezone:  "Mars/Olympus_Mons",
+		},
+		{
+			dataTypes:  []string{"steps"},
+			from:       "yesterday",
+			to:         "today",
+			timezone:   "Pacific/Apia",
+			resolvedAt: time.Date(2011, 12, 30, 12, 0, 0, 0, time.UTC),
+		},
+	}
+	for _, options := range tests {
+		_, err := gate.Validate(options)
+		if err == nil {
+			t.Fatalf("Validate(%+v): want range-resolution error", options)
+		}
+		var failure *preflightFailure
+		if !errors.As(err, &failure) || failure.Rule() != preflightRuleRangeParse {
+			t.Fatalf("error = %v, want range_parse preflight failure", err)
+		}
+	}
+	if connectionLookups != 0 {
+		t.Fatalf("connection lookups = %d, want 0", connectionLookups)
 	}
 }
 

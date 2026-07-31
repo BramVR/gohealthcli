@@ -525,11 +525,14 @@ func TestInstallSyncCancelContextCancelsOnStop(t *testing.T) {
 // preflightRuleAllVsTypesConflict, completely breaking --all.
 func TestPerTypeSyncOptionsClearsAllTypes(t *testing.T) {
 	t.Parallel()
+	resolvedAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	options := syncCommandOptions{
-		allTypes:  true,
-		dataTypes: []string{"steps", "heart-rate"},
-		from:      "2026-01-01",
-		to:        "2026-01-02T00:00:00Z",
+		allTypes:   true,
+		dataTypes:  []string{"steps", "heart-rate"},
+		from:       "yesterday",
+		to:         "today",
+		timezone:   "Europe/Brussels",
+		resolvedAt: resolvedAt,
 	}
 	perType := perTypeSyncOptions(options, "steps")
 	if perType.allTypes {
@@ -541,6 +544,9 @@ func TestPerTypeSyncOptionsClearsAllTypes(t *testing.T) {
 	if perType.from != options.from || perType.to != options.to {
 		t.Errorf("perType drops --from/--to: from=%q to=%q", perType.from, perType.to)
 	}
+	if perType.timezone != options.timezone || !perType.resolvedAt.Equal(resolvedAt) {
+		t.Errorf("perType drops shared range context: timezone=%q resolvedAt=%s", perType.timezone, perType.resolvedAt)
+	}
 	// Drive the resulting options through the gate's expandDataTypes to
 	// confirm the all-vs-types conflict no longer fires.
 	gate := syncPreflightGate{ctx: fakeSyncPreflightContext(time.Now(), archived.Connection{ID: "x"})}
@@ -551,6 +557,42 @@ func TestPerTypeSyncOptionsClearsAllTypes(t *testing.T) {
 	if len(got) != 1 || got[0] != "steps" {
 		t.Errorf("gate.expandDataTypes(perType) = %v, want [\"steps\"]", got)
 	}
+}
+
+func TestSyncOrchestratorCapturesOneRangeClockAcrossFanOut(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	testRuntime := runtimeAdapters{}
+	resolvedAt := time.Date(2026, 3, 30, 10, 15, 30, 0, time.UTC)
+	clockCalls := 0
+	testRuntime.now = func() time.Time {
+		clockCalls++
+		return resolvedAt.Add(time.Duration(clockCalls-1) * 24 * time.Hour)
+	}
+
+	results, err := newSyncOrchestrator(testRuntime).Sync(context.Background(), syncCommandOptions{
+		configPath:  configPath,
+		archivePath: archivePath,
+		dataTypes:   []string{"steps", "heart-rate"},
+		from:        "yesterday",
+		to:          "today",
+		timezone:    "Europe/Brussels",
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("results = %d, want 2 preflight failures", len(results))
+	}
+	for index, result := range results {
+		if result.Status != "sync_failed" || !strings.Contains(result.Message, "no Connection found") {
+			t.Errorf("results[%d] = status %q message %q, want missing-connection preflight failure", index, result.Status, result.Message)
+		}
+	}
+	if clockCalls != 1 {
+		t.Fatalf("range clock calls = %d, want one shared capture across fan-out", clockCalls)
+	}
+	assertArchiveTableCount(t, archivePath, "sync_runs", 0)
 }
 
 // TestFanOutStatusEmptyResultsReportsCanceled pins the contract callers

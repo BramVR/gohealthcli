@@ -141,7 +141,7 @@ type syncStatusResult struct {
 // sync and therefore conflict with --status. Order matters: the error
 // message names the FIRST conflicting flag in this order, so the
 // message is deterministic when several are passed at once.
-var syncExecutionFlagNames = []string{"types", "all", "from", "to", "rollup", "source-family"}
+var syncExecutionFlagNames = []string{"types", "all", "from", "to", "timezone", "rollup", "source-family"}
 
 // validateSyncStatusFlagSet enforces the --status flag-surface rules
 // against the flags the user ACTUALLY passed (flagWasProvided walks
