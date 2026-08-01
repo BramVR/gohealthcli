@@ -7,13 +7,19 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BramVR/gohealthcli/internal/googlehealth"
 )
 
 func TestBuildGoogleHealthRawRequestUsesProviderNamingConventions(t *testing.T) {
 	t.Parallel()
-	request, err := googlehealth.BuildRawRequest([]string{"endpoint", "dataTypes.heart-rate.list"}, "2026-01-01", "", 0, "")
+	request, err := googlehealth.BuildRawRequest(googlehealth.RawRequestOptions{
+		Target:     []string{"endpoint", "dataTypes.heart-rate.list"},
+		From:       "2026-01-01",
+		To:         "2026-01-02",
+		ResolvedAt: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
+	})
 	if err != nil {
 		t.Fatalf("build raw request: %v", err)
 	}
@@ -24,7 +30,7 @@ func TestBuildGoogleHealthRawRequestUsesProviderNamingConventions(t *testing.T) 
 	if parsedURL.Path != "/v4/users/me/dataTypes/heart-rate/dataPoints" {
 		t.Fatalf("path = %q, want kebab-case Data Type path", parsedURL.Path)
 	}
-	wantFilter := `heart_rate.sample_time.physical_time >= "2026-01-01T00:00:00Z"`
+	wantFilter := `heart_rate.sample_time.physical_time >= "2026-01-01T00:00:00Z" AND heart_rate.sample_time.physical_time < "2026-01-02T00:00:00Z"`
 	if parsedURL.Query().Get("filter") != wantFilter {
 		t.Fatalf("filter = %q, want snake-case filter", parsedURL.Query().Get("filter"))
 	}
@@ -34,7 +40,12 @@ func TestBuildGoogleHealthRawRequestRejectsNonListableDataTypes(t *testing.T) {
 	t.Parallel()
 	for _, dataType := range []string{"total-calories", "floors", "calories-in-heart-rate-zone"} {
 		t.Run(dataType, func(t *testing.T) {
-			_, err := googlehealth.BuildRawRequest([]string{"data-type", dataType}, "2026-01-01", "", 0, "")
+			_, err := googlehealth.BuildRawRequest(googlehealth.RawRequestOptions{
+				Target:     []string{"data-type", dataType},
+				From:       "2026-01-01",
+				To:         "2026-01-02",
+				ResolvedAt: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
+			})
 			if err == nil {
 				t.Fatal("build raw request error = nil, want unsupported Data Type")
 			}
@@ -67,7 +78,7 @@ func TestBuildGoogleHealthRawRequestEndpointCatalog(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			request, err := googlehealth.BuildRawRequest([]string{"endpoint", tt.name}, "", "", 0, "")
+			request, err := googlehealth.BuildRawRequest(googlehealth.RawRequestOptions{Target: []string{"endpoint", tt.name}})
 			if err != nil {
 				t.Fatalf("build raw request for %q: %v", tt.name, err)
 			}
@@ -99,7 +110,7 @@ func TestBuildGoogleHealthRawRequestEndpointCatalog(t *testing.T) {
 // than a nil request.
 func TestBuildGoogleHealthRawRequestUnknownEndpoint(t *testing.T) {
 	t.Parallel()
-	_, err := googlehealth.BuildRawRequest([]string{"endpoint", "nonexistent"}, "", "", 0, "")
+	_, err := googlehealth.BuildRawRequest(googlehealth.RawRequestOptions{Target: []string{"endpoint", "nonexistent"}})
 	if err == nil {
 		t.Fatal("build raw request error = nil, want unsupported raw endpoint")
 	}

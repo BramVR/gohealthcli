@@ -441,12 +441,13 @@ var commands = []commandDef{
 	{
 		Name:                 "raw",
 		Short:                "Print raw provider JSON for endpoint exploration.",
-		Long:                 "Fetch a single upstream Google Health API response and print the raw body to stdout. Useful for endpoint exploration without committing the response to the Health Archive.\n\nFirst positional argument is `endpoint <name>` (for example `endpoint getIdentity`) or `data-type <data-type>` (for example `data-type steps --from 2026-01-01 --to 2026-01-02`). `--from` and `--to` constrain time ranges where the endpoint supports them; `--page-size` and `--page-token` drive pagination.\n\n`raw` is provider-shaped on purpose — the JSON you see is what the provider returns, not the normalised shape the archive stores.\n\nFailures route through the unified Failure Reporter: a Provider outage (network failure or non-auth upstream HTTP error) reports status `provider_unreachable`, while other operation errors — including an upstream HTTP 401 auth rejection, which carries the `Google Health rejected stored Connection token` message — report `operation_failed`.",
+		Long:                 "Fetch a single upstream Google Health API response and print the raw body to stdout. Useful for endpoint exploration without committing the response to the Health Archive.\n\nFirst positional argument is `endpoint <name>` (for example `endpoint getIdentity`) or `data-type <data-type>` (for example `data-type steps --from yesterday --to today`). Data Type list targets accept the same exact range grammar as `sync`: `now`, `today`, `yesterday`, `YYYY-MM-DD`, or RFC3339. Named boundaries use `--timezone`, then the configured timezone, then UTC; one captured clock and the provider Data Type's physical, civil, or daily filter shape determine the exact range. Identity endpoints reject `--from`, `--to`, and `--timezone` because those flags have no meaning there. `--page-size` and `--page-token` drive pagination.\n\n`raw` is provider-shaped on purpose — the JSON you see is what the provider returns, not the normalised shape the archive stores. It does not archive the response; its only possible write remains persisting an existing OAuth token refresh.\n\nFailures route through the unified Failure Reporter: a Provider outage (network failure or non-auth upstream HTTP error) reports status `provider_unreachable`, while other operation errors — including an upstream HTTP 401 auth rejection, which carries the `Google Health rejected stored Connection token` message — report `operation_failed`.",
 		PositionalArgs:       "<target> [<args>...]",
 		PositionalCompletion: valueCompletionRawPositionals,
 		Flags: withCommonSubset(rawCommonFlagNames(),
 			flagSpec{Name: "from", Type: "string", Default: "", Usage: "inclusive time-range start (where supported by the endpoint)", ValueCompletion: valueCompletionNone},
 			flagSpec{Name: "to", Type: "string", Default: "", Usage: "exclusive time-range end (where supported by the endpoint)", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "timezone", Type: "string", Default: "", Usage: "IANA timezone for now, today, and yesterday (Data Type lists only; default config, then UTC)", ValueCompletion: valueCompletionNone},
 			flagSpec{Name: "page-size", Type: "int", Default: "", Usage: "pagination page size (positive integer; where supported by the endpoint)", ValueCompletion: valueCompletionNone},
 			flagSpec{Name: "page-token", Type: "string", Default: "", Usage: "pagination page token from a prior response", ValueCompletion: valueCompletionNone},
 		),
@@ -457,7 +458,7 @@ var commands = []commandDef{
 		// CommonFlags here mirrors that contract so the schema reflects
 		// the divergence honestly.
 		CommonFlags: rawCommonFlagNames(),
-		// raw owns its own --from / --to / --page-size / --page-token flag
+		// raw owns its own range, timezone, and pagination flag
 		// surface and writes the provider's raw bytes. raw does not accept
 		// --json / --plain on its own slot, so runRawWithRuntime derives
 		// the failure-rendering mode from the GLOBAL-slot values carried

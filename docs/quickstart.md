@@ -170,11 +170,13 @@ gohealthcli export daily-steps --format jsonl --stdout
 gohealthcli export daily-steps --format csv --output steps.csv
 ```
 
-`raw` prints upstream provider JSON for endpoint exploration without writing to the archive.
+`raw` prints upstream provider JSON for endpoint exploration without archiving the
+response. Data Type lists accept the same named range grammar and timezone
+precedence as `sync`; identity endpoints reject range and timezone flags.
 
 ```bash
 gohealthcli raw endpoint getIdentity
-gohealthcli raw data-type steps --from 2026-01-01 --to 2026-01-02
+gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels
 ```
 
 ## Where next

@@ -64,18 +64,28 @@ func SyncRangeTarget(dataType string, rollup *RollupSpec, reconcile bool) (Range
 // An empty --to is the historical "now" default and an empty --from remains
 // the cursor-resume signal.
 func ResolveRange(from, to, timezone string, resolvedAt time.Time, target RangeTarget) (ResolvedRange, error) {
+	return resolveRange("sync", from, to, timezone, resolvedAt, target)
+}
+
+// ResolveRawRange applies the same range grammar and target rendering as
+// ResolveRange while keeping raw's user-facing validation context accurate.
+func ResolveRawRange(from, to, timezone string, resolvedAt time.Time, target RangeTarget) (ResolvedRange, error) {
+	return resolveRange("raw", from, to, timezone, resolvedAt, target)
+}
+
+func resolveRange(command, from, to, timezone string, resolvedAt time.Time, target RangeTarget) (ResolvedRange, error) {
 	locationName, location, err := loadTimezone(timezone)
 	if err != nil {
-		return ResolvedRange{}, fmt.Errorf("sync --%w", err)
+		return ResolvedRange{}, fmt.Errorf("%s --%w", command, err)
 	}
 	if to == "" {
 		to = "now"
 	}
-	resolvedFrom, fromInstant, fromNamed, err := resolveRangeBoundary(from, "--from", location, resolvedAt, target)
+	resolvedFrom, fromInstant, fromNamed, err := resolveRangeBoundary(command, from, "--from", location, resolvedAt, target)
 	if err != nil {
 		return ResolvedRange{}, err
 	}
-	resolvedTo, toInstant, toNamed, err := resolveRangeBoundary(to, "--to", location, resolvedAt, target)
+	resolvedTo, toInstant, toNamed, err := resolveRangeBoundary(command, to, "--to", location, resolvedAt, target)
 	if err != nil {
 		return ResolvedRange{}, err
 	}
@@ -115,7 +125,7 @@ func loadTimezone(timezone string) (string, *time.Location, error) {
 }
 
 func resolveRangeBoundary(
-	value, flag string,
+	command, value, flag string,
 	location *time.Location,
 	resolvedAt time.Time,
 	target RangeTarget,
@@ -138,14 +148,14 @@ func resolveRangeBoundary(
 			var err error
 			canonicalNow, err = rangeDayStart(localNow.Year(), localNow.Month(), localNow.Day(), location)
 			if err != nil {
-				return "", time.Time{}, true, fmt.Errorf("sync %s now: %w", flag, err)
+				return "", time.Time{}, true, fmt.Errorf("%s %s now: %w", command, flag, err)
 			}
 		}
 		return renderNamedBoundary(canonicalNow, target), canonicalNow, true, nil
 	case "today":
 		start, err := rangeDayStart(localNow.Year(), localNow.Month(), localNow.Day(), location)
 		if err != nil {
-			return "", time.Time{}, true, fmt.Errorf("sync %s today: %w", flag, err)
+			return "", time.Time{}, true, fmt.Errorf("%s %s today: %w", command, flag, err)
 		}
 		return renderNamedBoundary(start, target), start, true, nil
 	case "yesterday":
@@ -153,13 +163,13 @@ func resolveRangeBoundary(
 		previous := time.Date(year, month, day-1, 12, 0, 0, 0, time.UTC)
 		start, err := rangeDayStart(previous.Year(), previous.Month(), previous.Day(), location)
 		if err != nil {
-			return "", time.Time{}, true, fmt.Errorf("sync %s yesterday: %w", flag, err)
+			return "", time.Time{}, true, fmt.Errorf("%s %s yesterday: %w", command, flag, err)
 		}
 		return renderNamedBoundary(start, target), start, true, nil
 	default:
 		return "", time.Time{}, false, fmt.Errorf(
-			"sync %s %q: expected now, today, yesterday, YYYY-MM-DD, or RFC3339",
-			flag, value,
+			"%s %s %q: expected now, today, yesterday, YYYY-MM-DD, or RFC3339",
+			command, flag, value,
 		)
 	}
 }

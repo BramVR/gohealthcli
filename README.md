@@ -321,8 +321,11 @@ Explore raw provider JSON:
 
 ```bash
 gohealthcli raw endpoint getIdentity
-gohealthcli raw data-type steps --from 2026-01-01 --to 2026-01-02
+gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels
 ```
+
+Raw Data Type lists share `sync`'s exact range grammar and timezone precedence.
+Identity endpoints reject range and timezone flags instead of ignoring them.
 
 Query the local archive:
 

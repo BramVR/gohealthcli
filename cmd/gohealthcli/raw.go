@@ -16,6 +16,7 @@ type rawCommandOptions struct {
 	archivePath string
 	from        string
 	to          string
+	timezone    string
 	pageSize    int64
 	pageToken   string
 	target      []string
@@ -39,6 +40,7 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	})
 	rawFrom := flags.String("from", "", "inclusive time-range start (where supported by the endpoint)")
 	rawTo := flags.String("to", "", "exclusive time-range end (where supported by the endpoint)")
+	rawTimezone := flags.String("timezone", "", "IANA timezone for now, today, and yesterday (Data Type lists only; default config, then UTC)")
 	rawPageSize := flags.Int64("page-size", 0, "pagination page size (positive integer; where supported by the endpoint)")
 	rawPageToken := flags.String("page-token", "", "pagination page token from a prior response")
 
@@ -52,8 +54,8 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	// genuine parse errors here.
 	rawUsage := func(w io.Writer) {
 		fmt.Fprintln(w, "usage: gohealthcli raw endpoint getIdentity")
-		fmt.Fprintln(w, "usage: gohealthcli raw endpoint dataTypes.<data-type>.list --from YYYY-MM-DD [--to YYYY-MM-DD]")
-		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> --from YYYY-MM-DD [--to YYYY-MM-DD]")
+		fmt.Fprintln(w, "usage: gohealthcli raw endpoint dataTypes.<data-type>.list --from <boundary> [--to <boundary>] [--timezone <IANA>]")
+		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> --from <boundary> [--to <boundary>] [--timezone <IANA>]")
 	}
 	// stdlib's flag package calls fs.Usage on BOTH `-h` and a parse
 	// error. Suppress that auto-call entirely and emit the bespoke
@@ -91,20 +93,47 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	if *rawPageSize < 0 || (flagWasProvided(flags, "page-size") && *rawPageSize <= 0) {
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: "--page-size must be a positive integer", Mode: mode}, stdout, stderr)
 	}
+	if flagWasProvided(flags, "timezone") && *rawTimezone == "" {
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: "--timezone requires a non-empty IANA timezone", Mode: mode}, stdout, stderr)
+	}
 	options := rawCommandOptions{
 		configPath:  common.ConfigPath,
 		archivePath: common.ArchivePath,
 		from:        *rawFrom,
 		to:          *rawTo,
+		timezone:    *rawTimezone,
 		pageSize:    *rawPageSize,
 		pageToken:   *rawPageToken,
 		target:      target,
 	}
-	request, err := googlehealth.BuildRawRequest(options.target, options.from, options.to, options.pageSize, options.pageToken)
+	requestOptions := googlehealth.RawRequestOptions{
+		Target:           options.target,
+		From:             options.from,
+		To:               options.to,
+		Timezone:         options.timezone,
+		FromProvided:     flagWasProvided(flags, "from"),
+		ToProvided:       flagWasProvided(flags, "to"),
+		TimezoneProvided: flagWasProvided(flags, "timezone"),
+		PageSize:         options.pageSize,
+		PageToken:        options.pageToken,
+	}
+	if err := googlehealth.ValidateRawRequestOptions(requestOptions); err != nil {
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
+	}
+	runtime = runtime.withDefaults()
+	config, err := inspectIdentityConfig(options.configPath, options.archivePath)
+	if err != nil {
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusOperationFailed, Message: fmt.Sprintf("config check failed: %v", err), Mode: mode}, stdout, stderr)
+	}
+	if requestOptions.Timezone == "" {
+		requestOptions.Timezone = config.timezone
+	}
+	requestOptions.ResolvedAt = runtime.now()
+	request, err := googlehealth.BuildRawRequest(requestOptions)
 	if err != nil {
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
-	body, err := rawSetupWithRuntime(options.configPath, options.archivePath, request, runtime)
+	body, err := rawSetupWithRuntime(options.configPath, options.archivePath, config, request, runtime)
 	if err != nil {
 		// Provider outage (non-auth HTTP failure or network error) maps
 		// to the documented provider_unreachable failure status so JSON
@@ -182,12 +211,8 @@ func partitionRawFlagArgs(fs *flag.FlagSet, args []string) ([]string, []string) 
 	return out, positionals
 }
 
-func rawSetupWithRuntime(configPath, archivePath string, request googlehealth.RawRequest, runtime runtimeAdapters) ([]byte, error) {
+func rawSetupWithRuntime(configPath, archivePath string, config fullConfigCheck, request googlehealth.RawRequest, runtime runtimeAdapters) ([]byte, error) {
 	runtime = runtime.withDefaults()
-	config, err := inspectIdentityConfig(configPath, archivePath)
-	if err != nil {
-		return nil, fmt.Errorf("config check failed: %w", err)
-	}
 	// PRD #142 slice 6 (issue #179): open the archive in writable mode
 	// via openHealthArchiveConnectionAPI so the handle satisfies
 	// connectionTokenWriter — WithAutoRefresh below can then persist a
