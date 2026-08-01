@@ -828,6 +828,12 @@ func syncStatusWriterFixtureRich() syncStatusResult {
 				ID:              61,
 				DataTypes:       []string{"steps"},
 				Status:          "sync_completed",
+				From:            "2026-06-08T22:00:00Z",
+				To:              "2026-06-09T22:00:00Z",
+				Timezone:        "Europe/Brussels",
+				ResolvedAt:      "2026-06-10T09:00:00.123456789Z",
+				FromInput:       "yesterday",
+				ToInput:         "today",
 				SeenCount:       120,
 				NewCount:        110,
 				UpdatedCount:    10,
@@ -840,6 +846,8 @@ func syncStatusWriterFixtureRich() syncStatusResult {
 				ID:              62,
 				DataTypes:       []string{"heart-rate"},
 				Status:          "sync_running",
+				From:            "2026-06-01",
+				To:              "2026-06-10",
 				SeenCount:       40,
 				NewCount:        40,
 				UpdatedCount:    0,
@@ -850,6 +858,10 @@ func syncStatusWriterFixtureRich() syncStatusResult {
 				ID:              63,
 				DataTypes:       []string{"sleep"},
 				Status:          "sync_failed",
+				From:            "2026-06-09T00:00:00",
+				To:              "2026-06-10T00:00:00",
+				Timezone:        "UTC",
+				ResolvedAt:      "2026-06-10T09:00:00Z",
 				DurationSeconds: 5,
 				StartedAt:       "2026-06-10T09:02:00Z",
 				FinishedAt:      "2026-06-10T09:02:05Z",
@@ -872,6 +884,12 @@ const syncStatusWriterRichJSON = `{
         "steps"
       ],
       "status": "sync_completed",
+      "from": "2026-06-08T22:00:00Z",
+      "to": "2026-06-09T22:00:00Z",
+      "timezone": "Europe/Brussels",
+      "resolved_at": "2026-06-10T09:00:00.123456789Z",
+      "from_input": "yesterday",
+      "to_input": "today",
       "seen_count": 120,
       "new_count": 110,
       "updated_count": 10,
@@ -886,6 +904,8 @@ const syncStatusWriterRichJSON = `{
         "heart-rate"
       ],
       "status": "sync_running",
+      "from": "2026-06-01",
+      "to": "2026-06-10",
       "seen_count": 40,
       "new_count": 40,
       "updated_count": 0,
@@ -898,6 +918,10 @@ const syncStatusWriterRichJSON = `{
         "sleep"
       ],
       "status": "sync_failed",
+      "from": "2026-06-09T00:00:00",
+      "to": "2026-06-10T00:00:00",
+      "timezone": "UTC",
+      "resolved_at": "2026-06-10T09:00:00Z",
       "seen_count": 0,
       "new_count": 0,
       "updated_count": 0,
@@ -918,6 +942,12 @@ window: 15m0s
 sync_run.0.id: 61
 sync_run.0.data_types: steps
 sync_run.0.status: sync_completed
+sync_run.0.from: 2026-06-08T22:00:00Z
+sync_run.0.to: 2026-06-09T22:00:00Z
+sync_run.0.timezone: Europe/Brussels
+sync_run.0.resolved_at: 2026-06-10T09:00:00.123456789Z
+sync_run.0.from_input: yesterday
+sync_run.0.to_input: today
 sync_run.0.seen_count: 120
 sync_run.0.new_count: 110
 sync_run.0.updated_count: 10
@@ -928,6 +958,8 @@ sync_run.0.last_progress_at: 2026-06-10T09:00:10Z
 sync_run.1.id: 62
 sync_run.1.data_types: heart-rate
 sync_run.1.status: sync_running
+sync_run.1.from: 2026-06-01
+sync_run.1.to: 2026-06-10
 sync_run.1.seen_count: 40
 sync_run.1.new_count: 40
 sync_run.1.updated_count: 0
@@ -936,6 +968,10 @@ sync_run.1.started_at: 2026-06-10T09:01:00Z
 sync_run.2.id: 63
 sync_run.2.data_types: sleep
 sync_run.2.status: sync_failed
+sync_run.2.from: 2026-06-09T00:00:00
+sync_run.2.to: 2026-06-10T00:00:00
+sync_run.2.timezone: UTC
+sync_run.2.resolved_at: 2026-06-10T09:00:00Z
 sync_run.2.seen_count: 0
 sync_run.2.new_count: 0
 sync_run.2.updated_count: 0
@@ -953,6 +989,9 @@ ID  DATA_TYPES  STATUS          SEEN  NEW  UPDATED  DURATION  LAST_PROGRESS  ERR
 61  steps       sync_completed  120   110  10       1m9s      4m50s          -
 62  heart-rate  sync_running    40    40   0        4m0s      -              -
 63  sleep       sync_failed     0     0    0        5s        2m56s          Provider timeout after 30s
+Run 61 range: 2026-06-08T22:00:00Z to 2026-06-09T22:00:00Z; timezone: Europe/Brussels; resolved at: 2026-06-10T09:00:00.123456789Z; inputs: yesterday to today
+Run 62 range: 2026-06-01 to 2026-06-10
+Run 63 range: 2026-06-09T00:00:00 to 2026-06-10T00:00:00; timezone: UTC; resolved at: 2026-06-10T09:00:00Z
 Message: 3 Sync Runs in the last 15m0s
 `
 

@@ -50,6 +50,7 @@ func probeSyncRunRow(t *testing.T, archivePath string, id int64) probedSyncRunRo
 // last_progress_at, error_summary).
 type syncStatusFixtureRun struct {
 	dataTypesJSON  string
+	rangeJSON      string
 	status         string
 	seenCount      int
 	newCount       int
@@ -64,6 +65,10 @@ func insertSyncStatusFixtureRuns(t *testing.T, archivePath string, runs []syncSt
 	t.Helper()
 	db := openArchiveForTest(t, archivePath)
 	for _, run := range runs {
+		rangeJSON := run.rangeJSON
+		if rangeJSON == "" {
+			rangeJSON = `{"from":"2026-06-01","to":"2026-06-10"}`
+		}
 		if _, err := db.ExecContext(context.Background(), `INSERT INTO sync_runs (
 			provider_name,
 			connection_id,
@@ -81,7 +86,7 @@ func insertSyncStatusFixtureRuns(t *testing.T, archivePath string, runs []syncSt
 		) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			"googlehealth",
 			run.dataTypesJSON,
-			`{"from":"2026-06-01","to":"2026-06-10"}`,
+			rangeJSON,
 			"list",
 			run.status,
 			run.seenCount,
@@ -94,6 +99,109 @@ func insertSyncStatusFixtureRuns(t *testing.T, archivePath string, runs []syncSt
 		); err != nil {
 			t.Fatalf("insert sync_runs fixture: %v", err)
 		}
+	}
+}
+
+func TestSyncStatusResolvedRangeParityAcrossModes(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	insertSyncStatusFixtureRuns(t, archivePath, []syncStatusFixtureRun{{
+		dataTypesJSON: `["steps"]`,
+		rangeJSON:     `{"from":"2026-06-08T22:00:00Z","to":"2026-06-09T22:00:00Z","timezone":"Europe/Brussels","resolved_at":"2026-06-10T09:00:00.123456789Z","from_input":"yesterday","to_input":"today"}`,
+		status:        "sync_completed",
+		startedAt:     "2026-06-10T11:59:00Z",
+		finishedAt:    stringPtr("2026-06-10T11:59:01Z"),
+	}})
+
+	runStatus := func(modeFlag string) string {
+		t.Helper()
+		args := []string{"sync", "--status", "--config", configPath, "--db", archivePath}
+		if modeFlag != "" {
+			args = append(args, modeFlag)
+		}
+		stdout := new(bytes.Buffer)
+		stderr := new(bytes.Buffer)
+		if code := runWithRuntime(args, stdout, stderr, fixedSyncStatusClock(now)); code != 0 {
+			t.Fatalf("sync --status %s exit = %d\nstdout: %s\nstderr: %s", modeFlag, code, stdout.String(), stderr.String())
+		}
+		return stdout.String()
+	}
+
+	jsonOutput := runStatus("--json")
+	var result syncStatusResult
+	if err := json.Unmarshal([]byte(jsonOutput), &result); err != nil {
+		t.Fatalf("decode JSON: %v\n%s", err, jsonOutput)
+	}
+	if len(result.Runs) != 1 {
+		t.Fatalf("JSON runs = %d, want 1", len(result.Runs))
+	}
+	run := result.Runs[0]
+	if run.From != "2026-06-08T22:00:00Z" || run.To != "2026-06-09T22:00:00Z" || run.Timezone != "Europe/Brussels" || run.ResolvedAt != "2026-06-10T09:00:00.123456789Z" || run.FromInput != "yesterday" || run.ToInput != "today" {
+		t.Fatalf("JSON range metadata = %+v", run)
+	}
+
+	plainOutput := runStatus("--plain")
+	for _, want := range []string{
+		"sync_run.0.from: 2026-06-08T22:00:00Z\n",
+		"sync_run.0.to: 2026-06-09T22:00:00Z\n",
+		"sync_run.0.timezone: Europe/Brussels\n",
+		"sync_run.0.resolved_at: 2026-06-10T09:00:00.123456789Z\n",
+		"sync_run.0.from_input: yesterday\n",
+		"sync_run.0.to_input: today\n",
+	} {
+		if !strings.Contains(plainOutput, want) {
+			t.Errorf("plain output missing %q\n%s", want, plainOutput)
+		}
+	}
+
+	humanOutput := runStatus("")
+	for _, want := range []string{
+		"Run 1 range: 2026-06-08T22:00:00Z to 2026-06-09T22:00:00Z",
+		"timezone: Europe/Brussels",
+		"resolved at: 2026-06-10T09:00:00.123456789Z",
+		"inputs: yesterday to today",
+	} {
+		if !strings.Contains(humanOutput, want) {
+			t.Errorf("human output missing %q\n%s", want, humanOutput)
+		}
+	}
+}
+
+func TestSyncStatusHistoricalRangeAuditCompatibility(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	insertSyncStatusFixtureRuns(t, archivePath, []syncStatusFixtureRun{{
+		dataTypesJSON: `["steps"]`,
+		rangeJSON:     `{"from":"2026-06-01","to":"2026-06-10"}`,
+		status:        "sync_completed",
+		startedAt:     "2026-06-10T11:59:00Z",
+		finishedAt:    stringPtr("2026-06-10T11:59:01Z"),
+	}})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	if code := runWithRuntime([]string{
+		"sync", "--status", "--config", configPath, "--db", archivePath, "--json",
+	}, stdout, stderr, fixedSyncStatusClock(now)); code != 0 {
+		t.Fatalf("sync --status exit = %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+	var result syncStatusResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode JSON: %v\n%s", err, stdout.String())
+	}
+	if len(result.Runs) != 1 {
+		t.Fatalf("runs = %d, want 1", len(result.Runs))
+	}
+	run := result.Runs[0]
+	if run.From != "2026-06-01" || run.To != "2026-06-10" {
+		t.Fatalf("historical range = %q..%q", run.From, run.To)
+	}
+	if run.Timezone != "" || run.ResolvedAt != "" || run.FromInput != "" || run.ToInput != "" {
+		t.Fatalf("historical row invented range metadata: %+v", run)
 	}
 }
 
@@ -185,6 +293,9 @@ func TestSyncStatusListsRecentRunsWithWindowExemptRunningRows(t *testing.T) {
 		"1   steps       sync_completed  120   5    0        8s        1m53s          -\n" +
 		"2   heart-rate  sync_failed     0     0    0        5s        -              Provider timeout after 30s\n" +
 		"3   heart-rate  sync_running    50    50   0        20m0s     5s             -\n" +
+		"Run 1 range: 2026-06-01 to 2026-06-10\n" +
+		"Run 2 range: 2026-06-01 to 2026-06-10\n" +
+		"Run 3 range: 2026-06-01 to 2026-06-10\n" +
 		"Message: 3 Sync Runs in the last 15m0s\n"
 	if stdout.String() != want {
 		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
@@ -259,6 +370,8 @@ func TestSyncStatusJSONEmitsSharedEnvelope(t *testing.T) {
         "steps"
       ],
       "status": "sync_completed",
+      "from": "2026-06-01",
+      "to": "2026-06-10",
       "seen_count": 120,
       "new_count": 5,
       "updated_count": 0,
@@ -273,6 +386,8 @@ func TestSyncStatusJSONEmitsSharedEnvelope(t *testing.T) {
         "heart-rate"
       ],
       "status": "sync_failed",
+      "from": "2026-06-01",
+      "to": "2026-06-10",
       "seen_count": 0,
       "new_count": 0,
       "updated_count": 0,
@@ -287,6 +402,8 @@ func TestSyncStatusJSONEmitsSharedEnvelope(t *testing.T) {
         "heart-rate"
       ],
       "status": "sync_running",
+      "from": "2026-06-01",
+      "to": "2026-06-10",
       "seen_count": 50,
       "new_count": 50,
       "updated_count": 0,
@@ -455,6 +572,8 @@ func TestSyncStatusPlainEmitsKeyValueLinesPerRun(t *testing.T) {
 		"sync_run.0.id: 1\n" +
 		"sync_run.0.data_types: steps\n" +
 		"sync_run.0.status: sync_completed\n" +
+		"sync_run.0.from: 2026-06-01\n" +
+		"sync_run.0.to: 2026-06-10\n" +
 		"sync_run.0.seen_count: 120\n" +
 		"sync_run.0.new_count: 5\n" +
 		"sync_run.0.updated_count: 0\n" +
@@ -465,6 +584,8 @@ func TestSyncStatusPlainEmitsKeyValueLinesPerRun(t *testing.T) {
 		"sync_run.1.id: 2\n" +
 		"sync_run.1.data_types: heart-rate\n" +
 		"sync_run.1.status: sync_failed\n" +
+		"sync_run.1.from: 2026-06-01\n" +
+		"sync_run.1.to: 2026-06-10\n" +
 		"sync_run.1.seen_count: 0\n" +
 		"sync_run.1.new_count: 0\n" +
 		"sync_run.1.updated_count: 0\n" +
@@ -475,6 +596,8 @@ func TestSyncStatusPlainEmitsKeyValueLinesPerRun(t *testing.T) {
 		"sync_run.2.id: 3\n" +
 		"sync_run.2.data_types: heart-rate\n" +
 		"sync_run.2.status: sync_running\n" +
+		"sync_run.2.from: 2026-06-01\n" +
+		"sync_run.2.to: 2026-06-10\n" +
 		"sync_run.2.seen_count: 50\n" +
 		"sync_run.2.new_count: 50\n" +
 		"sync_run.2.updated_count: 0\n" +

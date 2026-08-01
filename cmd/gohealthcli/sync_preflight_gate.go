@@ -56,6 +56,8 @@ type preflightPlan struct {
 	to         string
 	timezone   string
 	resolvedAt time.Time
+	fromInput  string
+	toInput    string
 	rollup     string
 	rollupSpec *googlehealth.RollupSpec
 	connection archived.Connection
@@ -221,11 +223,20 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 		to:         normTo,
 		timezone:   resolved.Timezone,
 		resolvedAt: resolved.ResolvedAt,
+		fromInput:  namedRangeInput(options.from, resolved.FromNamed),
+		toInput:    namedRangeInput(options.to, resolved.ToNamed),
 		rollup:     options.rollup,
 		rollupSpec: rollupSpec,
 		connection: connection,
 		cursorKeys: cursorKeys,
 	}, nil
+}
+
+func namedRangeInput(input string, named bool) string {
+	if !named {
+		return ""
+	}
+	return input
 }
 
 // normalizeRange applies the established rollup endpoint shape after named

@@ -265,6 +265,10 @@ gohealthcli sync --status --window 2h --json
 ```
 
 `sync --status` reads the local `sync_runs` audit table — no provider calls.
+It reports the stored resolved `from` / `to` boundaries for each run, plus the
+resolution timezone and timestamp and any original `now` / `today` /
+`yesterday` inputs recorded by newer builds. Historical rows expose their
+existing resolved range without inventing missing metadata or recomputing it.
 Every Sync Run heartbeats before each page fetch (counts so far plus
 `last_progress_at`), so in-flight rows show live progress; finished runs are
 listed inside the `--window` (default 15m, max 24h) while running rows never

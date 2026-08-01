@@ -55,9 +55,22 @@ type syncRunStart struct {
 	DataTypes          []string
 	From               string
 	To                 string
+	Timezone           string
+	ResolvedAt         string
+	FromInput          string
+	ToInput            string
 	EndpointFamily     string
 	SourceFamilyFilter string
 	StartedAt          string
+}
+
+type syncRunRangeAudit struct {
+	From       string `json:"from"`
+	To         string `json:"to"`
+	Timezone   string `json:"timezone,omitempty"`
+	ResolvedAt string `json:"resolved_at,omitempty"`
+	FromInput  string `json:"from_input,omitempty"`
+	ToInput    string `json:"to_input,omitempty"`
 }
 
 // syncRunFinish bundles the terminal-row UPDATE parameters shared by
@@ -283,7 +296,14 @@ func insertSyncRun(ctx context.Context, db *sql.DB, start syncRunStart) (int64, 
 	if err != nil {
 		return 0, err
 	}
-	rangeJSON, err := json.Marshal(map[string]string{"from": start.From, "to": start.To})
+	rangeJSON, err := json.Marshal(syncRunRangeAudit{
+		From:       start.From,
+		To:         start.To,
+		Timezone:   start.Timezone,
+		ResolvedAt: start.ResolvedAt,
+		FromInput:  start.FromInput,
+		ToInput:    start.ToInput,
+	})
 	if err != nil {
 		return 0, err
 	}

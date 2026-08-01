@@ -116,6 +116,12 @@ type syncStatusRun struct {
 	ID           int64    `json:"id"`
 	DataTypes    []string `json:"data_types,omitempty"`
 	Status       string   `json:"status"`
+	From         string   `json:"from,omitempty"`
+	To           string   `json:"to,omitempty"`
+	Timezone     string   `json:"timezone,omitempty"`
+	ResolvedAt   string   `json:"resolved_at,omitempty"`
+	FromInput    string   `json:"from_input,omitempty"`
+	ToInput      string   `json:"to_input,omitempty"`
 	SeenCount    int      `json:"seen_count"`
 	NewCount     int      `json:"new_count"`
 	UpdatedCount int      `json:"updated_count"`
@@ -276,6 +282,7 @@ func readSyncStatusRuns(ctx context.Context, db *sql.DB, now time.Time, window t
 	rows, err := db.QueryContext(ctx, `SELECT
 		id,
 		data_types_requested,
+		range_requested_json,
 		status,
 		seen_count,
 		new_count,
@@ -294,11 +301,12 @@ func readSyncStatusRuns(ctx context.Context, db *sql.DB, now time.Time, window t
 	var runs []syncStatusRun
 	for rows.Next() {
 		var run syncStatusRun
-		var dataTypesJSON string
+		var dataTypesJSON, rangeJSON string
 		var finishedAt, lastProgressAt, errorSummary sql.NullString
 		if err := rows.Scan(
 			&run.ID,
 			&dataTypesJSON,
+			&rangeJSON,
 			&run.Status,
 			&run.SeenCount,
 			&run.NewCount,
@@ -313,6 +321,16 @@ func readSyncStatusRuns(ctx context.Context, db *sql.DB, now time.Time, window t
 		if err := json.Unmarshal([]byte(dataTypesJSON), &run.DataTypes); err != nil {
 			return nil, fmt.Errorf("Sync Run %d data types are not valid JSON: %w", run.ID, err)
 		}
+		var audit syncRunRangeAudit
+		if err := json.Unmarshal([]byte(rangeJSON), &audit); err != nil {
+			return nil, fmt.Errorf("Sync Run %d range is not valid JSON: %w", run.ID, err)
+		}
+		run.From = audit.From
+		run.To = audit.To
+		run.Timezone = audit.Timezone
+		run.ResolvedAt = audit.ResolvedAt
+		run.FromInput = audit.FromInput
+		run.ToInput = audit.ToInput
 		if finishedAt.Valid {
 			run.FinishedAt = finishedAt.String
 		}
@@ -393,8 +411,28 @@ func writeSyncStatusHuman(writer *stickyWriter, result syncStatusResult, now tim
 			)
 		}
 		_ = table.Flush()
+		for _, run := range result.Runs {
+			writeSyncStatusRangeHuman(writer, run)
+		}
 	}
 	writer.Printf("Message: %s\n", result.Message)
+}
+
+func writeSyncStatusRangeHuman(writer *stickyWriter, run syncStatusRun) {
+	if run.From == "" && run.To == "" {
+		return
+	}
+	writer.Printf("Run %d range: %s to %s", run.ID, run.From, run.To)
+	if run.Timezone != "" {
+		writer.Printf("; timezone: %s", run.Timezone)
+	}
+	if run.ResolvedAt != "" {
+		writer.Printf("; resolved at: %s", run.ResolvedAt)
+	}
+	if run.FromInput != "" || run.ToInput != "" {
+		writer.Printf("; inputs: %s to %s", syncStatusTableCell(run.FromInput), syncStatusTableCell(run.ToInput))
+	}
+	writer.Println()
 }
 
 // syncStatusLastProgressAge renders the heartbeat recency ("5s",
@@ -444,6 +482,24 @@ func writeSyncStatusRunPlain(writer *stickyWriter, prefix string, run syncStatus
 		writer.Printf("%sdata_types: %s\n", prefix, strings.Join(run.DataTypes, ","))
 	}
 	writer.Printf("%sstatus: %s\n", prefix, run.Status)
+	if run.From != "" {
+		writer.Printf("%sfrom: %s\n", prefix, run.From)
+	}
+	if run.To != "" {
+		writer.Printf("%sto: %s\n", prefix, run.To)
+	}
+	if run.Timezone != "" {
+		writer.Printf("%stimezone: %s\n", prefix, run.Timezone)
+	}
+	if run.ResolvedAt != "" {
+		writer.Printf("%sresolved_at: %s\n", prefix, run.ResolvedAt)
+	}
+	if run.FromInput != "" {
+		writer.Printf("%sfrom_input: %s\n", prefix, run.FromInput)
+	}
+	if run.ToInput != "" {
+		writer.Printf("%sto_input: %s\n", prefix, run.ToInput)
+	}
 	writer.Printf("%sseen_count: %d\n", prefix, run.SeenCount)
 	writer.Printf("%snew_count: %d\n", prefix, run.NewCount)
 	writer.Printf("%supdated_count: %d\n", prefix, run.UpdatedCount)
