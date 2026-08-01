@@ -322,15 +322,14 @@ func readSyncStatusRuns(ctx context.Context, db *sql.DB, now time.Time, window t
 			return nil, fmt.Errorf("Sync Run %d data types are not valid JSON: %w", run.ID, err)
 		}
 		var audit syncRunRangeAudit
-		if err := json.Unmarshal([]byte(rangeJSON), &audit); err != nil {
-			return nil, fmt.Errorf("Sync Run %d range is not valid JSON: %w", run.ID, err)
+		if err := json.Unmarshal([]byte(rangeJSON), &audit); err == nil {
+			run.From = audit.From
+			run.To = audit.To
+			run.Timezone = audit.Timezone
+			run.ResolvedAt = audit.ResolvedAt
+			run.FromInput = audit.FromInput
+			run.ToInput = audit.ToInput
 		}
-		run.From = audit.From
-		run.To = audit.To
-		run.Timezone = audit.Timezone
-		run.ResolvedAt = audit.ResolvedAt
-		run.FromInput = audit.FromInput
-		run.ToInput = audit.ToInput
 		if finishedAt.Valid {
 			run.FinishedAt = finishedAt.String
 		}

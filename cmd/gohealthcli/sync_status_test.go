@@ -205,6 +205,39 @@ func TestSyncStatusHistoricalRangeAuditCompatibility(t *testing.T) {
 	}
 }
 
+func TestSyncStatusIgnoresMalformedHistoricalRangeAudit(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	insertSyncStatusFixtureRuns(t, archivePath, []syncStatusFixtureRun{{
+		dataTypesJSON: `["steps"]`,
+		rangeJSON:     `{not-json`,
+		status:        "sync_completed",
+		startedAt:     "2026-06-10T11:59:00Z",
+		finishedAt:    stringPtr("2026-06-10T11:59:01Z"),
+	}})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	if code := runWithRuntime([]string{
+		"sync", "--status", "--config", configPath, "--db", archivePath, "--json",
+	}, stdout, stderr, fixedSyncStatusClock(now)); code != 0 {
+		t.Fatalf("sync --status exit = %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+	var result syncStatusResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode JSON: %v\n%s", err, stdout.String())
+	}
+	if len(result.Runs) != 1 {
+		t.Fatalf("runs = %d, want 1", len(result.Runs))
+	}
+	run := result.Runs[0]
+	if run.From != "" || run.To != "" || run.Timezone != "" || run.ResolvedAt != "" || run.FromInput != "" || run.ToInput != "" {
+		t.Fatalf("malformed historical row invented range metadata: %+v", run)
+	}
+}
+
 func stringPtr(value string) *string { return &value }
 
 // fixedSyncStatusClock returns runtime adapters whose clock is pinned
