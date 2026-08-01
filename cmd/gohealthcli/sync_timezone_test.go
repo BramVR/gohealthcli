@@ -123,6 +123,113 @@ func TestSyncTimezoneNamedRangesReachTargetAwareProviderFilters(t *testing.T) {
 	}
 }
 
+// TestSyncStatusExposesPersistedResolvedRangeMetadata is the #405 tracer
+// bullet: status must report the range-resolution facts archived when the Sync
+// Run started, rather than attempting to resolve relative inputs again later.
+func TestSyncStatusExposesPersistedResolvedRangeMetadata(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, runtime := connectedArchiveViaSetup(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	resolvedAt := time.Date(2026, 3, 30, 10, 15, 30, 123456789, time.UTC)
+	runtime.now = func() time.Time { return resolvedAt }
+	runtime.fetchRawProvider = func(_ context.Context, _ googlehealth.RawRequest, _ string) ([]byte, error) {
+		return []byte(`{"dataPoints":[]}`), nil
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	if code := runWithRuntime([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "steps",
+		"--from", "yesterday",
+		"--to", "today",
+		"--timezone", "Europe/Brussels",
+		"--json",
+	}, stdout, stderr, runtime); code != 0 {
+		t.Fatalf("sync exit code = %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runWithRuntime([]string{
+		"sync",
+		"--status",
+		"--config", configPath,
+		"--db", archivePath,
+		"--json",
+	}, stdout, stderr, runtime); code != 0 {
+		t.Fatalf("sync --status exit code = %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+	var result struct {
+		Runs []map[string]any `json:"runs"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode sync --status: %v\n%s", err, stdout.String())
+	}
+	if len(result.Runs) != 1 {
+		t.Fatalf("runs = %d, want 1\n%s", len(result.Runs), stdout.String())
+	}
+	want := map[string]string{
+		"from":        "2026-03-28T23:00:00Z",
+		"to":          "2026-03-29T22:00:00Z",
+		"timezone":    "Europe/Brussels",
+		"resolved_at": "2026-03-30T10:15:30.123456789Z",
+		"from_input":  "yesterday",
+		"to_input":    "today",
+	}
+	for key, value := range want {
+		if got := result.Runs[0][key]; got != value {
+			t.Errorf("runs[0].%s = %#v, want %q", key, got, value)
+		}
+	}
+}
+
+func TestSyncAuditPreservesExplicitRangeWithoutRelativeInputEcho(t *testing.T) {
+	t.Parallel()
+	resolvedAt := time.Date(2026, 6, 10, 9, 0, 0, 987654321, time.UTC)
+	configPath, archivePath, runtime := connectedArchiveViaSetup(t, fakeConnectConfig{
+		now:                resolvedAt,
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	runtime.now = func() time.Time { return resolvedAt }
+	runtime.fetchRawProvider = func(_ context.Context, _ googlehealth.RawRequest, _ string) ([]byte, error) {
+		return []byte(`{"dataPoints":[]}`), nil
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	if code := runWithRuntime([]string{
+		"sync",
+		"--config", configPath,
+		"--db", archivePath,
+		"--types", "steps",
+		"--from", "2026-06-08T00:00:00Z",
+		"--to", "2026-06-09T00:00:00Z",
+		"--json",
+	}, stdout, stderr, runtime); code != 0 {
+		t.Fatalf("sync exit code = %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	db := openArchiveForTest(t, archivePath)
+	var rangeJSON string
+	if err := db.QueryRowContext(context.Background(), `SELECT range_requested_json FROM sync_runs`).Scan(&rangeJSON); err != nil {
+		t.Fatalf("read Sync Run audit: %v", err)
+	}
+	want := `{"from":"2026-06-08T00:00:00Z","to":"2026-06-09T00:00:00Z","timezone":"UTC","resolved_at":"2026-06-10T09:00:00.987654321Z"}`
+	if rangeJSON != want {
+		t.Fatalf("range_requested_json = %s, want %s", rangeJSON, want)
+	}
+}
+
 func TestSyncTimezonePreservesExplicitRFC3339(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)

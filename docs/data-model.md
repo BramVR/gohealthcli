@@ -215,7 +215,10 @@ default; no parallel-table-with-view shim was used (PRD #93
 - provider name
 - connection ID
 - Data Types requested
-- range requested
+- range audit JSON: `from` / `to` are the exact resolved Provider boundaries;
+  newer rows also carry the explicit resolution timezone, UTC `resolved_at`,
+  and `from_input` / `to_input` only for operator-supplied named boundaries
+  (`now`, `today`, `yesterday`); historical rows retain only `from` / `to`
 - endpoint family used
 - source-family filter when requested
 - status (`sync_running`, `sync_completed`, `sync_failed`, `sync_canceled`)
