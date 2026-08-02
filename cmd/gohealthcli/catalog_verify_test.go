@@ -188,3 +188,35 @@ func TestCatalogMissingActionPreservesGlobalJSONMode(t *testing.T) {
 		t.Errorf("stderr = %q, want empty", stderr.String())
 	}
 }
+
+func TestCatalogVerifyAcceptsFlagsBeforeAction(t *testing.T) {
+	t.Parallel()
+
+	fixture := filepath.Join("..", "..", "internal", "googlehealth", "testdata", "google-health-discovery-v4.json")
+	code, stdout, stderr := runCommand(t, "catalog", "--json", "--discovery", fixture, "verify")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"status":"verified_with_known_gaps"`) {
+		t.Errorf("stdout = %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestCatalogMissingActionPreservesCatalogJSONMode(t *testing.T) {
+	t.Parallel()
+
+	code, stdout, stderr := runCommand(t, "catalog", "--json")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	want := "{\"status\":\"unexpected_argument\",\"message\":\"expected action: verify\"}\n"
+	if stdout.String() != want {
+		t.Errorf("stdout = %q, want %q", stdout.String(), want)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", stderr.String())
+	}
+}

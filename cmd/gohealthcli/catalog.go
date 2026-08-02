@@ -34,37 +34,28 @@ func runCatalogWithRuntime(args []string, globals CommonFlagValues, stdout, stde
 	})
 	discoveryPath := flags.String("discovery", "", "read a Google Health discovery document from PATH instead of the public endpoint")
 
-	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		if len(args) == 0 {
-			return ReportFailure(FailureReport{
-				Command: "catalog",
-				Status:  StatusUnexpectedArgument,
-				Message: "expected action: verify",
-				Mode:    commonOutputMode(*common),
-			}, stdout, stderr)
-		}
-		if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
-			return commonFlagsExitCode(flags, err, stdout, stderr)
-		}
-		return 0
-	}
-	if args[0] != "verify" {
-		return ReportFailure(FailureReport{
-			Command: "catalog",
-			Status:  StatusUnexpectedArgument,
-			Message: fmt.Sprintf("unexpected catalog action: %s", args[0]),
-			Mode:    commonOutputMode(*common),
-		}, stdout, stderr)
-	}
-	if err := ParseCommon(flags, common, args[1:], runtime.observeSubcommandFlagSet); err != nil {
+	parseArgs, hasVerifyAction := catalogVerifyFlagArgs(args)
+	if err := ParseCommon(flags, common, parseArgs, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode := commonOutputMode(*common)
 	if flags.NArg() != 0 {
+		message := fmt.Sprintf("unexpected catalog action: %s", flags.Arg(0))
+		if hasVerifyAction {
+			message = fmt.Sprintf("unexpected catalog verify argument: %s", flags.Arg(0))
+		}
 		return ReportFailure(FailureReport{
 			Command: "catalog",
 			Status:  StatusUnexpectedArgument,
-			Message: fmt.Sprintf("unexpected catalog verify argument: %s", flags.Arg(0)),
+			Message: message,
+			Mode:    mode,
+		}, stdout, stderr)
+	}
+	if !hasVerifyAction {
+		return ReportFailure(FailureReport{
+			Command: "catalog",
+			Status:  StatusUnexpectedArgument,
+			Message: "expected action: verify",
 			Mode:    mode,
 		}, stdout, stderr)
 	}
@@ -89,6 +80,34 @@ func runCatalogWithRuntime(args []string, globals CommonFlagValues, stdout, stde
 		return 1
 	}
 	return 0
+}
+
+// catalogVerifyFlagArgs removes the fixed verify action before handing the
+// remaining arguments to flag.FlagSet, allowing flags on either side of the
+// action. A literal "verify" consumed as --discovery's value remains a path,
+// so a file with that name is never mistaken for the action.
+func catalogVerifyFlagArgs(args []string) ([]string, bool) {
+	flagArgs := make([]string, 0, len(args))
+	hasVerify := false
+	discoveryValueNext := false
+	for _, arg := range args {
+		if discoveryValueNext {
+			flagArgs = append(flagArgs, arg)
+			discoveryValueNext = false
+			continue
+		}
+		if arg == "--discovery" || arg == "-discovery" {
+			flagArgs = append(flagArgs, arg)
+			discoveryValueNext = true
+			continue
+		}
+		if arg == "verify" && !hasVerify {
+			hasVerify = true
+			continue
+		}
+		flagArgs = append(flagArgs, arg)
+	}
+	return flagArgs, hasVerify
 }
 
 func loadCatalogDiscovery(path string, runtime runtimeAdapters) ([]byte, string, error) {
