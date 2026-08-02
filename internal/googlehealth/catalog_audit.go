@@ -68,6 +68,13 @@ type discoveredDataType struct {
 
 var discoveryDataTypeName = regexp.MustCompile("`([a-z0-9-]+)`[^.]*data type collection")
 
+var discoveryDataPointMetadataFields = map[string]bool{
+	"dataSource":          true,
+	"food":                true,
+	"foodMeasurementUnit": true,
+	"name":                true,
+}
+
 var catalogKnownGaps = []CatalogKnownGap{
 	{Kind: "local_rollup_only", DataTypes: []string{"calories-in-heart-rate-zone", "total-calories"}},
 	{Kind: "upstream_raw_only", DataTypes: []string{"basal-energy-burned", "nutrition-log"}},
@@ -119,7 +126,7 @@ func VerifyCatalogDiscovery(payload []byte, source string) CatalogAuditResult {
 	result.DiscoveryRevision = document.Revision
 	result.KnownGaps = cloneKnownGaps(catalogKnownGaps)
 	result.Unverifiable = append([]CatalogUnverifiableFact(nil), catalogUnverifiableFacts...)
-	result.Drift = compareCatalog(discovered, baseline)
+	result.Drift = compareCatalog(discovered, baseline, googleHealthDataTypes.entries, googleHealthDataTypes.order)
 	result.Status = catalogAuditStatus(result.KnownGaps, result.Drift)
 	return result
 }
@@ -141,7 +148,10 @@ func discoveryDataTypes(document discoveryDocument) (map[string]discoveredDataTy
 	for jsonField, property := range dataPoint.Properties {
 		match := discoveryDataTypeName.FindStringSubmatch(property.Description)
 		if len(match) != 2 {
-			continue
+			if discoveryDataPointMetadataFields[jsonField] {
+				continue
+			}
+			return nil, fmt.Errorf("unclassified DataPoint property %q", jsonField)
 		}
 		if property.Ref == "" {
 			return nil, fmt.Errorf("Data Type %q has no schema reference", match[1])
@@ -191,11 +201,19 @@ func discoveryPropertyShape(name string, property discoveryProperty) string {
 	return name + ":" + property.Ref + ":" + property.Type
 }
 
-func compareCatalog(discovered, baseline map[string]discoveredDataType) []CatalogDrift {
+func compareCatalog(
+	discovered, baseline map[string]discoveredDataType,
+	localEntries map[string]googleHealthDataTypeCatalogEntry,
+	localOrder []string,
+) []CatalogDrift {
 	localRollupOnly := stringSet(catalogKnownGaps[0].DataTypes)
+	upstreamRawOnly := stringSet(catalogKnownGaps[1].DataTypes)
 	drift := make([]CatalogDrift, 0)
 	seen := make(map[string]bool)
 	for dataType, expected := range baseline {
+		if _, local := localEntries[dataType]; !local && !upstreamRawOnly[dataType] {
+			drift = appendCatalogDrift(drift, seen, "local_raw_missing", dataType)
+		}
 		upstream, ok := discovered[dataType]
 		if !ok {
 			drift = appendCatalogDrift(drift, seen, "upstream_raw_removed", dataType)
@@ -220,11 +238,14 @@ func compareCatalog(discovered, baseline map[string]discoveredDataType) []Catalo
 		}
 	}
 
-	for _, dataType := range googleHealthDataTypes.order {
+	for _, dataType := range localOrder {
 		if localRollupOnly[dataType] {
 			continue
 		}
-		entry := googleHealthDataTypes.entries[dataType]
+		entry, local := localEntries[dataType]
+		if !local {
+			continue
+		}
 		upstream, ok := discovered[dataType]
 		if !ok {
 			if _, expected := baseline[dataType]; !expected {

@@ -144,6 +144,52 @@ func TestVerifyCatalogDiscoverySortsDrift(t *testing.T) {
 	}
 }
 
+func TestVerifyCatalogDiscoveryRejectsUnclassifiedUnionMember(t *testing.T) {
+	t.Parallel()
+
+	document := loadCatalogDiscoveryFixture(t)
+	schemas := document["schemas"].(map[string]any)
+	properties := schemas["DataPoint"].(map[string]any)["properties"].(map[string]any)
+	properties["mysteryMetric"] = map[string]any{
+		"$ref":        "MysteryMetric",
+		"description": "A newly worded union member.",
+	}
+	schemas["MysteryMetric"] = map[string]any{"properties": map[string]any{
+		"interval": map[string]any{"$ref": "ObservationTimeInterval"},
+	}}
+
+	result := VerifyCatalogDiscovery(marshalCatalogDiscovery(t, document), "file")
+	want := CatalogAuditResult{
+		Status: CatalogDriftDetected,
+		Source: "file",
+		Drift:  []CatalogDrift{{Kind: "discovery_invalid"}},
+	}
+	if !reflect.DeepEqual(result, want) {
+		t.Errorf("result = %#v, want %#v", result, want)
+	}
+}
+
+func TestCompareCatalogDetectsOrdinaryTypeMissingLocally(t *testing.T) {
+	t.Parallel()
+
+	document := loadCatalogDiscoveryDocument(t)
+	discovered, err := discoveryDataTypes(document)
+	if err != nil {
+		t.Fatalf("parse discovery fixture: %v", err)
+	}
+	localEntries := make(map[string]googleHealthDataTypeCatalogEntry, len(googleHealthDataTypes.entries))
+	for dataType, entry := range googleHealthDataTypes.entries {
+		localEntries[dataType] = entry
+	}
+	delete(localEntries, "steps")
+
+	drift := compareCatalog(discovered, discovered, localEntries, googleHealthDataTypes.order)
+	want := []CatalogDrift{{Kind: "local_raw_missing", DataType: "steps"}}
+	if !reflect.DeepEqual(drift, want) {
+		t.Errorf("drift = %#v, want %#v", drift, want)
+	}
+}
+
 func TestCatalogAuditStatusValues(t *testing.T) {
 	t.Parallel()
 
@@ -165,6 +211,19 @@ func loadCatalogDiscoveryFixture(t *testing.T) map[string]any {
 		t.Fatalf("read discovery fixture: %v", err)
 	}
 	var document map[string]any
+	if err := json.Unmarshal(payload, &document); err != nil {
+		t.Fatalf("decode discovery fixture: %v", err)
+	}
+	return document
+}
+
+func loadCatalogDiscoveryDocument(t *testing.T) discoveryDocument {
+	t.Helper()
+	payload, err := os.ReadFile("testdata/google-health-discovery-v4.json")
+	if err != nil {
+		t.Fatalf("read discovery fixture: %v", err)
+	}
+	var document discoveryDocument
 	if err := json.Unmarshal(payload, &document); err != nil {
 		t.Fatalf("decode discovery fixture: %v", err)
 	}
