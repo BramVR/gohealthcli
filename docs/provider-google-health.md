@@ -19,6 +19,32 @@ The provider client is hand-rolled REST over `net/http` against
 `https://health.googleapis.com/v4` (`internal/googlehealth/fetch.go`).
 There is no `google.golang.org/api` Go module dependency.
 
+## Discovery-backed catalog audit
+
+`gohealthcli catalog verify` fetches Google's unauthenticated public v4
+discovery document and compares its raw Data Point union with the canonical
+local catalog. `--discovery PATH` performs the same audit against an offline
+document. Neither path reads config, a Connection, credentials, or a Health
+Archive, and neither invokes a Provider data operation.
+
+The committed reduced fixture at
+`internal/googlehealth/testdata/google-health-discovery-v4.json` records only
+the discovery facts this audit can prove: Data Type union membership, JSON
+field-to-schema references, and each schema's temporal shape. It intentionally
+does not claim that discovery verifies exact per-Data-Type operation support or
+filter fields; those facts are reported as unverifiable.
+
+Current explicit exceptions are:
+
+- Local Rollup-only: `calories-in-heart-rate-zone`, `total-calories`.
+- Upstream raw only: `basal-energy-burned`, `nutrition-log`.
+
+An otherwise matching document therefore reports
+`verified_with_known_gaps`. Unexpected additions, removals, reference or shape
+changes, malformed documents, and unavailable discovery transport report
+`drift_detected` and exit nonzero. Results and their nested lists are sorted for
+stable JSON, plain, and human output.
+
 ## Endpoint Families
 
 `getIdentity`

@@ -253,6 +253,11 @@ func completeValues(policy valueCompletionPolicy, args []string, toComplete stri
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
 		return completeCatalog(completionShells, toComplete), cobra.ShellCompDirectiveNoFileComp
+	case valueCompletionCatalogAction:
+		if len(args) != 0 {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		return completeCatalog([]string{"verify"}, toComplete), cobra.ShellCompDirectiveNoFileComp
 	default:
 		return nil, cobra.ShellCompDirectiveDefault
 	}

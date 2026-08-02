@@ -9,6 +9,7 @@ Every user-facing subcommand exposed by `gohealthcli`. Pages are regenerated fro
 
 - [`gohealthcli init`](commands/init.html) — Create local config and an empty Health Archive.
 - [`gohealthcli doctor`](commands/doctor.html) — Validate local setup and provider reachability.
+- [`gohealthcli catalog`](commands/catalog.html) — Verify the Provider catalog against Google discovery.
 - [`gohealthcli connect`](commands/connect.html) — Run the browser OAuth flow and anchor one Google Identity.
 - [`gohealthcli identity`](commands/identity.html) — Refresh the archived Google Identity metadata.
 - [`gohealthcli profile`](commands/profile.html) — Archive a Profile Snapshot from the provider.

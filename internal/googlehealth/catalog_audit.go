@@ -1,0 +1,284 @@
+package googlehealth
+
+import (
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"sort"
+)
+
+type CatalogAuditStatus string
+
+const (
+	CatalogVerified              CatalogAuditStatus = "verified"
+	CatalogVerifiedWithKnownGaps CatalogAuditStatus = "verified_with_known_gaps"
+	CatalogDriftDetected         CatalogAuditStatus = "drift_detected"
+)
+
+type CatalogKnownGap struct {
+	Kind      string   `json:"kind"`
+	DataTypes []string `json:"data_types"`
+}
+
+type CatalogUnverifiableFact struct {
+	Fact   string `json:"fact"`
+	Reason string `json:"reason"`
+}
+
+type CatalogDrift struct {
+	Kind     string `json:"kind"`
+	DataType string `json:"data_type,omitempty"`
+}
+
+type CatalogAuditResult struct {
+	Status            CatalogAuditStatus        `json:"status"`
+	Source            string                    `json:"source"`
+	DiscoveryRevision string                    `json:"discovery_revision,omitempty"`
+	KnownGaps         []CatalogKnownGap         `json:"known_gaps,omitempty"`
+	Unverifiable      []CatalogUnverifiableFact `json:"unverifiable,omitempty"`
+	Drift             []CatalogDrift            `json:"drift,omitempty"`
+}
+
+type discoveryDocument struct {
+	Kind     string                     `json:"kind"`
+	Name     string                     `json:"name"`
+	Version  string                     `json:"version"`
+	Revision string                     `json:"revision"`
+	Schemas  map[string]discoverySchema `json:"schemas"`
+}
+
+type discoverySchema struct {
+	Properties map[string]discoveryProperty `json:"properties"`
+}
+
+type discoveryProperty struct {
+	Description string `json:"description"`
+	Ref         string `json:"$ref"`
+	Type        string `json:"type"`
+}
+
+type discoveredDataType struct {
+	DataType   string
+	JSONField  string
+	RecordKind string
+	SchemaRef  string
+	Shape      string
+}
+
+var discoveryDataTypeName = regexp.MustCompile("`([a-z0-9-]+)`[^.]*data type collection")
+
+var catalogKnownGaps = []CatalogKnownGap{
+	{Kind: "local_rollup_only", DataTypes: []string{"calories-in-heart-rate-zone", "total-calories"}},
+	{Kind: "upstream_raw_only", DataTypes: []string{"basal-energy-burned", "nutrition-log"}},
+}
+
+var catalogUnverifiableFacts = []CatalogUnverifiableFact{
+	{
+		Fact:   "filter_fields",
+		Reason: "the discovery document describes shared filters but not each Data Type's accepted filter field",
+	},
+	{
+		Fact:   "operation_support",
+		Reason: "the discovery document lists shared methods but not exact per-Data-Type operation support",
+	},
+}
+
+// catalogDiscoveryBaseline is a deliberately reduced copy of the public v4
+// discovery surface: DataPoint union membership plus each member's temporal
+// shape. Those are the only discovery facts the local catalog can verify.
+//
+//go:embed testdata/google-health-discovery-v4.json
+var catalogDiscoveryBaseline []byte
+
+// VerifyCatalogDiscovery compares the canonical local catalog with one Google
+// Health v4 discovery document. It is pure: no config, credential, archive, or
+// Provider operation is consulted while constructing the result.
+func VerifyCatalogDiscovery(payload []byte, source string) CatalogAuditResult {
+	result := CatalogAuditResult{Source: source}
+	var document discoveryDocument
+	if err := json.Unmarshal(payload, &document); err != nil {
+		return invalidDiscoveryResult(source)
+	}
+	if document.Kind != "discovery#restDescription" || document.Name != "health" || document.Version != "v4" {
+		return invalidDiscoveryResult(source)
+	}
+
+	discovered, err := discoveryDataTypes(document)
+	if err != nil {
+		return invalidDiscoveryResult(source)
+	}
+	var baselineDocument discoveryDocument
+	if err := json.Unmarshal(catalogDiscoveryBaseline, &baselineDocument); err != nil {
+		return invalidDiscoveryResult(source)
+	}
+	baseline, err := discoveryDataTypes(baselineDocument)
+	if err != nil {
+		return invalidDiscoveryResult(source)
+	}
+	result.DiscoveryRevision = document.Revision
+	result.KnownGaps = cloneKnownGaps(catalogKnownGaps)
+	result.Unverifiable = append([]CatalogUnverifiableFact(nil), catalogUnverifiableFacts...)
+	result.Drift = compareCatalog(discovered, baseline)
+	result.Status = catalogAuditStatus(result.KnownGaps, result.Drift)
+	return result
+}
+
+func invalidDiscoveryResult(source string) CatalogAuditResult {
+	return CatalogAuditResult{
+		Status: CatalogDriftDetected,
+		Source: source,
+		Drift:  []CatalogDrift{{Kind: "discovery_invalid"}},
+	}
+}
+
+func discoveryDataTypes(document discoveryDocument) (map[string]discoveredDataType, error) {
+	dataPoint, ok := document.Schemas["DataPoint"]
+	if !ok || len(dataPoint.Properties) == 0 {
+		return nil, fmt.Errorf("discovery document has no DataPoint schema")
+	}
+	discovered := make(map[string]discoveredDataType)
+	for jsonField, property := range dataPoint.Properties {
+		match := discoveryDataTypeName.FindStringSubmatch(property.Description)
+		if len(match) != 2 {
+			continue
+		}
+		if property.Ref == "" {
+			return nil, fmt.Errorf("Data Type %q has no schema reference", match[1])
+		}
+		schema, ok := document.Schemas[property.Ref]
+		if !ok {
+			return nil, fmt.Errorf("Data Type %q references absent schema", match[1])
+		}
+		recordKind, shape, err := discoveryRecordKind(schema)
+		if err != nil {
+			return nil, fmt.Errorf("Data Type %q: %w", match[1], err)
+		}
+		if _, duplicate := discovered[match[1]]; duplicate {
+			return nil, fmt.Errorf("duplicate Data Type %q", match[1])
+		}
+		discovered[match[1]] = discoveredDataType{
+			DataType:   match[1],
+			JSONField:  jsonField,
+			RecordKind: recordKind,
+			SchemaRef:  property.Ref,
+			Shape:      shape,
+		}
+	}
+	if len(discovered) == 0 {
+		return nil, fmt.Errorf("discovery document has no raw Data Types")
+	}
+	return discovered, nil
+}
+
+func discoveryRecordKind(schema discoverySchema) (string, string, error) {
+	if date, ok := schema.Properties["date"]; ok {
+		return "daily", discoveryPropertyShape("date", date), nil
+	}
+	if sample, ok := schema.Properties["sampleTime"]; ok {
+		return "sample", discoveryPropertyShape("sampleTime", sample), nil
+	}
+	if interval, ok := schema.Properties["interval"]; ok {
+		if interval.Ref == "SessionTimeInterval" {
+			return "session", discoveryPropertyShape("interval", interval), nil
+		}
+		return "interval", discoveryPropertyShape("interval", interval), nil
+	}
+	return "", "", fmt.Errorf("schema has no date, sampleTime, or interval property")
+}
+
+func discoveryPropertyShape(name string, property discoveryProperty) string {
+	return name + ":" + property.Ref + ":" + property.Type
+}
+
+func compareCatalog(discovered, baseline map[string]discoveredDataType) []CatalogDrift {
+	localRollupOnly := stringSet(catalogKnownGaps[0].DataTypes)
+	drift := make([]CatalogDrift, 0)
+	seen := make(map[string]bool)
+	for dataType, expected := range baseline {
+		upstream, ok := discovered[dataType]
+		if !ok {
+			drift = appendCatalogDrift(drift, seen, "upstream_raw_removed", dataType)
+			continue
+		}
+		if upstream.JSONField != expected.JSONField {
+			drift = appendCatalogDrift(drift, seen, "json_field_changed", dataType)
+		}
+		if upstream.RecordKind != expected.RecordKind {
+			drift = appendCatalogDrift(drift, seen, "record_kind_changed", dataType)
+		}
+		if upstream.SchemaRef != expected.SchemaRef {
+			drift = appendCatalogDrift(drift, seen, "schema_reference_changed", dataType)
+		}
+		if upstream.Shape != expected.Shape {
+			drift = appendCatalogDrift(drift, seen, "schema_shape_changed", dataType)
+		}
+	}
+	for dataType := range discovered {
+		if _, ok := baseline[dataType]; !ok {
+			drift = appendCatalogDrift(drift, seen, "upstream_raw_added", dataType)
+		}
+	}
+
+	for _, dataType := range googleHealthDataTypes.order {
+		if localRollupOnly[dataType] {
+			continue
+		}
+		entry := googleHealthDataTypes.entries[dataType]
+		upstream, ok := discovered[dataType]
+		if !ok {
+			if _, expected := baseline[dataType]; !expected {
+				drift = appendCatalogDrift(drift, seen, "local_raw_unrepresented", dataType)
+			}
+			continue
+		}
+		if upstream.JSONField != entry.JSONField {
+			drift = appendCatalogDrift(drift, seen, "json_field_changed", dataType)
+		}
+		if upstream.RecordKind != entry.RecordKind {
+			drift = appendCatalogDrift(drift, seen, "record_kind_changed", dataType)
+		}
+	}
+	sort.Slice(drift, func(i, j int) bool {
+		if drift[i].DataType != drift[j].DataType {
+			return drift[i].DataType < drift[j].DataType
+		}
+		return drift[i].Kind < drift[j].Kind
+	})
+	return drift
+}
+
+func appendCatalogDrift(drift []CatalogDrift, seen map[string]bool, kind, dataType string) []CatalogDrift {
+	key := kind + "\x00" + dataType
+	if seen[key] {
+		return drift
+	}
+	seen[key] = true
+	return append(drift, CatalogDrift{Kind: kind, DataType: dataType})
+}
+
+func catalogAuditStatus(knownGaps []CatalogKnownGap, drift []CatalogDrift) CatalogAuditStatus {
+	if len(drift) != 0 {
+		return CatalogDriftDetected
+	}
+	if len(knownGaps) != 0 {
+		return CatalogVerifiedWithKnownGaps
+	}
+	return CatalogVerified
+}
+
+func cloneKnownGaps(gaps []CatalogKnownGap) []CatalogKnownGap {
+	cloned := make([]CatalogKnownGap, len(gaps))
+	for i, gap := range gaps {
+		cloned[i] = CatalogKnownGap{Kind: gap.Kind, DataTypes: append([]string(nil), gap.DataTypes...)}
+	}
+	return cloned
+}
+
+func stringSet(values []string) map[string]bool {
+	set := make(map[string]bool, len(values))
+	for _, value := range values {
+		set[value] = true
+	}
+	return set
+}

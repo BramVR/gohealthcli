@@ -56,9 +56,17 @@ advance a Sync Cursor.
 Use the installed binary as the catalog instead of memorizing names:
 
 ```bash
+gohealthcli catalog verify --json
 gohealthcli describe-schema --json --no-input
 gohealthcli describe-schema --sql --no-input
 ```
+
+`catalog verify` compares the public Google Health discovery document with the
+compiled Provider catalog. It needs no config, archive, Connection, or
+credentials and performs no Provider data operation. Treat
+`verified_with_known_gaps` as a reviewed match with explicit exceptions;
+`drift_detected` exits nonzero and needs maintainer review before relying on new
+or changed Data Types.
 
 Read `views[].dataset_name`, `views[].name`, and declared columns from the JSON
 catalog. Treat an `"unknown"` view-column type as opaque; inspect a sample row

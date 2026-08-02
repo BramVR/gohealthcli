@@ -22,7 +22,8 @@ data, delete health data, run a server, upload archives, or share exports.
 
 ## Status
 
-The full command surface is live: setup (`init`, `doctor`), OAuth and
+The full command surface is live: setup (`init`, `doctor`), Provider catalog
+verification (`catalog verify`), OAuth and
 identity snapshots (`connect` through `irn-profile`), archiving (`sync`,
 with heartbeat-backed `sync --status` observability and auto-fencing of
 abandoned runs), raw provider exploration (`raw`), and a stable read
@@ -38,6 +39,7 @@ sync with `gohealthcli --help`.
 
 - `init`: Create local config and an empty Health Archive.
 - `doctor`: Validate local setup and provider reachability.
+- `catalog`: Verify the Provider catalog against Google discovery.
 - `connect`: Run the browser OAuth flow and anchor one Google Identity.
 - `identity`: Refresh the archived Google Identity metadata.
 - `profile`: Archive a Profile Snapshot from the provider.
@@ -112,6 +114,14 @@ above or the caveat sentence.
 For a plain-language description of each Data Type — what it captures,
 the upstream record shape, required scope, and the normalized view it
 projects into — see [docs/data-types.md](./docs/data-types.md).
+
+Run `gohealthcli catalog verify` to compare this catalog with Google's live
+public v4 discovery document without reading config, credentials, a Connection,
+or a Health Archive. Use `--discovery PATH` for the committed offline fixture
+or another saved discovery document. The stable status is `verified`,
+`verified_with_known_gaps`, or `drift_detected`; unexpected drift exits
+nonzero. See [the generated command reference](./docs/commands/catalog.md) for
+the machine-readable gap and unverifiable-fact fields.
 
 Normalized export datasets. `gohealthcli export` accepts any of the
 names below as its positional argument. The list is auto-generated from
