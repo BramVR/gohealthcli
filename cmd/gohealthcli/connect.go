@@ -3,12 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
-
-	"github.com/BramVR/gohealthcli/internal/googlehealth"
 )
 
 type connectResult struct {
@@ -80,71 +77,17 @@ func runConnectWithRuntime(args []string, globals CommonFlagValues, stdout, stde
 
 func connectSetupWithRuntimeAndExtraScopes(configPath, archivePath string, noInput bool, extraScopes []string, runtime runtimeAdapters) (connectResult, error) {
 	runtime = runtime.withDefaults()
-	config, err := inspectFullConfig(configPath, archivePath)
+	ctx := context.Background()
+	prepared, err := prepareConnection(ctx, configPath, archivePath, extraScopes, runtime)
+	result := connectResult{CredentialStore: prepared.credentialStoreKind}
 	if err != nil {
-		return connectResult{}, setupFailureRemediation(err, fmt.Sprintf("config check failed: %v", err))
+		return result, err
 	}
-	if config.oauthClient.kind != "file" {
-		return connectResult{CredentialStore: config.credentialStore.kind}, errors.New("connect requires an OAuth client file source; Secret Provider references are setup-only")
-	}
-	if _, err := (healthArchiveLifecycle{path: archivePath}).MigrateAndInspect(context.Background(), false); err != nil {
-		var checkErr healthArchiveOpenError
-		if errors.As(err, &checkErr) {
-			return connectResult{}, err
-		}
-		return connectResult{CredentialStore: config.credentialStore.kind}, err
-	}
-	store, err := newCredentialStoreWithRuntime(config.credentialStore, runtime)
+	token, err := runtime.runOAuthFlow(prepared.oauthClient, prepared.requestedScopes, noInput)
 	if err != nil {
-		return connectResult{CredentialStore: config.credentialStore.kind}, err
+		return result, err
 	}
-	if err := validateCredentialStoreRuntimeWithRuntime(config.credentialStore, []string{configPath, archivePath, config.oauthClient.path}, runtime); err != nil {
-		return connectResult{CredentialStore: config.credentialStore.kind}, err
-	}
-	client, err := loadOAuthClientConfig(config.oauthClient.path)
-	if err != nil {
-		return connectResult{CredentialStore: config.credentialStore.kind}, err
-	}
-	requestedScopes := unionScopes(oauthScopesForDataTypes(config.defaultDataTypes), extraScopes)
-	token, err := runtime.runOAuthFlow(client, requestedScopes, noInput)
-	if err != nil {
-		return connectResult{CredentialStore: config.credentialStore.kind}, err
-	}
-	identity, err := runtime.fetchIdentity(token.accessToken)
-	if err != nil {
-		return connectResult{CredentialStore: config.credentialStore.kind}, connectionFailureRemediation(googlehealth.NormalizeError(err))
-	}
-	connectionID := "googlehealth:" + identity.healthUserID
-
-	archive, err := openHealthArchiveConnectionAPI(archivePath)
-	if err != nil {
-		return connectResult{CredentialStore: config.credentialStore.kind}, err
-	}
-	defer archive.Close()
-	// context.Background(): connect is a synchronous interactive flow
-	// with no cancellation path today (its OAuth POST rides
-	// context.Background() the same way, #284); the context keeps the
-	// Connection writes on the Context API (#305) without changing
-	// behavior.
-	if err := archive.EnsureSameGoogleIdentity(context.Background(), identity.healthUserID); err != nil {
-		return connectResult{CredentialStore: config.credentialStore.kind}, connectionFailureRemediation(err)
-	}
-	if err := store.Store(connectionID, token.rawTokenMaterialObject); err != nil {
-		return connectResult{CredentialStore: config.credentialStore.kind}, err
-	}
-	if err := archive.UpsertConnection(context.Background(), connectionID, identity, token, runtime.now()); err != nil {
-		return connectResult{CredentialStore: config.credentialStore.kind}, err
-	}
-	return connectResult{
-		Status:             "connected",
-		ConnectionID:       connectionID,
-		ProviderName:       "googlehealth",
-		GoogleHealthUserID: identity.healthUserID,
-		LegacyFitbitUserID: identity.legacyFitbitUserID,
-		CredentialStore:    config.credentialStore.kind,
-		TokenStatus:        "metadata_present",
-		Message:            "Google Identity connected",
-	}, nil
+	return finalizeConnection(ctx, prepared, token, runtime)
 }
 
 func writeConnectResult(result connectResult, mode outputMode, stdout io.Writer) error {
