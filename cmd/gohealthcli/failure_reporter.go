@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // FailureStatus is the six-valued enum the unified Failure Reporter uses
@@ -45,25 +47,101 @@ const (
 // FailureReport carries one failure's worth of context: which subcommand
 // hit it (Command, empty for the top-level surface), how it classifies
 // (Status), what to tell the operator (Message — single line, no
-// trailing newline), and which output mode the invocation was running
-// in (Mode). The Mode parameter lives on the report struct rather than
-// on ReportFailure's signature because every migrated call site already
-// has it in scope.
+// trailing newline), which output mode the invocation was running in
+// (Mode), and an optional typed Cause whose Reporter-owned remediation
+// actions may be rendered in structured modes. Message remains separate
+// so adding a cause never changes the stable user-facing text.
 type FailureReport struct {
 	Command string
 	Status  FailureStatus
 	Message string
 	Mode    outputMode
+	Cause   error
+}
+
+type remediationAction string
+
+const (
+	remediationShowHelp   remediationAction = "gohealthcli --help"
+	remediationRunDoctor  remediationAction = "gohealthcli doctor"
+	remediationReconnect  remediationAction = "gohealthcli connect"
+	remediationStatus     remediationAction = "gohealthcli status"
+	maxRemediationActions                   = 3
+)
+
+// remediationError is the only carrier the Failure Reporter reads.
+// Unwrap preserves the original error chain for errors.Is/errors.As;
+// actions are fixed Reporter vocabulary rather than caller text.
+type remediationError struct {
+	cause   error
+	actions []string
+}
+
+func (err *remediationError) Error() string { return err.cause.Error() }
+func (err *remediationError) Unwrap() error { return err.cause }
+
+func (err *remediationError) Remediation() []string {
+	return append([]string(nil), err.actions...)
+}
+
+func withRemediation(cause error, actions ...remediationAction) error {
+	return &remediationError{cause: cause, actions: normalizeRemediation(actions)}
+}
+
+func unknownCommandError(command string) error {
+	return withRemediation(fmt.Errorf("unknown command: %s", command), remediationShowHelp)
+}
+
+// normalizeRemediation collapses whitespace, removes duplicates without
+// reordering, rejects anything outside the fixed Reporter catalog, and
+// caps the structured output. The catalog contains only argument-free
+// gohealthcli commands, so paths, identifiers, Provider text, SQL, health
+// data, secrets, and echoed user input cannot cross this boundary.
+func normalizeRemediation(actions []remediationAction) []string {
+	remediation := make([]string, 0, min(len(actions), maxRemediationActions))
+	seen := make(map[string]struct{}, len(actions))
+	for _, action := range actions {
+		normalized := strings.Join(strings.Fields(string(action)), " ")
+		if !isReporterRemediation(normalized) {
+			continue
+		}
+		if _, duplicate := seen[normalized]; duplicate {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		remediation = append(remediation, normalized)
+		if len(remediation) == maxRemediationActions {
+			break
+		}
+	}
+	return remediation
+}
+
+func isReporterRemediation(action string) bool {
+	switch remediationAction(action) {
+	case remediationShowHelp, remediationRunDoctor, remediationReconnect, remediationStatus:
+		return true
+	default:
+		return false
+	}
+}
+
+func remediationFromError(err error) []string {
+	var carrier *remediationError
+	if !errors.As(err, &carrier) {
+		return nil
+	}
+	return carrier.Remediation()
 }
 
 // failureJSONEnvelope is the on-the-wire shape of `--json` failure
-// output: a single-line `{"status":"<status>","message":"<message>"}`.
-// Field order (status, message) follows struct declaration order, which
-// is what encoding/json actually guarantees, so the emitted bytes are
-// stable across builds.
+// output. remediation is additive and omitted when empty. Field order
+// (status, message, remediation) follows struct declaration order, which
+// encoding/json guarantees, so emitted bytes stay stable across builds.
 type failureJSONEnvelope struct {
-	Status  FailureStatus `json:"status"`
-	Message string        `json:"message"`
+	Status      FailureStatus `json:"status"`
+	Message     string        `json:"message"`
+	Remediation []string      `json:"remediation,omitempty"`
 }
 
 // ReportFailure writes a FailureReport in the requested output mode and
@@ -71,9 +149,9 @@ type failureJSONEnvelope struct {
 //
 //   - default (no --plain, no --json): `<cmd>: <message>\n` to stderr.
 //     Empty Command uses `gohealthcli` instead of an empty prefix.
-//   - --plain: same stderr line AND `status: <s>\nmessage: <m>\n` block
-//     on stdout, so terminal users see the prefix and machine-readable
-//     scripts can still parse stdout.
+//   - --plain: same stderr line AND `status: <s>\nmessage: <m>\n` block,
+//     followed by zero-based remediation.N lines when present, on stdout.
+//     Terminal users see the prefix and scripts can parse stdout.
 //   - --json: a single line `{"status":"<s>","message":"<m>"}\n` on
 //     stdout, nothing on stderr. encoding/json escapes the message so a
 //     payload with quotes or backslashes cannot corrupt the envelope.
@@ -95,8 +173,9 @@ func ReportFailure(report FailureReport, stdout, stderr io.Writer) int {
 		// exactly. encoding/json escapes the message contents; a
 		// hand-rolled fmt.Fprintf would not.
 		payload, err := json.Marshal(failureJSONEnvelope{
-			Status:  report.Status,
-			Message: report.Message,
+			Status:      report.Status,
+			Message:     report.Message,
+			Remediation: remediationFromError(report.Cause),
 		})
 		// If json.Marshal fails (struct of one FailureStatus + one
 		// string — should never happen) OR stdout itself rejects the
@@ -120,6 +199,9 @@ func ReportFailure(report FailureReport, stdout, stderr io.Writer) int {
 		// fails, so a broken-stdout failure path still surfaces.
 		fmt.Fprintf(stderr, "%s: %s\n", prefix, report.Message)
 		fmt.Fprintf(stdout, "status: %s\nmessage: %s\n", report.Status, report.Message)
+		for index, action := range remediationFromError(report.Cause) {
+			fmt.Fprintf(stdout, "remediation.%d: %s\n", index, action)
+		}
 	default:
 		fmt.Fprintf(stderr, "%s: %s\n", prefix, report.Message)
 	}

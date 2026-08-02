@@ -59,6 +59,55 @@ func TestUnknownCommandPrintsHintAndExitsNonZero(t *testing.T) {
 	}
 }
 
+func TestUnknownCommandJSONIncludesRemediation(t *testing.T) {
+	t.Parallel()
+	code, stdout, stderr := runCommand(t, "--json", "bogus-cmd")
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	want := `{"status":"flag_invalid","message":"unknown command: bogus-cmd","remediation":["gohealthcli --help"]}` + "\n"
+	if stdout.String() != want {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestUnknownCommandPlainIncludesRemediation(t *testing.T) {
+	t.Parallel()
+	code, stdout, stderr := runCommand(t, "--plain", "bogus-cmd")
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	wantStdout := "status: flag_invalid\nmessage: unknown command: bogus-cmd\nremediation.0: gohealthcli --help\n"
+	if stdout.String() != wantStdout {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), wantStdout)
+	}
+	wantStderr := "gohealthcli: unknown command: bogus-cmd\nRun 'gohealthcli --help' for a list of commands.\n"
+	if stderr.String() != wantStderr {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), wantStderr)
+	}
+}
+
+func TestUnknownCommandHumanOutputRemainsExact(t *testing.T) {
+	t.Parallel()
+	code, stdout, stderr := runCommand(t, "bogus-cmd")
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	want := "gohealthcli: unknown command: bogus-cmd\nRun 'gohealthcli --help' for a list of commands.\n"
+	if stderr.String() != want {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+	}
+}
+
 // TestUnknownCommandSuggestsCloseMatch closes the loop on the suggestion
 // pipeline: when the typo lands within the Levenshtein cutoff, stderr must
 // carry a "Did you mean: <name>?" line between the unknown-command banner
@@ -244,6 +293,22 @@ func TestHelpVerbWithUnknownSubcommand(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "unknown command: bogus") {
 		t.Fatalf("stderr missing unknown-command message: %q", stderr.String())
+	}
+}
+
+func TestHelpVerbUnknownSubcommandJSONIncludesRemediation(t *testing.T) {
+	t.Parallel()
+	code, stdout, stderr := runCommand(t, "--json", "help", "bogus")
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	want := `{"status":"flag_invalid","message":"unknown command: bogus","remediation":["gohealthcli --help"]}` + "\n"
+	if stdout.String() != want {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 }
 
