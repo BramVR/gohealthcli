@@ -24,7 +24,7 @@ Use the target Google Cloud project, then configure:
   - `https://www.googleapis.com/auth/googlehealth.irn.readonly` — required
     by `gohealthcli irn-profile` and the Tier 2 `irregular-rhythm-notification`
     Data Type (#104).
-  - `https://www.googleapis.com/auth/googlehealth.electrocardiogram.readonly`
+  - `https://www.googleapis.com/auth/googlehealth.ecg.readonly`
     — required by the Tier 2 `electrocardiogram` Data Type (#104).
   - `https://www.googleapis.com/auth/googlehealth.nutrition.readonly` —
     required by `hydration-log` and any future nutrition Data Type (#103).
@@ -161,7 +161,7 @@ never contacts Google or starts consent.
 
 ## Tier 2 Opt-in Scopes (ECG + IRN)
 
-After enabling `electrocardiogram.readonly` and `irn.readonly` in
+After enabling `ecg.readonly` and `irn.readonly` in
 the Google Cloud Data Access page, extend the existing local grant
 without re-running setup:
 

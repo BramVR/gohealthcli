@@ -7,7 +7,7 @@ read_when:
 ---
 # Research
 
-Last checked: 2026-05-24.
+Last checked: 2026-08-02.
 
 ## Findings
 
@@ -49,11 +49,33 @@ to Google Health API and does not fit a new CLI started in 2026.
 Existing `fitbit-cli` tools may be useful references, but they are not the clean
 long-term target if Google Health API access works.
 
+## ECG contract evidence (C1)
+
+Non-sensitive live public evidence checked on 2026-08-02 records the current
+ECG contract:
+
+- Google's scope catalog, migration mapping, release notes, and REST list
+  reference name
+  `https://www.googleapis.com/auth/googlehealth.ecg.readonly`.
+- The live v4 discovery document at revision `20260730` names the physical
+  `electrocardiogram.interval.start_time` filter and says ECG supports only the
+  `>=` start-time restriction, not an exclusive upper-bound clause.
+- That discovery document's list-method scope array still omits the newer ECG
+  and IRN scopes. This upstream discrepancy remains recorded here rather than
+  being hidden in gohealthcli's known-gap allowlist; the current REST reference
+  and dedicated scope catalog are authoritative for consent.
+
+No credential, Connection identifier, Provider payload, or Health Archive data
+was read or published for this evidence.
+
 ## Sources
 
 - Google Health API home: https://developers.google.com/health
 - Google Health API setup/OAuth: https://developers.google.com/health/setup
 - Google Health API endpoints: https://developers.google.com/health/endpoints
 - Google Health API data types: https://developers.google.com/health/data-types
+- Google Health API scopes: https://developers.google.com/health/scopes
+- Google Health API list method: https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/list
+- Google Health API release notes: https://developers.google.com/health/release-notes
 - Google Health API Go client: https://pkg.go.dev/google.golang.org/api/health/v4
 - Grill with docs skill: https://github.com/mattpocock/skills/blob/main/skills/engineering/grill-with-docs/SKILL.md

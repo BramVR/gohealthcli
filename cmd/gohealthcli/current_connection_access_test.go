@@ -99,6 +99,22 @@ func TestRequireConnectionScopesAddScopesHint(t *testing.T) {
 	}
 }
 
+func TestElectrocardiogramConsentAndRemediationUseCurrentScope(t *testing.T) {
+	t.Parallel()
+	const currentScope = "https://www.googleapis.com/auth/googlehealth.ecg.readonly"
+	if googlehealth.ScopeEcgReadonly != currentScope {
+		t.Fatalf("ScopeEcgReadonly = %q, want %q", googlehealth.ScopeEcgReadonly, currentScope)
+	}
+	if got := connectAddScopeKeywords["ecg"]; got != currentScope {
+		t.Fatalf("connect --add-scopes ecg scope = %q, want %q", got, currentScope)
+	}
+	metadata := tokenMetadataJSON(t, time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC), []string{googlehealth.ScopeProfileReadonly})
+	err := requireConnectionScopes(metadata, []string{googlehealth.ScopeEcgReadonly})
+	if err == nil || !strings.Contains(err.Error(), "run `gohealthcli connect --add-scopes ecg`") {
+		t.Fatalf("missing ECG scope error = %v, want ecg remediation", err)
+	}
+}
+
 // TestCurrentConnectionAccessTokenScopeMissingSentinel pins the AC for
 // PRD #142 slice 1: AccessToken returns an error matching
 // errors.Is(err, errCurrentConnectionScopeMissing) exactly when a

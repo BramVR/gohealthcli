@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -146,6 +147,42 @@ func TestRawDataTypeDoesNotSetPageSizeUnlessFlagPassed(t *testing.T) {
 	assertArchiveTableCount(t, archivePath, "data_points", 0)
 	assertArchiveTableCount(t, archivePath, "sync_runs", 0)
 	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
+func TestRawElectrocardiogramRejectsUnsupportedExplicitUpperBoundBeforeSetup(t *testing.T) {
+	t.Parallel()
+	for _, target := range [][]string{
+		{"data-type", "electrocardiogram"},
+		{"endpoint", "dataTypes.electrocardiogram.list"},
+	} {
+		target := target
+		t.Run(strings.Join(target, "-"), func(t *testing.T) {
+			t.Parallel()
+			runtime := runtimeAdapters{
+				fetchRawProvider: func(context.Context, googlehealth.RawRequest, string) ([]byte, error) {
+					t.Fatal("Provider must not run for rejected ECG --to")
+					return nil, nil
+				},
+			}
+			stdout := new(bytes.Buffer)
+			stderr := new(bytes.Buffer)
+			args := append([]string{"raw"}, target...)
+			args = append(args,
+				"--from", "2026-01-01T00:00:00Z",
+				"--to", "2026-01-02T00:00:00Z",
+				"--config", filepath.Join(t.TempDir(), "missing-config.toml"),
+				"--db", filepath.Join(t.TempDir(), "missing-archive.sqlite"),
+			)
+			code := runWithRuntime(args, stdout, stderr, runtime)
+			if code != 1 {
+				t.Fatalf("raw ECG exit code = %d, want 1\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+			}
+			want := "raw electrocardiogram supports only --from because the Provider exposes no ECG upper-bound filter"
+			if !strings.Contains(stderr.String(), want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+			}
+		})
+	}
 }
 
 func TestRawProviderErrorDoesNotLeakToken(t *testing.T) {

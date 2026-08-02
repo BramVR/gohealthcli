@@ -432,6 +432,13 @@ func (ingestion Ingestion) executeDataPointPages(ctx context.Context, archive Ar
 			if err != nil {
 				return err
 			}
+			withinRange, err := dataPointBeforeExclusiveUpperBound(request.DataType, endpointFamily(result.EndpointFamily), point, request.To)
+			if err != nil {
+				return err
+			}
+			if !withinRange {
+				continue
+			}
 			now := ingestion.now().UTC().Format(time.RFC3339)
 			status, err := archive.UpsertDataPoint(archiveCtx, point, now)
 			if err != nil {
@@ -458,6 +465,30 @@ func (ingestion Ingestion) executeDataPointPages(ctx context.Context, archive Ar
 		pageToken = page.nextPageToken
 	}
 	return nil
+}
+
+// dataPointBeforeExclusiveUpperBound closes the one Provider-side ECG gap:
+// dataPoints.list accepts electrocardiogram.interval.start_time >= ... but no
+// matching < clause. Other Data Types remain entirely Provider-filtered. The
+// parsed physical start is compared before any archive write or count so sync's
+// documented [from,to) range and cursor-to contract stay unchanged.
+func dataPointBeforeExclusiveUpperBound(dataType string, family endpointFamily, point archived.DataPoint, to string) (bool, error) {
+	support, err := googleHealthDataTypeFilterSupport(dataType, family)
+	if err != nil {
+		return false, err
+	}
+	if !support.LowerBoundOnly || to == "" {
+		return true, nil
+	}
+	upperBound, ok := ParseRangeBoundary(to)
+	if !ok {
+		return false, fmt.Errorf("Google Health %s client upper bound %q is not YYYY-MM-DD or RFC3339", dataType, to)
+	}
+	start, err := time.Parse(time.RFC3339, point.StartTimeUTC)
+	if err != nil {
+		return false, fmt.Errorf("Google Health %s Data Point startTime for client upper bound: %w", dataType, err)
+	}
+	return start.Before(upperBound), nil
 }
 
 // grantedScopesAuthoriseTcxExport returns true when the stored

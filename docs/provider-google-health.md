@@ -34,6 +34,14 @@ field-to-schema references, and each schema's temporal shape. It intentionally
 does not claim that discovery verifies exact per-Data-Type operation support or
 filter fields; those facts are reported as unverifiable.
 
+ECG is a separately evidenced exception to that discovery limitation. The live
+v4 list-method description names only the physical
+`electrocardiogram.interval.start_time >= ...` filter; it supports no ECG upper
+bound. The Provider request therefore sends the lower bound and ingestion
+enforces sync's exclusive `to` boundary before any archive write or count. The
+provider-shaped `raw` command rejects an explicit ECG `--to` instead of
+silently returning a wider response.
+
 Current explicit exceptions are:
 
 - Local Rollup-only: `calories-in-heart-rate-zone`, `total-calories`.

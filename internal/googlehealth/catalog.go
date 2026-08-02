@@ -26,6 +26,7 @@ const (
 // new struct field.
 type endpointSupport struct {
 	FilterField         string   // for list / reconcile — e.g. "steps.interval.start_time"
+	LowerBoundOnly      bool     // Provider accepts >= but no exclusive < clause (ECG list)
 	RollupValueType     string   // for rollUp / dailyRollUp — drives the generic rollup parser
 	WindowGranularities []string // for rollUp — e.g. ["1h","1d","7d"]; nil for fixed-window families
 }
@@ -53,6 +54,12 @@ type googleHealthDataTypeCatalog struct {
 func listEndpoint(filterField string) map[endpointFamily]endpointSupport {
 	return map[endpointFamily]endpointSupport{
 		endpointFamilyList: {FilterField: filterField},
+	}
+}
+
+func lowerBoundOnlyListEndpoint(filterField string) map[endpointFamily]endpointSupport {
+	return map[endpointFamily]endpointSupport{
+		endpointFamilyList: {FilterField: filterField, LowerBoundOnly: true},
 	}
 }
 
@@ -440,10 +447,9 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 	},
 	// Tier 2 ECG + IRN Data Types (#104). Both are list-only session
 	// shapes, gated behind opt-in scopes the user grants via
-	// `connect --add-scopes ecg,irn`. Filter fields mirror the sleep
-	// / exercise pattern (civil_start_time) — the live probe step
-	// confirms the upstream shape before any user flips
-	// DefaultConfigType for these.
+	// `connect --add-scopes ecg,irn`. ECG is the Provider exception:
+	// its list endpoint accepts only a physical start-time lower bound.
+	// Ingestion applies the requested exclusive upper bound locally.
 	{
 		DataType:             "electrocardiogram",
 		RequiredScopes:       []string{ScopeEcgReadonly},
@@ -451,7 +457,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		JSONField:            "electrocardiogram",
 		RecordKind:           "session",
 		UsesDateRangeDefault: true,
-		SupportedEndpoints:   listEndpoint("electrocardiogram.interval.civil_start_time"),
+		SupportedEndpoints:   lowerBoundOnlyListEndpoint("electrocardiogram.interval.start_time"),
 	},
 	{
 		DataType:             "irregular-rhythm-notification",
@@ -579,15 +585,23 @@ func ScopesForDataType(dataType string) []string {
 	return append([]string(nil), entry.RequiredScopes...)
 }
 
-func googleHealthDataTypeFilterField(dataType string, family endpointFamily) (string, error) {
+func googleHealthDataTypeFilterSupport(dataType string, family endpointFamily) (endpointSupport, error) {
 	entry, ok := googleHealthDataTypes.Lookup(dataType)
 	if !ok {
-		return "", fmt.Errorf("raw Data Type %q is not in the catalog", dataType)
+		return endpointSupport{}, fmt.Errorf("raw Data Type %q is not in the catalog", dataType)
 	}
 	if support, ok := entry.SupportedEndpoints[family]; ok && support.FilterField != "" {
-		return support.FilterField, nil
+		return support, nil
 	}
-	return "", fmt.Errorf("raw Data Type %q is not supported by dataPoints.%s", dataType, family)
+	return endpointSupport{}, fmt.Errorf("raw Data Type %q is not supported by dataPoints.%s", dataType, family)
+}
+
+func googleHealthDataTypeFilterField(dataType string, family endpointFamily) (string, error) {
+	support, err := googleHealthDataTypeFilterSupport(dataType, family)
+	if err != nil {
+		return "", err
+	}
+	return support.FilterField, nil
 }
 
 func googleHealthDataTypeListFilterField(dataType string) (string, error) {

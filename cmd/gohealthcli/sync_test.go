@@ -1132,12 +1132,13 @@ func TestSyncArchivesExerciseSessionDataPointsIdempotentlyAndTracksRevisions(t *
 }
 
 // TestSyncArchivesElectrocardiogramSessionDataPoints pins the
-// session-parser contract for the Tier 2 ECG Data Type (#104).
+// session-parser and current Provider request contract for the Tier 2 ECG Data Type (#104, #383).
 // addStoredConnectionScope simulates the user having run
 // `connect --add-scopes ecg`; without that the AccessToken call
 // would short-circuit on the missing-scope error. The fixture mirrors
-// the sleep/exercise session shape because the live probe is deferred
-// until the user grants the scope against the live OAuth client.
+// the upstream session shape; the Provider supports a physical
+// start-time lower bound for ECG and the ingestion layer enforces the
+// requested exclusive upper bound locally.
 func TestSyncArchivesElectrocardiogramSessionDataPoints(t *testing.T) {
 	t.Parallel()
 	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
@@ -1176,7 +1177,7 @@ func TestSyncArchivesElectrocardiogramSessionDataPoints(t *testing.T) {
 	if (*requests)[0].EndpointName != "dataTypes.electrocardiogram.list" {
 		t.Fatalf("endpoint = %q, want electrocardiogram Data Type list", (*requests)[0].EndpointName)
 	}
-	if gotFilter := mustURLQuery(t, (*requests)[0].URL).Get("filter"); gotFilter != `electrocardiogram.interval.civil_start_time >= "2026-01-01" AND electrocardiogram.interval.civil_start_time < "2026-01-02"` {
+	if gotFilter := mustURLQuery(t, (*requests)[0].URL).Get("filter"); gotFilter != `electrocardiogram.interval.start_time >= "2026-01-01T00:00:00Z"` {
 		t.Fatalf("electrocardiogram filter = %q", gotFilter)
 	}
 	assertArchivedSessionDataPoint(t, archivePath, "users/me/dataTypes/electrocardiogram/dataPoints/ecg-2026-01-01", "electrocardiogram", "2026-01-01T09:30:00Z", "2026-01-01T09:30:30Z", "2026-01-01T10:30:00", "2026-01-01T10:30:30", "2026-01-01", `{"end_utc_offset":"3600s","start_utc_offset":"3600s"}`, `{"platform":"FITBIT","device":{"manufacturer":"Google","model":"Pixel Watch"}}`, `"classification":"SINUS_RHYTHM"`)

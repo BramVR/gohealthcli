@@ -84,8 +84,20 @@ type rawRequestTarget struct {
 // ValidateRawRequestOptions performs target/flag validation that must happen
 // before raw inspects config or opens the Health Archive.
 func ValidateRawRequestOptions(options RawRequestOptions) error {
-	_, err := parseRawRequestTarget(options)
-	return err
+	target, err := parseRawRequestTarget(options)
+	if err != nil {
+		return err
+	}
+	if target.list && options.ToProvided {
+		support, supportErr := googleHealthDataTypeFilterSupport(target.dataType, endpointFamilyList)
+		if supportErr != nil {
+			return supportErr
+		}
+		if support.LowerBoundOnly {
+			return fmt.Errorf("raw %s supports only --from because the Provider exposes no ECG upper-bound filter", target.dataType)
+		}
+	}
+	return nil
 }
 
 func BuildRawRequest(options RawRequestOptions) (RawRequest, error) {
@@ -219,16 +231,17 @@ func googleHealthDataTypeListFilter(dataType, from, to string) (string, error) {
 }
 
 func googleHealthDataTypeFilter(dataType string, family endpointFamily, from, to string) (string, error) {
-	field, err := googleHealthDataTypeFilterField(dataType, family)
+	support, err := googleHealthDataTypeFilterSupport(dataType, family)
 	if err != nil {
 		return "", err
 	}
+	field := support.FilterField
 	filterFrom, err := googleHealthFilterValue(field, from)
 	if err != nil {
 		return "", fmt.Errorf("--from: %w", err)
 	}
 	clauses := []string{fmt.Sprintf("%s >= %s", field, filterFrom)}
-	if to != "" {
+	if to != "" && !support.LowerBoundOnly {
 		filterTo, err := googleHealthFilterValue(field, to)
 		if err != nil {
 			return "", fmt.Errorf("--to: %w", err)
