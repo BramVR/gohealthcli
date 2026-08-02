@@ -11,12 +11,13 @@ import (
 )
 
 type identityResult struct {
-	Status             string `json:"status"`
-	ConnectionID       string `json:"connection_id,omitempty"`
-	ProviderName       string `json:"provider_name,omitempty"`
-	GoogleHealthUserID string `json:"google_health_user_id,omitempty"`
-	LegacyFitbitUserID string `json:"legacy_fitbit_user_id,omitempty"`
-	Message            string `json:"message"`
+	Status             string   `json:"status"`
+	ConnectionID       string   `json:"connection_id,omitempty"`
+	ProviderName       string   `json:"provider_name,omitempty"`
+	GoogleHealthUserID string   `json:"google_health_user_id,omitempty"`
+	LegacyFitbitUserID string   `json:"legacy_fitbit_user_id,omitempty"`
+	Message            string   `json:"message"`
+	Remediation        []string `json:"remediation,omitempty"`
 }
 
 type googleIdentity struct {
@@ -50,10 +51,11 @@ var identityCommand = identitySnapshotCommandSpec[identityResult, googleIdentity
 			LegacyFitbitUserID: connection.LegacyFitbitUserID,
 		}
 	},
-	status:      func(result *identityResult) string { return result.Status },
-	setStatus:   func(result *identityResult, status string) { result.Status = status },
-	setMessage:  func(result *identityResult, message string) { result.Message = message },
-	writeResult: writeIdentityResult,
+	status:         func(result *identityResult) string { return result.Status },
+	setStatus:      func(result *identityResult, status string) { result.Status = status },
+	setMessage:     func(result *identityResult, message string) { result.Message = message },
+	setRemediation: func(result *identityResult, remediation []string) { result.Remediation = remediation },
+	writeResult:    writeIdentityResult,
 	act: func(engine identitySnapshotCommandContext, result *identityResult) error {
 		identity, err := engine.connectionAccess.FetchVerifiedIdentity(engine.accessToken)
 		if err != nil {
@@ -142,8 +144,10 @@ func writeIdentityResult(result identityResult, mode outputMode, stdout io.Write
 				return err
 			}
 		}
-		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
-		return err
+		if _, err := fmt.Fprintf(stdout, "message: %s\n", result.Message); err != nil {
+			return err
+		}
+		return writePlainRemediation(stdout, result.Remediation)
 	}
 	switch result.Status {
 	case "identity_refreshed":

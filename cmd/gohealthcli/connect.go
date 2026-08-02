@@ -7,17 +7,20 @@ import (
 	"flag"
 	"fmt"
 	"io"
+
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 )
 
 type connectResult struct {
-	Status             string `json:"status"`
-	ConnectionID       string `json:"connection_id,omitempty"`
-	ProviderName       string `json:"provider_name,omitempty"`
-	GoogleHealthUserID string `json:"google_health_user_id,omitempty"`
-	LegacyFitbitUserID string `json:"legacy_fitbit_user_id,omitempty"`
-	CredentialStore    string `json:"credential_store,omitempty"`
-	TokenStatus        string `json:"token_status,omitempty"`
-	Message            string `json:"message"`
+	Status             string   `json:"status"`
+	ConnectionID       string   `json:"connection_id,omitempty"`
+	ProviderName       string   `json:"provider_name,omitempty"`
+	GoogleHealthUserID string   `json:"google_health_user_id,omitempty"`
+	LegacyFitbitUserID string   `json:"legacy_fitbit_user_id,omitempty"`
+	CredentialStore    string   `json:"credential_store,omitempty"`
+	TokenStatus        string   `json:"token_status,omitempty"`
+	Message            string   `json:"message"`
+	Remediation        []string `json:"remediation,omitempty"`
 }
 
 func runConnectWithRuntime(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
@@ -63,6 +66,7 @@ func runConnectWithRuntime(args []string, globals CommonFlagValues, stdout, stde
 	if err != nil {
 		result.Status = "connect_failed"
 		result.Message = err.Error()
+		result.Remediation = remediationFromError(connectionFailureRemediation(err))
 		if writeErr := writeConnectResult(result, mode, stdout); writeErr != nil {
 			return reportWriteFailure("connect", writeErr, mode, stdout, stderr)
 		}
@@ -78,7 +82,7 @@ func connectSetupWithRuntimeAndExtraScopes(configPath, archivePath string, noInp
 	runtime = runtime.withDefaults()
 	config, err := inspectFullConfig(configPath, archivePath)
 	if err != nil {
-		return connectResult{}, fmt.Errorf("config check failed: %w", err)
+		return connectResult{}, setupFailureRemediation(err, fmt.Sprintf("config check failed: %v", err))
 	}
 	if config.oauthClient.kind != "file" {
 		return connectResult{CredentialStore: config.credentialStore.kind}, errors.New("connect requires an OAuth client file source; Secret Provider references are setup-only")
@@ -108,7 +112,7 @@ func connectSetupWithRuntimeAndExtraScopes(configPath, archivePath string, noInp
 	}
 	identity, err := runtime.fetchIdentity(token.accessToken)
 	if err != nil {
-		return connectResult{CredentialStore: config.credentialStore.kind}, err
+		return connectResult{CredentialStore: config.credentialStore.kind}, connectionFailureRemediation(googlehealth.NormalizeError(err))
 	}
 	connectionID := "googlehealth:" + identity.healthUserID
 
@@ -123,7 +127,7 @@ func connectSetupWithRuntimeAndExtraScopes(configPath, archivePath string, noInp
 	// Connection writes on the Context API (#305) without changing
 	// behavior.
 	if err := archive.EnsureSameGoogleIdentity(context.Background(), identity.healthUserID); err != nil {
-		return connectResult{CredentialStore: config.credentialStore.kind}, err
+		return connectResult{CredentialStore: config.credentialStore.kind}, connectionFailureRemediation(err)
 	}
 	if err := store.Store(connectionID, token.rawTokenMaterialObject); err != nil {
 		return connectResult{CredentialStore: config.credentialStore.kind}, err
@@ -183,8 +187,10 @@ func writeConnectResult(result connectResult, mode outputMode, stdout io.Writer)
 				return err
 			}
 		}
-		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
-		return err
+		if _, err := fmt.Fprintf(stdout, "message: %s\n", result.Message); err != nil {
+			return err
+		}
+		return writePlainRemediation(stdout, result.Remediation)
 	}
 	if result.Status == "connected" {
 		if _, err := fmt.Fprintln(stdout, "Connected Google Identity"); err != nil {

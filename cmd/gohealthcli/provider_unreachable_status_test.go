@@ -254,6 +254,30 @@ func TestRawEmitsProviderUnreachableFailureStatus(t *testing.T) {
 	}
 }
 
+func TestRawEmitsRemediationForRejectedConnectionToken(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedProviderFixture(t)
+	testRuntime.fetchRawProvider = func(ctx context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
+		return googlehealth.FetchRaw(ctx, providerDoer(&stubProviderTransport{status: 401, body: `{"error":"rejected"}`}), request, accessToken)
+	}
+
+	stdout := new(bytes.Buffer)
+	code := runWithRuntime([]string{"--json", "raw", "endpoint", "getIdentity", "--config", configPath, "--db", archivePath}, stdout, new(bytes.Buffer), testRuntime)
+	if code != 1 {
+		t.Fatalf("raw exit code = %d, want 1", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("decode raw failure envelope: %v", err)
+	}
+	assertJSONString(t, got, "status", "operation_failed")
+	remediation, ok := got["remediation"].([]any)
+	if !ok || len(remediation) != 2 || remediation[0] != "gohealthcli doctor --online" || remediation[1] != "gohealthcli connect" {
+		t.Fatalf("remediation = %#v, want online diagnosis then reconnect", got["remediation"])
+	}
+	assertNoSecretWords(t, stdout.String())
+}
+
 // TestFetchVerifiedIdentityPreservesTypedCauseChainOnUnauthorized pins
 // the issue #272 chain AC: when the Provider rejects the stored
 // Connection token with a typed HTTP 401, the normalized error still

@@ -12,14 +12,15 @@ import (
 )
 
 type profileResult struct {
-	Status             string `json:"status"`
-	SnapshotID         int64  `json:"snapshot_id,omitempty"`
-	ConnectionID       string `json:"connection_id,omitempty"`
-	ProviderName       string `json:"provider_name,omitempty"`
-	GoogleHealthUserID string `json:"google_health_user_id,omitempty"`
-	LegacyFitbitUserID string `json:"legacy_fitbit_user_id,omitempty"`
-	FetchedAt          string `json:"fetched_at,omitempty"`
-	Message            string `json:"message"`
+	Status             string   `json:"status"`
+	SnapshotID         int64    `json:"snapshot_id,omitempty"`
+	ConnectionID       string   `json:"connection_id,omitempty"`
+	ProviderName       string   `json:"provider_name,omitempty"`
+	GoogleHealthUserID string   `json:"google_health_user_id,omitempty"`
+	LegacyFitbitUserID string   `json:"legacy_fitbit_user_id,omitempty"`
+	FetchedAt          string   `json:"fetched_at,omitempty"`
+	Message            string   `json:"message"`
+	Remediation        []string `json:"remediation,omitempty"`
 }
 
 type googleProfile struct {
@@ -51,11 +52,12 @@ var profileSnapshotCommand = identitySnapshotCommandSpec[profileResult, googlePr
 			LegacyFitbitUserID: connection.LegacyFitbitUserID,
 		}
 	},
-	status:       func(result *profileResult) string { return result.Status },
-	setStatus:    func(result *profileResult, status string) { result.Status = status },
-	setMessage:   func(result *profileResult, message string) { result.Message = message },
-	writeResult:  writeProfileResult,
-	snapshotKind: snapshotKindProfile,
+	status:         func(result *profileResult) string { return result.Status },
+	setStatus:      func(result *profileResult, status string) { result.Status = status },
+	setMessage:     func(result *profileResult, message string) { result.Message = message },
+	setRemediation: func(result *profileResult, remediation []string) { result.Remediation = remediation },
+	writeResult:    writeProfileResult,
+	snapshotKind:   snapshotKindProfile,
 	fetchPayload: func(runtime runtimeAdapters, accessToken string) (googleProfile, error) {
 		return runtime.fetchProfile(accessToken)
 	},
@@ -167,8 +169,10 @@ func writeProfileResult(result profileResult, mode outputMode, stdout io.Writer)
 				return err
 			}
 		}
-		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
-		return err
+		if _, err := fmt.Fprintf(stdout, "message: %s\n", result.Message); err != nil {
+			return err
+		}
+		return writePlainRemediation(stdout, result.Remediation)
 	}
 	switch result.Status {
 	case "profile_archived":

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -91,6 +92,12 @@ func TestProfileCommandFailsFastWhenScopeMissing(t *testing.T) {
 		if !strings.Contains(result.Message, wantHint) {
 			t.Fatalf("result.Message = %q, want it to name %q", result.Message, wantHint)
 		}
+		wantRemediation := []string{"gohealthcli doctor", "gohealthcli connect --add-scopes " + strings.Join(keywords, ",")}
+		if !slices.Equal(result.Remediation, wantRemediation) {
+			t.Fatalf("result.Remediation = %#v, want %#v", result.Remediation, wantRemediation)
+		}
+	} else if !slices.Equal(result.Remediation, []string{"gohealthcli doctor", "gohealthcli connect"}) {
+		t.Fatalf("result.Remediation = %#v, want diagnosis then reconnect", result.Remediation)
 	}
 }
 

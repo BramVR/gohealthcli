@@ -34,6 +34,16 @@ presence, expiry shape, and scopes, but not token values. Default `doctor`
 should stay local; `doctor --online` is the explicit path for token refresh and
 provider reachability checks.
 
+Structured authentication remediation is output-only metadata. JSON may expose
+an ordered `remediation` array and plain output the matching zero-based
+`remediation.N` fields; human output is unchanged. Recovery commands come from
+the Failure Reporter's fixed catalog, with the sole parameterized form limited
+to sorted `connect --add-scopes` keywords already present in the public scope
+catalog. Error messages, tokens, authorization codes, identities, paths,
+Provider payloads, SQL, health data, and user input are never converted into
+actions. Building or rendering actions performs no Provider I/O and cannot
+start an OAuth flow.
+
 OAuth token material should live in a Credential Store:
 
 - macOS: Keychain.

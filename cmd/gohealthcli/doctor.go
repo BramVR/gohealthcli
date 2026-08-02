@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -23,6 +23,7 @@ type doctorResult struct {
 	AttachmentRootMode string                  `json:"attachment_root_mode,omitempty"`
 	Attachments        *doctorAttachmentReport `json:"attachments,omitempty"`
 	Message            string                  `json:"message"`
+	Remediation        []string                `json:"remediation,omitempty"`
 }
 
 type doctorAttachmentReport struct {
@@ -119,6 +120,7 @@ func runDoctorWithRuntime(args []string, globals CommonFlagValues, stdout, stder
 		ArchivePath: common.ArchivePath,
 		TokenStatus: "unknown",
 		Message:     "local gohealthcli setup not found",
+		Remediation: normalizeRemediation([]remediationAction{remediationRunDoctor, remediationInitialize}),
 	}
 
 	if err := writeDoctorResult(result, mode, stdout); err != nil {
@@ -142,6 +144,7 @@ func runDoctorInvalid(configPath, archivePath, message string, mode outputMode, 
 		ArchivePath: archivePath,
 		TokenStatus: "unknown",
 		Message:     message,
+		Remediation: normalizeRemediation([]remediationAction{remediationRunDoctor, remediationInitialize}),
 	}
 	if err := writeDoctorResult(result, mode, stdout); err != nil {
 		return reportWriteFailure("doctor", err, mode, stdout, stderr)
@@ -156,6 +159,7 @@ func runDoctorOnlineWithRuntime(configPath, archivePath string, mode outputMode,
 			result.Status = "connection_unhealthy"
 		}
 		result.Message = err.Error()
+		result.Remediation = remediationFromError(connectionFailureRemediation(err))
 		if writeErr := writeDoctorResult(result, mode, stdout); writeErr != nil {
 			return reportWriteFailure("doctor", writeErr, mode, stdout, stderr)
 		}
@@ -171,7 +175,8 @@ func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtim
 	runtime = runtime.withDefaults()
 	config, err := inspectFullConfig(configPath, archivePath)
 	if err != nil {
-		return doctorResult{Status: "setup_invalid", ConfigPath: configPath, ArchivePath: archivePath, TokenStatus: "unknown"}, fmt.Errorf("config check failed: %w", err)
+		cause := setupFailureRemediation(err, fmt.Sprintf("config check failed: %v", err))
+		return doctorResult{Status: "setup_invalid", ConfigPath: configPath, ArchivePath: archivePath, TokenStatus: "unknown"}, cause
 	}
 	result := doctorResult{
 		Status:            "ok",
@@ -205,7 +210,7 @@ func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtim
 	result.Attachments = attachments
 	if archive.connectionCount == 0 {
 		result.TokenStatus = "not_connected"
-		return result, errors.New("no Connection found; run `gohealthcli connect` first")
+		return result, missingConnectionRemediation(sql.ErrNoRows)
 	}
 	archiveAPI, err := openHealthArchiveConnectionAPI(archivePath)
 	if err != nil {
@@ -217,7 +222,7 @@ func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtim
 	connection, err := archiveAPI.CurrentConnection()
 	if err != nil {
 		result.TokenStatus = "connection_unavailable"
-		return result, err
+		return result, connectionFailureRemediation(err)
 	}
 	protectedPaths := []string{configPath, archivePath, config.oauthClient.path}
 	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, protectedPaths, runtime)
@@ -230,7 +235,7 @@ func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtim
 				result.TokenStatus = "refresh_failed"
 			}
 		}
-		return result, err
+		return result, connectionFailureRemediation(err)
 	}
 	if tokenCheck.refreshedToken == nil {
 		result.TokenStatus = "metadata_present"
@@ -240,7 +245,7 @@ func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtim
 		if isCurrentConnectionIdentityMismatch(err) {
 			result.TokenStatus = "identity_mismatch"
 		}
-		return result, err
+		return result, connectionFailureRemediation(err)
 	}
 	if tokenCheck.refreshedToken != nil {
 		if err := persistDoctorOnlineRefreshedTokenWithRuntime(archiveAPI, config.credentialStore, connection.ID, *tokenCheck.refreshedToken, tokenCheck.previousTokenMaterial, runtime); err != nil {
@@ -326,6 +331,9 @@ func writeDoctorPlain(writer *stickyWriter, result doctorResult) {
 		}
 	}
 	writer.Printf("message: %s\n", result.Message)
+	for index, action := range result.Remediation {
+		writer.Printf("remediation.%d: %s\n", index, action)
+	}
 }
 
 func writeDoctorHuman(writer *stickyWriter, result doctorResult) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 )
 
@@ -62,11 +63,14 @@ type FailureReport struct {
 type remediationAction string
 
 const (
-	remediationShowHelp   remediationAction = "gohealthcli --help"
-	remediationRunDoctor  remediationAction = "gohealthcli doctor"
-	remediationReconnect  remediationAction = "gohealthcli connect"
-	remediationStatus     remediationAction = "gohealthcli status"
-	maxRemediationActions                   = 3
+	remediationShowHelp     remediationAction = "gohealthcli --help"
+	remediationRunDoctor    remediationAction = "gohealthcli doctor"
+	remediationDoctorOnline remediationAction = "gohealthcli doctor --online"
+	remediationReconnect    remediationAction = "gohealthcli connect"
+	remediationInitialize   remediationAction = "gohealthcli init"
+	remediationInitHelp     remediationAction = "gohealthcli init --help"
+	remediationStatus       remediationAction = "gohealthcli status"
+	maxRemediationActions                     = 3
 )
 
 // remediationError is the only carrier the Failure Reporter reads.
@@ -74,10 +78,16 @@ const (
 // actions are fixed Reporter vocabulary rather than caller text.
 type remediationError struct {
 	cause   error
+	message string
 	actions []string
 }
 
-func (err *remediationError) Error() string { return err.cause.Error() }
+func (err *remediationError) Error() string {
+	if err.message != "" {
+		return err.message
+	}
+	return err.cause.Error()
+}
 func (err *remediationError) Unwrap() error { return err.cause }
 
 func (err *remediationError) Remediation() []string {
@@ -88,15 +98,20 @@ func withRemediation(cause error, actions ...remediationAction) error {
 	return &remediationError{cause: cause, actions: normalizeRemediation(actions)}
 }
 
+func withRemediationMessage(cause error, message string, actions ...remediationAction) error {
+	return &remediationError{cause: cause, message: message, actions: normalizeRemediation(actions)}
+}
+
 func unknownCommandError(command string) error {
 	return withRemediation(fmt.Errorf("unknown command: %s", command), remediationShowHelp)
 }
 
 // normalizeRemediation collapses whitespace, removes duplicates without
-// reordering, rejects anything outside the fixed Reporter catalog, and
-// caps the structured output. The catalog contains only argument-free
-// gohealthcli commands, so paths, identifiers, Provider text, SQL, health
-// data, secrets, and echoed user input cannot cross this boundary.
+// reordering, rejects anything outside the Reporter catalog, and caps
+// the structured output. Parameterized scope recovery is accepted only
+// when every keyword is sorted and present in connectAddScopeKeywords;
+// paths, identifiers, Provider text, SQL, health data, secrets, and
+// echoed user input cannot cross this boundary.
 func normalizeRemediation(actions []remediationAction) []string {
 	remediation := make([]string, 0, min(len(actions), maxRemediationActions))
 	seen := make(map[string]struct{}, len(actions))
@@ -119,11 +134,29 @@ func normalizeRemediation(actions []remediationAction) []string {
 
 func isReporterRemediation(action string) bool {
 	switch remediationAction(action) {
-	case remediationShowHelp, remediationRunDoctor, remediationReconnect, remediationStatus:
+	case remediationShowHelp, remediationRunDoctor, remediationDoctorOnline, remediationReconnect, remediationInitialize, remediationInitHelp, remediationStatus:
 		return true
-	default:
+	}
+	const addScopesPrefix = "gohealthcli connect --add-scopes "
+	keywords, ok := strings.CutPrefix(action, addScopesPrefix)
+	if !ok || keywords == "" {
 		return false
 	}
+	parts := strings.Split(keywords, ",")
+	if !sort.StringsAreSorted(parts) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(parts))
+	for _, keyword := range parts {
+		if _, allowed := connectAddScopeKeywords[keyword]; !allowed {
+			return false
+		}
+		if _, duplicate := seen[keyword]; duplicate {
+			return false
+		}
+		seen[keyword] = struct{}{}
+	}
+	return true
 }
 
 func remediationFromError(err error) []string {
@@ -132,6 +165,15 @@ func remediationFromError(err error) []string {
 		return nil
 	}
 	return carrier.Remediation()
+}
+
+func writePlainRemediation(writer io.Writer, remediation []string) error {
+	for index, action := range remediation {
+		if _, err := fmt.Fprintf(writer, "remediation.%d: %s\n", index, action); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // failureJSONEnvelope is the on-the-wire shape of `--json` failure

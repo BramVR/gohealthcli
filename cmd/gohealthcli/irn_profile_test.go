@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -243,6 +244,9 @@ func TestIRNProfileCommandFailsFastWhenScopeMissing(t *testing.T) {
 	}
 	if !strings.Contains(result.Message, "connect --add-scopes irn") {
 		t.Fatalf("result.Message = %q, want it to name `connect --add-scopes irn`", result.Message)
+	}
+	if !slices.Equal(result.Remediation, []string{"gohealthcli doctor", "gohealthcli connect --add-scopes irn"}) {
+		t.Fatalf("result.Remediation = %#v, want diagnosis then scoped consent", result.Remediation)
 	}
 }
 

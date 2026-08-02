@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -209,6 +210,10 @@ func TestConnectRejectsDifferentGoogleIdentity(t *testing.T) {
 	if !ok || !strings.Contains(message, "different Google Identity") {
 		t.Fatalf("message = %T(%v), want different identity failure", got["message"], got["message"])
 	}
+	remediation, ok := got["remediation"].([]any)
+	if !ok || len(remediation) != 2 || remediation[0] != "gohealthcli doctor --online" || remediation[1] != "gohealthcli init --help" {
+		t.Fatalf("remediation = %#v, want online diagnosis then new-archive setup guidance", got["remediation"])
+	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 
 	tokenStoreBytes, err := os.ReadFile(tokenStorePath)
@@ -218,6 +223,28 @@ func TestConnectRejectsDifferentGoogleIdentity(t *testing.T) {
 	if strings.Contains(string(tokenStoreBytes), "other-access-secret") {
 		t.Fatalf("different identity token was stored: %s", string(tokenStoreBytes))
 	}
+}
+
+func TestConnectReportsMissingSetupRemediation(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "missing-config.toml")
+	archivePath := filepath.Join(tempDir, "missing-archive.sqlite")
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{failIfCalled: true})
+
+	stdout := new(bytes.Buffer)
+	code := runWithRuntime([]string{"connect", "--config", configPath, "--db", archivePath, "--json"}, stdout, new(bytes.Buffer), testRuntime)
+	if code != 1 {
+		t.Fatalf("connect exit code = %d, want 1", code)
+	}
+	var result connectResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode connect result: %v", err)
+	}
+	if !slices.Equal(result.Remediation, []string{"gohealthcli doctor", "gohealthcli init"}) {
+		t.Fatalf("remediation = %#v, want diagnosis then setup", result.Remediation)
+	}
+	assertNoSecretWords(t, stdout.String())
 }
 
 func TestConnectDoesNotResolveSecretProviderAtRuntime(t *testing.T) {

@@ -123,7 +123,8 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	runtime = runtime.withDefaults()
 	config, err := inspectIdentityConfig(options.configPath, options.archivePath)
 	if err != nil {
-		return ReportFailure(FailureReport{Command: "raw", Status: StatusOperationFailed, Message: fmt.Sprintf("config check failed: %v", err), Mode: mode}, stdout, stderr)
+		cause := setupFailureRemediation(err, fmt.Sprintf("config check failed: %v", err))
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusOperationFailed, Message: cause.Error(), Mode: mode, Cause: cause}, stdout, stderr)
 	}
 	if requestOptions.Timezone == "" {
 		requestOptions.Timezone = config.timezone
@@ -143,7 +144,7 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		if googlehealth.IsUnreachableError(err) {
 			status = StatusProviderUnreachable
 		}
-		return ReportFailure(FailureReport{Command: "raw", Status: status, Message: err.Error(), Mode: mode}, stdout, stderr)
+		return ReportFailure(FailureReport{Command: "raw", Status: status, Message: err.Error(), Mode: mode, Cause: err}, stdout, stderr)
 	}
 	if _, err := stdout.Write(body); err != nil {
 		return reportWriteFailure("raw", err, mode, stdout, stderr)
@@ -228,7 +229,7 @@ func rawSetupWithRuntime(configPath, archivePath string, config fullConfigCheck,
 	connection, err := archive.CurrentConnection()
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, errors.New("no Connection found; run `gohealthcli connect` first")
+			return nil, missingConnectionRemediation(err)
 		}
 		return nil, err
 	}
@@ -238,14 +239,14 @@ func rawSetupWithRuntime(configPath, archivePath string, config fullConfigCheck,
 	}
 	accessToken, err := connectionAccess.AccessToken(request.RequiredScopes)
 	if err != nil {
-		return nil, err
+		return nil, connectionFailureRemediation(err)
 	}
 	// raw is an interactive exploration command with no SIGINT
 	// instrumentation; Background keeps the request context-scoped (the
 	// shared timeout client still bounds it) without wiring a handler.
 	body, err := runtime.fetchRawProvider(context.Background(), request, accessToken)
 	if err != nil {
-		return nil, googlehealth.NormalizeError(err)
+		return nil, connectionFailureRemediation(googlehealth.NormalizeError(err))
 	}
 	return body, nil
 }

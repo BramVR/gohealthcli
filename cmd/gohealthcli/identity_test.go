@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -261,6 +262,9 @@ func TestIdentityCommandFailsFastWhenScopeMissing(t *testing.T) {
 	if !strings.Contains(result.Message, "gohealthcli connect") {
 		t.Fatalf("result.Message = %q, want it to name `gohealthcli connect` recovery", result.Message)
 	}
+	if !slices.Equal(result.Remediation, []string{"gohealthcli doctor", "gohealthcli connect"}) {
+		t.Fatalf("result.Remediation = %#v, want diagnosis then reconnect", result.Remediation)
+	}
 }
 
 // TestIdentityCommandAutoRefreshesExpiredAccessToken pins the issue
@@ -388,6 +392,10 @@ func TestIdentityRejectsDifferentGoogleIdentity(t *testing.T) {
 	if !ok || !strings.Contains(message, "different Google Identity") {
 		t.Fatalf("message = %T(%v), want different identity refusal", got["message"], got["message"])
 	}
+	remediation, ok := got["remediation"].([]any)
+	if !ok || len(remediation) != 2 || remediation[0] != "gohealthcli doctor --online" || remediation[1] != "gohealthcli init --help" {
+		t.Fatalf("remediation = %#v, want online diagnosis then new-archive setup guidance", got["remediation"])
+	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 
 	db := openArchiveForTest(t, archivePath)
@@ -401,6 +409,33 @@ func TestIdentityRejectsDifferentGoogleIdentity(t *testing.T) {
 	if strings.Contains(identityJSON, "222222222222222222") {
 		t.Fatalf("different provider identity was archived: %s", identityJSON)
 	}
+}
+
+func TestIdentityReportsRejectedConnectionTokenRemediation(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	testRuntime.fetchIdentity = func(string) (googleIdentity, error) {
+		return googleIdentity{}, &googlehealth.HTTPError{StatusCode: http.StatusUnauthorized, Endpoint: "identity"}
+	}
+
+	stdout := new(bytes.Buffer)
+	code := runWithRuntime([]string{"identity", "--config", configPath, "--db", archivePath, "--json"}, stdout, new(bytes.Buffer), testRuntime)
+	if code != 1 {
+		t.Fatalf("identity exit code = %d, want 1", code)
+	}
+	var result identityResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode identity result: %v", err)
+	}
+	if !slices.Equal(result.Remediation, []string{"gohealthcli doctor --online", "gohealthcli connect"}) {
+		t.Fatalf("remediation = %#v, want online diagnosis then reconnect", result.Remediation)
+	}
+	assertNoSecretWords(t, stdout.String())
 }
 
 func TestFetchGoogleIdentityUsesGetIdentityEndpoint(t *testing.T) {

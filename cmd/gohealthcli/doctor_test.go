@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +44,10 @@ func TestDoctorJSONReportsMissingSetup(t *testing.T) {
 	}
 	assertJSONString(t, got, "config_path", configPath)
 	assertJSONString(t, got, "archive_path", archivePath)
+	remediation, ok := got["remediation"].([]any)
+	if !ok || len(remediation) != 2 || remediation[0] != "gohealthcli doctor" || remediation[1] != "gohealthcli init" {
+		t.Fatalf("remediation = %#v, want diagnosis then setup", got["remediation"])
+	}
 
 	errText := stderr.String()
 	if !strings.Contains(errText, "run `gohealthcli init`") {
@@ -84,6 +90,26 @@ func TestDoctorJSONReportsMissingSetupAfterCommand(t *testing.T) {
 		t.Fatalf("stderr missing init hint: %q", errText)
 	}
 	assertNoSecretWords(t, stdout.String()+errText)
+}
+
+func TestDoctorOnlineReportsMissingConnectionRemediation(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, t.TempDir())
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{failIfCalled: true})
+
+	stdout := new(bytes.Buffer)
+	code := runWithRuntime([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, new(bytes.Buffer), testRuntime)
+	if code != 1 {
+		t.Fatalf("doctor --online exit code = %d, want 1", code)
+	}
+	var result doctorResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode doctor result: %v", err)
+	}
+	if !slices.Equal(result.Remediation, []string{"gohealthcli doctor", "gohealthcli connect"}) {
+		t.Fatalf("remediation = %#v, want diagnosis then connect", result.Remediation)
+	}
+	assertNoSecretWords(t, stdout.String())
 }
 
 func TestDoctorRejectsUnknownFlagAfterCommand(t *testing.T) {
@@ -167,6 +193,8 @@ func TestDoctorPlainReportsMissingSetup(t *testing.T) {
 		"status: setup_missing\n",
 		"config_path: " + filepath.Join(tempDir, "config.toml") + "\n",
 		"archive_path: " + filepath.Join(tempDir, "gohealthcli.sqlite") + "\n",
+		"remediation.0: gohealthcli doctor\n",
+		"remediation.1: gohealthcli init\n",
 	} {
 		if !strings.Contains(outText, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, outText)
@@ -1343,6 +1371,36 @@ func TestDoctorOnlineReportsProviderFailureAsConnectionHealth(t *testing.T) {
 	}
 }
 
+func TestDoctorOnlineReportsRejectedConnectionTokenRemediation(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, _ := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	testRuntime := newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
+		refreshedAccessToken:    "refreshed-access-secret",
+		wantRefreshToken:        "connect-refresh-secret",
+		wantProviderAccessToken: "refreshed-access-secret",
+		providerErr:             &googlehealth.HTTPError{StatusCode: http.StatusUnauthorized, Endpoint: "identity"},
+	})
+
+	stdout := new(bytes.Buffer)
+	code := runWithRuntime([]string{"doctor", "--online", "--config", configPath, "--db", archivePath, "--json"}, stdout, new(bytes.Buffer), testRuntime)
+	if code != 1 {
+		t.Fatalf("doctor --online exit code = %d, want 1", code)
+	}
+	var result doctorResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode doctor result: %v", err)
+	}
+	if !slices.Equal(result.Remediation, []string{"gohealthcli doctor --online", "gohealthcli connect"}) {
+		t.Fatalf("remediation = %#v, want online diagnosis then reconnect", result.Remediation)
+	}
+	assertNoSecretWords(t, stdout.String())
+}
+
 func TestDoctorOnlineReportsMissingTokenAsConnectionHealth(t *testing.T) {
 	t.Parallel()
 	tempDir := t.TempDir()
@@ -1377,6 +1435,10 @@ func TestDoctorOnlineReportsMissingTokenAsConnectionHealth(t *testing.T) {
 	assertJSONString(t, got, "token_status", "token_missing")
 	if message, ok := got["message"].(string); !ok || !strings.Contains(message, "missing access token") {
 		t.Fatalf("message = %T(%v), want missing access token", got["message"], got["message"])
+	}
+	remediation, ok := got["remediation"].([]any)
+	if !ok || len(remediation) != 2 || remediation[0] != "gohealthcli doctor --online" || remediation[1] != "gohealthcli connect" {
+		t.Fatalf("remediation = %#v, want online diagnosis then reconnect", got["remediation"])
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
@@ -1455,6 +1517,10 @@ func TestDoctorOnlineDoesNotPersistRefreshBeforeIdentityMatch(t *testing.T) {
 	}
 	assertJSONString(t, got, "status", "connection_unhealthy")
 	assertJSONString(t, got, "token_status", "identity_mismatch")
+	remediation, ok := got["remediation"].([]any)
+	if !ok || len(remediation) != 2 || remediation[0] != "gohealthcli doctor --online" || remediation[1] != "gohealthcli init --help" {
+		t.Fatalf("remediation = %#v, want online diagnosis then new-archive setup guidance", got["remediation"])
+	}
 	tokenStoreBytes, err := os.ReadFile(tokenStorePath)
 	if err != nil {
 		t.Fatalf("read token store: %v", err)
