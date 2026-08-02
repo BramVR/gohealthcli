@@ -114,6 +114,27 @@ type IngestionPlan struct {
 	rollupSpec     RollupSpec
 }
 
+// IngestionPagePolicy describes how Execute repeats the first request.
+// RangeWindowMaxDays is non-zero only for dailyRollUp, whose Provider
+// contract requires long ranges to be split before token pagination.
+type IngestionPagePolicy struct {
+	PageSize           int64  `json:"page_size"`
+	PageSizePolicy     string `json:"page_size_policy"`
+	Pagination         string `json:"pagination"`
+	RangeWindowMaxDays int    `json:"range_window_max_days,omitempty"`
+	RangeWindowCount   int    `json:"range_window_count"`
+}
+
+// IngestionPlanDescription is the side-effect-free, request-shaped view of
+// one Sync Run. Request is the exact first request Execute would build; later
+// requests differ only by pageToken or, for dailyRollUp, the range window.
+type IngestionPlanDescription struct {
+	EndpointFamily         string
+	Request                RawRequest
+	PagePolicy             IngestionPagePolicy
+	ConditionalExerciseTcx bool
+}
+
 // IngestionResult carries the per-run counts back to main, which
 // folds them into the sync result envelope and the per-page heartbeat.
 type IngestionResult struct {
@@ -242,6 +263,62 @@ func (ingestion Ingestion) Plan(request IngestionRequest) (IngestionPlan, error)
 			request.DataType, formatSupportedEndpoints(entry.SupportedEndpoints))
 	}
 	return IngestionPlan{EndpointFamily: "list"}, nil
+}
+
+// DescribePlan builds the exact first Provider request and paging policy for
+// one Sync Run without invoking the Provider or touching an Archive.
+func (ingestion Ingestion) DescribePlan(request IngestionRequest) (IngestionPlanDescription, error) {
+	plan, err := ingestion.Plan(request)
+	if err != nil {
+		return IngestionPlanDescription{}, err
+	}
+	description := IngestionPlanDescription{
+		EndpointFamily: plan.EndpointFamily,
+		PagePolicy: IngestionPagePolicy{
+			PageSizePolicy:   "provider_default",
+			Pagination:       "nextPageToken",
+			RangeWindowCount: 1,
+		},
+		ConditionalExerciseTcx: request.DataType == "exercise" && request.Rollup == "",
+	}
+	switch plan.EndpointFamily {
+	case "dailyRollUp":
+		windows, err := googleHealthDailyRollupDateWindows(request.DataType, request.From, request.To)
+		if err != nil {
+			return IngestionPlanDescription{}, err
+		}
+		description.PagePolicy.RangeWindowMaxDays = googleHealthDailyRollupMaxRangeDays(request.DataType)
+		description.PagePolicy.RangeWindowCount = len(windows)
+		description.Request, err = buildGoogleHealthDailyRollupRawRequest(
+			request.DataType, windows[0].from, windows[0].to, 0, "",
+		)
+		if err != nil {
+			return IngestionPlanDescription{}, err
+		}
+	case "rollUp":
+		windowSize := fmt.Sprintf("%ds", int64(plan.rollupSpec.windowSize.Seconds()))
+		description.Request, err = buildGoogleHealthRollupRawRequest(
+			request.DataType, request.From, request.To, windowSize, 0, "",
+		)
+		if err != nil {
+			return IngestionPlanDescription{}, err
+		}
+	default:
+		description.PagePolicy.PageSize = syncDataPointPageSize(request.DataType)
+		description.PagePolicy.PageSizePolicy = "explicit"
+		description.Request, err = buildGoogleHealthSyncDataPointRawRequest(
+			request.DataType,
+			request.From,
+			request.To,
+			request.SourceFamily,
+			description.PagePolicy.PageSize,
+			"",
+		)
+		if err != nil {
+			return IngestionPlanDescription{}, err
+		}
+	}
+	return description, nil
 }
 
 func (ingestion Ingestion) Execute(ctx context.Context, archive Archive, request IngestionRequest) (IngestionResult, error) {

@@ -93,6 +93,13 @@ Supported Data Point sync types (grouped by domain):
 Google Health reconcile path. `sync --types steps --rollup daily` archives
 steps daily Rollups, and `sync --types heart-rate --rollup daily` archives
 daily heart-rate summary Rollups without replacing raw heart-rate samples.
+Use `sync --plan` with one Data Type to inspect its resolved range and source,
+endpoint, page policy, required scopes, sanitized request preview, conditional
+exercise TCX work, and predicted sync effects. Planning uses only strict
+read-only local inspection: it performs no Provider request, Credential Store
+read, token refresh, archive write or migration, Sync Cursor advance, or
+Attachment sidecar creation. A ready plan explicitly leaves credential
+availability, Google Identity matching, and Provider reachability unverified.
 `total-calories` is known to the catalog but is not
 supported by raw Data Point sync because Google exposes it as Rollup data;
 `calories-in-heart-rate-zone` is also catalog-known but not yet implemented
