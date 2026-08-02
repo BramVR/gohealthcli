@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -49,12 +48,47 @@ type syncCommandOptions struct {
 	sourceFamily string
 }
 
+type syncTypesFlag struct {
+	all  []string
+	last []string
+}
+
+func (value *syncTypesFlag) String() string {
+	return strings.Join(value.all, ",")
+}
+
+func (value *syncTypesFlag) Set(raw string) error {
+	parsed := parseCommaList(raw)
+	value.all = append(value.all, parsed...)
+	value.last = parsed
+	return nil
+}
+
+func (value syncTypesFlag) dataTypes(plan bool) []string {
+	if plan {
+		return value.all
+	}
+	// Preserve flag.String's historical behavior for real sync: the last
+	// occurrence wins. Repeat accumulation is a planning-only contract.
+	return value.last
+}
+
 func syncRollupUsage() string {
 	return "rollup kind to sync; supported: " + strings.Join(googlehealth.SupportedRollupKinds(), " | ")
 }
 
 func syncSourceFamilyUsage() string {
 	return "source family filter; supported: " + strings.Join(googlehealth.SupportedSourceFamilies(), " | ")
+}
+
+func syncTypesUsage() string {
+	// The backquoted placeholder keeps flag.UnquoteUsage's runtime type at
+	// string for the custom repeatable value, matching the command registry.
+	return "comma-separated Data Types (`string`); repeatable with --plan; defaults to \"steps\" when neither --types nor --all is set"
+}
+
+func syncPlanUsage() string {
+	return "print per-Data-Type resolved Sync Run plans without Provider, credential, or archive write effects"
 }
 
 func runSyncWithRuntime(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
@@ -67,14 +101,15 @@ func runSyncWithRuntime(args []string, globals CommonFlagValues, stdout, stderr 
 		JSONOutput:  globals.JSONOutput,
 		PlainOutput: globals.PlainOutput,
 	})
-	syncTypes := flags.String("types", "", "comma-separated Data Types; defaults to \"steps\" when neither --types nor --all is set")
+	var syncTypes syncTypesFlag
+	flags.Var(&syncTypes, "types", syncTypesUsage())
 	syncAll := flags.Bool("all", false, "sync every default Data Type")
 	syncFrom := flags.String("from", "", "inclusive sync range start; optional once a Sync Cursor exists")
 	syncTo := flags.String("to", "", "exclusive sync range end")
 	syncTimezone := flags.String("timezone", "", "IANA timezone for now, today, and yesterday (default UTC)")
 	syncRollup := flags.String("rollup", "", syncRollupUsage())
 	syncSourceFamily := flags.String("source-family", "", syncSourceFamilyUsage())
-	syncPlan := flags.Bool("plan", false, "print one Data Type's resolved Sync Run plan without Provider, credential, or archive write effects")
+	syncPlan := flags.Bool("plan", false, syncPlanUsage())
 	syncStatus := flags.Bool("status", false, "list recent Sync Runs from the local archive instead of syncing")
 	syncWindow := flags.String("window", "", "with --status: how far back to list finished Sync Runs (Go duration, default 15m, max 24h)")
 
@@ -114,7 +149,7 @@ func runSyncWithRuntime(args []string, globals CommonFlagValues, stdout, stderr 
 		}, stdout, stderr)
 	}
 
-	dataTypes := parseCommaList(*syncTypes)
+	dataTypes := syncTypes.dataTypes(*syncPlan)
 	if !*syncAll && len(dataTypes) == 0 {
 		// Preserve the historical default for single-type invocations
 		// (`gohealthcli sync` with no flags).
@@ -134,21 +169,7 @@ func runSyncWithRuntime(args []string, globals CommonFlagValues, stdout, stderr 
 	ctx, stopSignalHandler := installSyncCancelContext()
 	defer stopSignalHandler()
 	if *syncPlan {
-		if options.allTypes || len(options.dataTypes) != 1 {
-			result := blockedSyncPlan(options, "fan_out_not_supported", errors.New("sync --plan currently supports exactly one single Data Type; use one --types value or omit --types for steps"))
-			if writeErr := writeSyncPlanResult(result, mode, stdout); writeErr != nil {
-				return reportWriteFailure("sync", writeErr, mode, stdout, stderr)
-			}
-			return 1
-		}
-		result := buildSyncPlan(ctx, options, runtime)
-		if writeErr := writeSyncPlanResult(result, mode, stdout); writeErr != nil {
-			return reportWriteFailure("sync", writeErr, mode, stdout, stderr)
-		}
-		if !result.Ready {
-			return 1
-		}
-		return 0
+		return runSyncPlan(ctx, options, mode, stdout, stderr, runtime)
 	}
 	orchestrator := newSyncOrchestrator(runtime)
 	results, err := orchestrator.Sync(ctx, options)

@@ -351,14 +351,31 @@ func TestBuildSyncPlanHonorsCanceledContextBeforeInspection(t *testing.T) {
 	}
 }
 
-func TestSyncPlanRejectsFanOutAndStatusConflicts(t *testing.T) {
+func TestBuildSyncPlanFanOutHonorsCanceledContextBeforeInspection(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	runtime := runtimeAdapters{
+		openSyncPlanningArchive: func(context.Context, string) (syncPlanningArchive, error) {
+			t.Fatal("canceled sync --plan fan-out inspected the Health Archive")
+			return nil, nil
+		},
+	}
+	result := buildSyncPlanFanOut(ctx, syncCommandOptions{
+		dataTypes: []string{"steps", "heart-rate"},
+		from:      "2026-01-01T00:00:00Z",
+		to:        "2026-01-02T00:00:00Z",
+	}, runtime)
+	if result.Ready || result.Status != "plan_blocked" || len(result.Operations) != 0 || len(result.Blockers) != 1 || result.Blockers[0].Code != "planning_canceled" {
+		t.Fatalf("canceled fan-out plan = %+v, want planning_canceled blocker", result)
+	}
+}
+
+func TestSyncPlanRejectsStatusConflict(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		args []string
 		want string
 	}{
-		{args: []string{"sync", "--plan", "--all", "--json"}, want: "single Data Type"},
-		{args: []string{"sync", "--plan", "--types", "steps,heart-rate", "--json"}, want: "single Data Type"},
 		{args: []string{"sync", "--plan", "--status", "--json"}, want: "cannot be combined"},
 	}
 	for _, test := range tests {
@@ -369,5 +386,303 @@ func TestSyncPlanRejectsFanOutAndStatusConflicts(t *testing.T) {
 		if !strings.Contains(stdout.String()+stderr.String(), test.want) {
 			t.Errorf("%v output missing %q: stdout=%q stderr=%q", test.args, test.want, stdout.String(), stderr.String())
 		}
+	}
+}
+
+func TestSyncPlanFanOutRejectsGlobalSelectionConflicts(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name string
+		args []string
+		code string
+	}{
+		{name: "duplicate repeated type", args: []string{"--types", "steps", "--types", "steps"}, code: "duplicate_data_type"},
+		{name: "all with repeated type", args: []string{"--all", "--types", "steps"}, code: "all_vs_types_conflict"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			args := append([]string{"sync", "--plan", "--json"}, test.args...)
+			var stdout, stderr bytes.Buffer
+			if exitCode := run(args, &stdout, &stderr); exitCode == 0 {
+				t.Fatalf("exit = 0, want selection conflict\n%s", stdout.String())
+			}
+			var got syncPlanFanOutResult
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != "plan_blocked" || got.Ready || len(got.Operations) != 0 || len(got.Blockers) != 1 || got.Blockers[0].Code != test.code {
+				t.Fatalf("global blocker = %+v, want %q", got, test.code)
+			}
+		})
+	}
+}
+
+func TestSyncTypesFlagRepeatsOnlyAccumulateForPlanning(t *testing.T) {
+	t.Parallel()
+	var value syncTypesFlag
+	if err := value.Set("steps"); err != nil {
+		t.Fatal(err)
+	}
+	if err := value.Set("heart-rate,sleep"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := value.dataTypes(true), []string{"steps", "heart-rate", "sleep"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("planning Data Types = %v, want %v", got, want)
+	}
+	if got, want := value.dataTypes(false), []string{"heart-rate", "sleep"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("real sync Data Types = %v, want last occurrence %v", got, want)
+	}
+}
+
+func TestSyncPlanFansOutWithPerTypeRangesAndIsolatedBlockers(t *testing.T) {
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		now:                time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC),
+		accessToken:        "plan-access-secret",
+		refreshToken:       "plan-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	testRuntime.fetchRawProvider = func(context.Context, googlehealth.RawRequest, string) ([]byte, error) {
+		t.Fatal("fan-out sync --plan made a Provider request")
+		return nil, nil
+	}
+	testRuntime.refreshOAuthToken = func(oauthClientConfig, string, []string) (oauthTokenResponse, error) {
+		t.Fatal("fan-out sync --plan refreshed a token")
+		return oauthTokenResponse{}, nil
+	}
+	testRuntime.openHealthArchiveWriter = func(string) (healthArchiveWriter, error) {
+		t.Fatal("fan-out sync --plan opened the Health Archive writer")
+		return nil, nil
+	}
+	before := capturePlanningArchiveState(t, archivePath)
+
+	args := []string{
+		"sync", "--plan", "--config", configPath, "--db", archivePath,
+		"--types", "steps", "--types", "daily-resting-heart-rate,electrocardiogram",
+		"--from", "yesterday", "--to", "today", "--json",
+	}
+	var first, firstErr, second, secondErr bytes.Buffer
+	if code := runWithRuntime(args, &first, &firstErr, testRuntime); code == 0 {
+		t.Fatalf("first exit = 0, want nonzero for one isolated blocker\n%s", first.String())
+	}
+	if code := runWithRuntime(args, &second, &secondErr, testRuntime); code == 0 {
+		t.Fatalf("second exit = 0, want nonzero for one isolated blocker\n%s", second.String())
+	}
+	if firstErr.String() != "" || secondErr.String() != "" {
+		t.Fatalf("stderr = (%q, %q), want empty", firstErr.String(), secondErr.String())
+	}
+	if first.String() != second.String() {
+		t.Fatalf("fixed-clock fan-out plans differ:\nfirst: %s\nsecond: %s", first.String(), second.String())
+	}
+	var got struct {
+		Status     string           `json:"status"`
+		Ready      bool             `json:"ready"`
+		Operations []syncPlanResult `json:"operations"`
+		Results    json.RawMessage  `json:"results"`
+		Summary    json.RawMessage  `json:"summary"`
+	}
+	if err := json.Unmarshal(first.Bytes(), &got); err != nil {
+		t.Fatalf("decode fan-out JSON: %v\n%s", err, first.String())
+	}
+	if got.Status != "plan_blocked" || got.Ready {
+		t.Fatalf("fan-out status = (%q, %v), want plan_blocked false", got.Status, got.Ready)
+	}
+	if len(got.Results) != 0 || len(got.Summary) != 0 {
+		t.Fatalf("plan envelope reused Sync Run shape: results=%s summary=%s", got.Results, got.Summary)
+	}
+	wantTypes := []string{"steps", "daily-resting-heart-rate", "electrocardiogram"}
+	if len(got.Operations) != len(wantTypes) {
+		t.Fatalf("operations = %d, want %d\n%s", len(got.Operations), len(wantTypes), first.String())
+	}
+	for index, want := range wantTypes {
+		if got.Operations[index].DataType != want {
+			t.Errorf("operations[%d].data_type = %q, want %q", index, got.Operations[index].DataType, want)
+		}
+	}
+	if !got.Operations[0].Ready || got.Operations[0].Range.From != "2026-01-09T00:00:00Z" || got.Operations[0].Range.To != "2026-01-10T00:00:00Z" {
+		t.Errorf("physical operation = %+v", got.Operations[0])
+	}
+	if !got.Operations[1].Ready || got.Operations[1].Range.From != "2026-01-09" || got.Operations[1].Range.To != "2026-01-10" {
+		t.Errorf("daily operation = %+v", got.Operations[1])
+	}
+	blocked := got.Operations[2]
+	if blocked.Ready || len(blocked.Blockers) != 1 || blocked.Blockers[0].Code != "missing_required_scope" {
+		t.Errorf("isolated blocked operation = %+v", blocked)
+	}
+	for index := range got.Operations[:2] {
+		if got.Operations[index].PlanningEffects.ProviderRequest || got.Operations[index].PlanningEffects.CredentialRead || got.Operations[index].PlanningEffects.ArchiveWrite {
+			t.Errorf("operations[%d] planning effects = %+v, want zero", index, got.Operations[index].PlanningEffects)
+		}
+	}
+	after := capturePlanningArchiveState(t, archivePath)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("fan-out planning mutated archive:\nbefore: %+v\nafter:  %+v", before, after)
+	}
+
+	for _, output := range []struct {
+		name string
+		flag string
+		want []string
+	}{
+		{
+			name: "plain",
+			flag: "--plain",
+			want: []string{"operations.0.data_type: steps", "operations.1.data_type: daily-resting-heart-rate", "operations.2.data_type: electrocardiogram", "operations.2.blockers.0.code: missing_required_scope"},
+		},
+		{
+			name: "human",
+			want: []string{"Sync plan fan-out blocked across 3 Data Types", "Data Type: steps", "Data Type: daily-resting-heart-rate", "Data Type: electrocardiogram", "Blocker [missing_required_scope]"},
+		},
+	} {
+		t.Run(output.name, func(t *testing.T) {
+			modeArgs := append([]string(nil), args[:len(args)-1]...)
+			if output.flag != "" {
+				modeArgs = append(modeArgs, output.flag)
+			}
+			var stdout, stderr bytes.Buffer
+			if code := runWithRuntime(modeArgs, &stdout, &stderr, testRuntime); code == 0 {
+				t.Fatalf("exit = 0, want isolated blocker\n%s", stdout.String())
+			}
+			for _, want := range output.want {
+				if !strings.Contains(stdout.String(), want) {
+					t.Errorf("output missing %q:\n%s", want, stdout.String())
+				}
+			}
+		})
+	}
+}
+
+func TestSyncPlanAllUsesCatalogOrderAndOutputParity(t *testing.T) {
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		now:                time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC),
+		accessToken:        "plan-access-secret",
+		refreshToken:       "plan-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	base := []string{
+		"sync", "--plan", "--config", configPath, "--db", archivePath,
+		"--all", "--from", "2026-01-01", "--to", "2026-01-02",
+	}
+	var jsonOut, jsonErr bytes.Buffer
+	if code := runWithRuntime(append(append([]string(nil), base...), "--json"), &jsonOut, &jsonErr, testRuntime); code != 0 {
+		t.Fatalf("JSON exit = %d\n%s\n%s", code, jsonOut.String(), jsonErr.String())
+	}
+	var envelope struct {
+		Status     string           `json:"status"`
+		Ready      bool             `json:"ready"`
+		Operations []syncPlanResult `json:"operations"`
+	}
+	if err := json.Unmarshal(jsonOut.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"steps", "heart-rate", "daily-resting-heart-rate", "heart-rate-variability",
+		"daily-heart-rate-variability", "oxygen-saturation", "daily-oxygen-saturation",
+		"daily-respiratory-rate", "sleep", "exercise", "distance", "weight",
+	}
+	if envelope.Status != "plan_ready" || !envelope.Ready || len(envelope.Operations) != len(want) {
+		t.Fatalf("all envelope = status %q ready %v operations %d", envelope.Status, envelope.Ready, len(envelope.Operations))
+	}
+	for index, operation := range envelope.Operations {
+		if operation.DataType != want[index] {
+			t.Errorf("operations[%d].data_type = %q, want catalog-order %q", index, operation.DataType, want[index])
+		}
+	}
+
+	var plainOut, plainErr bytes.Buffer
+	if code := runWithRuntime(append(append([]string(nil), base...), "--plain"), &plainOut, &plainErr, testRuntime); code != 0 {
+		t.Fatalf("plain exit = %d\n%s\n%s", code, plainOut.String(), plainErr.String())
+	}
+	for _, wantLine := range []string{
+		"status: plan_ready", "ready: true", "operations.0.data_type: steps",
+		"operations.11.data_type: weight", "operations.0.planning_effects.provider_request: false",
+	} {
+		if !strings.Contains(plainOut.String(), wantLine+"\n") {
+			t.Errorf("plain output missing %q:\n%s", wantLine, plainOut.String())
+		}
+	}
+
+	var humanOut, humanErr bytes.Buffer
+	if code := runWithRuntime(base, &humanOut, &humanErr, testRuntime); code != 0 {
+		t.Fatalf("human exit = %d\n%s\n%s", code, humanOut.String(), humanErr.String())
+	}
+	for _, wantText := range []string{"Sync plan fan-out ready across 12 Data Types", "Data Type: steps", "Data Type: weight"} {
+		if !strings.Contains(humanOut.String(), wantText) {
+			t.Errorf("human output missing %q:\n%s", wantText, humanOut.String())
+		}
+	}
+}
+
+func TestSyncPlanFanOutResolvesPerTypeCursorsAndDefaultRanges(t *testing.T) {
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		now:                time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC),
+		accessToken:        "plan-access-secret",
+		refreshToken:       "plan-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	archive, err := openHealthArchiveWriter(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := archive.CurrentConnection(context.Background())
+	if err != nil {
+		archive.Close()
+		t.Fatal(err)
+	}
+	for _, cursor := range []struct {
+		dataType string
+		to       string
+	}{
+		{dataType: "steps", to: "2026-01-03T04:05:06Z"},
+		{dataType: "daily-resting-heart-rate", to: "2026-01-04"},
+	} {
+		if err := archive.CommitSyncCursor(context.Background(), syncCursorKey{
+			connectionID: connection.ID,
+			dataType:     cursor.dataType,
+			rollupKind:   syncCursorRollupKindNone,
+		}, syncRunOutcomeCompleted, cursor.to, "2026-01-04T00:00:00Z"); err != nil {
+			archive.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before := capturePlanningArchiveState(t, archivePath)
+	testRuntime.openHealthArchiveWriter = func(string) (healthArchiveWriter, error) {
+		t.Fatal("fan-out cursor planning opened the Health Archive writer")
+		return nil, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runWithRuntime([]string{
+		"sync", "--plan", "--config", configPath, "--db", archivePath,
+		"--types", "steps,daily-resting-heart-rate,heart-rate", "--json",
+	}, &stdout, &stderr, testRuntime)
+	if code == 0 {
+		t.Fatalf("exit = 0, want one missing-cursor blocker\n%s", stdout.String())
+	}
+	var got struct {
+		Operations []syncPlanResult `json:"operations"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Operations) != 3 {
+		t.Fatalf("operations = %d, want 3", len(got.Operations))
+	}
+	if operation := got.Operations[0]; !operation.Ready || operation.Range.From != "2026-01-03T04:05:06Z" || operation.Range.To != "2026-01-10T12:00:00Z" || !operation.Range.ResumedFromCursor {
+		t.Errorf("steps cursor operation = %+v", operation)
+	}
+	if operation := got.Operations[1]; !operation.Ready || operation.Range.From != "2026-01-04" || operation.Range.To != "2026-01-10" || !operation.Range.ResumedFromCursor {
+		t.Errorf("daily cursor operation = %+v", operation)
+	}
+	if operation := got.Operations[2]; operation.Ready || operation.Range.To != "2026-01-10T12:00:00Z" || len(operation.Blockers) != 1 || operation.Blockers[0].Code != "missing_sync_cursor" {
+		t.Errorf("missing cursor operation = %+v", operation)
+	}
+	after := capturePlanningArchiveState(t, archivePath)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("fan-out cursor planning mutated archive:\nbefore: %+v\nafter:  %+v", before, after)
 	}
 }
