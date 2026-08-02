@@ -131,6 +131,8 @@ func runSyncWithRuntime(args []string, globals CommonFlagValues, stdout, stderr 
 		rollup:       *syncRollup,
 		sourceFamily: *syncSourceFamily,
 	}
+	ctx, stopSignalHandler := installSyncCancelContext()
+	defer stopSignalHandler()
 	if *syncPlan {
 		if options.allTypes || len(options.dataTypes) != 1 {
 			result := blockedSyncPlan(options, "fan_out_not_supported", errors.New("sync --plan currently supports exactly one single Data Type; use one --types value or omit --types for steps"))
@@ -139,7 +141,7 @@ func runSyncWithRuntime(args []string, globals CommonFlagValues, stdout, stderr 
 			}
 			return 1
 		}
-		result := buildSyncPlan(context.Background(), options, runtime)
+		result := buildSyncPlan(ctx, options, runtime)
 		if writeErr := writeSyncPlanResult(result, mode, stdout); writeErr != nil {
 			return reportWriteFailure("sync", writeErr, mode, stdout, stderr)
 		}
@@ -148,9 +150,6 @@ func runSyncWithRuntime(args []string, globals CommonFlagValues, stdout, stderr 
 		}
 		return 0
 	}
-	ctx, stopSignalHandler := installSyncCancelContext()
-	defer stopSignalHandler()
-
 	orchestrator := newSyncOrchestrator(runtime)
 	results, err := orchestrator.Sync(ctx, options)
 	if err != nil {

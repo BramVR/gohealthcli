@@ -89,9 +89,15 @@ var syncPlanOnlineChecksNotPerformed = []string{
 const syncPlanCommandHelp = "\n\n`--plan` resolves one Data Type's local Sync Run plan without making a Provider request, reading the Credential Store, refreshing a token, opening a writable Health Archive, migrating, fencing runs, advancing a Sync Cursor, or creating an Attachment sidecar. It reports the resolved range and source, endpoint, page policy, required scopes, sanitized first-request preview, conditional exercise TCX operation, and predicted effects of the future sync. Readiness covers local facts only: credential availability, Google Identity match, and Provider reachability remain explicitly unchecked. Locally blocked plans exit nonzero with blocker details. This slice intentionally rejects `--all` and multi-value `--types`; complete fan-out planning is separate work."
 
 func buildSyncPlan(ctx context.Context, options syncCommandOptions, runtime runtimeAdapters) syncPlanResult {
+	if err := ctx.Err(); err != nil {
+		return blockedSyncPlan(options, "planning_canceled", err)
+	}
 	runtime = runtime.withDefaults()
 	gate := syncPreflightGate{ctx: productionSyncPreflightContext(ctx, options, runtime)}
 	plan, err := gate.Validate(options)
+	if cancelErr := ctx.Err(); cancelErr != nil {
+		return blockedSyncPlan(options, "planning_canceled", cancelErr)
+	}
 	if err != nil {
 		return blockedSyncPlan(options, syncPlanBlockerCode(err), err)
 	}

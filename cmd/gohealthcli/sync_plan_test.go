@@ -332,6 +332,25 @@ func TestSyncPlanResolvesCursorWithoutArchiveMutation(t *testing.T) {
 	}
 }
 
+func TestBuildSyncPlanHonorsCanceledContextBeforeInspection(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	runtime := runtimeAdapters{
+		openSyncPlanningArchive: func(context.Context, string) (syncPlanningArchive, error) {
+			t.Fatal("canceled sync --plan inspected the Health Archive")
+			return nil, nil
+		},
+	}
+	result := buildSyncPlan(ctx, syncCommandOptions{
+		dataTypes: []string{"steps"},
+		from:      "2026-01-01T00:00:00Z",
+		to:        "2026-01-02T00:00:00Z",
+	}, runtime)
+	if result.Ready || result.Status != "plan_blocked" || len(result.Blockers) != 1 || result.Blockers[0].Code != "planning_canceled" {
+		t.Fatalf("canceled plan = %+v, want planning_canceled blocker", result)
+	}
+}
+
 func TestSyncPlanRejectsFanOutAndStatusConflicts(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
