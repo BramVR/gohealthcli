@@ -172,3 +172,19 @@ func TestCatalogVerifyRejectsJSONAndPlainTogether(t *testing.T) {
 		t.Errorf("stderr = %q", stderr.String())
 	}
 }
+
+func TestCatalogMissingActionPreservesGlobalJSONMode(t *testing.T) {
+	t.Parallel()
+
+	code, stdout, stderr := runCommand(t, "--json", "catalog")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	want := "{\"status\":\"unexpected_argument\",\"message\":\"expected action: verify\"}\n"
+	if stdout.String() != want {
+		t.Errorf("stdout = %q, want %q", stdout.String(), want)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", stderr.String())
+	}
+}

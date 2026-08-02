@@ -40,6 +40,7 @@ func runCatalogWithRuntime(args []string, globals CommonFlagValues, stdout, stde
 				Command: "catalog",
 				Status:  StatusUnexpectedArgument,
 				Message: "expected action: verify",
+				Mode:    commonOutputMode(*common),
 			}, stdout, stderr)
 		}
 		if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
