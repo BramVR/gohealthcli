@@ -123,6 +123,9 @@ func runSyncPlan(ctx context.Context, options syncCommandOptions, mode outputMod
 }
 
 func buildSyncPlanFanOut(ctx context.Context, options syncCommandOptions, runtime runtimeAdapters) syncPlanFanOutResult {
+	if err := ctx.Err(); err != nil {
+		return blockedSyncPlanFanOut("planning_canceled", err)
+	}
 	runtime = runtime.withDefaults()
 	if options.resolvedAt.IsZero() {
 		options.resolvedAt = runtime.now()
