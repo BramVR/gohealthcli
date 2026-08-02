@@ -37,7 +37,11 @@ filter fields; those facts are reported as unverifiable.
 Current explicit exceptions are:
 
 - Local Rollup-only: `calories-in-heart-rate-zone`, `total-calories`.
-- Upstream raw only: `basal-energy-burned`, `nutrition-log`.
+- Upstream raw only: `basal-energy-burned`, `food`,
+  `food-measurement-unit`, `nutrition-log`. Google classifies the two Food
+  records as Data Types in its [public Data Types catalog](https://developers.google.com/health/data-types)
+  even though their discovery descriptions call them details rather than
+  collections.
 
 An otherwise matching document therefore reports
 `verified_with_known_gaps`. Unexpected additions, removals, reference or shape

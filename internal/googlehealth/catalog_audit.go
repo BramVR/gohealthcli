@@ -69,15 +69,21 @@ type discoveredDataType struct {
 var discoveryDataTypeName = regexp.MustCompile("`([a-z0-9-]+)`[^.]*data type collection")
 
 var discoveryDataPointMetadataFields = map[string]bool{
-	"dataSource":          true,
-	"food":                true,
-	"foodMeasurementUnit": true,
-	"name":                true,
+	"dataSource": true,
+	"name":       true,
+}
+
+// The public Data Types catalog classifies these two non-temporal DataPoint
+// union members as independently addressable nutrition Data Types, even though
+// their discovery descriptions call them details rather than collections.
+var discoveryNonTemporalDataTypes = map[string]string{
+	"food":                "food",
+	"foodMeasurementUnit": "food-measurement-unit",
 }
 
 var catalogKnownGaps = []CatalogKnownGap{
 	{Kind: "local_rollup_only", DataTypes: []string{"calories-in-heart-rate-zone", "total-calories"}},
-	{Kind: "upstream_raw_only", DataTypes: []string{"basal-energy-burned", "nutrition-log"}},
+	{Kind: "upstream_raw_only", DataTypes: []string{"basal-energy-burned", "food", "food-measurement-unit", "nutrition-log"}},
 }
 
 var catalogUnverifiableFacts = []CatalogUnverifiableFact{
@@ -146,29 +152,40 @@ func discoveryDataTypes(document discoveryDocument) (map[string]discoveredDataTy
 	}
 	discovered := make(map[string]discoveredDataType)
 	for jsonField, property := range dataPoint.Properties {
-		match := discoveryDataTypeName.FindStringSubmatch(property.Description)
-		if len(match) != 2 {
+		dataType, nonTemporal := discoveryNonTemporalDataTypes[jsonField]
+		if !nonTemporal {
+			match := discoveryDataTypeName.FindStringSubmatch(property.Description)
+			if len(match) == 2 {
+				dataType = match[1]
+			}
+		}
+		if dataType == "" {
 			if discoveryDataPointMetadataFields[jsonField] {
 				continue
 			}
 			return nil, fmt.Errorf("unclassified DataPoint property %q", jsonField)
 		}
 		if property.Ref == "" {
-			return nil, fmt.Errorf("Data Type %q has no schema reference", match[1])
+			return nil, fmt.Errorf("Data Type %q has no schema reference", dataType)
 		}
 		schema, ok := document.Schemas[property.Ref]
 		if !ok {
-			return nil, fmt.Errorf("Data Type %q references absent schema", match[1])
+			return nil, fmt.Errorf("Data Type %q references absent schema", dataType)
 		}
-		recordKind, shape, err := discoveryRecordKind(schema)
-		if err != nil {
-			return nil, fmt.Errorf("Data Type %q: %w", match[1], err)
+		recordKind := "food"
+		shape := "non_temporal"
+		var err error
+		if !nonTemporal {
+			recordKind, shape, err = discoveryRecordKind(schema)
+			if err != nil {
+				return nil, fmt.Errorf("Data Type %q: %w", dataType, err)
+			}
 		}
-		if _, duplicate := discovered[match[1]]; duplicate {
-			return nil, fmt.Errorf("duplicate Data Type %q", match[1])
+		if _, duplicate := discovered[dataType]; duplicate {
+			return nil, fmt.Errorf("duplicate Data Type %q", dataType)
 		}
-		discovered[match[1]] = discoveredDataType{
-			DataType:   match[1],
+		discovered[dataType] = discoveredDataType{
+			DataType:   dataType,
 			JSONField:  jsonField,
 			RecordKind: recordKind,
 			SchemaRef:  property.Ref,
