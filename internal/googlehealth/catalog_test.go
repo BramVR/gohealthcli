@@ -12,6 +12,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		dataType              string
 		wantScopes            []string
 		wantListFilterField   string
+		wantLowerBoundOnly    bool
 		wantSyncDataPoint     bool
 		wantReconcile         bool
 		wantDailyRollup       bool
@@ -267,7 +268,8 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		{
 			dataType:             "electrocardiogram",
 			wantScopes:           []string{ScopeEcgReadonly},
-			wantListFilterField:  "electrocardiogram.interval.civil_start_time",
+			wantListFilterField:  "electrocardiogram.interval.start_time",
+			wantLowerBoundOnly:   true,
 			wantSyncDataPoint:    true,
 			wantParser:           "session",
 			wantRecordKind:       "session",
@@ -300,6 +302,9 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			}
 			if gotFilter != tt.wantListFilterField {
 				t.Fatalf("ListFilterField = %q, want %q", gotFilter, tt.wantListFilterField)
+			}
+			if hasList && list.LowerBoundOnly != tt.wantLowerBoundOnly {
+				t.Fatalf("List LowerBoundOnly = %v, want %v", list.LowerBoundOnly, tt.wantLowerBoundOnly)
 			}
 			gotSyncDataPoint := SupportsSyncDataPoints(tt.dataType)
 			if gotSyncDataPoint != tt.wantSyncDataPoint {

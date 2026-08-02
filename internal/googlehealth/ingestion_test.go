@@ -70,6 +70,55 @@ func TestGoogleHealthIngestionArchivesDataPointListFromProviderPages(t *testing.
 	}
 }
 
+func TestGoogleHealthIngestionAppliesElectrocardiogramExclusiveUpperBoundLocally(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"": `{
+			"dataPoints": [
+				{
+					"name": "users/me/dataTypes/electrocardiogram/dataPoints/at-upper-bound",
+					"electrocardiogram": {"interval": {
+						"startTime": "2026-01-02T00:00:00Z",
+						"endTime": "2026-01-02T00:00:00Z",
+						"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 2}},
+						"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}
+					}}
+				},
+				{
+					"name": "users/me/dataTypes/electrocardiogram/dataPoints/in-range",
+					"electrocardiogram": {"interval": {
+						"startTime": "2026-01-01T12:00:00Z",
+						"endTime": "2026-01-01T12:00:00Z",
+						"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+						"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 1}}
+					}}
+				}
+			]
+		}`,
+	})
+	ingestion := fakeGoogleHealthIngestion(provider)
+
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "electrocardiogram",
+		From:     "2026-01-01T00:00:00Z",
+		To:       "2026-01-02T00:00:00Z",
+	}))
+	if err != nil {
+		t.Fatalf("ingest electrocardiogram: %v", err)
+	}
+	if result.DataPointsSeen != 1 || result.DataPointsNew != 1 || result.DataPointsUpdated != 0 {
+		t.Fatalf("Data Point counts = (%d, %d, %d), want (1, 1, 0)", result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated)
+	}
+	if len(archive.dataPoints) != 1 || archive.dataPoints[0].UpstreamResourceName != "users/me/dataTypes/electrocardiogram/dataPoints/in-range" {
+		t.Fatalf("archived Data Points = %#v, want only in-range ECG", archive.dataPoints)
+	}
+	wantFilter := `electrocardiogram.interval.start_time >= "2026-01-01T00:00:00Z"`
+	if got := mustURLQuery(t, provider.requests[0].URL).Get("filter"); got != wantFilter {
+		t.Fatalf("Provider filter = %q, want lower bound %q", got, wantFilter)
+	}
+}
+
 func TestGoogleHealthIngestionChoosesReconcileFromSourceFamily(t *testing.T) {
 	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}

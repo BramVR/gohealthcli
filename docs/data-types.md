@@ -258,10 +258,14 @@ These are gated behind opt-in scopes the user grants via `gohealthcli connect --
 
 - **Sync key:** `electrocardiogram`
 - **Shape:** session
-- **Scope:** `electrocardiogram.readonly` (Tier 2, opt-in via `connect --add-scopes ecg`)
+- **Scope:** `ecg.readonly` (Tier 2, opt-in via `connect --add-scopes ecg`)
 - **Stored as:** `data_points`; normalized export `electrocardiogram-sessions`
 
 A user-triggered ECG measurement: start/end, classification (e.g. sinus rhythm, AFib), and the underlying samples preserved in raw JSON.
+Google's list endpoint accepts only a physical
+`electrocardiogram.interval.start_time >= ...` filter. Sync applies the
+requested exclusive `--to` boundary before archiving, so its normal `[from,to)`
+contract still holds.
 
 ### Irregular rhythm notification
 

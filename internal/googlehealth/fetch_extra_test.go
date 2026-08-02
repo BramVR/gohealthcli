@@ -62,6 +62,31 @@ func TestDailyNamedDataTypeListRequestIsNotRollup(t *testing.T) {
 	}
 }
 
+func TestBuildElectrocardiogramListRequestUsesCurrentProviderContract(t *testing.T) {
+	t.Parallel()
+	request, err := buildGoogleHealthDataTypeListRawRequest(
+		"electrocardiogram",
+		"2026-01-01T00:00:00Z",
+		"2026-01-02T00:00:00Z",
+		0,
+		"",
+	)
+	if err != nil {
+		t.Fatalf("build electrocardiogram list request: %v", err)
+	}
+	if !slices.Equal(request.RequiredScopes, []string{"https://www.googleapis.com/auth/googlehealth.ecg.readonly"}) {
+		t.Fatalf("required scopes = %v, want current ECG read scope", request.RequiredScopes)
+	}
+	parsedURL, err := url.Parse(request.URL)
+	if err != nil {
+		t.Fatalf("parse electrocardiogram URL: %v", err)
+	}
+	want := `electrocardiogram.interval.start_time >= "2026-01-01T00:00:00Z"`
+	if got := parsedURL.Query().Get("filter"); got != want {
+		t.Fatalf("filter = %q, want Provider-supported lower-bound filter %q", got, want)
+	}
+}
+
 // TestBuildGoogleHealthRawRequestEndpointsReadFromCatalog pins PRD #142
 // slice 7 AC: no `[]string{ScopeProfileReadonly}` inline
 // literal remains in BuildRawRequest. The only source of

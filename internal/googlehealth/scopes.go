@@ -22,7 +22,7 @@ const (
 // `users.pairedDevices.list` actually require — `profile.readonly`
 // alone returns HTTP 403 for those.
 const (
-	ScopeEcgReadonly      = "https://www.googleapis.com/auth/googlehealth.electrocardiogram.readonly"
+	ScopeEcgReadonly      = "https://www.googleapis.com/auth/googlehealth.ecg.readonly"
 	ScopeIrnReadonly      = "https://www.googleapis.com/auth/googlehealth.irn.readonly"
 	ScopeSettingsReadonly = "https://www.googleapis.com/auth/googlehealth.settings.readonly"
 )

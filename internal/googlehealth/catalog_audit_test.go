@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -318,6 +319,22 @@ func TestCatalogAuditStatusValues(t *testing.T) {
 	}
 	if got := catalogAuditStatus(nil, []CatalogDrift{{Kind: "test"}}); got != CatalogDriftDetected {
 		t.Errorf("drift status = %q, want %q", got, CatalogDriftDetected)
+	}
+}
+
+func TestCatalogAuditDoesNotSuppressElectrocardiogramContractAsKnownGap(t *testing.T) {
+	t.Parallel()
+	for _, gap := range catalogKnownGaps {
+		for _, dataType := range gap.DataTypes {
+			if dataType == "electrocardiogram" {
+				t.Fatalf("ECG contract mismatch was suppressed as known gap %q", gap.Kind)
+			}
+		}
+	}
+	if !slices.ContainsFunc(catalogUnverifiableFacts, func(fact CatalogUnverifiableFact) bool {
+		return fact.Fact == "filter_fields"
+	}) {
+		t.Fatal("catalog audit must continue to report general per-Data-Type filter fields as unverifiable")
 	}
 }
 
