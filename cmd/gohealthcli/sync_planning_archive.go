@@ -39,7 +39,7 @@ func (archive *sqliteSyncPlanningArchive) Close() error {
 func (archive *sqliteSyncPlanningArchive) CurrentConnection(ctx context.Context) (archived.Connection, error) {
 	connection, err := readCurrentConnection(ctx, archive.db)
 	if errors.Is(err, sql.ErrNoRows) {
-		return archived.Connection{}, errors.New("no Connection found; run `gohealthcli connect` first")
+		return archived.Connection{}, missingConnectionRemediation(err)
 	}
 	return connection, err
 }

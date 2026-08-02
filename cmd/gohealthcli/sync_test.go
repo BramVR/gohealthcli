@@ -55,6 +55,110 @@ func TestSyncRejectsInvalidSourceFamilyOptionsBeforeSetup(t *testing.T) {
 	}
 }
 
+func TestSyncInitialBackfillRemediationUsesFixedExplicitFrom(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	baseArgs := []string{"sync", "--config", configPath, "--db", archivePath, "--to", "2026-01-02T00:00:00Z"}
+
+	var jsonStdout, jsonStderr bytes.Buffer
+	if code := runWithRuntime(append(append([]string(nil), baseArgs...), "--json"), &jsonStdout, &jsonStderr, testRuntime); code != 1 {
+		t.Fatalf("JSON exit = %d, want 1", code)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(jsonStdout.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	remediation, ok := envelope["remediation"].([]any)
+	if !ok || len(remediation) != 1 || remediation[0] != "gohealthcli sync --from YYYY-MM-DD" {
+		t.Fatalf("JSON remediation = %#v, want fixed explicit --from retry", envelope["remediation"])
+	}
+
+	var plainStdout, plainStderr bytes.Buffer
+	if code := runWithRuntime(append(append([]string(nil), baseArgs...), "--plain"), &plainStdout, &plainStderr, testRuntime); code != 1 {
+		t.Fatalf("plain exit = %d, want 1", code)
+	}
+	if !strings.Contains(plainStdout.String(), "remediation.0: gohealthcli sync --from YYYY-MM-DD\n") {
+		t.Fatalf("plain remediation missing:\n%s", plainStdout.String())
+	}
+
+	var humanStdout, humanStderr bytes.Buffer
+	if code := runWithRuntime(baseArgs, &humanStdout, &humanStderr, testRuntime); code != 1 {
+		t.Fatalf("human exit = %d, want 1", code)
+	}
+	if strings.Contains(humanStdout.String()+humanStderr.String(), "YYYY-MM-DD") || strings.Contains(humanStdout.String()+humanStderr.String(), "remediation") {
+		t.Fatalf("human output changed with structured remediation: stdout=%q stderr=%q", humanStdout.String(), humanStderr.String())
+	}
+	assertArchiveTableCount(t, archivePath, "sync_runs", 0)
+}
+
+func TestSyncFanOutKeepsInitialBackfillRemediationOnMissingCursorChild(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
+	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{"": `{"dataPoints":[]}`})
+
+	archive, err := openHealthArchiveWriter(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := archive.CurrentConnection(context.Background())
+	if err != nil {
+		archive.Close()
+		t.Fatal(err)
+	}
+	if err := archive.CommitSyncCursor(context.Background(), syncCursorKey{
+		connectionID: connection.ID,
+		dataType:     "steps",
+		rollupKind:   syncCursorRollupKindNone,
+	}, syncRunOutcomeCompleted, "2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z"); err != nil {
+		archive.Close()
+		t.Fatal(err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runWithRuntime([]string{
+		"sync", "--config", configPath, "--db", archivePath,
+		"--types", "steps,heart-rate", "--to", "2026-01-02T00:00:00Z", "--json",
+	}, &stdout, &stderr, testRuntime)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+	var envelope struct {
+		Remediation []string `json:"remediation"`
+		Results     []struct {
+			Status      string   `json:"status"`
+			DataTypes   []string `json:"data_types"`
+			Remediation []string `json:"remediation"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if len(envelope.Remediation) != 0 || len(envelope.Results) != 2 {
+		t.Fatalf("fan-out envelope = %+v", envelope)
+	}
+	if envelope.Results[0].Status != "sync_completed" || len(envelope.Results[0].Remediation) != 0 {
+		t.Fatalf("steps result = %+v, want completed without remediation", envelope.Results[0])
+	}
+	if envelope.Results[1].Status != "sync_failed" || len(envelope.Results[1].Remediation) != 1 || envelope.Results[1].Remediation[0] != "gohealthcli sync --from YYYY-MM-DD" {
+		t.Fatalf("heart-rate result = %+v, want child-only Initial Backfill remediation", envelope.Results[1])
+	}
+	assertArchiveTableCount(t, archivePath, "sync_runs", 1)
+}
+
 func TestSyncArchivesStepsIdempotentlyAndTracksRevisions(t *testing.T) {
 	t.Parallel()
 	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
@@ -1492,6 +1596,9 @@ func TestSyncProviderFailureRecordsFailedRun(t *testing.T) {
 	if !strings.Contains(message, "HTTP 503") {
 		t.Fatalf("message = %q, want provider status", message)
 	}
+	if remediation, ok := got["remediation"]; ok {
+		t.Fatalf("remediation = %#v, want omitted for unknown Provider failure", remediation)
+	}
 	assertArchiveTableCount(t, archivePath, "data_points", 0)
 	assertSyncRun(t, archivePath, 1, "sync_failed", 0, 0, 0, "HTTP 503")
 	assertNoSecretWords(t, stdout.String()+stderr.String())
@@ -1538,6 +1645,10 @@ func TestSyncRefusesDifferentProviderIdentityBeforeArchiving(t *testing.T) {
 	assertJSONNumber(t, got, "sync_run_id", 1)
 	if message := got["message"].(string); !strings.Contains(message, "different Google Identity") {
 		t.Fatalf("message = %q, want identity mismatch", message)
+	}
+	remediation, ok := got["remediation"].([]any)
+	if !ok || len(remediation) != 2 || remediation[0] != "gohealthcli doctor --online" || remediation[1] != "gohealthcli init --help" {
+		t.Fatalf("remediation = %#v, want online diagnosis then archive guidance", got["remediation"])
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 0)
 	assertSyncRun(t, archivePath, 1, "sync_failed", 0, 0, 0, "different Google Identity")
@@ -1640,6 +1751,14 @@ func TestSyncFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), googlehealth.ScopeActivityReadonly) || !strings.Contains(stdout.String(), "connect") {
 		t.Fatalf("stdout = %q, want missing scope reconnect hint", stdout.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("decode JSON: %v", err)
+	}
+	remediation, ok := got["remediation"].([]any)
+	if !ok || len(remediation) != 2 || remediation[0] != "gohealthcli doctor" || remediation[1] != "gohealthcli connect" {
+		t.Fatalf("remediation = %#v, want diagnosis then reconnect", got["remediation"])
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 0)
 	assertSyncRun(t, archivePath, 1, "sync_failed", 0, 0, 0, googlehealth.ScopeActivityReadonly)

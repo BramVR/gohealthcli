@@ -15,6 +15,8 @@ BLOB columns in `--json` mode are wrapped in a `{"__blob_base64__": "<base64>"}`
 
 BLOB columns in `--plain` mode are emitted as a `<blob:base64><payload>` string so the `row.N.M:` line stays parseable; without the prefix today's path emits the raw bytes and prints `\ufffd` replacement characters wherever the bytes are not valid UTF-8.
 
+Reviewed Sync and Health Archive failures may add `remediation` to JSON results and zero-based `remediation.N` fields to explicit plain results; human/default output stays unchanged. An Initial Backfill uses the fixed `gohealthcli sync --from YYYY-MM-DD` template without copying invocation arguments. Fan-out keeps actions only on the affected child. Canceled, corrupt, invalid-query, and unknown failures omit remediation. Building or rendering these steps performs no Provider I/O, OAuth, or archive mutation and never interpolates error text.
+
 ## Usage
 
 ```

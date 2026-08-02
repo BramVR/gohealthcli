@@ -264,6 +264,8 @@ func commonOutputMode(common CommonFlagValues) outputMode {
 // Site sidebar and the auto-generated command-reference index.
 const authRemediationCommandHelp = "\n\nSetup and Connection failures may add `remediation` to JSON results and zero-based `remediation.N` fields to plain results; human output stays unchanged. Steps are Reporter-owned and diagnosis-first: `doctor` before `init` or `connect`, `doctor --online` before reconnecting or choosing a new archive, and missing-scope consent uses only sorted `--add-scopes` keywords from the public catalog. Building or rendering these steps never performs Provider I/O, starts OAuth, or interpolates error text."
 
+const syncArchiveRemediationCommandHelp = "\n\nReviewed Sync and Health Archive failures may add `remediation` to JSON results and zero-based `remediation.N` fields to explicit plain results; human/default output stays unchanged. An Initial Backfill uses the fixed `gohealthcli sync --from YYYY-MM-DD` template without copying invocation arguments. Fan-out keeps actions only on the affected child. Canceled, corrupt, invalid-query, and unknown failures omit remediation. Building or rendering these steps performs no Provider I/O, OAuth, or archive mutation and never interpolates error text."
+
 var commands = []commandDef{
 	{
 		Name:  "init",
@@ -537,6 +539,8 @@ var commands = []commandDef{
 func init() {
 	for i := range commands {
 		switch commands[i].Name {
+		case "sync", "status", "query":
+			commands[i].Long += syncArchiveRemediationCommandHelp
 		case "completion":
 			commands[i].Run = func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 				return runCompletionWithRegistry(

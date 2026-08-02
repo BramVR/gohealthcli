@@ -73,6 +73,12 @@ func TestSyncRunLifecycleStatusEnumOnEveryReachableReturn(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error on missing cursor + no --from")
 		}
+		if got := remediationFromError(err); len(got) != 1 || got[0] != "gohealthcli sync --from YYYY-MM-DD" {
+			t.Fatalf("remediation = %#v, want fixed explicit --from retry", got)
+		}
+		if len(result.Remediation) != 1 || result.Remediation[0] != "gohealthcli sync --from YYYY-MM-DD" {
+			t.Fatalf("result remediation = %#v, want fixed explicit --from retry", result.Remediation)
+		}
 		if !validEnum(result.Status) {
 			t.Errorf("Status = %q, want enum value", result.Status)
 		}
