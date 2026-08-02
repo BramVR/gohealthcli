@@ -1376,8 +1376,8 @@ func TestDoctorOnlineReportsRejectedConnectionTokenRemediation(t *testing.T) {
 	configPath, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
-		healthUserID:       "111111256096816351",
-		legacyFitbitUserID: "A1B2C3",
+		healthUserID:       "fixture-user",
+		legacyFitbitUserID: "fixture-legacy",
 	})
 	testRuntime := newDoctorOnlineFakeRuntime(t, fakeDoctorOnlineConfig{
 		refreshedAccessToken:    "refreshed-access-secret",
