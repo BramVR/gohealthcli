@@ -175,7 +175,11 @@ func discoveryDataTypes(document discoveryDocument) (map[string]discoveredDataTy
 		recordKind := "food"
 		shape := "non_temporal"
 		var err error
-		if !nonTemporal {
+		if nonTemporal {
+			if len(discoveryTemporalMarkers(schema)) != 0 {
+				return nil, fmt.Errorf("non-temporal Data Type %q has a temporal property", dataType)
+			}
+		} else {
 			recordKind, shape, err = discoveryRecordKind(schema)
 			if err != nil {
 				return nil, fmt.Errorf("Data Type %q: %w", dataType, err)
@@ -199,19 +203,39 @@ func discoveryDataTypes(document discoveryDocument) (map[string]discoveredDataTy
 }
 
 func discoveryRecordKind(schema discoverySchema) (string, string, error) {
-	if date, ok := schema.Properties["date"]; ok {
-		return "daily", discoveryPropertyShape("date", date), nil
+	markers := discoveryTemporalMarkers(schema)
+	if len(markers) != 1 {
+		return "", "", fmt.Errorf("schema has %d temporal properties; want exactly one", len(markers))
 	}
-	if sample, ok := schema.Properties["sampleTime"]; ok {
-		return "sample", discoveryPropertyShape("sampleTime", sample), nil
+	marker := markers[0]
+	recordKind := marker.recordKind
+	if marker.name == "interval" && marker.property.Ref == "SessionTimeInterval" {
+		recordKind = "session"
 	}
-	if interval, ok := schema.Properties["interval"]; ok {
-		if interval.Ref == "SessionTimeInterval" {
-			return "session", discoveryPropertyShape("interval", interval), nil
+	return recordKind, discoveryPropertyShape(marker.name, marker.property), nil
+}
+
+type discoveryTemporalMarker struct {
+	name       string
+	recordKind string
+	property   discoveryProperty
+}
+
+func discoveryTemporalMarkers(schema discoverySchema) []discoveryTemporalMarker {
+	markers := make([]discoveryTemporalMarker, 0, 3)
+	for _, marker := range []discoveryTemporalMarker{
+		{name: "date", recordKind: "daily"},
+		{name: "sampleTime", recordKind: "sample"},
+		{name: "interval", recordKind: "interval"},
+	} {
+		property, ok := schema.Properties[marker.name]
+		if !ok {
+			continue
 		}
-		return "interval", discoveryPropertyShape("interval", interval), nil
+		marker.property = property
+		markers = append(markers, marker)
 	}
-	return "", "", fmt.Errorf("schema has no date, sampleTime, or interval property")
+	return markers
 }
 
 func discoveryPropertyShape(name string, property discoveryProperty) string {

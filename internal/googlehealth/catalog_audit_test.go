@@ -41,6 +41,42 @@ func TestVerifyCatalogDiscoveryDetectsTemporalSchemaChange(t *testing.T) {
 	}
 }
 
+func TestVerifyCatalogDiscoveryRejectsTemporalFoodSchema(t *testing.T) {
+	t.Parallel()
+
+	document := loadCatalogDiscoveryFixture(t)
+	schemas := document["schemas"].(map[string]any)
+	food := schemas["Food"].(map[string]any)
+	food["properties"].(map[string]any)["interval"] = map[string]any{"$ref": "ObservationTimeInterval"}
+
+	result := VerifyCatalogDiscovery(marshalCatalogDiscovery(t, document), "file")
+	assertInvalidDiscoveryResult(t, result)
+}
+
+func TestVerifyCatalogDiscoveryRejectsMultipleTemporalMarkers(t *testing.T) {
+	t.Parallel()
+
+	document := loadCatalogDiscoveryFixture(t)
+	schemas := document["schemas"].(map[string]any)
+	dailyVO2Max := schemas["DailyVO2Max"].(map[string]any)
+	dailyVO2Max["properties"].(map[string]any)["interval"] = map[string]any{"$ref": "ObservationTimeInterval"}
+
+	result := VerifyCatalogDiscovery(marshalCatalogDiscovery(t, document), "file")
+	assertInvalidDiscoveryResult(t, result)
+}
+
+func assertInvalidDiscoveryResult(t *testing.T, result CatalogAuditResult) {
+	t.Helper()
+	want := CatalogAuditResult{
+		Status: CatalogDriftDetected,
+		Source: "file",
+		Drift:  []CatalogDrift{{Kind: "discovery_invalid"}},
+	}
+	if !reflect.DeepEqual(result, want) {
+		t.Errorf("result = %#v, want %#v", result, want)
+	}
+}
+
 func TestVerifyCatalogDiscoveryMutationDrift(t *testing.T) {
 	t.Parallel()
 
