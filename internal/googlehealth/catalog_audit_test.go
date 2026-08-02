@@ -276,6 +276,28 @@ func TestCompareCatalogDetectsStaleKnownGapDeclarations(t *testing.T) {
 	}
 }
 
+func TestCompareCatalogKnownGapOrderDoesNotChangeAudit(t *testing.T) {
+	t.Parallel()
+
+	document := loadCatalogDiscoveryDocument(t)
+	discovered, err := discoveryDataTypes(document)
+	if err != nil {
+		t.Fatalf("parse discovery fixture: %v", err)
+	}
+	reordered := []CatalogKnownGap{catalogKnownGaps[1], catalogKnownGaps[0]}
+
+	got := compareCatalogWithKnownGaps(
+		discovered,
+		discovered,
+		googleHealthDataTypes.entries,
+		googleHealthDataTypes.order,
+		reordered,
+	)
+	if len(got) != 0 {
+		t.Errorf("drift = %#v, want none", got)
+	}
+}
+
 func containsCatalogDrift(drift []CatalogDrift, want CatalogDrift) bool {
 	for _, item := range drift {
 		if item == want {

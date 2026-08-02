@@ -247,8 +247,17 @@ func compareCatalog(
 	localEntries map[string]googleHealthDataTypeCatalogEntry,
 	localOrder []string,
 ) []CatalogDrift {
-	localRollupOnly := stringSet(catalogKnownGaps[0].DataTypes)
-	upstreamRawOnly := stringSet(catalogKnownGaps[1].DataTypes)
+	return compareCatalogWithKnownGaps(discovered, baseline, localEntries, localOrder, catalogKnownGaps)
+}
+
+func compareCatalogWithKnownGaps(
+	discovered, baseline map[string]discoveredDataType,
+	localEntries map[string]googleHealthDataTypeCatalogEntry,
+	localOrder []string,
+	knownGaps []CatalogKnownGap,
+) []CatalogDrift {
+	localRollupOnly := knownGapDataTypes(knownGaps, "local_rollup_only")
+	upstreamRawOnly := knownGapDataTypes(knownGaps, "upstream_raw_only")
 	drift := make([]CatalogDrift, 0)
 	seen := make(map[string]bool)
 	for dataType := range localRollupOnly {
@@ -322,6 +331,15 @@ func compareCatalog(
 		return drift[i].Kind < drift[j].Kind
 	})
 	return drift
+}
+
+func knownGapDataTypes(knownGaps []CatalogKnownGap, kind string) map[string]bool {
+	for _, gap := range knownGaps {
+		if gap.Kind == kind {
+			return stringSet(gap.DataTypes)
+		}
+	}
+	return map[string]bool{}
 }
 
 func appendCatalogDrift(drift []CatalogDrift, seen map[string]bool, kind, dataType string) []CatalogDrift {
