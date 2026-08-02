@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -73,6 +74,7 @@ func runSyncWithRuntime(args []string, globals CommonFlagValues, stdout, stderr 
 	syncTimezone := flags.String("timezone", "", "IANA timezone for now, today, and yesterday (default UTC)")
 	syncRollup := flags.String("rollup", "", syncRollupUsage())
 	syncSourceFamily := flags.String("source-family", "", syncSourceFamilyUsage())
+	syncPlan := flags.Bool("plan", false, "print one Data Type's resolved Sync Run plan without Provider, credential, or archive write effects")
 	syncStatus := flags.Bool("status", false, "list recent Sync Runs from the local archive instead of syncing")
 	syncWindow := flags.String("window", "", "with --status: how far back to list finished Sync Runs (Go duration, default 15m, max 24h)")
 
@@ -128,6 +130,23 @@ func runSyncWithRuntime(args []string, globals CommonFlagValues, stdout, stderr 
 		timezone:     *syncTimezone,
 		rollup:       *syncRollup,
 		sourceFamily: *syncSourceFamily,
+	}
+	if *syncPlan {
+		if options.allTypes || len(options.dataTypes) != 1 {
+			result := blockedSyncPlan(options, "fan_out_not_supported", errors.New("sync --plan currently supports exactly one single Data Type; use one --types value or omit --types for steps"))
+			if writeErr := writeSyncPlanResult(result, mode, stdout); writeErr != nil {
+				return reportWriteFailure("sync", writeErr, mode, stdout, stderr)
+			}
+			return 1
+		}
+		result := buildSyncPlan(context.Background(), options, runtime)
+		if writeErr := writeSyncPlanResult(result, mode, stdout); writeErr != nil {
+			return reportWriteFailure("sync", writeErr, mode, stdout, stderr)
+		}
+		if !result.Ready {
+			return 1
+		}
+		return 0
 	}
 	ctx, stopSignalHandler := installSyncCancelContext()
 	defer stopSignalHandler()

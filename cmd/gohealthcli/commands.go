@@ -394,6 +394,7 @@ var commands = []commandDef{
 			flagSpec{Name: "timezone", Type: "string", Default: "", Usage: "IANA timezone for now, today, and yesterday (default UTC)", ValueCompletion: valueCompletionNone},
 			flagSpec{Name: "rollup", Type: "string", Default: "", Usage: syncRollupUsage(), ValueCompletion: valueCompletionRollup},
 			flagSpec{Name: "source-family", Type: "string", Default: "", Usage: syncSourceFamilyUsage(), ValueCompletion: valueCompletionSourceFamily},
+			flagSpec{Name: "plan", Type: "bool", Default: "false", Usage: "print one Data Type's resolved Sync Run plan without Provider, credential, or archive write effects"},
 			flagSpec{Name: "status", Type: "bool", Default: "false", Usage: "list recent Sync Runs from the local archive instead of syncing"},
 			flagSpec{Name: "window", Type: "string", Default: "", Usage: "with --status: how far back to list finished Sync Runs (Go duration, default 15m, max 24h)", ValueCompletion: valueCompletionNone},
 		),
@@ -552,7 +553,10 @@ var commands = []commandDef{
 func init() {
 	for i := range commands {
 		switch commands[i].Name {
-		case "sync", "status", "query":
+		case "sync":
+			commands[i].Long += syncPlanCommandHelp
+			commands[i].Long += syncArchiveRemediationCommandHelp
+		case "status", "query":
 			commands[i].Long += syncArchiveRemediationCommandHelp
 		case "completion":
 			commands[i].Run = func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {

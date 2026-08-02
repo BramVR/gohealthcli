@@ -45,11 +45,18 @@ Start without Provider I/O:
 gohealthcli doctor --plain --no-input
 gohealthcli status --json --no-input
 gohealthcli sync --status --window 2h --json --no-input
+gohealthcli sync --plan --types steps --from yesterday --to today --json --no-input
 ```
 
 Treat the status commands as local archive operations. They may mark an
 abandoned `sync_running` row failed when its heartbeat is stale; they never
 advance a Sync Cursor.
+
+Treat `sync --plan` as stricter inspection: one Data Type only, no Provider or
+Credential Store access, token refresh, archive write or migration, cursor
+advance, fencing, or sidecar creation. A ready plan proves local shape only;
+credential availability, Google Identity match, and Provider reachability stay
+explicitly unchecked.
 
 ### 3. Discover the live schema
 
