@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+var errHealthArchiveIdentityMismatch = errors.New("Health Archive already belongs to a different Google Identity; use a new archive path")
+
 type healthArchiveConnectionAPI interface {
 	Close() error
 	EnsureSameGoogleIdentity(ctx context.Context, healthUserID string) error
@@ -74,7 +76,7 @@ func ensureSameArchiveIdentity(ctx context.Context, db *sql.DB, healthUserID str
 			return err
 		}
 		if existing != healthUserID {
-			return errors.New("Health Archive already belongs to a different Google Identity; use a new archive path")
+			return errHealthArchiveIdentityMismatch
 		}
 	}
 	return rows.Err()

@@ -371,6 +371,14 @@ default human failure output is unchanged. Remediation comes only from typed,
 Reporter-owned recovery metadata; messages, Provider text, paths, identifiers,
 health data, SQL, and user input are never parsed into steps.
 
+Authentication commands use that same field on their result-specific JSON and
+plain failure shapes. Actions are diagnosis-first: `doctor` precedes `init`,
+`connect`, or a sorted allowlisted `connect --add-scopes ...` consent step;
+rejected or unhealthy tokens use `doctor --online` before reconnecting; and an
+identity mismatch points to `init --help` without inventing or exposing an
+archive path. Constructing or rendering remediation never performs Provider I/O
+or starts OAuth.
+
 A few subcommands deviate from the standard `--plain` / `--json`
 contract:
 

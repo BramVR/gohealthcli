@@ -55,6 +55,10 @@ func TestIdentitySnapshotCommandsReportUnavailableWithoutConnection(t *testing.T
 			}
 			assertJSONString(t, got, "status", tc.statusUnavailable)
 			assertJSONString(t, got, "message", "no Connection found; run `gohealthcli connect` first")
+			remediation, ok := got["remediation"].([]any)
+			if !ok || len(remediation) != 2 || remediation[0] != "gohealthcli doctor" || remediation[1] != "gohealthcli connect" {
+				t.Fatalf("remediation = %#v, want diagnosis then connect", got["remediation"])
+			}
 			if _, ok := got["connection_id"]; ok {
 				t.Fatalf("connection_id = %v, want omitted when no Connection exists", got["connection_id"])
 			}
@@ -123,6 +127,10 @@ func TestIdentitySnapshotCommandsReportFailedStatusOnConfigError(t *testing.T) {
 			message, ok := got["message"].(string)
 			if !ok || !strings.HasPrefix(message, "config check failed: ") {
 				t.Fatalf("message = %T(%v), want \"config check failed: \" prefix", got["message"], got["message"])
+			}
+			remediation, ok := got["remediation"].([]any)
+			if !ok || len(remediation) != 2 || remediation[0] != "gohealthcli doctor" || remediation[1] != "gohealthcli init" {
+				t.Fatalf("remediation = %#v, want diagnosis then setup", got["remediation"])
 			}
 		})
 	}

@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 )
 
 func TestRemediationErrorPreservesCauseAndNormalizesActions(t *testing.T) {
@@ -64,6 +67,49 @@ func TestReportFailureRemediationRejectsNonCatalogContent(t *testing.T) {
 	}
 	if stderr.String() != "" {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestAuthRemediationPreservesTypedCauses(t *testing.T) {
+	t.Parallel()
+	missing := missingConnectionRemediation(sql.ErrNoRows)
+	if !errors.Is(missing, sql.ErrNoRows) {
+		t.Fatal("missing Connection remediation lost sql.ErrNoRows")
+	}
+	if got := remediationFromError(missing); !reflect.DeepEqual(got, []string{"gohealthcli doctor", "gohealthcli connect"}) {
+		t.Fatalf("missing remediation = %#v", got)
+	}
+
+	httpCause := &googlehealth.HTTPError{StatusCode: 401, Endpoint: "identity"}
+	rejected := connectionFailureRemediation(googlehealth.NormalizeError(httpCause))
+	if !errors.Is(rejected, googlehealth.ErrUnauthorized) {
+		t.Fatal("rejected-token remediation lost ErrUnauthorized")
+	}
+	var gotHTTP *googlehealth.HTTPError
+	if !errors.As(rejected, &gotHTTP) || gotHTTP != httpCause {
+		t.Fatal("rejected-token remediation lost typed HTTPError")
+	}
+	if got := remediationFromError(rejected); !reflect.DeepEqual(got, []string{"gohealthcli doctor --online", "gohealthcli connect"}) {
+		t.Fatalf("rejected-token remediation = %#v", got)
+	}
+
+	messageOnly := connectionFailureRemediation(errors.New(googlehealth.ErrUnauthorized.Error()))
+	if got := remediationFromError(messageOnly); len(got) != 0 {
+		t.Fatalf("message-only error remediation = %#v, want none", got)
+	}
+}
+
+func TestScopeRemediationAllowsOnlySortedCatalogKeywords(t *testing.T) {
+	t.Parallel()
+	cause := withRemediation(errors.New("safe"),
+		remediationAction("gohealthcli connect --add-scopes settings,ecg"),
+		remediationAction("gohealthcli connect --add-scopes ecg,unknown"),
+		remediationAction("gohealthcli connect --add-scopes ecg,settings"),
+		remediationAction("gohealthcli connect --add-scopes ecg,ecg"),
+	)
+	want := []string{"gohealthcli connect --add-scopes ecg,settings"}
+	if got := remediationFromError(cause); !reflect.DeepEqual(got, want) {
+		t.Fatalf("remediation = %#v, want %#v", got, want)
 	}
 }
 

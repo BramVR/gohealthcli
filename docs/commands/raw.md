@@ -11,6 +11,8 @@ First positional argument is `endpoint <name>` (for example `endpoint getIdentit
 
 Failures route through the unified Failure Reporter: a Provider outage (network failure or non-auth upstream HTTP error) reports status `provider_unreachable`, while other operation errors — including an upstream HTTP 401 auth rejection, which carries the `Google Health rejected stored Connection token` message — report `operation_failed`.
 
+Setup and Connection failures may add `remediation` to JSON results and zero-based `remediation.N` fields to plain results; human output stays unchanged. Steps are Reporter-owned and diagnosis-first: `doctor` before `init` or `connect`, `doctor --online` before reconnecting or choosing a new archive, and missing-scope consent uses only sorted `--add-scopes` keywords from the public catalog. Building or rendering these steps never performs Provider I/O, starts OAuth, or interpolates error text.
+
 ## Usage
 
 ```

@@ -80,9 +80,10 @@ type identitySnapshotCommandSpec[R, P any] struct {
 	// status / setStatus / setMessage are the engine's window into
 	// the per-command result struct, keeping R free of interface
 	// obligations.
-	status     func(result *R) string
-	setStatus  func(result *R, status string)
-	setMessage func(result *R, message string)
+	status         func(result *R) string
+	setStatus      func(result *R, status string)
+	setMessage     func(result *R, message string)
+	setRemediation func(result *R, remediation []string)
 
 	// writeResult renders the result in the requested output mode.
 	writeResult func(result R, mode outputMode, stdout io.Writer) error
@@ -173,6 +174,7 @@ func runIdentitySnapshotCommand[R, P any](spec identitySnapshotCommandSpec[R, P]
 			spec.setStatus(&result, spec.statusFailed)
 		}
 		spec.setMessage(&result, err.Error())
+		spec.setRemediation(&result, remediationFromError(err))
 		if writeErr := spec.writeResult(result, mode, stdout); writeErr != nil {
 			return reportWriteFailure(spec.command, writeErr, mode, stdout, stderr)
 		}
@@ -196,11 +198,11 @@ func identitySnapshotSetupWithRuntime[R, P any](spec identitySnapshotCommandSpec
 	runtime = runtime.withDefaults()
 	config, err := inspectIdentityConfig(configPath, archivePath)
 	if err != nil {
-		return result, fmt.Errorf("config check failed: %w", err)
+		return result, setupFailureRemediation(err, fmt.Sprintf("config check failed: %v", err))
 	}
 	archive, err := openHealthArchiveConnectionAPI(archivePath)
 	if err != nil {
-		return result, err
+		return result, connectionFailureRemediation(err)
 	}
 	// archive is closed either by writeIdentitySnapshotHandoff (success
 	// path) or by this deferred guard (any error before handoff, and
@@ -215,9 +217,9 @@ func identitySnapshotSetupWithRuntime[R, P any](spec identitySnapshotCommandSpec
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			spec.setStatus(&result, spec.statusUnavailable)
-			return result, errors.New("no Connection found; run `gohealthcli connect` first")
+			return result, missingConnectionRemediation(err)
 		}
-		return result, err
+		return result, connectionFailureRemediation(err)
 	}
 	result = spec.seedResult(connection)
 	// The deepened currentConnectionAccess pattern (PRD #142): wire
@@ -238,7 +240,7 @@ func identitySnapshotSetupWithRuntime[R, P any](spec identitySnapshotCommandSpec
 		if errors.Is(err, errCurrentConnectionScopeMissing) {
 			spec.setStatus(&result, spec.statusScopeMissing)
 		}
-		return result, err
+		return result, connectionFailureRemediation(err)
 	}
 	engine := identitySnapshotCommandContext{
 		archivePath:      archivePath,
@@ -249,7 +251,7 @@ func identitySnapshotSetupWithRuntime[R, P any](spec identitySnapshotCommandSpec
 		accessToken:      accessToken,
 	}
 	if spec.act != nil {
-		return result, spec.act(engine, &result)
+		return result, connectionFailureRemediation(spec.act(engine, &result))
 	}
 	payload, err := spec.fetchPayload(runtime, accessToken)
 	if err != nil {
@@ -259,14 +261,14 @@ func identitySnapshotSetupWithRuntime[R, P any](spec identitySnapshotCommandSpec
 		if googlehealth.IsUnreachableError(err) {
 			spec.setStatus(&result, "provider_unreachable")
 		}
-		return result, googlehealth.NormalizeError(err)
+		return result, connectionFailureRemediation(googlehealth.NormalizeError(err))
 	}
 	if spec.decorate != nil {
 		spec.decorate(&result, payload)
 	}
 	if spec.verifyPayload != nil {
 		if err := spec.verifyPayload(engine, &result, payload); err != nil {
-			return result, err
+			return result, connectionFailureRemediation(err)
 		}
 	}
 	fetchedAt := runtime.now().UTC().Format(time.RFC3339)

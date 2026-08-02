@@ -26,6 +26,7 @@ type devicesResult struct {
 	Devices            []devicesResultDevice `json:"devices,omitempty"`
 	FetchedAt          string                `json:"fetched_at,omitempty"`
 	Message            string                `json:"message"`
+	Remediation        []string              `json:"remediation,omitempty"`
 }
 
 // devicesResultDevice mirrors the columns the paired_devices Normalized
@@ -75,11 +76,12 @@ var devicesSnapshotCommand = identitySnapshotCommandSpec[devicesResult, googlePa
 			GoogleHealthUserID: connection.GoogleHealthUserID,
 		}
 	},
-	status:       func(result *devicesResult) string { return result.Status },
-	setStatus:    func(result *devicesResult, status string) { result.Status = status },
-	setMessage:   func(result *devicesResult, message string) { result.Message = message },
-	writeResult:  writeDevicesResult,
-	snapshotKind: snapshotKindPairedDevices,
+	status:         func(result *devicesResult) string { return result.Status },
+	setStatus:      func(result *devicesResult, status string) { result.Status = status },
+	setMessage:     func(result *devicesResult, message string) { result.Message = message },
+	setRemediation: func(result *devicesResult, remediation []string) { result.Remediation = remediation },
+	writeResult:    writeDevicesResult,
+	snapshotKind:   snapshotKindPairedDevices,
 	fetchPayload: func(runtime runtimeAdapters, accessToken string) (googlePairedDevices, error) {
 		return runtime.fetchPairedDevices(accessToken)
 	},
@@ -188,8 +190,10 @@ func writeDevicesResult(result devicesResult, mode outputMode, stdout io.Writer)
 				return err
 			}
 		}
-		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
-		return err
+		if _, err := fmt.Fprintf(stdout, "message: %s\n", result.Message); err != nil {
+			return err
+		}
+		return writePlainRemediation(stdout, result.Remediation)
 	}
 	if _, err := fmt.Fprintf(stdout, "Paired Devices: %s\n", result.Status); err != nil {
 		return err

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/BramVR/gohealthcli/internal/googlehealth"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -104,6 +105,10 @@ func TestSettingsCommandFailsFastWhenScopeMissing(t *testing.T) {
 		wantHint := "--add-scopes " + strings.Join(keywords, ",")
 		if !strings.Contains(result.Message, wantHint) {
 			t.Fatalf("result.Message = %q, want it to name %q", result.Message, wantHint)
+		}
+		wantRemediation := []string{"gohealthcli doctor", "gohealthcli connect --add-scopes " + strings.Join(keywords, ",")}
+		if !slices.Equal(result.Remediation, wantRemediation) {
+			t.Fatalf("result.Remediation = %#v, want %#v", result.Remediation, wantRemediation)
 		}
 	}
 }

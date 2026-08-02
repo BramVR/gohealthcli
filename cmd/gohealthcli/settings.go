@@ -17,13 +17,14 @@ type googleSettings struct {
 }
 
 type settingsResult struct {
-	Status             string `json:"status"`
-	ConnectionID       string `json:"connection_id,omitempty"`
-	ProviderName       string `json:"provider_name,omitempty"`
-	GoogleHealthUserID string `json:"google_health_user_id,omitempty"`
-	SnapshotID         int64  `json:"snapshot_id,omitempty"`
-	FetchedAt          string `json:"fetched_at,omitempty"`
-	Message            string `json:"message"`
+	Status             string   `json:"status"`
+	ConnectionID       string   `json:"connection_id,omitempty"`
+	ProviderName       string   `json:"provider_name,omitempty"`
+	GoogleHealthUserID string   `json:"google_health_user_id,omitempty"`
+	SnapshotID         int64    `json:"snapshot_id,omitempty"`
+	FetchedAt          string   `json:"fetched_at,omitempty"`
+	Message            string   `json:"message"`
+	Remediation        []string `json:"remediation,omitempty"`
 }
 
 // settingsSnapshotCommand is settings' Identity Snapshot engine spec
@@ -56,11 +57,12 @@ var settingsSnapshotCommand = identitySnapshotCommandSpec[settingsResult, google
 			GoogleHealthUserID: connection.GoogleHealthUserID,
 		}
 	},
-	status:       func(result *settingsResult) string { return result.Status },
-	setStatus:    func(result *settingsResult, status string) { result.Status = status },
-	setMessage:   func(result *settingsResult, message string) { result.Message = message },
-	writeResult:  writeSettingsResult,
-	snapshotKind: snapshotKindSettings,
+	status:         func(result *settingsResult) string { return result.Status },
+	setStatus:      func(result *settingsResult, status string) { result.Status = status },
+	setMessage:     func(result *settingsResult, message string) { result.Message = message },
+	setRemediation: func(result *settingsResult, remediation []string) { result.Remediation = remediation },
+	writeResult:    writeSettingsResult,
+	snapshotKind:   snapshotKindSettings,
 	fetchPayload: func(runtime runtimeAdapters, accessToken string) (googleSettings, error) {
 		return runtime.fetchSettings(accessToken)
 	},
@@ -106,8 +108,10 @@ func writeSettingsResult(result settingsResult, mode outputMode, stdout io.Write
 				return err
 			}
 		}
-		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
-		return err
+		if _, err := fmt.Fprintf(stdout, "message: %s\n", result.Message); err != nil {
+			return err
+		}
+		return writePlainRemediation(stdout, result.Remediation)
 	}
 	if _, err := fmt.Fprintf(stdout, "Settings: %s\n", result.Status); err != nil {
 		return err

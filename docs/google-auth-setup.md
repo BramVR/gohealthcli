@@ -150,6 +150,15 @@ Run that exact line to extend the grant — `include_granted_scopes=true`
 preserves the base set, so no second base-set browser sign-in is
 needed.
 
+In JSON mode, setup and Connection failures may also include an ordered
+`remediation` array; plain mode emits the same commands as zero-based
+`remediation.N` fields. Diagnose before changing state: run `doctor` before
+`init`, `connect`, or the emitted sorted `connect --add-scopes ...` command;
+token rejection uses `doctor --online` before reconnecting. Identity mismatch
+guidance uses `init --help`, leaving the alternate archive path as an explicit
+user choice. Human output remains unchanged, and remediation rendering itself
+never contacts Google or starts consent.
+
 ## Tier 2 Opt-in Scopes (ECG + IRN)
 
 After enabling `electrocardiogram.readonly` and `irn.readonly` in

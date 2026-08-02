@@ -259,9 +259,12 @@ func requireConnectionScopes(metadata string, requiredScopes []string) error {
 			// Every missing scope is an opt-in Tier 2 scope — point
 			// the user at the lightweight `connect --add-scopes` flow
 			// rather than re-running the full base-set connect.
-			return fmt.Errorf("%w %s; run `gohealthcli connect --add-scopes %s`", errCurrentConnectionScopeMissing, missing[0], strings.Join(keywords, ","))
+			action := remediationAction("gohealthcli connect --add-scopes " + strings.Join(keywords, ","))
+			cause := fmt.Errorf("%w %s; run `gohealthcli connect --add-scopes %s`", errCurrentConnectionScopeMissing, missing[0], strings.Join(keywords, ","))
+			return withRemediation(cause, remediationRunDoctor, action)
 		}
-		return fmt.Errorf("%w %s; run `gohealthcli connect` again", errCurrentConnectionScopeMissing, missing[0])
+		cause := fmt.Errorf("%w %s; run `gohealthcli connect` again", errCurrentConnectionScopeMissing, missing[0])
+		return withRemediation(cause, remediationRunDoctor, remediationReconnect)
 	}
 	return nil
 }

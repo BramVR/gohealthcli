@@ -16,13 +16,14 @@ type googleIRNProfile struct {
 }
 
 type irnProfileResult struct {
-	Status             string `json:"status"`
-	ConnectionID       string `json:"connection_id,omitempty"`
-	ProviderName       string `json:"provider_name,omitempty"`
-	GoogleHealthUserID string `json:"google_health_user_id,omitempty"`
-	SnapshotID         int64  `json:"snapshot_id,omitempty"`
-	FetchedAt          string `json:"fetched_at,omitempty"`
-	Message            string `json:"message"`
+	Status             string   `json:"status"`
+	ConnectionID       string   `json:"connection_id,omitempty"`
+	ProviderName       string   `json:"provider_name,omitempty"`
+	GoogleHealthUserID string   `json:"google_health_user_id,omitempty"`
+	SnapshotID         int64    `json:"snapshot_id,omitempty"`
+	FetchedAt          string   `json:"fetched_at,omitempty"`
+	Message            string   `json:"message"`
+	Remediation        []string `json:"remediation,omitempty"`
 }
 
 // irnProfileSnapshotCommand is irn-profile's Identity Snapshot engine
@@ -55,11 +56,12 @@ var irnProfileSnapshotCommand = identitySnapshotCommandSpec[irnProfileResult, go
 			GoogleHealthUserID: connection.GoogleHealthUserID,
 		}
 	},
-	status:       func(result *irnProfileResult) string { return result.Status },
-	setStatus:    func(result *irnProfileResult, status string) { result.Status = status },
-	setMessage:   func(result *irnProfileResult, message string) { result.Message = message },
-	writeResult:  writeIRNProfileResult,
-	snapshotKind: snapshotKindIRNProfile,
+	status:         func(result *irnProfileResult) string { return result.Status },
+	setStatus:      func(result *irnProfileResult, status string) { result.Status = status },
+	setMessage:     func(result *irnProfileResult, message string) { result.Message = message },
+	setRemediation: func(result *irnProfileResult, remediation []string) { result.Remediation = remediation },
+	writeResult:    writeIRNProfileResult,
+	snapshotKind:   snapshotKindIRNProfile,
 	fetchPayload: func(runtime runtimeAdapters, accessToken string) (googleIRNProfile, error) {
 		return runtime.fetchIRNProfile(accessToken)
 	},
@@ -114,8 +116,10 @@ func writeIRNProfileResult(result irnProfileResult, mode outputMode, stdout io.W
 				return err
 			}
 		}
-		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
-		return err
+		if _, err := fmt.Fprintf(stdout, "message: %s\n", result.Message); err != nil {
+			return err
+		}
+		return writePlainRemediation(stdout, result.Remediation)
 	}
 	if _, err := fmt.Fprintf(stdout, "IRN Profile: %s\n", result.Status); err != nil {
 		return err

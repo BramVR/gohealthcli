@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -230,4 +231,21 @@ func TestRawDataTypeFailsBeforeProviderWhenScopeMissing(t *testing.T) {
 		t.Fatalf("stderr = %q, want missing scope reconnect hint", stderr.String())
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
+
+	stdout.Reset()
+	stderr.Reset()
+	code = runWithRuntime([]string{"--json", "raw", "data-type", "heart-rate", "--from", "2026-01-01", "--config", configPath, "--db", archivePath}, stdout, stderr, testRuntime)
+	if code != 1 {
+		t.Fatalf("raw --json exit code = %d, want 1", code)
+	}
+	var failure failureJSONEnvelope
+	if err := json.Unmarshal(stdout.Bytes(), &failure); err != nil {
+		t.Fatalf("decode raw failure: %v; stderr=%q", err, stderr.String())
+	}
+	if !slices.Equal(failure.Remediation, []string{"gohealthcli doctor", "gohealthcli connect"}) {
+		t.Fatalf("remediation = %#v, want diagnosis then reconnect", failure.Remediation)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("raw --json stderr = %q, want empty", stderr.String())
+	}
 }
