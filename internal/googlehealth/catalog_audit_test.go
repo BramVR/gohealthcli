@@ -190,6 +190,65 @@ func TestCompareCatalogDetectsOrdinaryTypeMissingLocally(t *testing.T) {
 	}
 }
 
+func TestCompareCatalogDetectsStaleKnownGapDeclarations(t *testing.T) {
+	t.Parallel()
+
+	document := loadCatalogDiscoveryDocument(t)
+	discovered, err := discoveryDataTypes(document)
+	if err != nil {
+		t.Fatalf("parse discovery fixture: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(map[string]googleHealthDataTypeCatalogEntry)
+		want   CatalogDrift
+	}{
+		{
+			name: "declared local Rollup-only type absent locally",
+			mutate: func(local map[string]googleHealthDataTypeCatalogEntry) {
+				delete(local, "total-calories")
+			},
+			want: CatalogDrift{Kind: "known_gap_stale", DataType: "total-calories"},
+		},
+		{
+			name: "declared upstream-only raw type now local",
+			mutate: func(local map[string]googleHealthDataTypeCatalogEntry) {
+				local["nutrition-log"] = googleHealthDataTypeCatalogEntry{
+					DataType:   "nutrition-log",
+					JSONField:  "nutritionLog",
+					RecordKind: "session",
+				}
+			},
+			want: CatalogDrift{Kind: "known_gap_stale", DataType: "nutrition-log"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			local := make(map[string]googleHealthDataTypeCatalogEntry, len(googleHealthDataTypes.entries))
+			for dataType, entry := range googleHealthDataTypes.entries {
+				local[dataType] = entry
+			}
+			test.mutate(local)
+			drift := compareCatalog(discovered, discovered, local, googleHealthDataTypes.order)
+			if !containsCatalogDrift(drift, test.want) {
+				t.Errorf("drift = %#v, want it to contain %#v", drift, test.want)
+			}
+		})
+	}
+}
+
+func containsCatalogDrift(drift []CatalogDrift, want CatalogDrift) bool {
+	for _, item := range drift {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCatalogAuditStatusValues(t *testing.T) {
 	t.Parallel()
 

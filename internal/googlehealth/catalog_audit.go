@@ -210,6 +210,20 @@ func compareCatalog(
 	upstreamRawOnly := stringSet(catalogKnownGaps[1].DataTypes)
 	drift := make([]CatalogDrift, 0)
 	seen := make(map[string]bool)
+	for dataType := range localRollupOnly {
+		_, local := localEntries[dataType]
+		_, upstreamRaw := discovered[dataType]
+		if !local || upstreamRaw {
+			drift = appendCatalogDrift(drift, seen, "known_gap_stale", dataType)
+		}
+	}
+	for dataType := range upstreamRawOnly {
+		_, local := localEntries[dataType]
+		_, upstreamRaw := discovered[dataType]
+		if local || !upstreamRaw {
+			drift = appendCatalogDrift(drift, seen, "known_gap_stale", dataType)
+		}
+	}
 	for dataType, expected := range baseline {
 		if _, local := localEntries[dataType]; !local && !upstreamRawOnly[dataType] {
 			drift = appendCatalogDrift(drift, seen, "local_raw_missing", dataType)
