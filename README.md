@@ -363,6 +363,14 @@ exclusive`"). The check fires for `--version` too, so
 `gohealthcli --plain --json --version` is rejected before any output is
 written.
 
+Failure Reporter JSON keeps the stable `status` and `message` fields and may
+add `remediation`, an ordered array of at most three safe recovery commands.
+Plain output emits the same steps as zero-based `remediation.N` fields. The
+field or lines are absent when no structured remediation is available, and
+default human failure output is unchanged. Remediation comes only from typed,
+Reporter-owned recovery metadata; messages, Provider text, paths, identifiers,
+health data, SQL, and user input are never parsed into steps.
+
 A few subcommands deviate from the standard `--plain` / `--json`
 contract:
 

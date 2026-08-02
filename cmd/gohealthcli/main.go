@@ -140,10 +140,12 @@ func runWithRuntime(args []string, stdout, stderr io.Writer, runtime runtimeAdap
 		target := flags.Arg(1)
 		def, ok := lookupCommand(target)
 		if !ok {
+			cause := unknownCommandError(target)
 			return ReportFailure(FailureReport{
 				Status:  StatusFlagInvalid,
-				Message: fmt.Sprintf("unknown command: %s", target),
+				Message: cause.Error(),
 				Mode:    globalMode,
+				Cause:   cause,
 			}, stdout, stderr)
 		}
 		// Print the registry Long prose, then re-dispatch through the runtime
@@ -217,10 +219,12 @@ func dispatchCommand(cmd commandDef, args []string, common CommonFlagValues, std
 // default and --plain modes the hint lines stay so terminal users
 // still get the discoverability nudge the slice-3 AC requires.
 func runUnknownCommand(typo string, mode outputMode, stdout, stderr io.Writer) int {
+	cause := unknownCommandError(typo)
 	exit := ReportFailure(FailureReport{
 		Status:  StatusFlagInvalid,
-		Message: fmt.Sprintf("unknown command: %s", typo),
+		Message: cause.Error(),
 		Mode:    mode,
+		Cause:   cause,
 	}, stdout, stderr)
 	if mode.json {
 		return exit

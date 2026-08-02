@@ -2,9 +2,157 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestRemediationErrorPreservesCauseAndNormalizesActions(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("root cause")
+	wrapped := fmt.Errorf("outer context: %w", withRemediation(cause,
+		remediationAction("  gohealthcli\t--help\n"),
+		remediationShowHelp,
+		remediationAction("gohealthcli doctor"),
+		remediationAction("gohealthcli connect"),
+		remediationAction("gohealthcli status"),
+		remediationAction("SELECT * FROM health_data"),
+	))
+
+	if !errors.Is(wrapped, cause) {
+		t.Fatalf("errors.Is(wrapped, cause) = false")
+	}
+	var carrier *remediationError
+	if !errors.As(wrapped, &carrier) {
+		t.Fatalf("errors.As(wrapped, *remediationError) = false")
+	}
+	want := []string{"gohealthcli --help", "gohealthcli doctor", "gohealthcli connect"}
+	if got := remediationFromError(wrapped); !reflect.DeepEqual(got, want) {
+		t.Fatalf("remediation = %#v, want %#v", got, want)
+	}
+}
+
+func TestReportFailureRemediationRejectsNonCatalogContent(t *testing.T) {
+	t.Parallel()
+	cause := withRemediation(errors.New("safe message"),
+		remediationAction("token ya29.secret"),
+		remediationAction("authorization_code=secret-code"),
+		remediationAction("Google Identity 123456789"),
+		remediationAction("open /Users/person/private/archive.sqlite"),
+		remediationAction("heart-rate: 72"),
+		remediationAction("SELECT * FROM data_points"),
+		remediationAction("Provider response: raw body"),
+		remediationAction("repeat unexpected-positional"),
+		remediationShowHelp,
+	)
+	var stdout, stderr bytes.Buffer
+	code := ReportFailure(FailureReport{
+		Status:  StatusFlagInvalid,
+		Message: "safe message",
+		Mode:    outputMode{json: true},
+		Cause:   cause,
+	}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	want := `{"status":"flag_invalid","message":"safe message","remediation":["gohealthcli --help"]}` + "\n"
+	if stdout.String() != want {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestReportFailureDoesNotInferRemediationFromMessage(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	code := ReportFailure(FailureReport{
+		Status:  StatusFlagInvalid,
+		Message: "run gohealthcli --help",
+		Mode:    outputMode{json: true},
+	}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	want := `{"status":"flag_invalid","message":"run gohealthcli --help"}` + "\n"
+	if stdout.String() != want {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestReportFailureStructuredRemediationParity(t *testing.T) {
+	t.Parallel()
+	cause := withRemediation(errors.New("boom"), remediationRunDoctor, remediationReconnect, remediationStatus)
+	for _, testCase := range []struct {
+		name       string
+		mode       outputMode
+		wantStdout string
+		wantStderr string
+	}{
+		{
+			name:       "json",
+			mode:       outputMode{json: true},
+			wantStdout: `{"status":"operation_failed","message":"boom","remediation":["gohealthcli doctor","gohealthcli connect","gohealthcli status"]}` + "\n",
+		},
+		{
+			name:       "plain",
+			mode:       outputMode{plain: true},
+			wantStdout: "status: operation_failed\nmessage: boom\nremediation.0: gohealthcli doctor\nremediation.1: gohealthcli connect\nremediation.2: gohealthcli status\n",
+			wantStderr: "sync: boom\n",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := ReportFailure(FailureReport{
+				Command: "sync",
+				Status:  StatusOperationFailed,
+				Message: "boom",
+				Mode:    testCase.mode,
+				Cause:   cause,
+			}, &stdout, &stderr)
+			if code != 1 {
+				t.Fatalf("exit code = %d, want 1", code)
+			}
+			if stdout.String() != testCase.wantStdout {
+				t.Fatalf("stdout = %q, want %q", stdout.String(), testCase.wantStdout)
+			}
+			if stderr.String() != testCase.wantStderr {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), testCase.wantStderr)
+			}
+		})
+	}
+}
+
+func TestReportFailureOmitsEmptyRemediation(t *testing.T) {
+	t.Parallel()
+	cause := withRemediation(errors.New("boom"), remediationAction("unsafe user-provided step"))
+	var stdout, stderr bytes.Buffer
+	code := ReportFailure(FailureReport{
+		Status:  StatusOperationFailed,
+		Message: "boom",
+		Mode:    outputMode{json: true},
+		Cause:   cause,
+	}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	want := `{"status":"operation_failed","message":"boom"}` + "\n"
+	if stdout.String() != want {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
 
 // TestReportFailureDefaultModeMatchesLegacyShape locks the byte-for-byte
 // shape the unified Failure Reporter emits in the no-flag (default) mode:
