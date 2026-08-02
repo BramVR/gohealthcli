@@ -13,7 +13,7 @@ Also reports Tier 2 coverage: `electrocardiogram_event_count` and `irregular_rhy
 
 `status` does no provider I/O — it reads only the local Health Archive. On entry it fences abandoned Sync Runs: any `sync_running` row whose heartbeat is older than 5 minutes is flipped to `sync_failed` with `error_summary` `abandoned (no heartbeat for 5m)` (see `sync --status` for the full fencing rule), so the summary never reports a killed process as still running.
 
-Reviewed Sync and Health Archive failures may add `remediation` to JSON results and zero-based `remediation.N` fields to explicit plain results; human/default output stays unchanged. An Initial Backfill uses the fixed `gohealthcli sync --from YYYY-MM-DD` template without copying invocation arguments. Fan-out keeps actions only on the affected child. Canceled, corrupt, and unknown failures omit remediation. Building or rendering these steps performs no Provider I/O, OAuth, or archive mutation and never interpolates error text.
+Reviewed Sync and Health Archive failures may add `remediation` to JSON results and zero-based `remediation.N` fields to explicit plain results; human/default output stays unchanged. An Initial Backfill uses the fixed `gohealthcli sync --from YYYY-MM-DD` template without copying invocation arguments. Fan-out keeps actions only on the affected child. Canceled, corrupt, invalid-query, and unknown failures omit remediation. Building or rendering these steps performs no Provider I/O, OAuth, or archive mutation and never interpolates error text.
 
 ## Flags
 

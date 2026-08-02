@@ -44,7 +44,7 @@ Provider payloads, SQL, health data, and user input are never converted into
 actions. Building or rendering actions performs no Provider I/O and cannot
 start an OAuth flow.
 
-Sync and Health Archive recovery uses the same output-only boundary. The only
+Sync and Health Archive recoveries use the same output-only boundary. The only
 Sync-specific action is the fixed
 `gohealthcli sync --from YYYY-MM-DD` Initial Backfill template; it never copies
 the operator's Data Types, dates, paths, or other arguments. Fan-out actions
