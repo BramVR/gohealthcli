@@ -94,7 +94,10 @@ func (lifecycle syncRunLifecycle) Run(ctx context.Context) (syncResult, error) {
 			return syncRunFailure(syncResult{
 				DataTypes: options.dataTypes,
 				To:        options.to,
-			}, errors.New("sync has no Sync Cursor for this Data Type yet; set --from for the initial backfill"))
+			}, withRemediation(
+				errors.New("sync has no Sync Cursor for this Data Type yet; set --from for the initial backfill"),
+				remediationSyncFrom,
+			))
 		}
 		options.from = cursorTime
 		resumedFromCursor = true
@@ -264,7 +267,9 @@ func (lifecycle syncRunLifecycle) finalize(ctx context.Context, archive healthAr
 	result = syncResultFromOutcome(outcome, result)
 	errorSummary := ""
 	if cause != nil {
+		cause = syncFailureRemediation(cause)
 		result.Message = cause.Error()
+		result.Remediation = remediationFromError(cause)
 		errorSummary = result.Message
 	}
 	now := runtime.now().UTC().Format(time.RFC3339)
@@ -284,6 +289,7 @@ func (lifecycle syncRunLifecycle) finalize(ctx context.Context, archive healthAr
 	if finalizeErr == nil {
 		return result, cause
 	}
+	result.Remediation = nil
 	// The atomic finalize failed (rolled back). The sync_runs row is
 	// still in StartSyncRun's sync_running state and no cursor advance
 	// happened. Branch: a SQLITE_BUSY exhaustion gets a dedicated
@@ -352,7 +358,9 @@ func (lifecycle syncRunLifecycle) finalize(ctx context.Context, archive healthAr
 // already knows (DataTypes, From, To — or the fully-populated result
 // once StartSyncRun has been attempted).
 func syncRunFailure(base syncResult, cause error) (syncResult, error) {
+	cause = syncFailureRemediation(cause)
 	base.Message = cause.Error()
+	base.Remediation = remediationFromError(cause)
 	return syncResultFromOutcome(syncRunOutcomeFailed, base), cause
 }
 

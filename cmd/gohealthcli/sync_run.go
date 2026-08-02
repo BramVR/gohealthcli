@@ -20,11 +20,12 @@ type syncRunExecutor struct {
 // every error path, so plan.from/plan.to would always be empty here.
 func preflightFailureResult(options syncCommandOptions, err error) syncResult {
 	return syncResult{
-		Status:    "sync_failed",
-		DataTypes: options.dataTypes,
-		From:      options.from,
-		To:        options.to,
-		Message:   err.Error(),
+		Status:      "sync_failed",
+		DataTypes:   options.dataTypes,
+		From:        options.from,
+		To:          options.to,
+		Message:     err.Error(),
+		Remediation: remediationFromError(err),
 	}
 }
 
@@ -41,6 +42,7 @@ func (executor syncRunExecutor) Execute(ctx context.Context, options syncCommand
 	gate := syncPreflightGate{ctx: productionSyncPreflightContext(ctx, options, runtime)}
 	plan, err := gate.Validate(options)
 	if err != nil {
+		err = syncFailureRemediation(err)
 		return preflightFailureResult(options, err), err
 	}
 	return syncRunLifecycle{options: options, plan: plan, runtime: runtime}.Run(ctx)

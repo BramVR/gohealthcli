@@ -141,6 +141,7 @@ type syncStatusResult struct {
 	Window      string          `json:"window"`
 	Runs        []syncStatusRun `json:"runs,omitempty"`
 	Message     string          `json:"message"`
+	Remediation []string        `json:"remediation,omitempty"`
 }
 
 // syncExecutionFlagNames are the sync flags that configure an actual
@@ -189,6 +190,7 @@ func runSyncStatusWithRuntime(common CommonFlagValues, windowValue string, mode 
 			ArchivePath: common.ArchivePath,
 			Window:      window.String(),
 			Message:     err.Error(),
+			Remediation: remediationFromError(archiveFailureRemediation(err)),
 		}, 1, mode, now, stdout, stderr)
 	}
 	// context.Background(): `sync --status` is a synchronous read view
@@ -197,6 +199,7 @@ func runSyncStatusWithRuntime(common CommonFlagValues, windowValue string, mode 
 	result, err := syncStatusSetup(context.Background(), resolvedArchivePath, now, window)
 	if err != nil {
 		result.Message = err.Error()
+		result.Remediation = remediationFromError(archiveFailureRemediation(err))
 		return writeSyncStatusResultWithExit(result, 1, mode, now, stdout, stderr)
 	}
 	return writeSyncStatusResultWithExit(result, 0, mode, now, stdout, stderr)
@@ -473,6 +476,9 @@ func writeSyncStatusPlain(writer *stickyWriter, result syncStatusResult) {
 		writeSyncStatusRunPlain(writer, fmt.Sprintf("sync_run.%d.", index), run)
 	}
 	writer.Printf("message: %s\n", result.Message)
+	for index, action := range result.Remediation {
+		writer.Printf("remediation.%d: %s\n", index, action)
+	}
 }
 
 func writeSyncStatusRunPlain(writer *stickyWriter, prefix string, run syncStatusRun) {

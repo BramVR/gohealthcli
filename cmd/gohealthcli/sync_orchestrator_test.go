@@ -231,6 +231,9 @@ func TestSyncRunLifecycleClosesSIGINTPreFirstDataTypeRace(t *testing.T) {
 	if result.SyncRunID != 0 {
 		t.Errorf("SyncRunID = %d, want 0 (no audit row should have been written)", result.SyncRunID)
 	}
+	if len(result.Remediation) != 0 {
+		t.Errorf("Remediation = %#v, want none for canceled run", result.Remediation)
+	}
 	assertArchiveTableCount(t, archivePath, "sync_runs", 0)
 }
 
@@ -458,6 +461,9 @@ func TestSyncRunExecutorCancelMidFetchFinalizesCanceledAndKeepsCursor(t *testing
 	if outcome.result.SyncRunID == 0 {
 		t.Fatal("SyncRunID = 0, want a persisted audit row (cancel landed mid-run, after StartSyncRun)")
 	}
+	if len(outcome.result.Remediation) != 0 {
+		t.Fatalf("Remediation = %#v, want none for canceled run", outcome.result.Remediation)
+	}
 
 	// The persisted audit row must agree with the envelope, and the
 	// canceled run must not have advanced any cursor (ADR-0008).
@@ -587,6 +593,9 @@ func TestSyncOrchestratorCapturesOneRangeClockAcrossFanOut(t *testing.T) {
 	for index, result := range results {
 		if result.Status != "sync_failed" || !strings.Contains(result.Message, "no Connection found") {
 			t.Errorf("results[%d] = status %q message %q, want missing-connection preflight failure", index, result.Status, result.Message)
+		}
+		if len(result.Remediation) != 2 || result.Remediation[0] != "gohealthcli doctor" || result.Remediation[1] != "gohealthcli connect" {
+			t.Errorf("results[%d].Remediation = %#v, want diagnosis then connect", index, result.Remediation)
 		}
 	}
 	if clockCalls != 1 {

@@ -379,6 +379,16 @@ identity mismatch points to `init --help` without inventing or exposing an
 archive path. Constructing or rendering remediation never performs Provider I/O
 or starts OAuth.
 
+Sync and archive result envelopes use the same optional contract. A missing
+Initial Backfill cursor suggests the fixed
+`gohealthcli sync --from YYYY-MM-DD` template without copying any invocation
+arguments. Multi-Data-Type sync keeps remediation only on the affected result
+child. Missing setup may diagnose then initialise; Connection, scope, token,
+and identity failures reuse the reviewed authentication actions. Canceled,
+corrupt, invalid-query, and unknown failures add no fabricated step. JSON and
+explicit `--plain` may expose the metadata; default human output remains
+unchanged.
+
 A few subcommands deviate from the standard `--plain` / `--json`
 contract:
 

@@ -36,6 +36,7 @@ type statusResult struct {
 	LatestSuccessfulRun        *statusSyncRun           `json:"latest_successful_sync_run,omitempty"`
 	LatestFailedRun            *statusSyncRun           `json:"latest_failed_sync_run,omitempty"`
 	Message                    string                   `json:"message"`
+	Remediation                []string                 `json:"remediation,omitempty"`
 }
 
 // statusSnapshotFreshness summarises identity-level metadata recency:
@@ -126,7 +127,12 @@ func runStatus(args []string, globals CommonFlagValues, stdout, stderr io.Writer
 
 	resolvedArchivePath, err := resolveReadArchivePath(*common)
 	if err != nil {
-		result := statusResult{Status: "status_failed", ArchivePath: common.ArchivePath, Message: err.Error()}
+		result := statusResult{
+			Status:      "status_failed",
+			ArchivePath: common.ArchivePath,
+			Message:     err.Error(),
+			Remediation: remediationFromError(archiveFailureRemediation(err)),
+		}
 		if writeErr := writeStatusResult(result, mode, stdout); writeErr != nil {
 			return reportWriteFailure("status", writeErr, mode, stdout, stderr)
 		}
@@ -141,6 +147,7 @@ func runStatus(args []string, globals CommonFlagValues, stdout, stderr io.Writer
 			result.Status = "status_failed"
 		}
 		result.Message = err.Error()
+		result.Remediation = remediationFromError(archiveFailureRemediation(err))
 		if writeErr := writeStatusResult(result, mode, stdout); writeErr != nil {
 			return reportWriteFailure("status", writeErr, mode, stdout, stderr)
 		}
@@ -190,6 +197,9 @@ func writeStatusPlain(writer *stickyWriter, result statusResult) {
 	writeStatusSyncRunPlain(writer, "latest_successful_sync_run", result.LatestSuccessfulRun)
 	writeStatusSyncRunPlain(writer, "latest_failed_sync_run", result.LatestFailedRun)
 	writer.Printf("message: %s\n", result.Message)
+	for index, action := range result.Remediation {
+		writer.Printf("remediation.%d: %s\n", index, action)
+	}
 }
 
 func writeStatusDataTypePlain(writer *stickyWriter, dataType statusDataType) {

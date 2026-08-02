@@ -70,6 +70,7 @@ const (
 	remediationInitialize   remediationAction = "gohealthcli init"
 	remediationInitHelp     remediationAction = "gohealthcli init --help"
 	remediationStatus       remediationAction = "gohealthcli status"
+	remediationSyncFrom     remediationAction = "gohealthcli sync --from YYYY-MM-DD"
 	maxRemediationActions                     = 3
 )
 
@@ -134,7 +135,7 @@ func normalizeRemediation(actions []remediationAction) []string {
 
 func isReporterRemediation(action string) bool {
 	switch remediationAction(action) {
-	case remediationShowHelp, remediationRunDoctor, remediationDoctorOnline, remediationReconnect, remediationInitialize, remediationInitHelp, remediationStatus:
+	case remediationShowHelp, remediationRunDoctor, remediationDoctorOnline, remediationReconnect, remediationInitialize, remediationInitHelp, remediationStatus, remediationSyncFrom:
 		return true
 	}
 	const addScopesPrefix = "gohealthcli connect --add-scopes "

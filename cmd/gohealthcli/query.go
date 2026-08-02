@@ -35,6 +35,7 @@ type queryResult struct {
 	Rows        [][]any  `json:"rows,omitempty"`
 	RowCount    int      `json:"row_count"`
 	Message     string   `json:"message"`
+	Remediation []string `json:"remediation,omitempty"`
 }
 
 func runQuery(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
@@ -71,7 +72,12 @@ func runQuery(args []string, globals CommonFlagValues, stdout, stderr io.Writer,
 
 	resolvedArchivePath, err := resolveReadArchivePath(*common)
 	if err != nil {
-		result := queryResult{Status: "query_failed", ArchivePath: common.ArchivePath, Message: err.Error()}
+		result := queryResult{
+			Status:      "query_failed",
+			ArchivePath: common.ArchivePath,
+			Message:     err.Error(),
+			Remediation: remediationFromError(archiveFailureRemediation(err)),
+		}
 		if writeErr := writeQueryResult(result, mode, stdout); writeErr != nil {
 			return ReportFailure(FailureReport{
 				Command: "query",
@@ -90,6 +96,7 @@ func runQuery(args []string, globals CommonFlagValues, stdout, stderr io.Writer,
 	if err != nil {
 		result.Status = "query_failed"
 		result.Message = err.Error()
+		result.Remediation = remediationFromError(archiveFailureRemediation(err))
 		if writeErr := writeQueryResult(result, mode, stdout); writeErr != nil {
 			return ReportFailure(FailureReport{
 				Command: "query",
@@ -616,8 +623,13 @@ func writeQueryResult(result queryResult, mode outputMode, stdout io.Writer) err
 			}
 		}
 	}
-	_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
-	return err
+	if _, err := fmt.Fprintf(stdout, "message: %s\n", result.Message); err != nil {
+		return err
+	}
+	if mode.plain {
+		return writePlainRemediation(stdout, result.Remediation)
+	}
+	return nil
 }
 
 func queryPlainValue(value any) string {

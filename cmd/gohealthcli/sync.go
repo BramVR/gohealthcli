@@ -32,6 +32,7 @@ type syncResult struct {
 	RollupsNew        int      `json:"rollups_new"`
 	RollupsUpdated    int      `json:"rollups_updated"`
 	Message           string   `json:"message"`
+	Remediation       []string `json:"remediation,omitempty"`
 }
 
 type syncCommandOptions struct {
@@ -140,12 +141,14 @@ func runSyncWithRuntime(args []string, globals CommonFlagValues, stdout, stderr 
 		// the user-supplied --from/--to round-trip so tooling that pivots
 		// on the failed-range can still see what was attempted. The
 		// no-audit-row contract is preserved upstream of this branch.
+		cause := syncFailureRemediation(err)
 		fallback := syncResult{
-			Status:    "sync_failed",
-			DataTypes: dataTypes,
-			From:      options.from,
-			To:        options.to,
-			Message:   err.Error(),
+			Status:      "sync_failed",
+			DataTypes:   dataTypes,
+			From:        options.from,
+			To:          options.to,
+			Message:     err.Error(),
+			Remediation: remediationFromError(cause),
 		}
 		if writeErr := writeSyncResult(fallback, mode, stdout); writeErr != nil {
 			return reportWriteFailure("sync", writeErr, mode, stdout, stderr)
@@ -251,6 +254,9 @@ func writeSyncPlain(writer *stickyWriter, result syncResult) {
 	writer.Printf("rollups_new: %d\n", result.RollupsNew)
 	writer.Printf("rollups_updated: %d\n", result.RollupsUpdated)
 	writer.Printf("message: %s\n", result.Message)
+	for index, action := range result.Remediation {
+		writer.Printf("remediation.%d: %s\n", index, action)
+	}
 }
 
 func writeSyncHuman(writer *stickyWriter, result syncResult) {
@@ -356,6 +362,9 @@ func writeSyncFanOutResultPlain(writer *stickyWriter, prefix string, result sync
 	}
 	if result.Message != "" {
 		writer.Printf("%smessage: %s\n", prefix, result.Message)
+	}
+	for index, action := range result.Remediation {
+		writer.Printf("%sremediation.%d: %s\n", prefix, index, action)
 	}
 }
 

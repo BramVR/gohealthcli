@@ -44,6 +44,15 @@ Provider payloads, SQL, health data, and user input are never converted into
 actions. Building or rendering actions performs no Provider I/O and cannot
 start an OAuth flow.
 
+Sync and Health Archive recovery uses the same output-only boundary. The only
+Sync-specific action is the fixed
+`gohealthcli sync --from YYYY-MM-DD` Initial Backfill template; it never copies
+the operator's Data Types, dates, paths, or other arguments. Fan-out actions
+remain on the affected child. Missing archives may suggest diagnosis followed
+by initialisation, but canceled, corrupt, invalid-query, and unknown failures
+remain actionless. Classification uses typed causes only and does not read or
+mutate the Provider, OAuth state, Sync Cursor, audit trail, or archive.
+
 OAuth token material should live in a Credential Store:
 
 - macOS: Keychain.
