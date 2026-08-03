@@ -37,7 +37,7 @@ the headless listener. It is not the default because dynamic port discovery and
 tunnel setup add operational coupling. It also does not remove the need for
 PKCE, exact `state` validation, or one-time completion.
 
-## Operator contract for a later implementation
+## Operator contract
 
 1. Start authorization on the headless host. The CLI creates a fresh PKCE
    verifier and random `state`, retains them in the configured Credential Store,
@@ -87,13 +87,13 @@ assertions above were retained; authorization URLs, codes, state, tokens,
 client details, identity values, and screenshots were not published. The
 production Health Archive was not opened for writes.
 
-## Follow-up boundary
+## Implementation boundary
 
-Issue #389 may later add the start/completion commands, expiring Credential
-Store state, exact redirect parsing, atomic single-use claiming, granted-scope
-archival, and concurrency tests. This decision does not implement any of those
-surfaces, change current interactive `connect`, add a Provider scope, or permit
-health-data requests.
+Issue #389 implements the start/completion flags, ten-minute Credential Store
+state, exact redirect parsing, atomic single-use claiming, granted-scope
+archival, and concurrency tests. It does not change interactive `connect`, add
+a Provider scope, permit health-data requests, accept a bare authorization
+code, or store pending authorization in the Health Archive.
 
 ## Sources
 

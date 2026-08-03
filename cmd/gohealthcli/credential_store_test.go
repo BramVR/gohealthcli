@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOSNativeCredentialStoreDoesNotSendTokenAsArgument(t *testing.T) {
@@ -174,6 +176,117 @@ func TestFileCredentialStoreFirstWriteIsOwnerOnly(t *testing.T) {
 	}
 	assertMode(t, storePath, 0o600)
 	assertMode(t, tempDir, 0o700)
+}
+
+func TestFileCredentialStoreDeleteRemovesOnlyClaimedEntryOwnerOnly(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	if err := os.Chmod(tempDir, 0o700); err != nil {
+		t.Fatalf("make temp dir owner-only: %v", err)
+	}
+	storePath := filepath.Join(tempDir, "tokens.json")
+	store := fileCredentialStore{path: storePath}
+	if err := store.Store("pending", map[string]any{"code_verifier": "private-verifier"}); err != nil {
+		t.Fatalf("store pending authorization: %v", err)
+	}
+	if err := store.Store("connection", map[string]any{"access_token": "private-token"}); err != nil {
+		t.Fatalf("store Connection token: %v", err)
+	}
+	if err := store.Delete("pending"); err != nil {
+		t.Fatalf("delete pending authorization: %v", err)
+	}
+	if _, err := store.Load("pending"); !errors.Is(err, errCredentialStoreTokenMaterialNotFound) {
+		t.Fatalf("load deleted pending authorization = %v, want not found", err)
+	}
+	connection, err := store.Load("connection")
+	if err != nil {
+		t.Fatalf("load preserved Connection token: %v", err)
+	}
+	if connection["access_token"] != "private-token" {
+		t.Fatalf("preserved access token = %v", connection["access_token"])
+	}
+	assertMode(t, storePath, 0o600)
+}
+
+func TestFileCredentialStoreMutationsUseOwnerOnlyLock(t *testing.T) {
+	tempDir := t.TempDir()
+	if err := os.Chmod(tempDir, 0o700); err != nil {
+		t.Fatalf("make temp dir owner-only: %v", err)
+	}
+	storePath := filepath.Join(tempDir, "tokens.json")
+	store := fileCredentialStore{path: storePath}
+	lockPath := storePath + ".lock"
+
+	lock, err := lockHeadlessClaimFile(lockPath)
+	if err != nil {
+		t.Fatalf("hold Credential Store lock: %v", err)
+	}
+	storeDone := make(chan error, 1)
+	go func() {
+		storeDone <- store.Store("connection", map[string]any{"access_token": "private-token"})
+	}()
+	select {
+	case err := <-storeDone:
+		t.Fatalf("Credential Store write completed while mutation lock was held: %v", err)
+	case <-time.After(250 * time.Millisecond):
+	}
+	if err := unlockHeadlessClaimFile(lock); err != nil {
+		t.Fatalf("release Credential Store lock: %v", err)
+	}
+	if err := <-storeDone; err != nil {
+		t.Fatalf("store after mutation lock release: %v", err)
+	}
+
+	lock, err = lockHeadlessClaimFile(lockPath)
+	if err != nil {
+		t.Fatalf("hold Credential Store lock for delete: %v", err)
+	}
+	deleteDone := make(chan error, 1)
+	go func() {
+		deleteDone <- store.Delete("connection")
+	}()
+	select {
+	case err := <-deleteDone:
+		t.Fatalf("Credential Store delete completed while mutation lock was held: %v", err)
+	case <-time.After(250 * time.Millisecond):
+	}
+	if err := unlockHeadlessClaimFile(lock); err != nil {
+		t.Fatalf("release Credential Store delete lock: %v", err)
+	}
+	if err := <-deleteDone; err != nil {
+		t.Fatalf("delete after mutation lock release: %v", err)
+	}
+	if usesPOSIXPermissions() {
+		assertMode(t, lockPath, 0o600)
+	}
+}
+
+func TestOSNativeCredentialStoreDeleteRoutesWithoutSecretMaterial(t *testing.T) {
+	t.Parallel()
+	for _, platform := range []string{"darwin", "linux", "windows"} {
+		t.Run(platform, func(t *testing.T) {
+			runtime := productionRuntimeAdapters()
+			runtime.currentOS = platform
+			var service, key string
+			deleteFake := func(_ context.Context, gotService, gotKey string) error {
+				service, key = gotService, gotKey
+				return nil
+			}
+			runtime.runSecurityDeleteGenericPassword = deleteFake
+			runtime.runSecretToolClear = deleteFake
+			runtime.runWindowsCredentialDelete = deleteFake
+			store, err := newCredentialStoreWithRuntime(credentialStoreConfig{kind: "os_native", service: "gohealthcli"}, runtime)
+			if err != nil {
+				t.Fatalf("new Credential Store: %v", err)
+			}
+			if err := store.Delete("headless-connect:binding"); err != nil {
+				t.Fatalf("delete pending authorization: %v", err)
+			}
+			if service != "gohealthcli" || key != "headless-connect:binding" {
+				t.Fatalf("delete target = (%q, %q), want service/key", service, key)
+			}
+		})
+	}
 }
 
 func TestFileCredentialStoreReplacementDoesNotMutateExistingInode(t *testing.T) {

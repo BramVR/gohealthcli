@@ -230,7 +230,9 @@ func inspectFullConfig(configPath, archivePath string) (fullConfigCheck, error) 
 	if config.archivePath == "" {
 		return fullConfigCheck{}, errors.New("missing archive_path")
 	}
-	if config.archivePath != archivePath {
+	configuredArchivePath, configuredErr := canonicalCredentialPath(config.archivePath)
+	requestedArchivePath, requestedErr := canonicalCredentialPath(archivePath)
+	if configuredErr != nil || requestedErr != nil || configuredArchivePath != requestedArchivePath {
 		return fullConfigCheck{}, fmt.Errorf("archive_path points to %s, want %s", config.archivePath, archivePath)
 	}
 	if err := validateDefaultDataTypes(config.defaultDataTypes); err != nil {

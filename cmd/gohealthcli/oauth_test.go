@@ -197,7 +197,7 @@ func TestOAuthScopesForEmptyDataTypesRequestOnlyProfileScope(t *testing.T) {
 	}
 }
 
-func TestListenForOAuthRedirectPreservesEmptyLoopbackPath(t *testing.T) {
+func TestListenForOAuthRedirectNormalizesEmptyLoopbackPath(t *testing.T) {
 	t.Parallel()
 	listener, redirectURI, err := listenForOAuthRedirect([]string{"http://localhost"})
 	if err != nil {
@@ -209,8 +209,8 @@ func TestListenForOAuthRedirectPreservesEmptyLoopbackPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse redirect URI: %v", err)
 	}
-	if parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Path != "" {
-		t.Fatalf("redirect URI = %s, want dynamic loopback with empty path", redirectURI)
+	if parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Path != "/" {
+		t.Fatalf("redirect URI = %s, want dynamic loopback with explicit root path", redirectURI)
 	}
 }
 

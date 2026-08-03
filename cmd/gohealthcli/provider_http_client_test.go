@@ -222,7 +222,7 @@ func TestOAuthCodeExchangePostsFormThroughInjectedDoer(t *testing.T) {
 	}`}
 	client := oauthClientConfig{clientID: "test-client", clientSecret: "test-secret", tokenURI: "https://oauth2.googleapis.com/token"}
 
-	token, err := exchangeOAuthCodeWithRuntime(client, "http://127.0.0.1:7777/callback", "auth-code", "pkce-verifier", runtimeAdapters{
+	token, err := exchangeOAuthCodeWithRuntime(client, "http://127.0.0.1:7777/callback", "auth-code", "pkce-verifier", []string{"https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"}, runtimeAdapters{
 		now:      func() time.Time { return now },
 		httpDoer: providerDoer(transport),
 	})
@@ -267,7 +267,7 @@ func TestOAuthCodeExchangeMapsNonSuccessStatus(t *testing.T) {
 	transport := &recordingOAuthTransport{status: http.StatusBadRequest, body: `{"error":"invalid_grant"}`}
 	client := oauthClientConfig{clientID: "id", clientSecret: "secret", tokenURI: "https://oauth2.googleapis.com/token"}
 
-	_, err := exchangeOAuthCodeWithRuntime(client, "http://127.0.0.1/callback", "code", "verifier", runtimeAdapters{
+	_, err := exchangeOAuthCodeWithRuntime(client, "http://127.0.0.1/callback", "code", "verifier", nil, runtimeAdapters{
 		now:      productionNow,
 		httpDoer: providerDoer(transport),
 	})
@@ -341,7 +341,7 @@ func TestOAuthCodeExchangeFailsStalledTokenEndpointByDeadline(t *testing.T) {
 	server := startStalledProviderServer(t)
 
 	client := oauthClientConfig{clientID: "id", clientSecret: "secret", tokenURI: server.URL}
-	_, err := exchangeOAuthCodeWithRuntime(client, "http://127.0.0.1/callback", "code", "verifier", runtimeAdapters{now: productionNow, httpDoer: shortTimeoutDoer()})
+	_, err := exchangeOAuthCodeWithRuntime(client, "http://127.0.0.1/callback", "code", "verifier", nil, runtimeAdapters{now: productionNow, httpDoer: shortTimeoutDoer()})
 	if err == nil {
 		t.Fatal("expected a stalled OAuth token exchange to fail by deadline, got success")
 	}

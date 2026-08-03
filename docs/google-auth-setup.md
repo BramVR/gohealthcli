@@ -109,6 +109,25 @@ gohealthcli profile --plain
 The browser may briefly show a localhost callback page after consent. If the CLI
 prints `status: connected`, the callback worked.
 
+## Headless Connect
+
+When the CLI host has no local browser, use the existing Desktop OAuth client:
+
+```bash
+gohealthcli connect --headless-start --plain
+gohealthcli connect --complete --plain
+```
+
+Open the printed authorization URL in a trusted browser. After consent reaches
+the unavailable loopback page, copy the complete address-bar URL and supply it
+as the completion command's only stdin line. Never pass a bare code or put the
+URL on the command line. The pending authorization expires after ten minutes;
+starting again replaces it. When extending consent, repeat the exact
+`--add-scopes` value on both commands. A state-valid cancellation or a claimed
+completion is single-use; invalid state, redirect, binding, input, expiry, and
+concurrent-loser attempts leave the Connection and stored token material
+unchanged.
+
 ## Smoke Test
 
 Use a narrow window first:

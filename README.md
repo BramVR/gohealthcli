@@ -287,6 +287,21 @@ gohealthcli identity --plain
 gohealthcli profile --plain
 ```
 
+On a host without a local browser, start an expiring authorization and complete
+it by supplying the browser's full redirected loopback URL over stdin:
+
+```bash
+gohealthcli connect --headless-start --plain
+gohealthcli connect --complete --plain
+```
+
+The pending PKCE verifier and binding metadata live only in the configured
+Credential Store and expire after ten minutes. Copy the entire redirected URL,
+never only its authorization code; do not put either URL in shell history,
+logs, screenshots, or shared artifacts. If `--add-scopes` is used, pass the
+same value to both commands. Invalid, expired, or concurrent-loser attempts do
+not replace the Connection or stored token material.
+
 Sync a small window first:
 
 ```bash

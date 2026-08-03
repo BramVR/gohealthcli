@@ -256,7 +256,7 @@ func runBrowserOAuthFlowWithRuntime(client oauthClientConfig, scopes []string, n
 	if err != nil {
 		return oauthTokenResponse{}, err
 	}
-	return exchangeOAuthCodeWithRuntime(client, redirectURI, code, verifier, runtime)
+	return exchangeOAuthCodeWithRuntime(client, redirectURI, code, verifier, scopes, runtime)
 }
 
 func listenForOAuthRedirect(redirectURIs []string) (net.Listener, string, error) {
@@ -271,6 +271,9 @@ func listenForOAuthRedirect(redirectURIs []string) (net.Listener, string, error)
 			continue
 		}
 		redirectPath = parsed.EscapedPath()
+		if redirectPath == "" {
+			redirectPath = "/"
+		}
 		break
 	}
 	// Background-scoped (#284): the loopback redirect listener for the
@@ -385,7 +388,7 @@ func postOAuthForm(runtime runtimeAdapters, tokenURI string, values url.Values) 
 	return doer.Do(request)
 }
 
-func exchangeOAuthCodeWithRuntime(client oauthClientConfig, redirectURI, code, verifier string, runtime runtimeAdapters) (oauthTokenResponse, error) {
+func exchangeOAuthCodeWithRuntime(client oauthClientConfig, redirectURI, code, verifier string, fallbackScopes []string, runtime runtimeAdapters) (oauthTokenResponse, error) {
 	if runtime.now == nil {
 		runtime.now = productionNow
 	}
@@ -408,7 +411,7 @@ func exchangeOAuthCodeWithRuntime(client oauthClientConfig, redirectURI, code, v
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return oauthTokenResponse{}, fmt.Errorf("OAuth token exchange failed with HTTP %d", response.StatusCode)
 	}
-	return parseOAuthTokenResponse(body, runtime.now())
+	return parseOAuthTokenResponseWithFallback(body, runtime.now(), fallbackScopes)
 }
 
 func refreshGoogleOAuthToken(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
@@ -440,6 +443,10 @@ func refreshGoogleOAuthTokenWithRuntime(client oauthClientConfig, refreshToken s
 }
 
 func parseOAuthTokenResponse(body []byte, now time.Time) (oauthTokenResponse, error) {
+	return parseOAuthTokenResponseWithFallback(body, now, nil)
+}
+
+func parseOAuthTokenResponseWithFallback(body []byte, now time.Time, fallbackScopes []string) (oauthTokenResponse, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return oauthTokenResponse{}, errors.New("OAuth token response is not valid JSON")
@@ -460,10 +467,15 @@ func parseOAuthTokenResponse(body []byte, now time.Time) (oauthTokenResponse, er
 	if expiresIn <= 0 {
 		return oauthTokenResponse{}, errors.New("OAuth token response missing expiry")
 	}
-	scopeText, _ := raw["scope"].(string)
+	scopeValue, scopePresent := raw["scope"]
+	scopeText, _ := scopeValue.(string)
 	scopes := strings.Fields(scopeText)
 	if len(scopes) == 0 {
-		return oauthTokenResponse{}, errors.New("OAuth token response missing scopes")
+		if scopePresent || len(fallbackScopes) == 0 {
+			return oauthTokenResponse{}, errors.New("OAuth token response missing scopes")
+		}
+		scopes = append([]string(nil), fallbackScopes...)
+		raw["scope"] = strings.Join(scopes, " ")
 	}
 	var refreshExpiresAt *time.Time
 	if refreshExpiresIn, ok := raw["refresh_token_expires_in"].(float64); ok && refreshExpiresIn > 0 {
