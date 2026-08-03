@@ -131,6 +131,7 @@ var normalizedViewCatalogOrder = []string{
 	"basal-energy-burned-intervals",
 	"total-calories-rollups",
 	"nutrition-log-sessions",
+	"nutrition-log-nutrients",
 }
 
 // TestNormalizedViewsRegistryCatalogOrderIsStable pins the full
@@ -173,6 +174,7 @@ var normalizedViewMigrationOrder = map[int][]string{
 	26: {"basal_energy_burned_intervals"},
 	27: {"total_calories_rollups"},
 	28: {"nutrition_log_sessions"},
+	29: {"nutrition_log_nutrients"},
 }
 
 // TestNormalizedViewsRegistryMigrationStatementsPinViewsPerVersion pins

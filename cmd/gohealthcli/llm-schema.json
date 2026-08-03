@@ -48,6 +48,7 @@
     "basal energy intervals": "basal_energy_burned_intervals",
     "total calorie expenditure": "total_calories_rollups",
     "logged foods and nutrition summaries": "nutrition_log_sessions",
+    "per-nutrient nutrition-log amounts": "nutrition_log_nutrients",
     "current units / timezone": "current_settings",
     "currently paired devices": "paired_devices",
     "IRN onboarding status": "current_irn_profile",

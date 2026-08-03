@@ -289,7 +289,8 @@ The current catalog spans (grouped, with PRD anchors):
 - **Sleep & recovery** — `sleep_sessions`, `sleep_stages`,
   `respiratory_rate_sleep_summary`, `daily_sleep_temperature_derivations`.
 - **Exercise, nutrition & hydration** — `exercise_sessions`,
-  `exercise_splits`, `hydration_log_sessions`, `nutrition_log_sessions`.
+  `exercise_splits`, `hydration_log_sessions`, `nutrition_log_sessions`,
+  `nutrition_log_nutrients`.
 - **Identity & search** — `current_settings`, `paired_devices`,
   `current_irn_profile`, `searchable_text`.
 
