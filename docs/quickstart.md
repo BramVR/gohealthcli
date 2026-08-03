@@ -33,7 +33,7 @@ In the Google Cloud console:
    Optionally add these too if you plan to use `connect --add-scopes`. Each scope below maps to one of the five `--add-scopes` keywords (`ecg`, `irn`, `nutrition`, `settings`, `tcx`); declaring it here now saves a return trip to Google Cloud later:
    - `https://www.googleapis.com/auth/googlehealth.ecg.readonly` (`ecg`) — needed by the Tier 2 `electrocardiogram` Data Type.
    - `https://www.googleapis.com/auth/googlehealth.irn.readonly` (`irn`) — needed by `gohealthcli irn-profile` and the Tier 2 `irregular-rhythm-notification` Data Type.
-   - `https://www.googleapis.com/auth/googlehealth.nutrition.readonly` (`nutrition`) — needed by the `hydration-log` Data Type.
+   - `https://www.googleapis.com/auth/googlehealth.nutrition.readonly` (`nutrition`) — needed by the `hydration-log` and `nutrition-log` Data Types.
    - `https://www.googleapis.com/auth/googlehealth.settings.readonly` (`settings`) — needed by `gohealthcli settings` and `gohealthcli devices`.
    - `https://www.googleapis.com/auth/googlehealth.location.readonly` (`tcx`) — needed to archive TCX route files during exercise sync.
 6. Create an OAuth client with application type **Desktop app**.

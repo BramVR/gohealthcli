@@ -83,7 +83,7 @@ var discoveryNonTemporalDataTypes = map[string]string{
 
 var catalogKnownGaps = []CatalogKnownGap{
 	{Kind: "local_rollup_only", DataTypes: []string{"calories-in-heart-rate-zone", "total-calories"}},
-	{Kind: "upstream_raw_only", DataTypes: []string{"food", "food-measurement-unit", "nutrition-log"}},
+	{Kind: "upstream_raw_only", DataTypes: []string{"food", "food-measurement-unit"}},
 }
 
 var catalogUnverifiableFacts = []CatalogUnverifiableFact{

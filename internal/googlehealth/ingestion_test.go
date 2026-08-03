@@ -131,6 +131,86 @@ func TestGoogleHealthIngestionRejectsInvalidBasalEnergyBurnedShapes(t *testing.T
 	}
 }
 
+func TestGoogleHealthIngestionRejectsMalformedNutritionLogShapesAndAmounts(t *testing.T) {
+	t.Parallel()
+	validInterval := `"interval":{"startTime":"2026-01-01T00:00:00Z","endTime":"2026-01-01T00:01:00Z"}`
+	tests := []struct {
+		name    string
+		value   string
+		wantErr string
+	}{
+		{name: "missing value", value: ``, wantErr: "missing nutritionLog value"},
+		{name: "invalid value", value: `"invalid"`, wantErr: "nutritionLog is not valid JSON"},
+		{name: "missing interval", value: `{"foodDisplayName":"Synthetic food"}`, wantErr: "missing interval startTime or endTime"},
+		{name: "missing food display name", value: `{` + validInterval + `}`, wantErr: "missing foodDisplayName"},
+		{name: "invalid food resource", value: `{` + validInterval + `,"food":42,"foodDisplayName":"Synthetic food"}`, wantErr: "food is not a string"},
+		{name: "invalid serving", value: `{` + validInterval + `,"foodDisplayName":"Synthetic food","serving":"invalid"}`, wantErr: "serving is not an object"},
+		{name: "serving missing unit", value: `{` + validInterval + `,"foodDisplayName":"Synthetic food","serving":{"amount":1}}`, wantErr: "serving missing foodMeasurementUnit"},
+		{name: "invalid serving amount", value: `{` + validInterval + `,"foodDisplayName":"Synthetic food","serving":{"foodMeasurementUnit":"units/synthetic","amount":"many"}}`, wantErr: "serving amount is not a number"},
+		{name: "invalid energy amount", value: `{` + validInterval + `,"foodDisplayName":"Synthetic food","energy":{"kcal":"many"}}`, wantErr: "energy kcal is not a number"},
+		{name: "invalid carbohydrate amount", value: `{` + validInterval + `,"foodDisplayName":"Synthetic food","totalCarbohydrate":{"grams":"many"}}`, wantErr: "totalCarbohydrate grams is not a number"},
+		{name: "invalid nutrients shape", value: `{` + validInterval + `,"foodDisplayName":"Synthetic food","nutrients":{}}`, wantErr: "nutrients is not an array"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			point := `{"name":"users/me/dataTypes/nutrition-log/dataPoints/malformed"`
+			if test.value != "" {
+				point += `,"nutritionLog":` + test.value
+			}
+			point += `}`
+			archive := &fakeGoogleHealthIngestionArchive{}
+			provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+				"": `{"dataPoints":[` + point + `]}`,
+			})
+			ingestion := fakeGoogleHealthIngestion(provider)
+			_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+				DataType: "nutrition-log",
+				From:     "2026-01-01",
+				To:       "2026-01-02",
+			}))
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("error = %v, want %q", err, test.wantErr)
+			}
+			if len(archive.dataPoints) != 0 {
+				t.Fatalf("archived Data Points = %d, want 0", len(archive.dataPoints))
+			}
+		})
+	}
+}
+
+func TestGoogleHealthIngestionAcceptsNullableNutritionLogOptionals(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"": `{"dataPoints":[{
+			"name":"users/me/dataTypes/nutrition-log/dataPoints/nullable",
+			"nutritionLog":{
+				"interval":{"startTime":"2026-01-01T00:00:00Z","endTime":"2026-01-01T00:01:00Z"},
+				"foodDisplayName":"Synthetic nullable food",
+				"food":null,"mealType":null,"serving":null,
+				"energy":null,"energyFromFat":null,
+				"totalCarbohydrate":null,"totalFat":null,"nutrients":null
+			}
+		}]}`,
+	})
+	ingestion := fakeGoogleHealthIngestion(provider)
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "nutrition-log",
+		From:     "2026-01-01",
+		To:       "2026-01-02",
+	}))
+	if err != nil {
+		t.Fatalf("ingest nullable Nutrition Log: %v", err)
+	}
+	if result.DataPointsNew != 1 || len(archive.dataPoints) != 1 {
+		t.Fatalf("result/archive = (%+v, %d points), want one new Data Point", result, len(archive.dataPoints))
+	}
+	if !strings.Contains(archive.dataPoints[0].RawJSON, `"nutrients":null`) {
+		t.Fatalf("raw JSON = %s, want explicit nullable fields retained", archive.dataPoints[0].RawJSON)
+	}
+}
+
 func TestGoogleHealthIngestionAppliesElectrocardiogramExclusiveUpperBoundLocally(t *testing.T) {
 	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}

@@ -173,6 +173,11 @@ func parseGoogleHealthIntervalShapedDataPoint(connection archived.Connection, da
 	if err != nil {
 		return archived.DataPoint{}, err
 	}
+	if dataType == "nutrition-log" {
+		if err := validateGoogleHealthNutritionLog(rawValue); err != nil {
+			return archived.DataPoint{}, err
+		}
+	}
 	var value struct {
 		Interval googleHealthIntervalFields `json:"interval"`
 	}
@@ -214,6 +219,83 @@ func parseGoogleHealthIntervalShapedDataPoint(connection archived.Connection, da
 		SourceFamilyFilter:   sourceFamilyFilter,
 		RawJSON:              canonicalRaw,
 	}, nil
+}
+
+func validateGoogleHealthNutritionLog(rawValue json.RawMessage) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(rawValue, &fields); err != nil || fields == nil {
+		return errors.New("Google Health nutrition-log Data Point nutritionLog is not valid JSON")
+	}
+	displayName, ok := fields["foodDisplayName"]
+	if !ok || len(displayName) == 0 || bytes.Equal(displayName, []byte("null")) {
+		return errors.New("Google Health nutrition-log Data Point missing foodDisplayName")
+	}
+	var displayNameText string
+	if err := json.Unmarshal(displayName, &displayNameText); err != nil || displayNameText == "" {
+		return errors.New("Google Health nutrition-log Data Point foodDisplayName is not a string")
+	}
+	if food, present := fields["food"]; present && !bytes.Equal(food, []byte("null")) {
+		var foodText string
+		if err := json.Unmarshal(food, &foodText); err != nil || foodText == "" {
+			return errors.New("Google Health nutrition-log Data Point food is not a string")
+		}
+	}
+	if serving, present := fields["serving"]; present && !bytes.Equal(serving, []byte("null")) {
+		var servingFields map[string]json.RawMessage
+		if err := json.Unmarshal(serving, &servingFields); err != nil || servingFields == nil {
+			return errors.New("Google Health nutrition-log Data Point serving is not an object")
+		}
+		unit, ok := servingFields["foodMeasurementUnit"]
+		if !ok || bytes.Equal(unit, []byte("null")) {
+			return errors.New("Google Health nutrition-log Data Point serving missing foodMeasurementUnit")
+		}
+		var unitText string
+		if err := json.Unmarshal(unit, &unitText); err != nil || unitText == "" {
+			return errors.New("Google Health nutrition-log Data Point serving foodMeasurementUnit is not a string")
+		}
+		if amount, present := servingFields["amount"]; present && !bytes.Equal(amount, []byte("null")) {
+			if err := validateGoogleHealthJSONNumber(amount); err != nil {
+				return errors.New("Google Health nutrition-log Data Point serving amount is not a number")
+			}
+		}
+	}
+	for _, quantity := range []struct {
+		field string
+		unit  string
+	}{
+		{field: "energy", unit: "kcal"},
+		{field: "energyFromFat", unit: "kcal"},
+		{field: "totalCarbohydrate", unit: "grams"},
+		{field: "totalFat", unit: "grams"},
+	} {
+		rawQuantity, present := fields[quantity.field]
+		if !present || bytes.Equal(rawQuantity, []byte("null")) {
+			continue
+		}
+		var quantityFields map[string]json.RawMessage
+		if err := json.Unmarshal(rawQuantity, &quantityFields); err != nil || quantityFields == nil {
+			return fmt.Errorf("Google Health nutrition-log Data Point %s is not an object", quantity.field)
+		}
+		amount, present := quantityFields[quantity.unit]
+		if !present || bytes.Equal(amount, []byte("null")) {
+			return fmt.Errorf("Google Health nutrition-log Data Point %s missing %s", quantity.field, quantity.unit)
+		}
+		if err := validateGoogleHealthJSONNumber(amount); err != nil {
+			return fmt.Errorf("Google Health nutrition-log Data Point %s %s is not a number", quantity.field, quantity.unit)
+		}
+	}
+	if nutrients, present := fields["nutrients"]; present && !bytes.Equal(nutrients, []byte("null")) {
+		var nutrientItems []json.RawMessage
+		if err := json.Unmarshal(nutrients, &nutrientItems); err != nil {
+			return errors.New("Google Health nutrition-log Data Point nutrients is not an array")
+		}
+	}
+	return nil
+}
+
+func validateGoogleHealthJSONNumber(raw json.RawMessage) error {
+	var value float64
+	return json.Unmarshal(raw, &value)
 }
 
 func parseGoogleHealthSampleDataPoint(connection archived.Connection, dataType string, rawPoint json.RawMessage, sourceFamilyFilter string) (archived.DataPoint, error) {

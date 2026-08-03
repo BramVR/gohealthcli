@@ -88,7 +88,8 @@ Supported Data Point sync types (grouped by domain):
 - Exercise: `exercise`.
 - Body measurements: `weight`, `body-fat`, `height`.
 - Other biomarkers: `blood-glucose`, `core-body-temperature`.
-- Hydration (nutrition.readonly scope): `hydration-log`.
+- Nutrition (opt-in `nutrition.readonly` scope): `hydration-log`,
+  `nutrition-log`.
 
 `sync --source-family wearable` is available for Data Types backed by the
 Google Health reconcile path. `sync --types steps --rollup daily` archives
@@ -169,6 +170,7 @@ just the bullets without touching the surrounding prose.
 - `height-samples`
 - `hydration-log-sessions`
 - `irregular-rhythm-notifications`
+- `nutrition-log-sessions`
 - `paired-devices`
 - `respiratory-rate-sleep-summary`
 - `resting-heart-rate-by-day`
@@ -183,6 +185,10 @@ just the bullets without touching the surrounding prose.
 - `vo2-max-samples`
 - `weight-samples`
 <!-- export-datasets:end -->
+
+Nullable Nutrition Log summary columns render as empty CSV cells (including
+`export --plain`) and as JSON `null` in JSONL. `nutrients_json` stays one JSON
+array on the parent session row; it is not expanded into per-nutrient rows.
 
 The drift guard in `cmd/gohealthcli/docs_export_datasets_test.go`
 (`TestREADMEExportDatasetsBlockMatchesCatalog`) fails if the committed
@@ -244,7 +250,7 @@ In Google Cloud:
 The four scopes above cover the default Tier 1 surface. The Tier 2
 features — the `settings`, `devices`, and `irn-profile` commands, the
 `electrocardiogram`, `irregular-rhythm-notification`, and
-`hydration-log` sync types, and TCX route archiving — each need an
+`hydration-log` and `nutrition-log` sync types, and TCX route archiving — each need an
 extra opt-in scope granted with `gohealthcli connect --add-scopes`
 (keywords: `ecg`, `irn`, `nutrition`, `settings`, `tcx`); without it
 the provider returns HTTP 403. Add the matching optional scopes in

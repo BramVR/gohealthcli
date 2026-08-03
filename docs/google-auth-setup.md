@@ -27,7 +27,7 @@ Use the target Google Cloud project, then configure:
   - `https://www.googleapis.com/auth/googlehealth.ecg.readonly`
     — required by the Tier 2 `electrocardiogram` Data Type (#104).
   - `https://www.googleapis.com/auth/googlehealth.nutrition.readonly` —
-    required by `hydration-log` and any future nutrition Data Type (#103).
+    required by `hydration-log` and `nutrition-log`.
   - `https://www.googleapis.com/auth/googlehealth.location.readonly` —
     required (on top of `activity_and_fitness.readonly`) by the
     `users.dataTypes.dataPoints.exportExerciseTcx` endpoint that

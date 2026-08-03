@@ -14,7 +14,14 @@ import (
 	"strings"
 )
 
-type exportRow []string
+type exportRow struct {
+	values []string
+	nulls  []bool
+}
+
+func exportRowFromStrings(values ...string) exportRow {
+	return exportRow{values: values, nulls: make([]bool, len(values))}
+}
 
 // exportDatasetCatalog is the small discovery adapter over the
 // exportDatasetDefinitions registry. It owns the three views the read
@@ -481,7 +488,7 @@ func writeExportCSV(rows []exportRow, spec exportDatasetSpec, writer io.Writer) 
 		return err
 	}
 	for _, row := range rows {
-		if err := csvWriter.Write([]string(row)); err != nil {
+		if err := csvWriter.Write(row.values); err != nil {
 			return err
 		}
 	}
@@ -510,8 +517,23 @@ func writeExportJSONL(rows []exportRow, spec exportDatasetSpec, writer io.Writer
 			if _, err := fmt.Fprint(writer, ":"); err != nil {
 				return err
 			}
-			if field.kind == "int" && row[index] != "" {
-				value, err := strconv.ParseInt(row[index], 10, 64)
+			if field.nullable && row.nulls[index] {
+				if _, err := fmt.Fprint(writer, "null"); err != nil {
+					return err
+				}
+				continue
+			}
+			if field.kind == "json" {
+				if !json.Valid([]byte(row.values[index])) {
+					return fmt.Errorf("export field %s is not valid JSON", field.name)
+				}
+				if _, err := fmt.Fprint(writer, row.values[index]); err != nil {
+					return err
+				}
+				continue
+			}
+			if field.kind == "int" && row.values[index] != "" {
+				value, err := strconv.ParseInt(row.values[index], 10, 64)
 				if err != nil {
 					return err
 				}
@@ -520,7 +542,7 @@ func writeExportJSONL(rows []exportRow, spec exportDatasetSpec, writer io.Writer
 				}
 				continue
 			}
-			value, err := json.Marshal(row[index])
+			value, err := json.Marshal(row.values[index])
 			if err != nil {
 				return err
 			}

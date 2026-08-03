@@ -463,6 +463,15 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		UsesDateRangeDefault: true,
 		SupportedEndpoints:   listEndpoint("hydration_log.interval.civil_start_time"),
 	},
+	{
+		DataType:             "nutrition-log",
+		RequiredScopes:       []string{ScopeNutritionReadonly},
+		Parser:               "session",
+		JSONField:            "nutritionLog",
+		RecordKind:           "session",
+		UsesDateRangeDefault: true,
+		SupportedEndpoints:   listReconcileEndpoints("nutrition_log.interval.civil_start_time"),
+	},
 	// Tier 2 ECG + IRN Data Types (#104). Both are list-only session
 	// shapes, gated behind opt-in scopes the user grants via
 	// `connect --add-scopes ecg,irn`. ECG is the Provider exception:

@@ -271,6 +271,16 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantRecordKind:       "session",
 			wantDateRangeDefault: true,
 		},
+		{
+			dataType:             "nutrition-log",
+			wantScopes:           []string{ScopeNutritionReadonly},
+			wantListFilterField:  "nutrition_log.interval.civil_start_time",
+			wantSyncDataPoint:    true,
+			wantReconcile:        true,
+			wantParser:           "session",
+			wantRecordKind:       "session",
+			wantDateRangeDefault: true,
+		},
 		// Tier 2 ECG + IRN Data Types (#104). List-only Data Types
 		// guarded by opt-in scopes (`connect --add-scopes ecg,irn`).
 		// Neither is DefaultConfigType — users opt in via --types
