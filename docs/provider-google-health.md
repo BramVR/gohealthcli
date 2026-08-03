@@ -45,7 +45,7 @@ silently returning a wider response.
 Current explicit exceptions are:
 
 - Local Rollup-only: `calories-in-heart-rate-zone`, `total-calories`.
-- Upstream raw only: `food`, `food-measurement-unit`, `nutrition-log`.
+- Upstream raw only: `food`, `food-measurement-unit`.
   Google classifies the two Food records as Data Types in its
   [public Data Types catalog](https://developers.google.com/health/data-types)
   even though their discovery descriptions call them details rather than
@@ -82,6 +82,10 @@ stable JSON, plain, and human output.
 - `basal-energy-burned` uses the same
   `basal_energy_burned.interval.start_time` filter as `list`; Google exposes
   no Rollup operation for this Data Type.
+- `nutrition-log` uses
+  `nutrition_log.interval.civil_start_time` for both list and reconcile,
+  under the existing opt-in `nutrition.readonly` scope. gohealthcli does not
+  implement its upstream Rollup shapes yet.
 
 `rollUp`
 

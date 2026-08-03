@@ -44,7 +44,7 @@ Each sync key links to its full description further down this page.
 | [`sleep`](#sleep) | session | ~1 | ~18 pts | seconds |
 | [`vo2-max`](#vo2-max), [`run-vo2-max`](#run-vo2-max), [`respiratory-rate-sleep-summary`](#respiratory-rate-sleep-summary), the `daily-*` types | sample / daily | ~1 | ~14 pts | seconds |
 
-Not yet measured on this account: [`basal-energy-burned`](#basal-energy-burned), [`floors`](#floors), [`calories-in-heart-rate-zone`](#calories-in-heart-rate-zone), [`electrocardiogram`](#electrocardiogram), [`irregular-rhythm-notification`](#irregular-rhythm-notification), [`weight`](#weight), [`body-fat`](#body-fat), [`height`](#height), [`blood-glucose`](#blood-glucose), [`core-body-temperature`](#core-body-temperature), and [`hydration-log`](#hydration-log). Most of these are sparse user-logged or per-event records (weigh-ins, ECG sessions, hydration entries) and should sync in seconds; a continuously-recording source — a CGM feeding `blood-glucose`, for instance — raises density and cost accordingly.
+Not yet measured on this account: [`basal-energy-burned`](#basal-energy-burned), [`floors`](#floors), [`calories-in-heart-rate-zone`](#calories-in-heart-rate-zone), [`electrocardiogram`](#electrocardiogram), [`irregular-rhythm-notification`](#irregular-rhythm-notification), [`weight`](#weight), [`body-fat`](#body-fat), [`height`](#height), [`blood-glucose`](#blood-glucose), [`core-body-temperature`](#core-body-temperature), [`hydration-log`](#hydration-log), and [`nutrition-log`](#nutrition-log). Most of these are sparse user-logged or per-event records (weigh-ins, ECG sessions, hydration or food entries) and should sync in seconds; a continuously-recording source — a CGM feeding `blood-glucose`, for instance — raises density and cost accordingly.
 
 A run longer than an OAuth access token's ~1-hour lifetime survives it: the token is refreshed mid-run on the first 401 and the failed page retried, so even a two-week `heart-rate` backfill can run as a single `--from`/`--to` window in the standard `init --oauth-client-file` setup. The [sync reference](commands/sync.html) has the full timing prose, and `sync --status` watches a long run live from a second terminal.
 
@@ -412,7 +412,7 @@ Glucose readings at a point in time, from a CGM or manual entry.
 
 Core-temperature readings at a point in time.
 
-## Hydration
+## Nutrition and hydration
 
 ### Hydration log
 
@@ -421,7 +421,23 @@ Core-temperature readings at a point in time.
 - **Scope:** `nutrition.readonly` (opt-in via `connect --add-scopes nutrition` — never part of the default `connect` grant)
 - **Stored as:** `data_points`; normalized view `hydration-log-sessions`
 
-A user-logged hydration entry: volume over a civil window. The only Data Type under the nutrition scope today.
+A user-logged hydration entry: volume over a civil window.
+
+### Nutrition log
+
+- **Sync key:** `nutrition-log`
+- **Shape:** session
+- **Scope:** `nutrition.readonly` (opt-in via `connect --add-scopes nutrition` — never part of the default `connect` grant)
+- **List / reconcile:** yes; civil filter `nutrition_log.interval.civil_start_time`
+- **Rollups:** not implemented
+- **Stored as:** `data_points`; normalized view `nutrition-log-sessions`
+- **Default / `sync --all`:** no; explicit `sync --types nutrition-log` only
+
+One raw Data Point per logged food. Identified foods retain the Food resource
+name; anonymous foods retain their display name. The Normalized View keeps one
+row per parent log with nullable meal, serving, energy, carbohydrate, fat, and
+food-reference columns. It also retains the unexpanded `nutrients_json` array;
+per-nutrient rows belong to the separate follow-up tracked in #394.
 
 ## Identity, device, and settings snapshots
 

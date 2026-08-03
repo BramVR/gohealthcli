@@ -179,9 +179,13 @@ func (archive *sqliteHealthArchiveReader) ExportRows(ctx context.Context, spec e
 		if err := rows.Scan(destinations...); err != nil {
 			return nil, err
 		}
-		item := make(exportRow, len(spec.fields))
+		item := exportRow{
+			values: make([]string, len(spec.fields)),
+			nulls:  make([]bool, len(spec.fields)),
+		}
 		for index, value := range values {
-			item[index] = value.String
+			item.values[index] = value.String
+			item.nulls[index] = !value.Valid
 		}
 		result = append(result, item)
 	}

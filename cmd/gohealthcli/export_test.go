@@ -612,7 +612,7 @@ func TestExportDoesNotRecreateMissingAttachmentRoot(t *testing.T) {
 func TestWriteExportJSONLCanonicalizesIntegerFields(t *testing.T) {
 	t.Parallel()
 	output := new(bytes.Buffer)
-	err := writeExportJSONL([]exportRow{{
+	err := writeExportJSONL([]exportRow{exportRowFromStrings(
 		"googlehealth",
 		"googlehealth:111111256096816351",
 		"2026-01-01",
@@ -621,7 +621,7 @@ func TestWriteExportJSONLCanonicalizesIntegerFields(t *testing.T) {
 		"",
 		"01",
 		"2026-01-01T08:15:00Z",
-	}}, exportDatasetSpecs["daily-steps"], output)
+	)}, exportDatasetSpecs["daily-steps"], output)
 	if err != nil {
 		t.Fatalf("write JSONL: %v", err)
 	}
@@ -1345,14 +1345,14 @@ func TestExportPlainAndJSONMutuallyExclusive(t *testing.T) {
 // fixture-derived and not pinned here, matching the historical helper.
 func assertDailyStepsRow(t *testing.T, row exportRow, civilDate string, stepCount int64, sourceKind, sourceFamily string, sourceRecordCount int64) {
 	t.Helper()
-	if len(row) != 8 ||
-		row[0] != "googlehealth" ||
-		row[1] != "googlehealth:111111256096816351" ||
-		row[2] != civilDate ||
-		row[3] != strconv.FormatInt(stepCount, 10) ||
-		row[4] != sourceKind ||
-		row[5] != sourceFamily ||
-		row[6] != strconv.FormatInt(sourceRecordCount, 10) {
+	if len(row.values) != 8 ||
+		row.values[0] != "googlehealth" ||
+		row.values[1] != "googlehealth:111111256096816351" ||
+		row.values[2] != civilDate ||
+		row.values[3] != strconv.FormatInt(stepCount, 10) ||
+		row.values[4] != sourceKind ||
+		row.values[5] != sourceFamily ||
+		row.values[6] != strconv.FormatInt(sourceRecordCount, 10) {
 		t.Fatalf("row = %v, want date=%s steps=%d source=%s source_family=%s records=%d", row, civilDate, stepCount, sourceKind, sourceFamily, sourceRecordCount)
 	}
 }

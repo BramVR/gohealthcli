@@ -251,13 +251,13 @@ func TestCompareCatalogDetectsStaleKnownGapDeclarations(t *testing.T) {
 		{
 			name: "declared upstream-only raw type now local",
 			mutate: func(local map[string]googleHealthDataTypeCatalogEntry) {
-				local["nutrition-log"] = googleHealthDataTypeCatalogEntry{
-					DataType:   "nutrition-log",
-					JSONField:  "nutritionLog",
-					RecordKind: "session",
+				local["food"] = googleHealthDataTypeCatalogEntry{
+					DataType:   "food",
+					JSONField:  "food",
+					RecordKind: "catalog",
 				}
 			},
-			want: CatalogDrift{Kind: "known_gap_stale", DataType: "nutrition-log"},
+			want: CatalogDrift{Kind: "known_gap_stale", DataType: "food"},
 		},
 	}
 
@@ -269,7 +269,11 @@ func TestCompareCatalogDetectsStaleKnownGapDeclarations(t *testing.T) {
 				local[dataType] = entry
 			}
 			test.mutate(local)
-			drift := compareCatalog(discovered, discovered, local, googleHealthDataTypes.order)
+			order := append([]string(nil), googleHealthDataTypes.order...)
+			if _, added := local["food"]; added {
+				order = append(order, "food")
+			}
+			drift := compareCatalog(discovered, discovered, local, order)
 			if !containsCatalogDrift(drift, test.want) {
 				t.Errorf("drift = %#v, want it to contain %#v", drift, test.want)
 			}

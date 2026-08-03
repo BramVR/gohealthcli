@@ -85,6 +85,30 @@ Non-sensitive public evidence checked on 2026-08-03 records the current
 No credential, Connection identifier, Provider payload, or Health Archive data
 was read or published for this evidence.
 
+## Nutrition Log contract evidence (C4)
+
+Non-sensitive public evidence checked on 2026-08-03 records the current
+`nutrition-log` contract:
+
+- The v4 REST resource and reconcile response expose `nutritionLog` with a
+  required `SessionTimeInterval` and `foodDisplayName`. Google auto-populates
+  that display name when an identified log also carries a Food resource name;
+  anonymous logs omit the Food resource name. Meal, serving, energy, fat,
+  carbohydrate, and nutrient fields are optional.
+- The v4 list reference defines session filtering through
+  `{session_data_type}.interval.civil_start_time`; the exact filter for this
+  Data Type is therefore `nutrition_log.interval.civil_start_time`.
+- List and reconcile authorize with the existing
+  `googlehealth.nutrition.readonly` scope. The public Data Types table currently
+  labels Nutrition Log as “Sample” even though the resource schema and method
+  response describe a session with an interval; gohealthcli follows the
+  concrete payload schema and records that documentation discrepancy here.
+- Upstream Rollup operations are documented but are not part of issue #393;
+  this slice implements only raw list/reconcile archiving.
+
+No credential, Connection identifier, Provider payload, or Health Archive data
+was read or published for this evidence.
+
 ## Basal energy burned contract evidence (C2)
 
 Non-sensitive public evidence checked on 2026-08-03 records the current
@@ -115,6 +139,8 @@ was read or published for this evidence.
 - Google Health API Rollup method: https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/rollUp
 - Google Health API daily Rollup method: https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/dailyRollUp
 - Google Health API total-calories Rollup value: https://developers.google.com/health/reference/rest/v4/TotalCaloriesRollupValue
+- Google Health API reconcile method: https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/reconcile
+- Google Health API Data Point and Nutrition Log resource: https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints
 - Google Health API release notes: https://developers.google.com/health/release-notes
 - Google Health API Go client: https://pkg.go.dev/google.golang.org/api/health/v4
 - Grill with docs skill: https://github.com/mattpocock/skills/blob/main/skills/engineering/grill-with-docs/SKILL.md

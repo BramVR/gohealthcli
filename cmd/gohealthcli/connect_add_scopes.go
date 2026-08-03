@@ -11,8 +11,7 @@ import (
 // to the actual Google Health API scope URL. PRD #93 §"Tier 2 Data
 // Types" picks `ecg` (electrocardiogram) and `irn`
 // (irregular-rhythm-notification) as the two opt-in expansions;
-// `nutrition` covers hydration-log (#103) and any future
-// nutrition.readonly Data Types; `tcx` (#140) unlocks the
+// `nutrition` covers hydration-log and nutrition-log; `tcx` (#140) unlocks the
 // `location.readonly` scope that Google requires on top of
 // `activity_and_fitness.readonly` for the `exportExerciseTcx`
 // endpoint; `settings` (#176) unlocks `settings.readonly`, which

@@ -92,6 +92,88 @@ var hydrationLogSessionsViewSpec = exportDatasetSpec{
 	},
 }
 
+var nutritionLogSessionsViewSpec = exportDatasetSpec{
+	name:             "nutrition-log-sessions",
+	view:             "nutrition_log_sessions",
+	migrationVersion: 28,
+	orderBy:          "start_time_utc, provider_name, connection_id, upstream_resource_name",
+	viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			start_time_utc,
+			end_time_utc,
+			IFNULL(start_civil_time, '') AS start_civil_time,
+			IFNULL(end_civil_time, '') AS end_civil_time,
+			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
+			CASE WHEN json_type(raw_json, '$.nutritionLog.food') = 'text'
+				THEN json_extract(raw_json, '$.nutritionLog.food') END AS food_resource_name,
+			CASE WHEN json_type(raw_json, '$.nutritionLog.foodDisplayName') = 'text'
+				THEN json_extract(raw_json, '$.nutritionLog.foodDisplayName') END AS food_display_name,
+			CASE WHEN json_type(raw_json, '$.nutritionLog.mealType') = 'text'
+				THEN json_extract(raw_json, '$.nutritionLog.mealType') END AS meal_type,
+			CASE WHEN json_type(raw_json, '$.nutritionLog.serving.foodMeasurementUnit') = 'text'
+				THEN json_extract(raw_json, '$.nutritionLog.serving.foodMeasurementUnit') END AS serving_food_measurement_unit,
+			CASE WHEN json_type(raw_json, '$.nutritionLog.serving.foodMeasurementUnitDisplayName') = 'text'
+				THEN json_extract(raw_json, '$.nutritionLog.serving.foodMeasurementUnitDisplayName') END AS serving_food_measurement_unit_display_name,
+			CASE WHEN json_type(raw_json, '$.nutritionLog.serving.amount') IN ('integer', 'real')
+				THEN CASE WHEN json_type(raw_json, '$.nutritionLog.serving.amount') = 'real'
+						AND json_extract(raw_json, '$.nutritionLog.serving.amount') = CAST(json_extract(raw_json, '$.nutritionLog.serving.amount') AS INTEGER)
+					THEN printf('%.1f', json_extract(raw_json, '$.nutritionLog.serving.amount'))
+					ELSE printf('%.15g', json_extract(raw_json, '$.nutritionLog.serving.amount')) END END AS serving_amount,
+			CASE WHEN json_type(raw_json, '$.nutritionLog.energy.kcal') IN ('integer', 'real')
+				THEN CASE WHEN json_type(raw_json, '$.nutritionLog.energy.kcal') = 'real'
+						AND json_extract(raw_json, '$.nutritionLog.energy.kcal') = CAST(json_extract(raw_json, '$.nutritionLog.energy.kcal') AS INTEGER)
+					THEN printf('%.1f', json_extract(raw_json, '$.nutritionLog.energy.kcal'))
+					ELSE printf('%.15g', json_extract(raw_json, '$.nutritionLog.energy.kcal')) END END AS energy_kcal,
+			CASE WHEN json_type(raw_json, '$.nutritionLog.energyFromFat.kcal') IN ('integer', 'real')
+				THEN CASE WHEN json_type(raw_json, '$.nutritionLog.energyFromFat.kcal') = 'real'
+						AND json_extract(raw_json, '$.nutritionLog.energyFromFat.kcal') = CAST(json_extract(raw_json, '$.nutritionLog.energyFromFat.kcal') AS INTEGER)
+					THEN printf('%.1f', json_extract(raw_json, '$.nutritionLog.energyFromFat.kcal'))
+					ELSE printf('%.15g', json_extract(raw_json, '$.nutritionLog.energyFromFat.kcal')) END END AS energy_from_fat_kcal,
+			CASE WHEN json_type(raw_json, '$.nutritionLog.totalCarbohydrate.grams') IN ('integer', 'real')
+				THEN CASE WHEN json_type(raw_json, '$.nutritionLog.totalCarbohydrate.grams') = 'real'
+						AND json_extract(raw_json, '$.nutritionLog.totalCarbohydrate.grams') = CAST(json_extract(raw_json, '$.nutritionLog.totalCarbohydrate.grams') AS INTEGER)
+					THEN printf('%.1f', json_extract(raw_json, '$.nutritionLog.totalCarbohydrate.grams'))
+					ELSE printf('%.15g', json_extract(raw_json, '$.nutritionLog.totalCarbohydrate.grams')) END END AS total_carbohydrate_grams,
+			CASE WHEN json_type(raw_json, '$.nutritionLog.totalFat.grams') IN ('integer', 'real')
+				THEN CASE WHEN json_type(raw_json, '$.nutritionLog.totalFat.grams') = 'real'
+						AND json_extract(raw_json, '$.nutritionLog.totalFat.grams') = CAST(json_extract(raw_json, '$.nutritionLog.totalFat.grams') AS INTEGER)
+					THEN printf('%.1f', json_extract(raw_json, '$.nutritionLog.totalFat.grams'))
+					ELSE printf('%.15g', json_extract(raw_json, '$.nutritionLog.totalFat.grams')) END END AS total_fat_grams,
+			CASE WHEN json_type(raw_json, '$.nutritionLog.nutrients') = 'array'
+				THEN json_extract(raw_json, '$.nutritionLog.nutrients') END AS nutrients_json,
+			IFNULL(json_extract(data_source_json, '$.platform'), '') AS source_platform,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'nutrition-log'
+			AND record_kind = 'session'
+			AND start_time_utc IS NOT NULL`,
+	fields: []exportFieldSpec{
+		{name: "provider_name"},
+		{name: "connection_id"},
+		{name: "start_time_utc"},
+		{name: "end_time_utc"},
+		{name: "start_civil_time"},
+		{name: "end_civil_time"},
+		{name: "civil_date"},
+		{name: "food_resource_name", nullable: true},
+		{name: "food_display_name", nullable: true},
+		{name: "meal_type", nullable: true},
+		{name: "serving_food_measurement_unit", nullable: true},
+		{name: "serving_food_measurement_unit_display_name", nullable: true},
+		{name: "serving_amount", nullable: true},
+		{name: "energy_kcal", nullable: true},
+		{name: "energy_from_fat_kcal", nullable: true},
+		{name: "total_carbohydrate_grams", nullable: true},
+		{name: "total_fat_grams", nullable: true},
+		{name: "nutrients_json", kind: "json", nullable: true},
+		{name: "source_platform"},
+		{name: "source_family_filter"},
+		{name: "upstream_resource_name"},
+	},
+}
+
 // Tier 1 Health metrics views (#102), migration 18. Each
 // projects the principal scalar Google Health's REST API
 // documents for the corresponding Data Type. Scalars stored as

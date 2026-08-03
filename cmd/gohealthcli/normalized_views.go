@@ -22,8 +22,9 @@ type exportDatasetSpec struct {
 }
 
 type exportFieldSpec struct {
-	name string
-	kind string
+	name     string
+	kind     string
+	nullable bool
 }
 
 // exportDatasetDefinitions is the canonical Normalized View registry
@@ -72,6 +73,7 @@ var exportDatasetDefinitions = []exportDatasetSpec{
 	currentHeightViewSpec,
 	basalEnergyBurnedIntervalsViewSpec,
 	totalCaloriesRollupsViewSpec,
+	nutritionLogSessionsViewSpec,
 }
 
 var exportDatasetSpecs = exportDatasetSpecByName(exportDatasetDefinitions)
