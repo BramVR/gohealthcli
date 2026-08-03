@@ -70,6 +70,7 @@ var exportDatasetDefinitions = []exportDatasetSpec{
 	coreBodyTemperatureSamplesViewSpec,
 	heightSamplesViewSpec,
 	currentHeightViewSpec,
+	basalEnergyBurnedIntervalsViewSpec,
 }
 
 var exportDatasetSpecs = exportDatasetSpecByName(exportDatasetDefinitions)

@@ -73,7 +73,8 @@ The discoverability verbs added by PRD #143 cover the rest of the surface:
 Supported Data Point sync types (grouped by domain):
 
 - Activity and fitness: `steps`, `distance`, `floors`, `altitude`,
-  `active-energy-burned`, `active-minutes`, `active-zone-minutes`,
+  `active-energy-burned`, `basal-energy-burned`, `active-minutes`,
+  `active-zone-minutes`,
   `activity-level`, `sedentary-period`, `time-in-heart-rate-zone`,
   `vo2-max`, `run-vo2-max`, `daily-vo2-max`, `swim-lengths-data`.
 - Heart rate: `heart-rate`, `heart-rate-variability`,
@@ -145,6 +146,7 @@ just the bullets without touching the surrounding prose.
 - `active-zone-minutes-intervals`
 - `activity-level-intervals`
 - `altitude-intervals`
+- `basal-energy-burned-intervals`
 - `blood-glucose-samples`
 - `body-fat-samples`
 - `core-body-temperature-samples`

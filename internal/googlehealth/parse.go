@@ -179,6 +179,21 @@ func parseGoogleHealthIntervalShapedDataPoint(connection archived.Connection, da
 	if err := json.Unmarshal(rawValue, &value); err != nil {
 		return archived.DataPoint{}, fmt.Errorf("Google Health %s Data Point %s is not valid JSON", dataType, jsonField)
 	}
+	if dataType == "basal-energy-burned" {
+		var basalEnergy struct {
+			Kcal json.RawMessage `json:"kcal"`
+		}
+		if err := json.Unmarshal(rawValue, &basalEnergy); err != nil {
+			return archived.DataPoint{}, fmt.Errorf("Google Health %s Data Point %s is not valid JSON", dataType, jsonField)
+		}
+		if len(basalEnergy.Kcal) == 0 || bytes.Equal(basalEnergy.Kcal, []byte("null")) {
+			return archived.DataPoint{}, fmt.Errorf("Google Health %s Data Point missing kcal value", dataType)
+		}
+		var kcal float64
+		if err := json.Unmarshal(basalEnergy.Kcal, &kcal); err != nil {
+			return archived.DataPoint{}, fmt.Errorf("Google Health %s Data Point kcal is not a number", dataType)
+		}
+	}
 	interval, err := parseGoogleHealthIntervalMetadata(dataType, value.Interval)
 	if err != nil {
 		return archived.DataPoint{}, err

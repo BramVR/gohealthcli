@@ -50,7 +50,7 @@ func TestCatalogVerifyOfflineFixtureJSON(t *testing.T) {
 		DataTypes []string `json:"data_types"`
 	}{
 		{Kind: "local_rollup_only", DataTypes: []string{"calories-in-heart-rate-zone", "total-calories"}},
-		{Kind: "upstream_raw_only", DataTypes: []string{"basal-energy-burned", "food", "food-measurement-unit", "nutrition-log"}},
+		{Kind: "upstream_raw_only", DataTypes: []string{"food", "food-measurement-unit", "nutrition-log"}},
 	}
 	if !reflect.DeepEqual(got.KnownGaps, wantGaps) {
 		t.Errorf("known_gaps = %#v, want %#v", got.KnownGaps, wantGaps)
@@ -72,7 +72,7 @@ func TestCatalogVerifyOutputModes(t *testing.T) {
 	wantHuman := "Google Health catalog verified with known gaps.\n" +
 		"Discovery source: file (revision 20260730)\n" +
 		"Known gap local_rollup_only: calories-in-heart-rate-zone, total-calories\n" +
-		"Known gap upstream_raw_only: basal-energy-burned, food, food-measurement-unit, nutrition-log\n" +
+		"Known gap upstream_raw_only: food, food-measurement-unit, nutrition-log\n" +
 		"Unverifiable filter_fields: the discovery document describes shared filters but not each Data Type's accepted filter field\n" +
 		"Unverifiable operation_support: the discovery document lists shared methods but not exact per-Data-Type operation support\n"
 	if humanStdout.String() != wantHuman {
@@ -89,7 +89,7 @@ func TestCatalogVerifyOutputModes(t *testing.T) {
 		"known_gap.0.kind: local_rollup_only\n" +
 		"known_gap.0.data_types: calories-in-heart-rate-zone,total-calories\n" +
 		"known_gap.1.kind: upstream_raw_only\n" +
-		"known_gap.1.data_types: basal-energy-burned,food,food-measurement-unit,nutrition-log\n" +
+		"known_gap.1.data_types: food,food-measurement-unit,nutrition-log\n" +
 		"unverifiable.0.fact: filter_fields\n" +
 		"unverifiable.0.reason: the discovery document describes shared filters but not each Data Type's accepted filter field\n" +
 		"unverifiable.1.fact: operation_support\n" +

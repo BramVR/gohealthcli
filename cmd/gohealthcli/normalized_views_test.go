@@ -128,6 +128,7 @@ var normalizedViewCatalogOrder = []string{
 	"core-body-temperature-samples",
 	"height-samples",
 	"current-height",
+	"basal-energy-burned-intervals",
 }
 
 // TestNormalizedViewsRegistryCatalogOrderIsStable pins the full
@@ -167,6 +168,7 @@ var normalizedViewMigrationOrder = map[int][]string{
 	19: {"daily_vo2_max", "daily_heart_rate_zones", "daily_sleep_temperature_derivations", "respiratory_rate_sleep_summary"},
 	20: {"electrocardiogram_sessions", "irregular_rhythm_notifications"},
 	21: {"hydration_log_sessions"},
+	26: {"basal_energy_burned_intervals"},
 }
 
 // TestNormalizedViewsRegistryMigrationStatementsPinViewsPerVersion pins

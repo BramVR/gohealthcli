@@ -273,6 +273,7 @@ gohealthcli describe-schema --json | jq '[.views[].name] | sort'
 The current catalog spans (grouped, with PRD anchors):
 
 - **Activity & fitness** — `daily_steps`, `floors_intervals`,
+  `basal_energy_burned_intervals`,
   `active_minutes_intervals`, `active_zone_minutes_intervals`,
   `activity_level_intervals`, `altitude_intervals`,
   `sedentary_period_intervals`, `swim_lengths_data_intervals`,

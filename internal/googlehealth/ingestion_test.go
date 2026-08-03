@@ -70,6 +70,67 @@ func TestGoogleHealthIngestionArchivesDataPointListFromProviderPages(t *testing.
 	}
 }
 
+func TestGoogleHealthIngestionRejectsInvalidBasalEnergyBurnedShapes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		point   string
+		wantErr string
+	}{
+		{
+			name:    "missing value",
+			point:   `{"name":"users/me/dataTypes/basal-energy-burned/dataPoints/missing"}`,
+			wantErr: "missing basalEnergyBurned value",
+		},
+		{
+			name:    "invalid value object",
+			point:   `{"name":"users/me/dataTypes/basal-energy-burned/dataPoints/invalid","basalEnergyBurned":"invalid"}`,
+			wantErr: "basalEnergyBurned is not valid JSON",
+		},
+		{
+			name:    "missing interval bound",
+			point:   `{"name":"users/me/dataTypes/basal-energy-burned/dataPoints/missing-bound","basalEnergyBurned":{"interval":{"startTime":"2026-01-01T00:00:00Z"},"kcal":1.5}}`,
+			wantErr: "missing interval startTime or endTime",
+		},
+		{
+			name:    "invalid physical time",
+			point:   `{"name":"users/me/dataTypes/basal-energy-burned/dataPoints/invalid-time","basalEnergyBurned":{"interval":{"startTime":"not-a-time","endTime":"2026-01-01T00:15:00Z"},"kcal":1.5}}`,
+			wantErr: "expected RFC3339 timestamp",
+		},
+		{
+			name:    "missing kcal",
+			point:   `{"name":"users/me/dataTypes/basal-energy-burned/dataPoints/missing-kcal","basalEnergyBurned":{"interval":{"startTime":"2026-01-01T00:00:00Z","endTime":"2026-01-01T00:15:00Z"}}}`,
+			wantErr: "missing kcal value",
+		},
+		{
+			name:    "invalid kcal",
+			point:   `{"name":"users/me/dataTypes/basal-energy-burned/dataPoints/invalid-kcal","basalEnergyBurned":{"interval":{"startTime":"2026-01-01T00:00:00Z","endTime":"2026-01-01T00:15:00Z"},"kcal":"unknown"}}`,
+			wantErr: "kcal is not a number",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			archive := &fakeGoogleHealthIngestionArchive{}
+			provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+				"": `{"dataPoints":[` + test.point + `]}`,
+			})
+			ingestion := fakeGoogleHealthIngestion(provider)
+			_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+				DataType: "basal-energy-burned",
+				From:     "2026-01-01",
+				To:       "2026-01-02",
+			}))
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("error = %v, want %q", err, test.wantErr)
+			}
+			if len(archive.dataPoints) != 0 {
+				t.Fatalf("archived Data Points = %d, want 0", len(archive.dataPoints))
+			}
+		})
+	}
+}
+
 func TestGoogleHealthIngestionAppliesElectrocardiogramExclusiveUpperBoundLocally(t *testing.T) {
 	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}

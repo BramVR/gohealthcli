@@ -87,6 +87,38 @@ func TestBuildElectrocardiogramListRequestUsesCurrentProviderContract(t *testing
 	}
 }
 
+func TestBuildBasalEnergyBurnedListRequestUsesPhysicalIntervalFilter(t *testing.T) {
+	t.Parallel()
+	request, err := buildGoogleHealthDataTypeListRawRequest(
+		"basal-energy-burned",
+		"2026-07-01T00:00:00Z",
+		"2026-07-02T00:00:00Z",
+		0,
+		"",
+	)
+	if err != nil {
+		t.Fatalf("build basal-energy-burned list request: %v", err)
+	}
+	if request.Method != http.MethodGet {
+		t.Fatalf("method = %q, want GET", request.Method)
+	}
+	if !slices.Equal(request.RequiredScopes, []string{ScopeActivityReadonly}) {
+		t.Fatalf("required scopes = %v, want activity read scope", request.RequiredScopes)
+	}
+	parsedURL, err := url.Parse(request.URL)
+	if err != nil {
+		t.Fatalf("parse basal-energy-burned URL: %v", err)
+	}
+	wantPath := "/v4/users/me/dataTypes/basal-energy-burned/dataPoints"
+	if parsedURL.Path != wantPath {
+		t.Fatalf("path = %q, want %q", parsedURL.Path, wantPath)
+	}
+	wantFilter := `basal_energy_burned.interval.start_time >= "2026-07-01T00:00:00Z" AND basal_energy_burned.interval.start_time < "2026-07-02T00:00:00Z"`
+	if got := parsedURL.Query().Get("filter"); got != wantFilter {
+		t.Fatalf("filter = %q, want %q", got, wantFilter)
+	}
+}
+
 // TestBuildGoogleHealthRawRequestEndpointsReadFromCatalog pins PRD #142
 // slice 7 AC: no `[]string{ScopeProfileReadonly}` inline
 // literal remains in BuildRawRequest. The only source of

@@ -164,6 +164,15 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantRecordKind:    "interval",
 		},
 		{
+			dataType:            "basal-energy-burned",
+			wantScopes:          []string{ScopeActivityReadonly},
+			wantListFilterField: "basal_energy_burned.interval.start_time",
+			wantSyncDataPoint:   true,
+			wantReconcile:       true,
+			wantParser:          "interval",
+			wantRecordKind:      "interval",
+		},
+		{
 			dataType:          "calories-in-heart-rate-zone",
 			wantScopes:        []string{ScopeActivityReadonly},
 			wantSyncDataPoint: false,
