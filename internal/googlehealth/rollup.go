@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+var errRollupValueAbsent = errors.New("Google Health Rollup value union member is absent")
+
 // parseGoogleHealthRollup is the generic Rollup parser introduced in
 // #106, which replaced the steps-daily-only parser (deleted with the
 // dead command-wrapper layer, #270). Its output for the steps-daily
@@ -117,7 +119,13 @@ func parseGoogleHealthDailyRollupCivilShape(valueType string, rawRollup json.Raw
 		return err
 	}
 	if value == nil {
+		if valueType == "totalCalories" {
+			return fmt.Errorf("%w: %s", errRollupValueAbsent, jsonField)
+		}
 		return fmt.Errorf("Google Health %s daily Rollup missing %s value", rollup.DataType, jsonField)
+	}
+	if err := validateRollupValueShape(valueType, value, rollup.DataType); err != nil {
+		return err
 	}
 	_, civilDate, err := googleCivilDateTimeText(raw.CivilStartTime)
 	if err != nil {
@@ -161,7 +169,13 @@ func parseGoogleHealthWindowRollupShape(valueType string, rawRollup json.RawMess
 		return err
 	}
 	if value == nil {
+		if valueType == "totalCalories" {
+			return fmt.Errorf("%w: %s", errRollupValueAbsent, jsonField)
+		}
 		return fmt.Errorf("Google Health %s %s Rollup missing %s value", rollup.DataType, rollup.RollupKind, jsonField)
+	}
+	if err := validateRollupValueShape(valueType, value, rollup.DataType); err != nil {
+		return err
 	}
 	if raw.StartTime == "" {
 		return fmt.Errorf("Google Health %s %s Rollup missing startTime", rollup.DataType, rollup.RollupKind)
@@ -195,8 +209,29 @@ func rollupJSONFieldForValueType(valueType string) (string, error) {
 		return "floors", nil
 	case "heartRate":
 		return "heartRate", nil
+	case "totalCalories":
+		return "totalCalories", nil
 	}
 	return "", fmt.Errorf("Google Health Rollup value type %q has no parser shape", valueType)
+}
+
+func validateRollupValueShape(valueType string, value json.RawMessage, dataType string) error {
+	if valueType != "totalCalories" {
+		return nil
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(value, &object); err != nil || object == nil {
+		return fmt.Errorf("Google Health %s Rollup totalCalories is not an object", dataType)
+	}
+	rawKcal, ok := object["kcalSum"]
+	if !ok || len(rawKcal) == 0 || string(rawKcal) == "null" {
+		return fmt.Errorf("Google Health %s Rollup missing kcalSum", dataType)
+	}
+	var kcal float64
+	if err := json.Unmarshal(rawKcal, &kcal); err != nil {
+		return fmt.Errorf("Google Health %s Rollup kcalSum is not a number", dataType)
+	}
+	return nil
 }
 
 // rollupFieldRawValue extracts the raw JSON value of fieldName from

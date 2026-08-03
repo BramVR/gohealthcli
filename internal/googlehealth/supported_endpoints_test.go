@@ -11,7 +11,7 @@ import (
 // summary-history path is supported by the catalog.
 func TestDailyRollupSupportMatchesDocumentedSummaryTypes(t *testing.T) {
 	t.Parallel()
-	want := []string{"floors", "heart-rate", "steps"}
+	want := []string{"floors", "heart-rate", "steps", "total-calories"}
 	var got []string
 	for _, dataType := range googleHealthDataTypes.order {
 		entry, _ := googleHealthDataTypes.Lookup(dataType)

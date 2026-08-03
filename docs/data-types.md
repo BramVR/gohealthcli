@@ -201,7 +201,17 @@ Per-length swim metrics (stroke type, length, duration) captured by waterproof w
 ### Total calories
 
 - **Sync key:** `total-calories`
-- **Status:** catalog-reserved; raw sync is not supported because Google exposes total-calories only as Rollup data.
+- **Shape:** Rollup-only
+- **Scope:** `activity_and_fitness.readonly`
+- **Rollups:** `daily`, `hourly`, `weekly`, `window=<duration>` (1h / 1d / 7d granularities)
+- **Stored as:** `rollups`; normalized export `total-calories-rollups`
+
+Google exposes total calories only through `dailyRollUp` and physical-window
+`rollUp`; raw Data Point sync remains rejected. An absent `totalCalories` union
+member means no manual or on-wrist data and is skipped. A present `kcalSum: 0`
+is an explicit measurement and remains queryable/exportable. Google limits both
+endpoint modes to 14-day request spans; gohealthcli chunks longer ranges without
+gaps and keeps daily and physical Rollup cursors independent.
 
 ## Heart rate Data Types
 
@@ -424,4 +434,4 @@ These ride alongside the Data Point catalog and capture per-Connection metadata.
 
 ## Rollups
 
-`steps`, `heart-rate`, and `floors` support `--rollup daily`, which calls the upstream `dailyRollUp` endpoint and writes to the `rollups` table instead of `data_points` — the catalog rejects `--rollup daily` for every other Data Type. The same three catalog rows support the windowed `rollUp` endpoint (`--rollup hourly`, `--rollup weekly`, or `--rollup window=<duration>`) at 1h / 1d / 7d granularities. Heart-rate daily Rollups are a fast daily summary-history path, not a replacement for raw heart-rate samples. Each rollup kind carries its own Sync Cursor — syncing daily aggregates does not disturb raw or hourly cursors for the same Data Type. See [`sync`](commands/sync.html) for the full flag matrix.
+`steps`, `heart-rate`, `floors`, and Rollup-only `total-calories` support `--rollup daily`, which calls the upstream `dailyRollUp` endpoint and writes to the `rollups` table instead of `data_points`. The same catalog rows support the windowed `rollUp` endpoint (`--rollup hourly`, `--rollup weekly`, or `--rollup window=<duration>`) at 1h / 1d / 7d granularities. Heart-rate daily Rollups are a fast daily summary-history path, not a replacement for raw heart-rate samples. Total-calories requests are capped at 14 days per Provider call, with physical chunk boundaries aligned to whole requested windows. Each rollup kind carries its own Sync Cursor — syncing daily aggregates does not disturb raw or hourly cursors for the same Data Type. See [`sync`](commands/sync.html) for the full flag matrix.

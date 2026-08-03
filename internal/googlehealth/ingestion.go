@@ -115,8 +115,8 @@ type IngestionPlan struct {
 }
 
 // IngestionPagePolicy describes how Execute repeats the first request.
-// RangeWindowMaxDays is non-zero only for dailyRollUp, whose Provider
-// contract requires long ranges to be split before token pagination.
+// RangeWindowMaxDays is non-zero when the Provider contract requires
+// long ranges to be split before token pagination.
 type IngestionPagePolicy struct {
 	PageSize           int64  `json:"page_size"`
 	PageSizePolicy     string `json:"page_size_policy"`
@@ -148,6 +148,11 @@ type IngestionResult struct {
 }
 
 type googleHealthDateRange struct {
+	from string
+	to   string
+}
+
+type googleHealthTimeRange struct {
 	from string
 	to   string
 }
@@ -296,9 +301,15 @@ func (ingestion Ingestion) DescribePlan(request IngestionRequest) (IngestionPlan
 			return IngestionPlanDescription{}, err
 		}
 	case "rollUp":
+		windows, err := googleHealthWindowRollupRanges(request.DataType, request.From, request.To, plan.rollupSpec.windowSize)
+		if err != nil {
+			return IngestionPlanDescription{}, err
+		}
 		windowSize := fmt.Sprintf("%ds", int64(plan.rollupSpec.windowSize.Seconds()))
+		description.PagePolicy.RangeWindowMaxDays = googleHealthRollupMaxRangeDays(request.DataType)
+		description.PagePolicy.RangeWindowCount = len(windows)
 		description.Request, err = buildGoogleHealthRollupRawRequest(
-			request.DataType, request.From, request.To, windowSize, 0, "",
+			request.DataType, windows[0].from, windows[0].to, windowSize, 0, "",
 		)
 		if err != nil {
 			return IngestionPlanDescription{}, err
@@ -391,6 +402,9 @@ func (ingestion Ingestion) executeDailyRollupPages(ctx context.Context, archive 
 			}
 			for _, rawRollup := range page.rollups {
 				rollup, err := parseGoogleHealthRollup(request.Connection, request.DataType, "dailyRollUp", rawRollup)
+				if errors.Is(err, errRollupValueAbsent) {
+					continue
+				}
 				if err != nil {
 					return err
 				}
@@ -420,61 +434,69 @@ func (ingestion Ingestion) executeDailyRollupPages(ctx context.Context, archive 
 }
 
 // executeWindowRollupPages drives the windowed rollUp endpoint
-// (hourly / weekly / window=<duration>). Unlike dailyRollUp the
-// upstream takes an RFC3339 range and a windowSize Duration string,
-// returns rollupDataPoints with RFC3339 startTime/endTime, and does
-// not need the 90-day client-side window split that dailyRollUp does.
+// (hourly / weekly / window=<duration>). The upstream takes an
+// RFC3339 range and a windowSize Duration string and returns
+// rollupDataPoints with RFC3339 startTime/endTime.
 func (ingestion Ingestion) executeWindowRollupPages(ctx context.Context, archive Archive, request IngestionRequest, spec RollupSpec, result *IngestionResult) error {
 	windowSize := fmt.Sprintf("%ds", int64(spec.windowSize.Seconds()))
+	windows, err := googleHealthWindowRollupRanges(request.DataType, request.From, request.To, spec.windowSize)
+	if err != nil {
+		return err
+	}
 	// archiveCtx: see Archive — page archiving is
 	// not a cancellation point.
 	archiveCtx := context.WithoutCancel(ctx)
-	seenPageTokens := map[string]struct{}{}
-	for pageToken := ""; ; {
-		if ctx.Err() != nil {
-			return ErrSyncCanceled
-		}
-		reportIngestionProgress(request, result)
-		rawRequest, err := buildGoogleHealthRollupRawRequest(request.DataType, request.From, request.To, windowSize, 0, pageToken)
-		if err != nil {
-			return err
-		}
-		body, err := ingestion.provider.Fetch(ctx, rawRequest, request.AccessToken)
-		if err != nil {
+	for _, window := range windows {
+		seenPageTokens := map[string]struct{}{}
+		for pageToken := ""; ; {
 			if ctx.Err() != nil {
 				return ErrSyncCanceled
 			}
-			return NormalizeError(err)
-		}
-		page, err := parseGoogleHealthRollupList(body)
-		if err != nil {
-			return err
-		}
-		for _, rawRollup := range page.rollups {
-			rollup, err := parseGoogleHealthRollup(request.Connection, request.DataType, spec.cursorKind, rawRollup)
+			reportIngestionProgress(request, result)
+			rawRequest, err := buildGoogleHealthRollupRawRequest(request.DataType, window.from, window.to, windowSize, 0, pageToken)
 			if err != nil {
 				return err
 			}
-			status, err := archive.UpsertRollup(archiveCtx, rollup, ingestion.now().UTC().Format(time.RFC3339))
+			body, err := ingestion.provider.Fetch(ctx, rawRequest, request.AccessToken)
+			if err != nil {
+				if ctx.Err() != nil {
+					return ErrSyncCanceled
+				}
+				return NormalizeError(err)
+			}
+			page, err := parseGoogleHealthRollupList(body)
 			if err != nil {
 				return err
 			}
-			result.RollupsSeen++
-			switch status {
-			case "new":
-				result.RollupsNew++
-			case "updated":
-				result.RollupsUpdated++
+			for _, rawRollup := range page.rollups {
+				rollup, err := parseGoogleHealthRollup(request.Connection, request.DataType, spec.cursorKind, rawRollup)
+				if errors.Is(err, errRollupValueAbsent) {
+					continue
+				}
+				if err != nil {
+					return err
+				}
+				status, err := archive.UpsertRollup(archiveCtx, rollup, ingestion.now().UTC().Format(time.RFC3339))
+				if err != nil {
+					return err
+				}
+				result.RollupsSeen++
+				switch status {
+				case "new":
+					result.RollupsNew++
+				case "updated":
+					result.RollupsUpdated++
+				}
 			}
+			if page.nextPageToken == "" {
+				break
+			}
+			if _, ok := seenPageTokens[page.nextPageToken]; ok {
+				return fmt.Errorf("Google Health %s rollUp returned a repeated page token", request.DataType)
+			}
+			seenPageTokens[page.nextPageToken] = struct{}{}
+			pageToken = page.nextPageToken
 		}
-		if page.nextPageToken == "" {
-			break
-		}
-		if _, ok := seenPageTokens[page.nextPageToken]; ok {
-			return fmt.Errorf("Google Health %s rollUp returned a repeated page token", request.DataType)
-		}
-		seenPageTokens[page.nextPageToken] = struct{}{}
-		pageToken = page.nextPageToken
 	}
 	return nil
 }
@@ -845,6 +867,57 @@ func googleHealthDailyRollupMaxRangeDays(dataType string) int {
 	default:
 		return 90
 	}
+}
+
+func googleHealthRollupMaxRangeDays(dataType string) int {
+	switch dataType {
+	case "total-calories":
+		return 14
+	default:
+		return 0
+	}
+}
+
+func googleHealthWindowRollupRanges(dataType, from, to string, windowSize time.Duration) ([]googleHealthTimeRange, error) {
+	if windowSize < time.Second {
+		return nil, fmt.Errorf("windowed Rollup window size %s must be at least 1s", windowSize)
+	}
+	start, err := time.Parse(time.RFC3339Nano, from)
+	if err != nil {
+		return nil, errors.New("--from: expected RFC3339")
+	}
+	end, err := time.Parse(time.RFC3339Nano, to)
+	if err != nil {
+		return nil, errors.New("--to: expected RFC3339")
+	}
+	if !end.After(start) {
+		return nil, errors.New("--to must be after --from for windowed Rollup sync")
+	}
+	maxDays := googleHealthRollupMaxRangeDays(dataType)
+	if maxDays == 0 {
+		return []googleHealthTimeRange{{
+			from: start.UTC().Format(time.RFC3339Nano),
+			to:   end.UTC().Format(time.RFC3339Nano),
+		}}, nil
+	}
+	maxRange := time.Duration(maxDays) * 24 * time.Hour
+	chunkSpan := (maxRange / windowSize) * windowSize
+	if chunkSpan <= 0 {
+		return nil, fmt.Errorf("windowed Rollup window size %s exceeds Google Health's %d-day maximum request range for %s", windowSize, maxDays, dataType)
+	}
+	windows := make([]googleHealthTimeRange, 0, int(end.Sub(start)/chunkSpan)+1)
+	for current := start; current.Before(end); {
+		next := current.Add(chunkSpan)
+		if next.After(end) {
+			next = end
+		}
+		windows = append(windows, googleHealthTimeRange{
+			from: current.UTC().Format(time.RFC3339Nano),
+			to:   next.UTC().Format(time.RFC3339Nano),
+		})
+		current = next
+	}
+	return windows, nil
 }
 
 func googleHealthCivilDateJSON(value string) (json.RawMessage, error) {

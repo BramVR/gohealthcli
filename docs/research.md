@@ -68,6 +68,23 @@ ECG contract:
 No credential, Connection identifier, Provider payload, or Health Archive data
 was read or published for this evidence.
 
+## Total calories Rollup contract evidence (C3)
+
+Non-sensitive public evidence checked on 2026-08-03 records the current
+`total-calories` contract:
+
+- Google's calorie catalog names `total-calories` as read-only, derived calorie
+  expenditure with `rollUp` and `dailyRollUp` operations under the
+  `activity_and_fitness` scope. Both modes have a 14-day maximum request span.
+- The live v4 discovery document at revision `20260730` exposes the
+  `totalCalories` Rollup union member. `TotalCaloriesRollupValue` contains a
+  numeric `kcalSum`.
+- The REST reference distinguishes an absent union member (no manual or
+  on-wrist data) from an explicit zero (the device was worn and measured zero).
+
+No credential, Connection identifier, Provider payload, or Health Archive data
+was read or published for this evidence.
+
 ## Basal energy burned contract evidence (C2)
 
 Non-sensitive public evidence checked on 2026-08-03 records the current
@@ -95,6 +112,9 @@ was read or published for this evidence.
 - Google Health API calories and energy data types (localized current catalog): https://developers.google.com/health/data-types/calories?hl=pt-br
 - Google Health API scopes: https://developers.google.com/health/scopes
 - Google Health API list method: https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/list
+- Google Health API Rollup method: https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/rollUp
+- Google Health API daily Rollup method: https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/dailyRollUp
+- Google Health API total-calories Rollup value: https://developers.google.com/health/reference/rest/v4/TotalCaloriesRollupValue
 - Google Health API release notes: https://developers.google.com/health/release-notes
 - Google Health API Go client: https://pkg.go.dev/google.golang.org/api/health/v4
 - Grill with docs skill: https://github.com/mattpocock/skills/blob/main/skills/engineering/grill-with-docs/SKILL.md

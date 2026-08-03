@@ -71,6 +71,7 @@ var exportDatasetDefinitions = []exportDatasetSpec{
 	heightSamplesViewSpec,
 	currentHeightViewSpec,
 	basalEnergyBurnedIntervalsViewSpec,
+	totalCaloriesRollupsViewSpec,
 }
 
 var exportDatasetSpecs = exportDatasetSpecByName(exportDatasetDefinitions)

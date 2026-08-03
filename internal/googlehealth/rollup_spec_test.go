@@ -124,6 +124,14 @@ func TestSyncRollupSpecParseRejectsBadWindow(t *testing.T) {
 	}
 }
 
+func TestSyncRollupSpecRejectsSubsecondWindow(t *testing.T) {
+	t.Parallel()
+	_, err := ParseRollupSpec("window=500ms")
+	if err == nil || !strings.Contains(err.Error(), "at least 1s") {
+		t.Fatalf("ParseRollupSpec window=500ms error = %v, want at-least-1s rejection", err)
+	}
+}
+
 // TestSyncRollupSpecValidateAgainstDataTypeQuotesSupportedEndpoints
 // pins the AC's "Unsupported combinations error with the Data Type's
 // actual SupportedEndpoints quoted in the error message".

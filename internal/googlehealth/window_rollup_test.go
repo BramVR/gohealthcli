@@ -248,3 +248,94 @@ func TestGoogleHealthRollupRequestBodyCarriesWindowSize(t *testing.T) {
 		t.Errorf("range.endTime = %q, want 2026-01-01T02:00:00Z", body.Range.EndTime)
 	}
 }
+
+func TestTotalCaloriesPhysicalRollupChunksAtAlignedFourteenDayBoundaries(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"2026-01-01T00:00:00Z/2026-01-15T00:00:00Z/3600s/":           `{"rollupDataPoints":[],"nextPageToken":"same-token"}`,
+		"2026-01-01T00:00:00Z/2026-01-15T00:00:00Z/3600s/same-token": `{"rollupDataPoints":[]}`,
+		"2026-01-15T00:00:00Z/2026-01-29T00:00:00Z/3600s/":           `{"rollupDataPoints":[],"nextPageToken":"same-token"}`,
+		"2026-01-15T00:00:00Z/2026-01-29T00:00:00Z/3600s/same-token": `{"rollupDataPoints":[]}`,
+	})
+	ingestion := fakeGoogleHealthIngestion(provider)
+
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "total-calories",
+		Rollup:   "hourly",
+		From:     "2026-01-01T00:00:00Z",
+		To:       "2026-01-29T00:00:00Z",
+	}))
+	if err != nil {
+		t.Fatalf("ingest total-calories hourly Rollups: %v", err)
+	}
+	if result.EndpointFamily != "rollUp" {
+		t.Fatalf("endpoint family = %q, want rollUp", result.EndpointFamily)
+	}
+	if len(provider.requests) != 4 {
+		t.Fatalf("Provider request count = %d, want 4", len(provider.requests))
+	}
+	for index, wantRange := range [][2]string{
+		{"2026-01-01T00:00:00Z", "2026-01-15T00:00:00Z"},
+		{"2026-01-01T00:00:00Z", "2026-01-15T00:00:00Z"},
+		{"2026-01-15T00:00:00Z", "2026-01-29T00:00:00Z"},
+		{"2026-01-15T00:00:00Z", "2026-01-29T00:00:00Z"},
+	} {
+		var body struct {
+			Range struct {
+				StartTime string `json:"startTime"`
+				EndTime   string `json:"endTime"`
+			} `json:"range"`
+		}
+		if err := json.Unmarshal(provider.requests[index].Body, &body); err != nil {
+			t.Fatalf("request[%d] body: %v", index, err)
+		}
+		if body.Range.StartTime != wantRange[0] || body.Range.EndTime != wantRange[1] {
+			t.Fatalf("request[%d] range = [%s,%s), want [%s,%s)", index, body.Range.StartTime, body.Range.EndTime, wantRange[0], wantRange[1])
+		}
+	}
+}
+
+func TestTotalCaloriesRollupChunkRangesHonorProviderMaximumAndWindowAlignment(t *testing.T) {
+	t.Parallel()
+	daily, err := googleHealthDailyRollupDateWindows("total-calories", "2026-01-01", "2026-02-01")
+	if err != nil {
+		t.Fatalf("daily ranges: %v", err)
+	}
+	wantDaily := []googleHealthDateRange{
+		{from: "2026-01-01", to: "2026-01-15"},
+		{from: "2026-01-15", to: "2026-01-29"},
+		{from: "2026-01-29", to: "2026-02-01"},
+	}
+	if len(daily) != len(wantDaily) {
+		t.Fatalf("daily range count = %d, want %d", len(daily), len(wantDaily))
+	}
+	for index := range wantDaily {
+		if daily[index] != wantDaily[index] {
+			t.Fatalf("daily[%d] = %#v, want %#v", index, daily[index], wantDaily[index])
+		}
+	}
+
+	physical, err := googleHealthWindowRollupRanges(
+		"total-calories",
+		"2026-01-01T00:00:00Z",
+		"2026-01-28T00:00:00Z",
+		5*24*time.Hour,
+	)
+	if err != nil {
+		t.Fatalf("physical ranges: %v", err)
+	}
+	wantPhysical := []googleHealthTimeRange{
+		{from: "2026-01-01T00:00:00Z", to: "2026-01-11T00:00:00Z"},
+		{from: "2026-01-11T00:00:00Z", to: "2026-01-21T00:00:00Z"},
+		{from: "2026-01-21T00:00:00Z", to: "2026-01-28T00:00:00Z"},
+	}
+	if len(physical) != len(wantPhysical) {
+		t.Fatalf("physical range count = %d, want %d", len(physical), len(wantPhysical))
+	}
+	for index := range wantPhysical {
+		if physical[index] != wantPhysical[index] {
+			t.Fatalf("physical[%d] = %#v, want %#v", index, physical[index], wantPhysical[index])
+		}
+	}
+}
