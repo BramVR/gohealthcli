@@ -664,10 +664,9 @@ func TestSyncOrchestratorAllExpandsToSyncableDefaultDataTypes(t *testing.T) {
 		t.Fatal("expanded list is empty; --all needs at least one syncable Data Type")
 	}
 	// Filter must keep only catalog entries with SupportsSyncDataPoint=true.
-	// "total-calories" is a reserved default in the catalog without a parser
-	// (Tier-1 catalog growth lands the shape later); it MUST NOT appear in
-	// the --all fan-out today, otherwise every `sync --all` would book a
-	// guaranteed sync_failed row.
+	// "total-calories" is Rollup-only and has no raw Data Point parser. It
+	// MUST NOT appear in the raw --all fan-out, otherwise `sync --all` would
+	// book a guaranteed sync_failed row.
 	for _, dataType := range got {
 		if !googlehealth.SupportsSyncDataPoints(dataType) {
 			t.Errorf("--all included %q which has no sync parser; would produce a guaranteed sync_failed", dataType)

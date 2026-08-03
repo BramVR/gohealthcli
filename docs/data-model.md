@@ -255,8 +255,9 @@ design (see ADR-0008).
 
 ## Normalized Views
 
-Normalized Views are SQLite views over `data_points.raw_json` (and
-`identity_snapshots.raw_json` for `current_*` and `paired_devices`)
+Normalized Views are SQLite views over `data_points.raw_json`, `rollups.raw_json`
+(for `total_calories_rollups`), and `identity_snapshots.raw_json` (for
+`current_*` and `paired_devices`)
 that project the principal scalars of each Data Type as typed columns,
 so downstream consumers can `SELECT ... FROM <view>` instead of walking
 JSON paths. Every view registered through the **Normalized Views
@@ -273,7 +274,7 @@ gohealthcli describe-schema --json | jq '[.views[].name] | sort'
 The current catalog spans (grouped, with PRD anchors):
 
 - **Activity & fitness** — `daily_steps`, `floors_intervals`,
-  `basal_energy_burned_intervals`,
+  `basal_energy_burned_intervals`, `total_calories_rollups`,
   `active_minutes_intervals`, `active_zone_minutes_intervals`,
   `activity_level_intervals`, `altitude_intervals`,
   `sedentary_period_intervals`, `swim_lengths_data_intervals`,

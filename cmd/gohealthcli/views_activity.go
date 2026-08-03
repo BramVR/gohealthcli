@@ -243,3 +243,35 @@ var basalEnergyBurnedIntervalsViewSpec = exportDatasetSpec{
 		{name: "upstream_resource_name"},
 	},
 }
+
+var totalCaloriesRollupsViewSpec = exportDatasetSpec{
+	name:             "total-calories-rollups",
+	view:             "total_calories_rollups",
+	migrationVersion: 27,
+	orderBy:          "CASE WHEN civil_date = '' THEN window_start_utc ELSE civil_date END, rollup_kind, provider_name, connection_id",
+	viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			rollup_kind,
+			IFNULL(window_start_utc, '') AS window_start_utc,
+			IFNULL(window_end_utc, '') AS window_end_utc,
+			IFNULL(civil_date, '') AS civil_date,
+			CASE
+				WHEN json_type(raw_json, '$.totalCalories.kcalSum') = 'real'
+					AND json_extract(raw_json, '$.totalCalories.kcalSum') = CAST(json_extract(raw_json, '$.totalCalories.kcalSum') AS INTEGER)
+				THEN printf('%.1f', json_extract(raw_json, '$.totalCalories.kcalSum'))
+				ELSE printf('%.15g', json_extract(raw_json, '$.totalCalories.kcalSum'))
+			END AS kcal_sum
+		FROM rollups
+		WHERE data_type = 'total-calories'
+			AND json_type(raw_json, '$.totalCalories.kcalSum') IN ('integer', 'real')`,
+	fields: []exportFieldSpec{
+		{name: "provider_name"},
+		{name: "connection_id"},
+		{name: "rollup_kind"},
+		{name: "window_start_utc"},
+		{name: "window_end_utc"},
+		{name: "civil_date"},
+		{name: "kcal_sum"},
+	},
+}

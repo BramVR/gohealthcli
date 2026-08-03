@@ -390,6 +390,46 @@ func TestGoogleHealthIngestionArchivesDailyRollups(t *testing.T) {
 	}
 }
 
+func TestTotalCaloriesRollupSkipsAbsentUnionAndArchivesExplicitZero(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{rollupStatuses: []string{"new"}}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"2026-01-01/2026-01-03/": `{
+			"rollupDataPoints": [
+				{
+					"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+					"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}
+				},
+				{
+					"totalCalories": {"kcalSum": 0},
+					"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 2}},
+					"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 3}}
+				}
+			]
+		}`,
+	})
+	ingestion := fakeGoogleHealthIngestion(provider)
+
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "total-calories",
+		Rollup:   "daily",
+		From:     "2026-01-01",
+		To:       "2026-01-03",
+	}))
+	if err != nil {
+		t.Fatalf("ingest total-calories daily Rollups: %v", err)
+	}
+	if result.RollupsSeen != 1 || result.RollupsNew != 1 {
+		t.Fatalf("Rollup counts = (%d seen, %d new), want (1, 1)", result.RollupsSeen, result.RollupsNew)
+	}
+	if len(archive.rollups) != 1 || archive.rollups[0].CivilDate != "2026-01-02" {
+		t.Fatalf("archived Rollups = %#v, want only explicit-zero day", archive.rollups)
+	}
+	if !strings.Contains(archive.rollups[0].RawJSON, `"kcalSum":0`) {
+		t.Fatalf("raw_json = %s, want explicit zero", archive.rollups[0].RawJSON)
+	}
+}
+
 func TestGoogleHealthIngestionHeartRateDailyRollupUsesFourteenDayWindows(t *testing.T) {
 	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}

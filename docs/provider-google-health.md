@@ -86,12 +86,14 @@ stable JSON, plain, and human output.
 `rollUp`
 
 - Aggregate over arbitrary time windows.
-- Useful later for hourly or custom summaries.
+- Used for hourly, weekly, and custom summaries, including total calories.
+- Total-calories requests have a 14-day maximum physical span.
 
 `dailyRollUp`
 
 - Civil-day aggregate.
-- Useful first normalized export path for steps, distance, calories, and heart-rate summaries.
+- Used for steps, floors, heart-rate, and total-calories daily summaries.
+- Total-calories requests have a 14-day maximum civil span.
 
 ## Retry behavior
 

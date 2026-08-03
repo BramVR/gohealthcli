@@ -258,7 +258,7 @@ func TestBasalEnergyBurnedViewMigrationUpgradesAndIsIdempotent(t *testing.T) {
 	if err := lifecycle.Migrate(context.Background()); err != nil {
 		t.Fatalf("repeat migration: %v", err)
 	}
-	assertArchiveUserVersion(t, archivePath, 26)
+	assertArchiveUserVersion(t, archivePath, currentSchemaVersion)
 	db := openArchiveForTest(t, archivePath)
 	defer db.Close()
 	var viewCount, migrationCount int

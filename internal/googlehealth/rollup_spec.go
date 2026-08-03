@@ -64,8 +64,8 @@ func ParseRollupSpec(value string) (RollupSpec, error) {
 		if err != nil {
 			return RollupSpec{}, fmt.Errorf("sync --rollup window=%s: %w", raw, err)
 		}
-		if dur <= 0 {
-			return RollupSpec{}, fmt.Errorf("sync --rollup window=%s: duration must be positive", raw)
+		if dur < time.Second {
+			return RollupSpec{}, fmt.Errorf("sync --rollup window=%s: duration must be at least 1s", raw)
 		}
 		return RollupSpec{
 			cursorKind:     value,
@@ -172,6 +172,28 @@ func ValidateRollupAgainstDataType(spec RollupSpec, dataType string) error {
 	if !ok || support.RollupValueType == "" {
 		return fmt.Errorf("sync --rollup %s: Data Type %q does not support %s Rollups; SupportedEndpoints=%s",
 			spec.cursorKind, dataType, spec.cursorKind, formatSupportedEndpoints(entry.SupportedEndpoints))
+	}
+	return nil
+}
+
+// ValidateRequestWindow rejects a physical aggregation window that cannot
+// fit even once inside the Provider's maximum request range. It is independent
+// of the requested from/to values, so the CLI preflight can run it before any
+// Connection, Credential Store, archive-write, or Provider I/O boundary.
+func (spec RollupSpec) ValidateRequestWindow(dataType string) error {
+	if spec.endpointFamily != endpointFamilyRollUp {
+		return nil
+	}
+	maxDays := googleHealthRollupMaxRangeDays(dataType)
+	if maxDays == 0 {
+		return nil
+	}
+	maxRange := time.Duration(maxDays) * 24 * time.Hour
+	if spec.windowSize < time.Second {
+		return fmt.Errorf("windowed Rollup window size %s must be at least 1s", spec.windowSize)
+	}
+	if spec.windowSize > maxRange {
+		return fmt.Errorf("windowed Rollup window size %s exceeds Google Health's %d-day maximum request range for %s", spec.windowSize, maxDays, dataType)
 	}
 	return nil
 }

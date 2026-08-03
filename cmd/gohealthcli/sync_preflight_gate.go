@@ -109,7 +109,7 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 		return preflightPlan{}, err
 	}
 	for _, dataType := range dataTypes {
-		if !gate.ctx.dataTypeSupported(dataType) {
+		if options.rollup == "" && !gate.ctx.dataTypeSupported(dataType) {
 			return preflightPlan{}, newPreflightFailure(
 				preflightRuleUnsupportedDataType,
 				fmt.Errorf("sync Data Type %q is not supported yet", dataType),
@@ -135,6 +135,9 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 		for _, dataType := range dataTypes {
 			if err := validate(spec, dataType); err != nil {
 				return preflightPlan{}, newPreflightFailure(preflightRuleRollupCatalog, err)
+			}
+			if err := spec.ValidateRequestWindow(dataType); err != nil {
+				return preflightPlan{}, newPreflightFailure(preflightRuleRangeParse, err)
 			}
 		}
 		rollupSpec = &spec

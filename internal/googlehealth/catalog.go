@@ -92,6 +92,13 @@ func reconcileAllRollupEndpoints(filterField, dailyValueType, windowValueType st
 	}
 }
 
+func allRollupEndpoints(dailyValueType, windowValueType string, windowGranularities []string) map[endpointFamily]endpointSupport {
+	return map[endpointFamily]endpointSupport{
+		endpointFamilyDailyRollUp: {RollupValueType: dailyValueType},
+		endpointFamilyRollUp:      {RollupValueType: windowValueType, WindowGranularities: windowGranularities},
+	}
+}
+
 // listReconcileWithRollupEndpoints adds only the windowed rollUp
 // family alongside list/reconcile. Used by Data Types whose upstream
 // returns sample shapes per Data Point but supports aggregated rollUp
@@ -225,8 +232,11 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		DataType:          "total-calories",
 		RequiredScopes:    []string{ScopeActivityReadonly},
 		DefaultConfigType: true,
-		// total-calories has no parser shape yet — reserved Tier 1 entry.
-		// SupportedEndpoints stays nil; sync would error 'not supported'.
+		SupportedEndpoints: allRollupEndpoints(
+			"totalCalories",
+			"totalCalories",
+			[]string{"1h", "1d", "7d"},
+		),
 	},
 	{
 		DataType:           "weight",

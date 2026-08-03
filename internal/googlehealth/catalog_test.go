@@ -140,6 +140,7 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 		{
 			dataType:              "total-calories",
 			wantScopes:            []string{ScopeActivityReadonly},
+			wantDailyRollup:       true,
 			wantParser:            "",
 			wantRecordKind:        "",
 			wantDefaultConfigType: true,

@@ -608,6 +608,10 @@ func withDailyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessT
 // RFC3339 for hourly per PRD #141 slice 3) rather than the raw civil
 // option.from.
 func withHeartRateHourlyRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken string, pages map[string]string) (runtimeAdapters, *[]googlehealth.RawRequest) {
+	return withWindowRollupFetchFake(t, runtime, wantAccessToken, "heart-rate", pages)
+}
+
+func withWindowRollupFetchFake(t *testing.T, runtime runtimeAdapters, wantAccessToken, dataType string, pages map[string]string) (runtimeAdapters, *[]googlehealth.RawRequest) {
 	t.Helper()
 
 	var requests []googlehealth.RawRequest
@@ -615,8 +619,8 @@ func withHeartRateHourlyRollupFetchFake(t *testing.T, runtime runtimeAdapters, w
 		if accessToken != wantAccessToken {
 			t.Fatalf("rollup sync access token = %q, want stored token", accessToken)
 		}
-		if request.EndpointName != "dataTypes.heart-rate.rollUp" || request.DataType != "heart-rate" {
-			t.Fatalf("rollup sync request = (%q, %q), want heart-rate rollUp", request.EndpointName, request.DataType)
+		if request.EndpointName != "dataTypes."+dataType+".rollUp" || request.DataType != dataType {
+			t.Fatalf("rollup sync request = (%q, %q), want %s rollUp", request.EndpointName, request.DataType, dataType)
 		}
 		if request.Method != http.MethodPost {
 			t.Fatalf("rollup method = %q, want POST", request.Method)
@@ -625,7 +629,7 @@ func withHeartRateHourlyRollupFetchFake(t *testing.T, runtime runtimeAdapters, w
 		if err != nil {
 			t.Fatalf("parse rollup URL: %v", err)
 		}
-		if parsedURL.Path != "/v4/users/me/dataTypes/heart-rate/dataPoints:rollUp" {
+		if parsedURL.Path != "/v4/users/me/dataTypes/"+dataType+"/dataPoints:rollUp" {
 			t.Fatalf("rollup path = %q, want rollUp path", parsedURL.Path)
 		}
 		var body struct {

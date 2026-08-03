@@ -146,6 +146,34 @@ func TestGenericRollupParserRejectsUnknownDataType(t *testing.T) {
 	}
 }
 
+func TestTotalCaloriesRollupRejectsMalformedValueShapes(t *testing.T) {
+	t.Parallel()
+	connection := archived.Connection{ProviderName: "googlehealth", ID: "googlehealth:synthetic"}
+	tests := []struct {
+		name    string
+		value   string
+		wantErr string
+	}{
+		{name: "not object", value: `"invalid"`, wantErr: "totalCalories is not an object"},
+		{name: "missing kcalSum", value: `{}`, wantErr: "missing kcalSum"},
+		{name: "kcalSum string", value: `{"kcalSum":"0"}`, wantErr: "kcalSum is not a number"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			raw := json.RawMessage(`{
+				"totalCalories": ` + test.value + `,
+				"startTime": "2026-01-01T00:00:00Z",
+				"endTime": "2026-01-01T01:00:00Z"
+			}`)
+			_, err := parseGoogleHealthRollup(connection, "total-calories", "hourly", raw)
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("error = %v, want %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
 // TestStepsDailyRollupParserStillProducesByteIdenticalRow pins the
 // #106 AC: the steps-daily byte-identical guard. The legacy
 // steps-only parser was deleted with the dead command-wrapper layer

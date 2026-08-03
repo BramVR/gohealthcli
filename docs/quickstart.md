@@ -120,6 +120,15 @@ gohealthcli sync --types heart-rate --rollup hourly --from 2026-01-01 --to 2026-
 
 Each raw or Rollup path has its own Sync Cursor key. A successful daily Rollup Sync Run advances the `heart-rate` daily Rollup cursor, not the raw `heart-rate` cursor; a later raw Data Point sync still needs its own successful Initial Backfill before cursor-resumed raw syncs can omit `--from`.
 
+Total calories are Rollup-only. Use a daily or physical-window mode and export
+the `total-calories-rollups` dataset; raw total-calories sync is intentionally
+rejected:
+
+```bash
+gohealthcli sync --types total-calories --rollup daily --from 2026-01-01 --to 2026-01-15 --plain
+gohealthcli export total-calories-rollups --format csv --stdout
+```
+
 ## How long will a sync take?
 
 Cursor-resumed incremental syncs (no `--from`) finish in seconds. An explicit Initial Backfill window costs time in proportion to how many Data Points it covers, and that depends on the Data Type's density. `sync` uses the largest safe raw Data Point page size automatically — `pageSize=10000` for Data Types such as `heart-rate` and `steps`, and the provider's smaller `pageSize=25` cap for `sleep` and `exercise` — but page size only reduces provider round-trips. It does not reduce the number of raw Data Points that must be parsed and archived. Sustained throughput measures roughly 2,000–5,000 Data Points per minute on real runs; the table plans with the conservative ~2,000/min, using densities measured 2026-06-10 from a real archive backed by a Pixel Watch 4 (continuous heart-rate sampling). A Data Point is the upstream record unit, which is why the counts differ so wildly per type: a heart-rate point is a single reading (every ~3 seconds on the watch), a steps point is a one-minute bucket, and a sleep point is an entire night with its stage breakdown.

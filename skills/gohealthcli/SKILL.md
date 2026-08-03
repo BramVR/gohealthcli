@@ -113,7 +113,8 @@ leaves the cursor unchanged, so retrying may re-fetch idempotently.
 Use Rollups only when summary history is acceptable. Rollups are separate from
 raw Data Points, do not replace them, and have separate Sync Cursors. Validate
 the requested combination through command output before starting a large
-backfill.
+backfill. `total-calories` is Rollup-only: use daily or physical-window modes
+and query/export `total-calories-rollups`; do not attempt raw sync.
 
 ### 6. Export deliberately
 
