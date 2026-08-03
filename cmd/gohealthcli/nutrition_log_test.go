@@ -204,16 +204,16 @@ func TestExportNutritionLogSessionsPreservesFoodsNullsAndStableOrder(t *testing.
 			endCivil:     "2026-01-01T11:31:00",
 			civilDate:    "2026-01-01",
 			dataSource:   `{}`,
-			rawJSON:      `{"nutritionLog":{"foodDisplayName":"Synthetic anonymous soup","nutrients":[]}}`,
+			rawJSON:      `{"nutritionLog":{"foodDisplayName":"Synthetic anonymous soup"}}`,
 		},
 	} {
 		insertExportDataPoint(t, archivePath, point)
 	}
 
 	wantCSV := "provider_name,connection_id,start_time_utc,end_time_utc,start_civil_time,end_civil_time,civil_date,food_resource_name,food_display_name,meal_type,serving_food_measurement_unit,serving_food_measurement_unit_display_name,serving_amount,energy_kcal,energy_from_fat_kcal,total_carbohydrate_grams,total_fat_grams,nutrients_json,source_platform,source_family_filter,upstream_resource_name\n" +
-		"googlehealth,googlehealth:111111256096816351,2026-01-01T10:30:00Z,2026-01-01T10:31:00Z,2026-01-01T11:30:00,2026-01-01T11:31:00,2026-01-01,,Synthetic anonymous soup,,,,,,,,,[],,,users/me/dataTypes/nutrition-log/dataPoints/nutrition-a\n" +
+		"googlehealth,googlehealth:111111256096816351,2026-01-01T10:30:00Z,2026-01-01T10:31:00Z,2026-01-01T11:30:00,2026-01-01T11:31:00,2026-01-01,,Synthetic anonymous soup,,,,,,,,,,,,users/me/dataTypes/nutrition-log/dataPoints/nutrition-a\n" +
 		"googlehealth,googlehealth:111111256096816351,2026-01-01T10:30:00Z,2026-01-01T10:35:00Z,2026-01-01T11:30:00,2026-01-01T11:35:00,2026-01-01,users/me/foods/synthetic-oats,Synthetic oats,BREAKFAST,users/me/foodMeasurementUnits/synthetic-bowl,bowl,1.25,321.0,81.5,52.25,9.125,\"[{\"\"nutrient\"\":\"\"PROTEIN\"\",\"\"quantity\"\":{\"\"grams\"\":12.5}}]\",SYNTHETIC,,users/me/dataTypes/nutrition-log/dataPoints/nutrition-b\n"
-	wantJSONL := "{\"provider_name\":\"googlehealth\",\"connection_id\":\"googlehealth:111111256096816351\",\"start_time_utc\":\"2026-01-01T10:30:00Z\",\"end_time_utc\":\"2026-01-01T10:31:00Z\",\"start_civil_time\":\"2026-01-01T11:30:00\",\"end_civil_time\":\"2026-01-01T11:31:00\",\"civil_date\":\"2026-01-01\",\"food_resource_name\":null,\"food_display_name\":\"Synthetic anonymous soup\",\"meal_type\":null,\"serving_food_measurement_unit\":null,\"serving_food_measurement_unit_display_name\":null,\"serving_amount\":null,\"energy_kcal\":null,\"energy_from_fat_kcal\":null,\"total_carbohydrate_grams\":null,\"total_fat_grams\":null,\"nutrients_json\":[],\"source_platform\":\"\",\"source_family_filter\":\"\",\"upstream_resource_name\":\"users/me/dataTypes/nutrition-log/dataPoints/nutrition-a\"}\n" +
+	wantJSONL := "{\"provider_name\":\"googlehealth\",\"connection_id\":\"googlehealth:111111256096816351\",\"start_time_utc\":\"2026-01-01T10:30:00Z\",\"end_time_utc\":\"2026-01-01T10:31:00Z\",\"start_civil_time\":\"2026-01-01T11:30:00\",\"end_civil_time\":\"2026-01-01T11:31:00\",\"civil_date\":\"2026-01-01\",\"food_resource_name\":null,\"food_display_name\":\"Synthetic anonymous soup\",\"meal_type\":null,\"serving_food_measurement_unit\":null,\"serving_food_measurement_unit_display_name\":null,\"serving_amount\":null,\"energy_kcal\":null,\"energy_from_fat_kcal\":null,\"total_carbohydrate_grams\":null,\"total_fat_grams\":null,\"nutrients_json\":null,\"source_platform\":\"\",\"source_family_filter\":\"\",\"upstream_resource_name\":\"users/me/dataTypes/nutrition-log/dataPoints/nutrition-a\"}\n" +
 		"{\"provider_name\":\"googlehealth\",\"connection_id\":\"googlehealth:111111256096816351\",\"start_time_utc\":\"2026-01-01T10:30:00Z\",\"end_time_utc\":\"2026-01-01T10:35:00Z\",\"start_civil_time\":\"2026-01-01T11:30:00\",\"end_civil_time\":\"2026-01-01T11:35:00\",\"civil_date\":\"2026-01-01\",\"food_resource_name\":\"users/me/foods/synthetic-oats\",\"food_display_name\":\"Synthetic oats\",\"meal_type\":\"BREAKFAST\",\"serving_food_measurement_unit\":\"users/me/foodMeasurementUnits/synthetic-bowl\",\"serving_food_measurement_unit_display_name\":\"bowl\",\"serving_amount\":\"1.25\",\"energy_kcal\":\"321.0\",\"energy_from_fat_kcal\":\"81.5\",\"total_carbohydrate_grams\":\"52.25\",\"total_fat_grams\":\"9.125\",\"nutrients_json\":[{\"nutrient\":\"PROTEIN\",\"quantity\":{\"grams\":12.5}}],\"source_platform\":\"SYNTHETIC\",\"source_family_filter\":\"\",\"upstream_resource_name\":\"users/me/dataTypes/nutrition-log/dataPoints/nutrition-b\"}\n"
 
 	for _, test := range []struct {
@@ -324,7 +324,7 @@ func TestNutritionLogSessionsViewMigrationUpgradesAndIsIdempotent(t *testing.T) 
 	createLegacyArchive(t, archivePath, 27)
 	lifecycle := healthArchiveLifecycle{path: archivePath}
 	if err := lifecycle.Migrate(context.Background()); err != nil {
-		t.Fatalf("upgrade v26 Health Archive: %v", err)
+		t.Fatalf("upgrade v27 Health Archive: %v", err)
 	}
 	if err := lifecycle.Migrate(context.Background()); err != nil {
 		t.Fatalf("repeat migration: %v", err)
