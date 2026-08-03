@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"github.com/BramVR/gohealthcli/internal/googlehealth"
+	"io"
+	"os"
 	"os/exec"
 	goruntime "runtime"
 	"time"
 )
 
 type runtimeAdapters struct {
+	stdin io.Reader
 	// httpDoer is the transport seam every Provider HTTP request rides
 	// (#281): the production adapter binds the shared timeout client
 	// (#271), tests bind a fake. Code paths that build requests receive
@@ -37,15 +40,18 @@ type runtimeAdapters struct {
 	// sleep is the blocking-wait seam the Sync Run finalize retry loop
 	// rides between SQLITE_BUSY attempts. Production binds time.Sleep;
 	// tests bind a no-op so retry scenarios stay instant.
-	sleep                          func(time.Duration)
-	currentOS                      string
-	findExecutable                 func(string) (string, error)
-	runSecurityAddGenericPassword  func(context.Context, string, string, []byte) error
-	runSecurityFindGenericPassword func(context.Context, string, string) ([]byte, error)
-	runSecretToolStore             func(context.Context, string, string, []byte) error
-	runSecretToolLookup            func(context.Context, string, string) ([]byte, error)
-	runWindowsCredentialWrite      func(context.Context, string, string, []byte) error
-	runWindowsCredentialRead       func(context.Context, string, string) ([]byte, error)
+	sleep                            func(time.Duration)
+	currentOS                        string
+	findExecutable                   func(string) (string, error)
+	runSecurityAddGenericPassword    func(context.Context, string, string, []byte) error
+	runSecurityFindGenericPassword   func(context.Context, string, string) ([]byte, error)
+	runSecurityDeleteGenericPassword func(context.Context, string, string) error
+	runSecretToolStore               func(context.Context, string, string, []byte) error
+	runSecretToolLookup              func(context.Context, string, string) ([]byte, error)
+	runSecretToolClear               func(context.Context, string, string) error
+	runWindowsCredentialWrite        func(context.Context, string, string, []byte) error
+	runWindowsCredentialRead         func(context.Context, string, string) ([]byte, error)
+	runWindowsCredentialDelete       func(context.Context, string, string) error
 	// observeSubcommandFlagSet is the issue #76 schema-drift test hook
 	// (see flagSetObserver in common_flags.go). Production leaves it
 	// nil — notifySubcommandFlagSetObserver treats nil as a no-op.
@@ -79,28 +85,32 @@ func productionNow() time.Time {
 
 func productionRuntimeAdapters() runtimeAdapters {
 	return runtimeAdapters{
-		httpDoer:                       googlehealth.HTTPClient,
-		runOAuthFlow:                   runBrowserOAuthFlow,
-		refreshOAuthToken:              refreshGoogleOAuthToken,
-		openBrowser:                    openBrowser,
-		fetchIdentity:                  productionFetchIdentity,
-		fetchProfile:                   productionFetchProfile,
-		fetchPairedDevices:             productionFetchPairedDevices,
-		fetchSettings:                  productionFetchSettings,
-		fetchIRNProfile:                productionFetchIRNProfile,
-		fetchRawProvider:               productionFetchRawProvider,
-		openHealthArchiveWriter:        openHealthArchiveWriter,
-		openSyncPlanningArchive:        openSyncPlanningArchive,
-		now:                            productionNow,
-		sleep:                          time.Sleep,
-		currentOS:                      goruntime.GOOS,
-		findExecutable:                 exec.LookPath,
-		runSecurityAddGenericPassword:  runSecurityAddGenericPasswordCommand,
-		runSecurityFindGenericPassword: runSecurityFindGenericPasswordCommand,
-		runSecretToolStore:             runSecretToolStoreCommand,
-		runSecretToolLookup:            runSecretToolLookupCommand,
-		runWindowsCredentialWrite:      runWindowsCredentialWriteCommand,
-		runWindowsCredentialRead:       runWindowsCredentialReadCommand,
+		stdin:                            os.Stdin,
+		httpDoer:                         googlehealth.HTTPClient,
+		runOAuthFlow:                     runBrowserOAuthFlow,
+		refreshOAuthToken:                refreshGoogleOAuthToken,
+		openBrowser:                      openBrowser,
+		fetchIdentity:                    productionFetchIdentity,
+		fetchProfile:                     productionFetchProfile,
+		fetchPairedDevices:               productionFetchPairedDevices,
+		fetchSettings:                    productionFetchSettings,
+		fetchIRNProfile:                  productionFetchIRNProfile,
+		fetchRawProvider:                 productionFetchRawProvider,
+		openHealthArchiveWriter:          openHealthArchiveWriter,
+		openSyncPlanningArchive:          openSyncPlanningArchive,
+		now:                              productionNow,
+		sleep:                            time.Sleep,
+		currentOS:                        goruntime.GOOS,
+		findExecutable:                   exec.LookPath,
+		runSecurityAddGenericPassword:    runSecurityAddGenericPasswordCommand,
+		runSecurityFindGenericPassword:   runSecurityFindGenericPasswordCommand,
+		runSecurityDeleteGenericPassword: runSecurityDeleteGenericPasswordCommand,
+		runSecretToolStore:               runSecretToolStoreCommand,
+		runSecretToolLookup:              runSecretToolLookupCommand,
+		runSecretToolClear:               runSecretToolClearCommand,
+		runWindowsCredentialWrite:        runWindowsCredentialWriteCommand,
+		runWindowsCredentialRead:         runWindowsCredentialReadCommand,
+		runWindowsCredentialDelete:       runWindowsCredentialDeleteCommand,
 	}
 }
 
@@ -126,6 +136,9 @@ func newGoogleHealthIngestionWithRuntime(runtime runtimeAdapters) googlehealth.I
 
 func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
 	production := productionRuntimeAdapters()
+	if adapters.stdin == nil {
+		adapters.stdin = production.stdin
+	}
 	// The doer resolves first: the closures bound below capture the
 	// adapters value and must see the injected (or defaulted) doer.
 	if adapters.httpDoer == nil {
@@ -204,17 +217,26 @@ func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
 	if adapters.runSecurityFindGenericPassword == nil {
 		adapters.runSecurityFindGenericPassword = production.runSecurityFindGenericPassword
 	}
+	if adapters.runSecurityDeleteGenericPassword == nil {
+		adapters.runSecurityDeleteGenericPassword = production.runSecurityDeleteGenericPassword
+	}
 	if adapters.runSecretToolStore == nil {
 		adapters.runSecretToolStore = production.runSecretToolStore
 	}
 	if adapters.runSecretToolLookup == nil {
 		adapters.runSecretToolLookup = production.runSecretToolLookup
 	}
+	if adapters.runSecretToolClear == nil {
+		adapters.runSecretToolClear = production.runSecretToolClear
+	}
 	if adapters.runWindowsCredentialWrite == nil {
 		adapters.runWindowsCredentialWrite = production.runWindowsCredentialWrite
 	}
 	if adapters.runWindowsCredentialRead == nil {
 		adapters.runWindowsCredentialRead = production.runWindowsCredentialRead
+	}
+	if adapters.runWindowsCredentialDelete == nil {
+		adapters.runWindowsCredentialDelete = production.runWindowsCredentialDelete
 	}
 	return adapters
 }

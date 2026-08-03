@@ -10,6 +10,8 @@ import (
 
 type connectResult struct {
 	Status             string   `json:"status"`
+	AuthorizationURL   string   `json:"authorization_url,omitempty"`
+	ExpiresAt          string   `json:"expires_at,omitempty"`
 	ConnectionID       string   `json:"connection_id,omitempty"`
 	ProviderName       string   `json:"provider_name,omitempty"`
 	GoogleHealthUserID string   `json:"google_health_user_id,omitempty"`
@@ -35,6 +37,8 @@ func runConnectWithRuntime(args []string, globals CommonFlagValues, stdout, stde
 	// --help text can never drift from what expandConnectAddScopes
 	// accepts again (#148: `nutrition` was accepted but invisible).
 	connectAddScopes := flags.String("add-scopes", "", connectAddScopesUsage())
+	headlessStart := flags.Bool("headless-start", false, "start headless OAuth and print the authorization URL")
+	headlessComplete := flags.Bool("complete", false, "complete headless OAuth from a redirected URL read on stdin")
 
 	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
@@ -58,8 +62,31 @@ func runConnectWithRuntime(args []string, globals CommonFlagValues, stdout, stde
 			Mode:    mode,
 		}, stdout, stderr)
 	}
+	if *headlessStart && *headlessComplete {
+		return ReportFailure(FailureReport{
+			Command: "connect",
+			Status:  StatusFlagInvalid,
+			Message: "--headless-start and --complete are mutually exclusive",
+			Mode:    mode,
+		}, stdout, stderr)
+	}
+	if *headlessComplete && common.NoInput {
+		return ReportFailure(FailureReport{
+			Command: "connect",
+			Status:  StatusFlagInvalid,
+			Message: "--complete cannot be combined with --no-input",
+			Mode:    mode,
+		}, stdout, stderr)
+	}
 
-	result, err := connectSetupWithRuntimeAndExtraScopes(common.ConfigPath, common.ArchivePath, common.NoInput, additionalScopes, runtime)
+	var result connectResult
+	if *headlessStart {
+		result, err = startHeadlessConnection(context.Background(), common.ConfigPath, common.ArchivePath, additionalScopes, runtime)
+	} else if *headlessComplete {
+		result, err = completeHeadlessConnection(context.Background(), common.ConfigPath, common.ArchivePath, additionalScopes, runtime)
+	} else {
+		result, err = connectSetupWithRuntimeAndExtraScopes(common.ConfigPath, common.ArchivePath, common.NoInput, additionalScopes, runtime)
+	}
 	if err != nil {
 		result.Status = "connect_failed"
 		result.Message = err.Error()
@@ -105,6 +132,16 @@ func writeConnectResult(result connectResult, mode outputMode, stdout io.Writer)
 				return err
 			}
 		}
+		if result.AuthorizationURL != "" {
+			if _, err := fmt.Fprintf(stdout, "authorization_url: %s\n", result.AuthorizationURL); err != nil {
+				return err
+			}
+		}
+		if result.ExpiresAt != "" {
+			if _, err := fmt.Fprintf(stdout, "expires_at: %s\n", result.ExpiresAt); err != nil {
+				return err
+			}
+		}
 		if result.ProviderName != "" {
 			if _, err := fmt.Fprintf(stdout, "provider_name: %s\n", result.ProviderName); err != nil {
 				return err
@@ -139,8 +176,22 @@ func writeConnectResult(result connectResult, mode outputMode, stdout io.Writer)
 		if _, err := fmt.Fprintln(stdout, "Connected Google Identity"); err != nil {
 			return err
 		}
+	} else if result.Status == "authorization_pending" {
+		if _, err := fmt.Fprintln(stdout, "Headless authorization ready"); err != nil {
+			return err
+		}
 	} else if _, err := fmt.Fprintln(stdout, "Connect failed"); err != nil {
 		return err
+	}
+	if result.AuthorizationURL != "" {
+		if _, err := fmt.Fprintf(stdout, "Authorization URL: %s\n", result.AuthorizationURL); err != nil {
+			return err
+		}
+	}
+	if result.ExpiresAt != "" {
+		if _, err := fmt.Fprintf(stdout, "Expires at: %s\n", result.ExpiresAt); err != nil {
+			return err
+		}
 	}
 	if result.ConnectionID != "" {
 		if _, err := fmt.Fprintf(stdout, "Connection: %s\n", result.ConnectionID); err != nil {

@@ -120,6 +120,7 @@ func canonicalCredentialPath(path string) (string, error) {
 type credentialStore interface {
 	Store(key string, tokenMaterial map[string]any) error
 	Load(key string) (map[string]any, error)
+	Delete(key string) error
 }
 
 // errCredentialStoreTokenMaterialNotFound is the sentinel every
@@ -153,6 +154,16 @@ func (store fileCredentialStore) Store(key string, tokenMaterial map[string]any)
 	if err := ensureOwnerOnlyDir(filepath.Dir(store.path)); err != nil {
 		return err
 	}
+	if err := rejectSymlinkCredentialStorePath(store.path); err != nil {
+		return err
+	}
+	lock, err := lockHeadlessClaimFile(store.path + ".lock")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = unlockHeadlessClaimFile(lock)
+	}()
 	if err := rejectSymlinkCredentialStorePath(store.path); err != nil {
 		return err
 	}
@@ -197,6 +208,42 @@ func (store fileCredentialStore) Load(key string) (map[string]any, error) {
 		return nil, errors.New("Credential Store token material is not valid JSON")
 	}
 	return tokenMaterial, nil
+}
+
+func (store fileCredentialStore) Delete(key string) error {
+	if err := rejectSymlinkCredentialStorePath(store.path); err != nil {
+		return err
+	}
+	lock, err := lockHeadlessClaimFile(store.path + ".lock")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = unlockHeadlessClaimFile(lock)
+	}()
+	if err := rejectSymlinkCredentialStorePath(store.path); err != nil {
+		return err
+	}
+	content, err := os.ReadFile(store.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return errCredentialStoreTokenMaterialNotFound
+		}
+		return err
+	}
+	var existing map[string]json.RawMessage
+	if err := json.Unmarshal(content, &existing); err != nil {
+		return errors.New("Credential Store file is not valid JSON")
+	}
+	if _, ok := existing[key]; !ok {
+		return errCredentialStoreTokenMaterialNotFound
+	}
+	delete(existing, key)
+	updated, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeCredentialStoreFile(store.path, append(updated, '\n'))
 }
 
 func rejectSymlinkCredentialStorePath(path string) error {
@@ -267,6 +314,21 @@ func (store osNativeCredentialStore) Load(key string) (map[string]any, error) {
 	return tokenMaterial, nil
 }
 
+func (store osNativeCredentialStore) Delete(key string) error {
+	runtime := store.runtime.withDefaults()
+	ctx := context.Background()
+	switch runtime.currentOS {
+	case "darwin":
+		return runtime.runSecurityDeleteGenericPassword(ctx, store.service, key)
+	case "linux":
+		return runtime.runSecretToolClear(ctx, store.service, key)
+	case "windows":
+		return runtime.runWindowsCredentialDelete(ctx, store.service, key)
+	default:
+		return errors.New("OS-native Credential Store is not available on this platform; configure credential_store type \"file\"")
+	}
+}
+
 func runSecurityAddGenericPasswordCommand(ctx context.Context, service, key string, content []byte) error {
 	cmd := exec.CommandContext(ctx, "security", "add-generic-password", "-U", "-s", service, "-a", key, "-w")
 	password := string(content)
@@ -283,6 +345,13 @@ func runSecurityFindGenericPasswordCommand(ctx context.Context, service, key str
 	return []byte(strings.TrimSpace(string(output))), nil
 }
 
+func runSecurityDeleteGenericPasswordCommand(ctx context.Context, service, key string) error {
+	if err := exec.CommandContext(ctx, "security", "delete-generic-password", "-s", service, "-a", key).Run(); err != nil {
+		return errCredentialStoreTokenMaterialNotFound
+	}
+	return nil
+}
+
 func runSecretToolStoreCommand(ctx context.Context, service, key string, content []byte) error {
 	cmd := exec.CommandContext(ctx, "secret-tool", "store", "--label", service, "service", service, "account", key)
 	cmd.Stdin = strings.NewReader(string(content))
@@ -296,6 +365,13 @@ func runSecretToolLookupCommand(ctx context.Context, service, key string) ([]byt
 		return nil, errCredentialStoreTokenMaterialNotFound
 	}
 	return []byte(strings.TrimSpace(string(output))), nil
+}
+
+func runSecretToolClearCommand(ctx context.Context, service, key string) error {
+	if err := exec.CommandContext(ctx, "secret-tool", "clear", "service", service, "account", key).Run(); err != nil {
+		return errCredentialStoreTokenMaterialNotFound
+	}
+	return nil
 }
 
 func runWindowsCredentialWriteCommand(ctx context.Context, service, key string, content []byte) error {
@@ -403,4 +479,28 @@ try {
 		return nil, errCredentialStoreTokenMaterialNotFound
 	}
 	return []byte(strings.TrimSpace(string(output))), nil
+}
+
+func runWindowsCredentialDeleteCommand(ctx context.Context, service, key string) error {
+	target := service + ":" + key
+	script := `
+$code = @"
+using System;
+using System.Runtime.InteropServices;
+public static class NativeCredentialDelete {
+  [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  public static extern bool CredDelete(string target, UInt32 type, UInt32 flags);
+}
+"@
+Add-Type $code
+if (-not [NativeCredentialDelete]::CredDelete($env:GOHEALTHCLI_CREDENTIAL_TARGET, 1, 0)) {
+  throw [ComponentModel.Win32Exception][Runtime.InteropServices.Marshal]::GetLastWin32Error()
+}
+`
+	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+	cmd.Env = append(os.Environ(), "GOHEALTHCLI_CREDENTIAL_TARGET="+target)
+	if err := cmd.Run(); err != nil {
+		return errCredentialStoreTokenMaterialNotFound
+	}
+	return nil
 }

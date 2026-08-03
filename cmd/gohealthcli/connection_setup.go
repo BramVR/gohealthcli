@@ -12,7 +12,9 @@ import (
 // every check that must succeed before any OAuth flow starts or token material
 // is accepted from a completion path.
 type preparedConnection struct {
+	configIdentityPath  string
 	archivePath         string
+	archiveIdentityPath string
 	credentialStore     credentialStore
 	credentialStoreKind string
 	oauthClient         oauthClientConfig
@@ -25,8 +27,18 @@ func prepareConnection(ctx context.Context, configPath, archivePath string, extr
 	if err != nil {
 		return preparedConnection{}, setupFailureRemediation(err, fmt.Sprintf("config check failed: %v", err))
 	}
+	canonicalConfigPath, err := canonicalCredentialPath(configPath)
+	if err != nil {
+		return preparedConnection{}, err
+	}
+	canonicalArchivePath, err := canonicalCredentialPath(archivePath)
+	if err != nil {
+		return preparedConnection{}, err
+	}
 	prepared := preparedConnection{
+		configIdentityPath:  canonicalConfigPath,
 		archivePath:         archivePath,
+		archiveIdentityPath: canonicalArchivePath,
 		credentialStoreKind: config.credentialStore.kind,
 	}
 	if config.oauthClient.kind != "file" {

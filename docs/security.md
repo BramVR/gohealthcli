@@ -73,6 +73,17 @@ Archive corruption. `connect` may re-authorize the same Google Identity and keep
 using the existing archive. If re-authorization returns a different Google
 Identity, require an explicit new archive or a future multi-identity decision.
 
+Headless authorization uses the same Desktop-client loopback and PKCE S256
+flow as interactive `connect`. `connect --headless-start` stores its verifier,
+state, exact redirect, expiry, and config/archive/client/scope/identity binding
+only in the configured Credential Store for ten minutes. `connect --complete`
+accepts one complete redirected URL on stdin only. It validates the exact
+origin and path, binding, expiry, state, and full requested scope grant before
+identity validation or token storage. A claim is atomic across processes, so
+only one concurrent completion can exchange the code. Treat authorization and
+redirected URLs as sensitive transfer material even though neither is stored
+in the Health Archive.
+
 ## Local Files
 
 Default paths should follow the `gobankcli` pattern:
