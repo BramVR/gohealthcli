@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "accepted"
 summary: "Use a Desktop OAuth client and copy the complete loopback redirect URL back to a headless gohealthcli process."
 read_when:
   - "Designing or implementing headless Google OAuth completion."
@@ -8,12 +8,11 @@ read_when:
 ---
 # Headless OAuth Uses a Copied Loopback Redirect
 
-Issue #387 selects the following candidate, pending the live proof listed below:
-keep the Google Desktop OAuth client and its dynamic IPv4 loopback redirect,
-but let an operator copy the complete redirected URL from a browser back to the
-headless `gohealthcli` process. This is a manual delivery of the standard
-loopback response, not Google's removed out-of-band flow and not permission to
-accept a bare authorization code.
+Issue #387 selects the Google Desktop OAuth client and its dynamic IPv4
+loopback redirect, with an operator copying the complete redirected URL from a
+browser back to the headless `gohealthcli` process. This is a manual delivery
+of the standard loopback response, not Google's removed out-of-band flow and
+not permission to accept a bare authorization code.
 
 ## Support status
 
@@ -23,9 +22,8 @@ exact redirect URI, and CSRF protection such as `state`. Google's loopback
 migration guide says the flow remains supported for Desktop clients. Copying
 the complete loopback URL from an unreachable callback page between two
 machines is an operator technique around that supported redirect; Google does
-not document it as a distinct OAuth mode. Therefore this decision remains
-`proposed` until the issue's live proof passes against Google OAuth and
-`users.getIdentity`.
+not document it as a distinct OAuth mode. The live proof below establishes that
+Google accepts the redirect and the built CLI completes it successfully.
 
 Google Health's setup page currently tells new integrations to create a Web
 Server client with an HTTPS redirect. That shape is not selected: it would need
@@ -62,28 +60,32 @@ pull-request bodies, and repository artifacts. Use this flow only across
 operator-controlled hosts and a trusted transfer path. Prefer ordinary
 `gohealthcli connect` whenever the browser and CLI share a loopback interface.
 
-## Evidence gate
+## Evidence
 
 Non-secret validation on 2026-08-03 confirmed that the built CLI produces a
 Google HTTPS authorization request with a Desktop-client dynamic IPv4 loopback
 redirect, a non-empty random `state`, and PKCE `code_challenge_method=S256`.
 Repository tests cover the PKCE transform, exact `state` callback check, token
 exchange form, returned-scope parsing, identity verification, and non-success
-token exchange handling. These checks do not substitute for live Provider
-proof.
+token exchange handling.
 
-Before accepting this ADR or merging its issue PR, one redacted live run must
-confirm all of the following without preserving values or identifying output:
+An isolated live run on 2026-08-03 then proved the complete flow without a
+Provider health-data request:
 
-- the complete redirected URL contains the expected `state`;
-- the authorization code exchanges with the originating PKCE S256 verifier;
-- the response contains the required granted Google Health read-only scopes;
-- `users.getIdentity` succeeds and only response shape is recorded;
-- a second exchange of the same code is rejected as `invalid_grant`.
+- the authorization request used PKCE S256 and a random `state`;
+- the copied complete loopback URL contained a code and the exact expected
+  `state`, which the copy boundary and built CLI listener validated before
+  exchange;
+- the built CLI exchanged the code with its originating verifier and Google
+  returned five scopes, including every required base read-only scope;
+- `users.getIdentity` succeeded with the expected identifier-field shape;
+- resubmitting the consumed code with the same client and redirect tuple
+  returned HTTP 400 `invalid_grant`.
 
-The live run is currently blocked at Google's unverified-app interstitial and
-has not been claimed. Until an authorized operator completes that browser-only
-step, the ADR stays proposed, the PR must not merge, and #387 must remain open.
+The proof used an isolated Health Archive and owner-only files. Only the
+assertions above were retained; authorization URLs, codes, state, tokens,
+client details, identity values, and screenshots were not published. The
+production Health Archive was not opened for writes.
 
 ## Follow-up boundary
 
