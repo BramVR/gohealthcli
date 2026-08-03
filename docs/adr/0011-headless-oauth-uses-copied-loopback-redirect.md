@@ -21,10 +21,11 @@ Google's installed-app documentation recommends a random-port loopback IP
 redirect for macOS, Linux, and Windows Desktop clients. It requires PKCE, an
 exact redirect URI, and CSRF protection such as `state`. Google's loopback
 migration guide says the flow remains supported for Desktop clients. Copying
-the complete failed loopback URL between two machines is an operator technique
-around that supported redirect; Google does not document it as a distinct OAuth
-mode. Therefore this decision remains `proposed` until the issue's live proof
-passes against Google OAuth and `users.getIdentity`.
+the complete loopback URL from an unreachable callback page between two
+machines is an operator technique around that supported redirect; Google does
+not document it as a distinct OAuth mode. Therefore this decision remains
+`proposed` until the issue's live proof passes against Google OAuth and
+`users.getIdentity`.
 
 Google Health's setup page currently tells new integrations to create a Web
 Server client with an HTTPS redirect. That shape is not selected: it would need
