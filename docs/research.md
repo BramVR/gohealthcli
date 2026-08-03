@@ -91,8 +91,9 @@ Non-sensitive public evidence checked on 2026-08-03 records the current
 `nutrition-log` contract:
 
 - The v4 REST resource and reconcile response expose `nutritionLog` with a
-  required `SessionTimeInterval`. Identified logs carry a Food resource name;
-  anonymous logs use `foodDisplayName`. Meal, serving, energy, fat,
+  required `SessionTimeInterval` and `foodDisplayName`. Google auto-populates
+  that display name when an identified log also carries a Food resource name;
+  anonymous logs omit the Food resource name. Meal, serving, energy, fat,
   carbohydrate, and nutrient fields are optional.
 - The v4 list reference defines session filtering through
   `{session_data_type}.interval.civil_start_time`; the exact filter for this
