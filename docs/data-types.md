@@ -430,14 +430,16 @@ A user-logged hydration entry: volume over a civil window.
 - **Scope:** `nutrition.readonly` (opt-in via `connect --add-scopes nutrition` — never part of the default `connect` grant)
 - **List / reconcile:** yes; civil filter `nutrition_log.interval.civil_start_time`
 - **Rollups:** not implemented
-- **Stored as:** `data_points`; normalized view `nutrition-log-sessions`
+- **Stored as:** `data_points`; normalized views `nutrition-log-sessions` and `nutrition-log-nutrients`
 - **Default / `sync --all`:** no; explicit `sync --types nutrition-log` only
 
 One raw Data Point per logged food. Identified foods retain the Food resource
 name; anonymous foods retain their display name. The Normalized View keeps one
 row per parent log with nullable meal, serving, energy, carbohydrate, fat, and
 food-reference columns. It also retains the unexpanded `nutrients_json` array;
-per-nutrient rows belong to the separate follow-up tracked in #394.
+`nutrition-log-nutrients` expands that array into one row per nutrient with
+the parent session and food context, the original array index, the nutrient
+enum, and nullable grams. Unknown nutrient enum values pass through unchanged.
 
 ## Identity, device, and settings snapshots
 

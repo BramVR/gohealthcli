@@ -174,6 +174,62 @@ var nutritionLogSessionsViewSpec = exportDatasetSpec{
 	},
 }
 
+var nutritionLogNutrientsViewSpec = exportDatasetSpec{
+	// The JSON -> operator keeps the stored grams number token intact;
+	// json_extract would coerce it through a SQLite float first. The
+	// array-type predicate also makes absent/null nutrient collections
+	// produce zero child rows without affecting nutrition_log_sessions.
+	name:             "nutrition-log-nutrients",
+	view:             "nutrition_log_nutrients",
+	migrationVersion: 29,
+	orderBy:          "start_time_utc, provider_name, connection_id, upstream_resource_name, nutrient_index",
+	viewSQL: `SELECT
+			data_points.provider_name,
+			data_points.connection_id,
+			data_points.start_time_utc,
+			data_points.end_time_utc,
+			IFNULL(data_points.start_civil_time, '') AS start_civil_time,
+			IFNULL(data_points.end_civil_time, '') AS end_civil_time,
+			COALESCE(data_points.provider_civil_date, substr(data_points.start_civil_time, 1, 10), substr(data_points.start_time_utc, 1, 10), '') AS civil_date,
+			CASE WHEN json_type(data_points.raw_json, '$.nutritionLog.food') = 'text'
+				THEN json_extract(data_points.raw_json, '$.nutritionLog.food') END AS food_resource_name,
+			CASE WHEN json_type(data_points.raw_json, '$.nutritionLog.foodDisplayName') = 'text'
+				THEN json_extract(data_points.raw_json, '$.nutritionLog.foodDisplayName') END AS food_display_name,
+			CASE WHEN json_type(data_points.raw_json, '$.nutritionLog.mealType') = 'text'
+				THEN json_extract(data_points.raw_json, '$.nutritionLog.mealType') END AS meal_type,
+			CAST(nutrient_entry.key AS INTEGER) AS nutrient_index,
+			CASE WHEN json_type(nutrient_entry.value, '$.nutrient') = 'text'
+				THEN json_extract(nutrient_entry.value, '$.nutrient') END AS nutrient,
+			CASE WHEN json_type(nutrient_entry.value, '$.quantity.grams') IN ('integer', 'real')
+				THEN nutrient_entry.value -> '$.quantity.grams' END AS grams,
+			IFNULL(json_extract(data_points.data_source_json, '$.platform'), '') AS source_platform,
+			IFNULL(data_points.source_family_filter, '') AS source_family_filter,
+			IFNULL(data_points.upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points, json_each(data_points.raw_json, '$.nutritionLog.nutrients') AS nutrient_entry
+		WHERE data_points.data_type = 'nutrition-log'
+			AND data_points.record_kind = 'session'
+			AND data_points.start_time_utc IS NOT NULL
+			AND json_type(data_points.raw_json, '$.nutritionLog.nutrients') = 'array'`,
+	fields: []exportFieldSpec{
+		{name: "provider_name"},
+		{name: "connection_id"},
+		{name: "start_time_utc"},
+		{name: "end_time_utc"},
+		{name: "start_civil_time"},
+		{name: "end_civil_time"},
+		{name: "civil_date"},
+		{name: "food_resource_name", nullable: true},
+		{name: "food_display_name", nullable: true},
+		{name: "meal_type", nullable: true},
+		{name: "nutrient_index", kind: "int"},
+		{name: "nutrient", nullable: true},
+		{name: "grams", nullable: true},
+		{name: "source_platform"},
+		{name: "source_family_filter"},
+		{name: "upstream_resource_name"},
+	},
+}
+
 // Tier 1 Health metrics views (#102), migration 18. Each
 // projects the principal scalar Google Health's REST API
 // documents for the corresponding Data Type. Scalars stored as

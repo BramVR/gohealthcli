@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -240,6 +241,242 @@ func TestExportNutritionLogSessionsPreservesFoodsNullsAndStableOrder(t *testing.
 	}
 }
 
+func TestExportNutritionLogNutrientsEmitsOneRowPerNutrient(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+	insertExportDataPoint(t, archivePath, exportDataPointFixture{
+		dataType:     "nutrition-log",
+		resourceName: "users/me/dataTypes/nutrition-log/dataPoints/nutrition-a",
+		recordKind:   "session",
+		startUTC:     "2026-01-01T10:30:00Z",
+		endUTC:       "2026-01-01T10:35:00Z",
+		startCivil:   "2026-01-01T11:30:00",
+		endCivil:     "2026-01-01T11:35:00",
+		civilDate:    "2026-01-01",
+		dataSource:   `{"platform":"SYNTHETIC"}`,
+		rawJSON: `{"nutritionLog":{
+			"food":"users/me/foods/synthetic-oats",
+			"foodDisplayName":"Synthetic oats",
+			"mealType":"BREAKFAST",
+			"nutrients":[{"nutrient":"PROTEIN","quantity":{"grams":12.5}}]
+		}}`,
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"export", "--config", configPath, "--db", archivePath,
+		"nutrition-log-nutrients", "--stdout", "--format", "csv",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("export exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	want := "provider_name,connection_id,start_time_utc,end_time_utc,start_civil_time,end_civil_time,civil_date,food_resource_name,food_display_name,meal_type,nutrient_index,nutrient,grams,source_platform,source_family_filter,upstream_resource_name\n" +
+		"googlehealth,googlehealth:111111256096816351,2026-01-01T10:30:00Z,2026-01-01T10:35:00Z,2026-01-01T11:30:00,2026-01-01T11:35:00,2026-01-01,users/me/foods/synthetic-oats,Synthetic oats,BREAKFAST,0,PROTEIN,12.5,SYNTHETIC,,users/me/dataTypes/nutrition-log/dataPoints/nutrition-a\n"
+	if stdout.String() != want {
+		t.Fatalf("output =\n%s\nwant:\n%s", stdout.String(), want)
+	}
+}
+
+func TestNutritionLogNutrientsEmptyArraysDoNotHideParentSessions(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+	for index, rawJSON := range []string{
+		`{"nutritionLog":{"foodDisplayName":"Synthetic absent"}}`,
+		`{"nutritionLog":{"foodDisplayName":"Synthetic null","nutrients":null}}`,
+		`{"nutritionLog":{"foodDisplayName":"Synthetic empty","nutrients":[]}}`,
+	} {
+		insertExportDataPoint(t, archivePath, exportDataPointFixture{
+			dataType:     "nutrition-log",
+			resourceName: fmt.Sprintf("users/me/dataTypes/nutrition-log/dataPoints/nutrition-%d", index),
+			recordKind:   "session",
+			startUTC:     fmt.Sprintf("2026-01-01T10:0%d:00Z", index),
+			endUTC:       fmt.Sprintf("2026-01-01T10:0%d:30Z", index),
+			dataSource:   `{}`,
+			rawJSON:      rawJSON,
+		})
+	}
+
+	export := func(dataset string) string {
+		t.Helper()
+		stdout := new(bytes.Buffer)
+		stderr := new(bytes.Buffer)
+		if code := run([]string{
+			"export", "--config", configPath, "--db", archivePath,
+			dataset, "--stdout", "--format", "csv",
+		}, stdout, stderr); code != 0 {
+			t.Fatalf("export %s exit code = %d, want 0\nstderr: %s\nstdout: %s", dataset, code, stderr.String(), stdout.String())
+		}
+		return stdout.String()
+	}
+
+	parentCSV := export("nutrition-log-sessions")
+	if lines := strings.Count(parentCSV, "\n"); lines != 4 {
+		t.Fatalf("parent export lines = %d, want header plus 3 sessions\n%s", lines, parentCSV)
+	}
+	for _, name := range []string{"Synthetic absent", "Synthetic null", "Synthetic empty"} {
+		if !strings.Contains(parentCSV, name) {
+			t.Fatalf("parent export missing %q\n%s", name, parentCSV)
+		}
+	}
+
+	nutrientsCSV := export("nutrition-log-nutrients")
+	if lines := strings.Count(nutrientsCSV, "\n"); lines != 1 {
+		t.Fatalf("nutrient export lines = %d, want header only\n%s", lines, nutrientsCSV)
+	}
+}
+
+func TestExportNutritionLogNutrientsPreservesContextNullsNumbersAndStableOrder(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+	for _, point := range []exportDataPointFixture{
+		{
+			dataType:     "nutrition-log",
+			resourceName: "users/me/dataTypes/nutrition-log/dataPoints/nutrition-b",
+			recordKind:   "session",
+			startUTC:     "2026-01-01T10:30:00Z",
+			endUTC:       "2026-01-01T10:35:00Z",
+			startCivil:   "2026-01-01T11:30:00",
+			endCivil:     "2026-01-01T11:35:00",
+			civilDate:    "2026-01-01",
+			dataSource:   `{"platform":"SYNTHETIC"}`,
+			rawJSON: `{"nutritionLog":{
+				"food":"users/me/foods/synthetic-stew",
+				"foodDisplayName":"Synthetic stew",
+				"mealType":"DINNER",
+				"nutrients":[
+					{"nutrient":"FAT","quantity":{"grams":1.25}},
+					{"nutrient":"WHOLE_REAL","quantity":{"grams":2.0}},
+					{"nutrient":"NULL_GRAMS","quantity":{"grams":null}}
+				]
+			}}`,
+		},
+		{
+			dataType:     "nutrition-log",
+			resourceName: "users/me/dataTypes/nutrition-log/dataPoints/nutrition-a",
+			recordKind:   "session",
+			startUTC:     "2026-01-01T10:30:00Z",
+			endUTC:       "2026-01-01T10:31:00Z",
+			startCivil:   "2026-01-01T11:30:00",
+			endCivil:     "2026-01-01T11:31:00",
+			civilDate:    "2026-01-01",
+			dataSource:   `{}`,
+			rawJSON: `{"nutritionLog":{
+				"foodDisplayName":"Synthetic anonymous",
+				"nutrients":[
+					{"nutrient":"FUTURE_ENUM","quantity":{"grams":12}},
+					{"nutrient":"ZERO_REAL","quantity":{"grams":0.0}},
+					{"nutrient":"MISSING_GRAMS"}
+				]
+			}}`,
+		},
+	} {
+		insertExportDataPoint(t, archivePath, point)
+	}
+
+	wantCSV := "provider_name,connection_id,start_time_utc,end_time_utc,start_civil_time,end_civil_time,civil_date,food_resource_name,food_display_name,meal_type,nutrient_index,nutrient,grams,source_platform,source_family_filter,upstream_resource_name\n" +
+		"googlehealth,googlehealth:111111256096816351,2026-01-01T10:30:00Z,2026-01-01T10:31:00Z,2026-01-01T11:30:00,2026-01-01T11:31:00,2026-01-01,,Synthetic anonymous,,0,FUTURE_ENUM,12,,,users/me/dataTypes/nutrition-log/dataPoints/nutrition-a\n" +
+		"googlehealth,googlehealth:111111256096816351,2026-01-01T10:30:00Z,2026-01-01T10:31:00Z,2026-01-01T11:30:00,2026-01-01T11:31:00,2026-01-01,,Synthetic anonymous,,1,ZERO_REAL,0.0,,,users/me/dataTypes/nutrition-log/dataPoints/nutrition-a\n" +
+		"googlehealth,googlehealth:111111256096816351,2026-01-01T10:30:00Z,2026-01-01T10:31:00Z,2026-01-01T11:30:00,2026-01-01T11:31:00,2026-01-01,,Synthetic anonymous,,2,MISSING_GRAMS,,,,users/me/dataTypes/nutrition-log/dataPoints/nutrition-a\n" +
+		"googlehealth,googlehealth:111111256096816351,2026-01-01T10:30:00Z,2026-01-01T10:35:00Z,2026-01-01T11:30:00,2026-01-01T11:35:00,2026-01-01,users/me/foods/synthetic-stew,Synthetic stew,DINNER,0,FAT,1.25,SYNTHETIC,,users/me/dataTypes/nutrition-log/dataPoints/nutrition-b\n" +
+		"googlehealth,googlehealth:111111256096816351,2026-01-01T10:30:00Z,2026-01-01T10:35:00Z,2026-01-01T11:30:00,2026-01-01T11:35:00,2026-01-01,users/me/foods/synthetic-stew,Synthetic stew,DINNER,1,WHOLE_REAL,2.0,SYNTHETIC,,users/me/dataTypes/nutrition-log/dataPoints/nutrition-b\n" +
+		"googlehealth,googlehealth:111111256096816351,2026-01-01T10:30:00Z,2026-01-01T10:35:00Z,2026-01-01T11:30:00,2026-01-01T11:35:00,2026-01-01,users/me/foods/synthetic-stew,Synthetic stew,DINNER,2,NULL_GRAMS,,SYNTHETIC,,users/me/dataTypes/nutrition-log/dataPoints/nutrition-b\n"
+	wantJSONL := "{\"provider_name\":\"googlehealth\",\"connection_id\":\"googlehealth:111111256096816351\",\"start_time_utc\":\"2026-01-01T10:30:00Z\",\"end_time_utc\":\"2026-01-01T10:31:00Z\",\"start_civil_time\":\"2026-01-01T11:30:00\",\"end_civil_time\":\"2026-01-01T11:31:00\",\"civil_date\":\"2026-01-01\",\"food_resource_name\":null,\"food_display_name\":\"Synthetic anonymous\",\"meal_type\":null,\"nutrient_index\":0,\"nutrient\":\"FUTURE_ENUM\",\"grams\":\"12\",\"source_platform\":\"\",\"source_family_filter\":\"\",\"upstream_resource_name\":\"users/me/dataTypes/nutrition-log/dataPoints/nutrition-a\"}\n" +
+		"{\"provider_name\":\"googlehealth\",\"connection_id\":\"googlehealth:111111256096816351\",\"start_time_utc\":\"2026-01-01T10:30:00Z\",\"end_time_utc\":\"2026-01-01T10:31:00Z\",\"start_civil_time\":\"2026-01-01T11:30:00\",\"end_civil_time\":\"2026-01-01T11:31:00\",\"civil_date\":\"2026-01-01\",\"food_resource_name\":null,\"food_display_name\":\"Synthetic anonymous\",\"meal_type\":null,\"nutrient_index\":1,\"nutrient\":\"ZERO_REAL\",\"grams\":\"0.0\",\"source_platform\":\"\",\"source_family_filter\":\"\",\"upstream_resource_name\":\"users/me/dataTypes/nutrition-log/dataPoints/nutrition-a\"}\n" +
+		"{\"provider_name\":\"googlehealth\",\"connection_id\":\"googlehealth:111111256096816351\",\"start_time_utc\":\"2026-01-01T10:30:00Z\",\"end_time_utc\":\"2026-01-01T10:31:00Z\",\"start_civil_time\":\"2026-01-01T11:30:00\",\"end_civil_time\":\"2026-01-01T11:31:00\",\"civil_date\":\"2026-01-01\",\"food_resource_name\":null,\"food_display_name\":\"Synthetic anonymous\",\"meal_type\":null,\"nutrient_index\":2,\"nutrient\":\"MISSING_GRAMS\",\"grams\":null,\"source_platform\":\"\",\"source_family_filter\":\"\",\"upstream_resource_name\":\"users/me/dataTypes/nutrition-log/dataPoints/nutrition-a\"}\n" +
+		"{\"provider_name\":\"googlehealth\",\"connection_id\":\"googlehealth:111111256096816351\",\"start_time_utc\":\"2026-01-01T10:30:00Z\",\"end_time_utc\":\"2026-01-01T10:35:00Z\",\"start_civil_time\":\"2026-01-01T11:30:00\",\"end_civil_time\":\"2026-01-01T11:35:00\",\"civil_date\":\"2026-01-01\",\"food_resource_name\":\"users/me/foods/synthetic-stew\",\"food_display_name\":\"Synthetic stew\",\"meal_type\":\"DINNER\",\"nutrient_index\":0,\"nutrient\":\"FAT\",\"grams\":\"1.25\",\"source_platform\":\"SYNTHETIC\",\"source_family_filter\":\"\",\"upstream_resource_name\":\"users/me/dataTypes/nutrition-log/dataPoints/nutrition-b\"}\n" +
+		"{\"provider_name\":\"googlehealth\",\"connection_id\":\"googlehealth:111111256096816351\",\"start_time_utc\":\"2026-01-01T10:30:00Z\",\"end_time_utc\":\"2026-01-01T10:35:00Z\",\"start_civil_time\":\"2026-01-01T11:30:00\",\"end_civil_time\":\"2026-01-01T11:35:00\",\"civil_date\":\"2026-01-01\",\"food_resource_name\":\"users/me/foods/synthetic-stew\",\"food_display_name\":\"Synthetic stew\",\"meal_type\":\"DINNER\",\"nutrient_index\":1,\"nutrient\":\"WHOLE_REAL\",\"grams\":\"2.0\",\"source_platform\":\"SYNTHETIC\",\"source_family_filter\":\"\",\"upstream_resource_name\":\"users/me/dataTypes/nutrition-log/dataPoints/nutrition-b\"}\n" +
+		"{\"provider_name\":\"googlehealth\",\"connection_id\":\"googlehealth:111111256096816351\",\"start_time_utc\":\"2026-01-01T10:30:00Z\",\"end_time_utc\":\"2026-01-01T10:35:00Z\",\"start_civil_time\":\"2026-01-01T11:30:00\",\"end_civil_time\":\"2026-01-01T11:35:00\",\"civil_date\":\"2026-01-01\",\"food_resource_name\":\"users/me/foods/synthetic-stew\",\"food_display_name\":\"Synthetic stew\",\"meal_type\":\"DINNER\",\"nutrient_index\":2,\"nutrient\":\"NULL_GRAMS\",\"grams\":null,\"source_platform\":\"SYNTHETIC\",\"source_family_filter\":\"\",\"upstream_resource_name\":\"users/me/dataTypes/nutrition-log/dataPoints/nutrition-b\"}\n"
+
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "csv", args: []string{"--format", "csv"}, want: wantCSV},
+		{name: "plain", args: []string{"--plain"}, want: wantCSV},
+		{name: "jsonl", args: []string{"--format", "jsonl"}, want: wantJSONL},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for attempt := 0; attempt < 2; attempt++ {
+				stdout := new(bytes.Buffer)
+				stderr := new(bytes.Buffer)
+				args := []string{"export", "--config", configPath, "--db", archivePath, "nutrition-log-nutrients", "--stdout"}
+				args = append(args, test.args...)
+				if code := run(args, stdout, stderr); code != 0 {
+					t.Fatalf("export exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+				}
+				if stdout.String() != test.want {
+					t.Fatalf("attempt %d output =\n%s\nwant:\n%s", attempt, stdout.String(), test.want)
+				}
+			}
+		})
+	}
+}
+
+func TestExportNutritionLogNutrientsReportsMalformedStoredJSON(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+	insertExportDataPoint(t, archivePath, exportDataPointFixture{
+		dataType:     "nutrition-log",
+		resourceName: "users/me/dataTypes/nutrition-log/dataPoints/nutrition-malformed",
+		recordKind:   "session",
+		startUTC:     "2026-01-01T10:30:00Z",
+		endUTC:       "2026-01-01T10:31:00Z",
+		dataSource:   `{}`,
+		rawJSON:      `{"nutritionLog":{"nutrients":[`,
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"export", "--config", configPath, "--db", archivePath,
+		"nutrition-log-nutrients", "--stdout", "--format", "csv",
+	}, stdout, stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "malformed JSON") {
+		t.Fatalf("export result = code %d, stderr %q, want explicit malformed JSON failure", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty on malformed stored JSON", stdout.String())
+	}
+}
+
+func TestExportNutritionLogNutrientsPreservesStoredGramPrecision(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+	insertExportDataPoint(t, archivePath, exportDataPointFixture{
+		dataType:     "nutrition-log",
+		resourceName: "users/me/dataTypes/nutrition-log/dataPoints/nutrition-precise",
+		recordKind:   "session",
+		startUTC:     "2026-01-01T10:30:00Z",
+		endUTC:       "2026-01-01T10:31:00Z",
+		dataSource:   `{}`,
+		rawJSON:      `{"nutritionLog":{"nutrients":[{"nutrient":"PRECISE","quantity":{"grams":0.1234567890123456}}]}}`,
+	})
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	if code := run([]string{
+		"export", "--config", configPath, "--db", archivePath,
+		"nutrition-log-nutrients", "--stdout", "--format", "csv",
+	}, stdout, stderr); code != 0 {
+		t.Fatalf("export exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), ",PRECISE,0.1234567890123456,,,") {
+		t.Fatalf("export did not preserve stored gram precision:\n%s", stdout.String())
+	}
+}
+
 func TestSyncNutritionLogCorrectionPreservesRevision(t *testing.T) {
 	t.Parallel()
 	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
@@ -329,7 +566,7 @@ func TestNutritionLogSessionsViewMigrationUpgradesAndIsIdempotent(t *testing.T) 
 	if err := lifecycle.Migrate(context.Background()); err != nil {
 		t.Fatalf("repeat migration: %v", err)
 	}
-	assertArchiveUserVersion(t, archivePath, 28)
+	assertArchiveUserVersion(t, archivePath, 29)
 	db := openArchiveForTest(t, archivePath)
 	var viewCount, migrationCount int
 	if err := db.QueryRowContext(context.Background(), `SELECT count(*) FROM sqlite_master WHERE type = 'view' AND name = 'nutrition_log_sessions'`).Scan(&viewCount); err != nil {
@@ -340,5 +577,53 @@ func TestNutritionLogSessionsViewMigrationUpgradesAndIsIdempotent(t *testing.T) 
 	}
 	if viewCount != 1 || migrationCount != 1 {
 		t.Fatalf("view/migration counts = (%d, %d), want (1, 1)", viewCount, migrationCount)
+	}
+}
+
+func TestNutritionLogNutrientsViewMigrationFreshUpgradeAndIdempotent(t *testing.T) {
+	t.Parallel()
+	t.Run("fresh", func(t *testing.T) {
+		_, archivePath, _ := initializeFileCredentialSetup(t, t.TempDir())
+		assertArchiveUserVersion(t, archivePath, 29)
+		assertNutritionLogViewMigrations(t, archivePath)
+	})
+	t.Run("upgrade and repeat", func(t *testing.T) {
+		archivePath := filepath.Join(t.TempDir(), "legacy", "archive.sqlite")
+		createLegacyArchive(t, archivePath, 28)
+		lifecycle := healthArchiveLifecycle{path: archivePath}
+		if err := lifecycle.Migrate(context.Background()); err != nil {
+			t.Fatalf("upgrade v28 Health Archive: %v", err)
+		}
+		if err := lifecycle.Migrate(context.Background()); err != nil {
+			t.Fatalf("repeat migration: %v", err)
+		}
+		assertArchiveUserVersion(t, archivePath, 29)
+		assertNutritionLogViewMigrations(t, archivePath)
+	})
+}
+
+func assertNutritionLogViewMigrations(t *testing.T, archivePath string) {
+	t.Helper()
+	db := openArchiveForTest(t, archivePath)
+	for _, view := range []string{"nutrition_log_sessions", "nutrition_log_nutrients"} {
+		var count int
+		if err := db.QueryRowContext(context.Background(), `SELECT count(*) FROM sqlite_master WHERE type = 'view' AND name = ?`, view).Scan(&count); err != nil {
+			t.Fatalf("query %s view: %v", view, err)
+		}
+		if count != 1 {
+			t.Fatalf("%s view count = %d, want 1", view, count)
+		}
+	}
+	for version, name := range map[int]string{
+		28: "add_nutrition_log_sessions_view",
+		29: "add_nutrition_log_nutrients_view",
+	} {
+		var count int
+		if err := db.QueryRowContext(context.Background(), `SELECT count(*) FROM schema_migrations WHERE version = ? AND name = ?`, version, name).Scan(&count); err != nil {
+			t.Fatalf("query migration %d: %v", version, err)
+		}
+		if count != 1 {
+			t.Fatalf("migration %d count = %d, want 1", version, count)
+		}
 	}
 }

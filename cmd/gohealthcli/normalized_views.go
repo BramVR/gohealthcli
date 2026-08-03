@@ -74,6 +74,7 @@ var exportDatasetDefinitions = []exportDatasetSpec{
 	basalEnergyBurnedIntervalsViewSpec,
 	totalCaloriesRollupsViewSpec,
 	nutritionLogSessionsViewSpec,
+	nutritionLogNutrientsViewSpec,
 }
 
 var exportDatasetSpecs = exportDatasetSpecByName(exportDatasetDefinitions)

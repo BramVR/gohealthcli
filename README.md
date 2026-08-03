@@ -170,6 +170,7 @@ just the bullets without touching the surrounding prose.
 - `height-samples`
 - `hydration-log-sessions`
 - `irregular-rhythm-notifications`
+- `nutrition-log-nutrients`
 - `nutrition-log-sessions`
 - `paired-devices`
 - `respiratory-rate-sleep-summary`
@@ -188,7 +189,9 @@ just the bullets without touching the surrounding prose.
 
 Nullable Nutrition Log summary columns render as empty CSV cells (including
 `export --plain`) and as JSON `null` in JSONL. `nutrients_json` stays one JSON
-array on the parent session row; it is not expanded into per-nutrient rows.
+array on the parent `nutrition-log-sessions` row. Use
+`nutrition-log-nutrients` for one deterministic row per nutrient, linked to
+the source session and food context; unknown nutrient enum values pass through.
 
 The drift guard in `cmd/gohealthcli/docs_export_datasets_test.go`
 (`TestREADMEExportDatasetsBlockMatchesCatalog`) fails if the committed
