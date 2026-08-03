@@ -168,6 +168,7 @@ Command flags must appear **before** the SQL argument — Go's `flag` parser sto
 ```bash
 gohealthcli export daily-steps --format jsonl --stdout
 gohealthcli export daily-steps --format csv --output steps.csv
+gohealthcli export basal-energy-burned-intervals --format csv --output basal-energy.csv
 ```
 
 `raw` prints upstream provider JSON for endpoint exploration without archiving the

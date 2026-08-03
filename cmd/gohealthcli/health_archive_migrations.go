@@ -16,7 +16,7 @@ import (
 // currentSchemaVersion is the schema version a fully migrated Health
 // Archive reports via PRAGMA user_version. It must equal the version of
 // the last row in schemaMigrationTable.
-const currentSchemaVersion = 25
+const currentSchemaVersion = 26
 
 // schemaMigration is one Health Archive schema step: the version it
 // migrates an archive *to*, the schema_migrations history name recorded
@@ -131,6 +131,7 @@ func schemaMigrationTable() []schemaMigration {
 		// duplicate detection, Data Point Revision creation, Rollup
 		// updates, provider corrections, or Sync Cursor advancement.
 		{version: 25, name: "add_sync_upsert_lookup_indexes", apply: statementsStep(syncUpsertLookupIndexMigrationStatements)},
+		{version: 26, name: "add_basal_energy_burned_intervals_view", apply: registryViewsStep(26)},
 	}
 }
 

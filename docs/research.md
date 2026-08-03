@@ -7,7 +7,7 @@ read_when:
 ---
 # Research
 
-Last checked: 2026-08-02.
+Last checked: 2026-08-03.
 
 ## Findings
 
@@ -68,12 +68,31 @@ ECG contract:
 No credential, Connection identifier, Provider payload, or Health Archive data
 was read or published for this evidence.
 
+## Basal energy burned contract evidence (C2)
+
+Non-sensitive public evidence checked on 2026-08-03 records the current
+`basal-energy-burned` contract:
+
+- The live v4 discovery document at revision `20260730` contains
+  `DataPoint.basalEnergyBurned` and `ReconciledDataPoint.basalEnergyBurned`.
+  Its `BasalEnergyBurned` schema is interval-shaped with a required numeric
+  `kcal` value.
+- Google's localized calorie documentation names the endpoint identifier
+  `basal-energy-burned`, filter prefix `basal_energy_burned`, `list` and
+  `reconcile` operations, the `activity_and_fitness` scope, and no Rollup
+  operations. The English catalog still omits the Data Type, so gohealthcli
+  keeps it out of `sync --all` while allowing explicit `--types` sync.
+
+No credential, Connection identifier, Provider payload, or Health Archive data
+was read or published for this evidence.
+
 ## Sources
 
 - Google Health API home: https://developers.google.com/health
 - Google Health API setup/OAuth: https://developers.google.com/health/setup
 - Google Health API endpoints: https://developers.google.com/health/endpoints
 - Google Health API data types: https://developers.google.com/health/data-types
+- Google Health API calories and energy data types (localized current catalog): https://developers.google.com/health/data-types/calories?hl=pt-br
 - Google Health API scopes: https://developers.google.com/health/scopes
 - Google Health API list method: https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/list
 - Google Health API release notes: https://developers.google.com/health/release-notes

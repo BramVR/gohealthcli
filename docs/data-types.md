@@ -44,7 +44,7 @@ Each sync key links to its full description further down this page.
 | [`sleep`](#sleep) | session | ~1 | ~18 pts | seconds |
 | [`vo2-max`](#vo2-max), [`run-vo2-max`](#run-vo2-max), [`respiratory-rate-sleep-summary`](#respiratory-rate-sleep-summary), the `daily-*` types | sample / daily | ~1 | ~14 pts | seconds |
 
-Not yet measured on this account: [`floors`](#floors), [`calories-in-heart-rate-zone`](#calories-in-heart-rate-zone), [`electrocardiogram`](#electrocardiogram), [`irregular-rhythm-notification`](#irregular-rhythm-notification), [`weight`](#weight), [`body-fat`](#body-fat), [`height`](#height), [`blood-glucose`](#blood-glucose), [`core-body-temperature`](#core-body-temperature), and [`hydration-log`](#hydration-log). Most of these are sparse user-logged or per-event records (weigh-ins, ECG sessions, hydration entries) and should sync in seconds; a continuously-recording source — a CGM feeding `blood-glucose`, for instance — raises density and cost accordingly.
+Not yet measured on this account: [`basal-energy-burned`](#basal-energy-burned), [`floors`](#floors), [`calories-in-heart-rate-zone`](#calories-in-heart-rate-zone), [`electrocardiogram`](#electrocardiogram), [`irregular-rhythm-notification`](#irregular-rhythm-notification), [`weight`](#weight), [`body-fat`](#body-fat), [`height`](#height), [`blood-glucose`](#blood-glucose), [`core-body-temperature`](#core-body-temperature), and [`hydration-log`](#hydration-log). Most of these are sparse user-logged or per-event records (weigh-ins, ECG sessions, hydration entries) and should sync in seconds; a continuously-recording source — a CGM feeding `blood-glucose`, for instance — raises density and cost accordingly.
 
 A run longer than an OAuth access token's ~1-hour lifetime survives it: the token is refreshed mid-run on the first 401 and the failed page retried, so even a two-week `heart-rate` backfill can run as a single `--from`/`--to` window in the standard `init --oauth-client-file` setup. The [sync reference](commands/sync.html) has the full timing prose, and `sync --status` watches a long run live from a second terminal.
 
@@ -97,6 +97,16 @@ Altitude readings over an interval.
 - **Stored as:** `data_points`
 
 Active-only energy expenditure (kilocalories) over an interval, excluding basal metabolism.
+
+### Basal energy burned
+
+- **Sync key:** `basal-energy-burned`
+- **Shape:** interval
+- **Scope:** `activity_and_fitness.readonly`
+- **Rollups:** none
+- **Stored as:** `data_points`; normalized export `basal-energy-burned-intervals`
+
+Resting-metabolism energy expenditure in kilocalories over an interval. Raw sync uses `list`; `--source-family wearable` uses `reconcile`. Both filter on `basal_energy_burned.interval.start_time`. This opt-in Data Type is deliberately absent from `sync --all` until Google's English catalog catches up with the v4 discovery and localized calorie documentation.
 
 ### Active minutes
 

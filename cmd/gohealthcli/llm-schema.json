@@ -45,6 +45,7 @@
     "exercise sessions": "exercise_sessions",
     "per-split exercise breakdown": "exercise_splits",
     "weight trends": "weight_samples",
+    "basal energy intervals": "basal_energy_burned_intervals",
     "current units / timezone": "current_settings",
     "currently paired devices": "paired_devices",
     "IRN onboarding status": "current_irn_profile",

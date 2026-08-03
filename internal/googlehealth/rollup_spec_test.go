@@ -215,6 +215,26 @@ func TestSyncRollupSpecValidateAgainstDataTypeAcceptsStepsDaily(t *testing.T) {
 	}
 }
 
+func TestBasalEnergyBurnedRejectsDailyAndWindowRollups(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"daily", "hourly", "weekly", "window=6h"} {
+		kind := kind
+		t.Run(kind, func(t *testing.T) {
+			spec, err := ParseRollupSpec(kind)
+			if err != nil {
+				t.Fatalf("ParseRollupSpec(%q): %v", kind, err)
+			}
+			err = ValidateRollupAgainstDataType(spec, "basal-energy-burned")
+			if err == nil {
+				t.Fatalf("basal-energy-burned %s Rollup accepted, want rejection", kind)
+			}
+			if !strings.Contains(err.Error(), "SupportedEndpoints=[list, reconcile]") {
+				t.Fatalf("error = %q, want list/reconcile-only contract", err)
+			}
+		})
+	}
+}
+
 // TestSyncRollupSpecNormalizeRange pins PRD #141 slice 3: civil-vs-RFC3339
 // is owned by RollupSpec. The matrix is (input shape) × (rollup kind)
 // → normalized output / error. The planner downstream consumes only the

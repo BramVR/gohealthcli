@@ -274,6 +274,14 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		SupportedEndpoints: listReconcileEndpoints("active_energy_burned.interval.start_time"),
 	},
 	{
+		DataType:           "basal-energy-burned",
+		RequiredScopes:     []string{ScopeActivityReadonly},
+		Parser:             "interval",
+		JSONField:          "basalEnergyBurned",
+		RecordKind:         "interval",
+		SupportedEndpoints: listReconcileEndpoints("basal_energy_burned.interval.start_time"),
+	},
+	{
 		DataType:           "active-minutes",
 		RequiredScopes:     []string{ScopeActivityReadonly},
 		Parser:             "interval",

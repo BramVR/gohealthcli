@@ -200,3 +200,46 @@ var swimLengthsDataIntervalsViewSpec = exportDatasetSpec{
 		{name: "source_family_filter"}, {name: "upstream_resource_name"},
 	},
 }
+
+var basalEnergyBurnedIntervalsViewSpec = exportDatasetSpec{
+	name:             "basal-energy-burned-intervals",
+	view:             "basal_energy_burned_intervals",
+	migrationVersion: 26,
+	orderBy:          "start_time_utc, provider_name, connection_id, source_family_filter, upstream_resource_name",
+	viewSQL: `SELECT
+			provider_name,
+			connection_id,
+			start_time_utc,
+			end_time_utc,
+			IFNULL(start_civil_time, '') AS start_civil_time,
+			IFNULL(end_civil_time, '') AS end_civil_time,
+			COALESCE(provider_civil_date, substr(start_civil_time, 1, 10), substr(start_time_utc, 1, 10), '') AS civil_date,
+			CASE
+				WHEN json_extract(raw_json, '$.basalEnergyBurned.kcal') IS NULL THEN NULL
+				WHEN json_type(raw_json, '$.basalEnergyBurned.kcal') NOT IN ('integer', 'real') THEN NULL
+				WHEN json_type(raw_json, '$.basalEnergyBurned.kcal') = 'real'
+					AND json_extract(raw_json, '$.basalEnergyBurned.kcal') = CAST(json_extract(raw_json, '$.basalEnergyBurned.kcal') AS INTEGER)
+				THEN printf('%.1f', json_extract(raw_json, '$.basalEnergyBurned.kcal'))
+				ELSE printf('%.15g', json_extract(raw_json, '$.basalEnergyBurned.kcal'))
+			END AS kcal,
+			IFNULL(json_extract(data_source_json, '$.platform'), '') AS source_platform,
+			IFNULL(source_family_filter, '') AS source_family_filter,
+			IFNULL(upstream_resource_name, '') AS upstream_resource_name
+		FROM data_points
+		WHERE data_type = 'basal-energy-burned'
+			AND record_kind = 'interval'
+			AND start_time_utc IS NOT NULL`,
+	fields: []exportFieldSpec{
+		{name: "provider_name"},
+		{name: "connection_id"},
+		{name: "start_time_utc"},
+		{name: "end_time_utc"},
+		{name: "start_civil_time"},
+		{name: "end_civil_time"},
+		{name: "civil_date"},
+		{name: "kcal"},
+		{name: "source_platform"},
+		{name: "source_family_filter"},
+		{name: "upstream_resource_name"},
+	},
+}

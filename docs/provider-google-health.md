@@ -45,9 +45,9 @@ silently returning a wider response.
 Current explicit exceptions are:
 
 - Local Rollup-only: `calories-in-heart-rate-zone`, `total-calories`.
-- Upstream raw only: `basal-energy-burned`, `food`,
-  `food-measurement-unit`, `nutrition-log`. Google classifies the two Food
-  records as Data Types in its [public Data Types catalog](https://developers.google.com/health/data-types)
+- Upstream raw only: `food`, `food-measurement-unit`, `nutrition-log`.
+  Google classifies the two Food records as Data Types in its
+  [public Data Types catalog](https://developers.google.com/health/data-types)
   even though their discovery descriptions call them details rather than
   collections.
 
@@ -79,6 +79,9 @@ stable JSON, plain, and human output.
 - Use when source-family filtering is requested, or if provider behavior proves
   it has better correction semantics than `list`.
 - Important for "watch data" questions.
+- `basal-energy-burned` uses the same
+  `basal_energy_burned.interval.start_time` filter as `list`; Google exposes
+  no Rollup operation for this Data Type.
 
 `rollUp`
 
