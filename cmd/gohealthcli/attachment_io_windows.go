@@ -40,6 +40,9 @@ func readAttachmentFileNoFollow(rootDir, pathRelative string, expectedSize int64
 	defer windows.CloseHandle(parent)
 	handle, err := openWindowsAttachmentChild(parent, leaf, windows.FILE_GENERIC_READ, windows.FILE_OPEN, windows.FILE_NON_DIRECTORY_FILE)
 	if err != nil {
+		if errors.Is(err, windows.STATUS_FILE_IS_A_DIRECTORY) {
+			return nil, fmt.Errorf("attachment path %q is not a regular file", pathRelative)
+		}
 		return nil, windowsAttachmentPathError(pathRelative, err)
 	}
 	file := os.NewFile(uintptr(handle), leaf)
