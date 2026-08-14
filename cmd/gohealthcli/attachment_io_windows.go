@@ -78,7 +78,7 @@ func writeAttachmentFileNoFollow(rootDir, pathRelative string, payload []byte, e
 	if err != nil {
 		return err
 	}
-	handle, err := openWindowsAttachmentChild(parent, tempLeaf, windows.FILE_WRITE_DATA|windows.FILE_WRITE_ATTRIBUTES|windows.DELETE|windows.SYNCHRONIZE, windows.FILE_CREATE, windows.FILE_NON_DIRECTORY_FILE)
+	handle, err := openWindowsAttachmentChild(parent, tempLeaf, windows.FILE_WRITE_DATA|windows.FILE_READ_ATTRIBUTES|windows.FILE_WRITE_ATTRIBUTES|windows.DELETE|windows.SYNCHRONIZE, windows.FILE_CREATE, windows.FILE_NON_DIRECTORY_FILE)
 	if err != nil {
 		return fmt.Errorf("create temporary attachment for %q: %w", pathRelative, err)
 	}
