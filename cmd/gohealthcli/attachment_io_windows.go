@@ -87,10 +87,16 @@ func writeAttachmentFileNoFollow(rootDir, pathRelative string, payload []byte, e
 		_ = windows.CloseHandle(handle)
 		return fmt.Errorf("create temporary attachment for %q", pathRelative)
 	}
-	if _, err := file.Write(payload); err != nil {
+	written, err := file.Write(payload)
+	if err != nil {
 		_ = markWindowsAttachmentDelete(handle)
 		_ = file.Close()
 		return err
+	}
+	if written != len(payload) {
+		_ = markWindowsAttachmentDelete(handle)
+		_ = file.Close()
+		return fmt.Errorf("write sidecar: wrote %d bytes, want %d", written, len(payload))
 	}
 	if err := renameWindowsAttachmentHandle(handle, parent, leaf); err != nil {
 		_ = markWindowsAttachmentDelete(handle)

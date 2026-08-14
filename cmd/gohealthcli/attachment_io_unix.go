@@ -101,9 +101,14 @@ func writeAttachmentFileNoFollow(rootDir, pathRelative string, payload []byte, e
 		_ = unix.Close(fd)
 		return fmt.Errorf("create temporary attachment for %q", pathRelative)
 	}
-	if _, err := file.Write(payload); err != nil {
+	written, err := file.Write(payload)
+	if err != nil {
 		_ = file.Close()
 		return fmt.Errorf("write sidecar: %w", err)
+	}
+	if written != len(payload) {
+		_ = file.Close()
+		return fmt.Errorf("write sidecar: wrote %d bytes, want %d", written, len(payload))
 	}
 	if err := file.Chmod(0o600); err != nil {
 		_ = file.Close()
