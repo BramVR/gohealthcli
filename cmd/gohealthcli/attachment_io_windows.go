@@ -78,9 +78,9 @@ func writeAttachmentFileNoFollow(rootDir, pathRelative string, payload []byte, e
 	if err != nil {
 		return err
 	}
-	handle, err := openWindowsAttachmentChild(parent, tempLeaf, windows.FILE_GENERIC_WRITE|windows.DELETE, windows.FILE_CREATE, windows.FILE_NON_DIRECTORY_FILE)
+	handle, err := openWindowsAttachmentChild(parent, tempLeaf, windows.FILE_WRITE_DATA|windows.FILE_WRITE_ATTRIBUTES|windows.DELETE|windows.SYNCHRONIZE, windows.FILE_CREATE, windows.FILE_NON_DIRECTORY_FILE)
 	if err != nil {
-		return err
+		return fmt.Errorf("create temporary attachment for %q: %w", pathRelative, err)
 	}
 	file := os.NewFile(uintptr(handle), tempLeaf)
 	if file == nil {
@@ -159,7 +159,12 @@ func openWindowsAttachmentParentFromHandle(root windows.Handle, pathRelative str
 		access := uint32(windows.FILE_LIST_DIRECTORY | windows.FILE_TRAVERSE | windows.FILE_READ_ATTRIBUTES | windows.SYNCHRONIZE)
 		if create {
 			disposition = windows.FILE_OPEN_IF
-			access = windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE | windows.DELETE
+			// Directory write access uses the FILE_ADD_FILE and
+			// FILE_ADD_SUBDIRECTORY bits (the file-oriented aliases are
+			// FILE_WRITE_DATA and FILE_APPEND_DATA). Requesting generic
+			// write or DELETE can be denied by ordinary Windows directory
+			// ACLs even when creating children is allowed.
+			access |= windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA
 		}
 		next, err := openWindowsAttachmentChild(current, component, access, disposition, windows.FILE_DIRECTORY_FILE)
 		if err != nil {
@@ -179,7 +184,7 @@ func openWindowsAttachmentRoot(rootDir string, write bool) (windows.Handle, atta
 	}
 	access := uint32(windows.FILE_LIST_DIRECTORY | windows.FILE_TRAVERSE | windows.FILE_READ_ATTRIBUTES | windows.SYNCHRONIZE)
 	if write {
-		access = windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE | windows.DELETE
+		access |= windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA
 	}
 	handle, err := windows.CreateFile(path, access, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if err != nil {
