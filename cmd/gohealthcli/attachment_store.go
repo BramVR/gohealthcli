@@ -40,6 +40,48 @@ func attachmentRootDirForArchive(archivePath string) string {
 	return archivePath + ".attachments"
 }
 
+func rejectSymlinkedAttachmentRoot(rootDir string) error {
+	info, err := os.Lstat(rootDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("attachment root %q is a symbolic link", rootDir)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("attachment root %q is not a directory", rootDir)
+	}
+	return nil
+}
+
+func validateSnapshotRestoreAttachmentRoot(rootDir string) error {
+	if err := rejectSymlinkedAttachmentRoot(rootDir); err != nil {
+		return err
+	}
+	_, err := os.Lstat(rootDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return filepath.Walk(rootDir, func(current string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if current == rootDir {
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("attachment root %q must contain only empty directories before Health Archive Snapshot restore", rootDir)
+		}
+		return nil
+	})
+}
+
 // collectAttachmentOrphans opens the attachment store read-only and
 // walks it for integrity violations. Returns nil if no orphans exist
 // (so the doctor result's attachments block stays omitempty), or a
@@ -134,12 +176,13 @@ func (store *attachmentStore) Store(ctx context.Context, dataPointID int64, kind
 	}
 	hash := sha256.Sum256(payload)
 	hashHex := hex.EncodeToString(hash[:])
-	ext := attachmentFileExtension(kind)
-	subdir := filepath.Join(store.rootDir, kind, hashHex[:2])
 	// path_relative is stored with forward slashes so an archive moved
 	// between POSIX and Windows resolves consistently. The on-disk path
 	// is built from filepath.FromSlash at the seam.
-	pathRelative := path.Join(kind, hashHex[:2], hashHex+ext)
+	pathRelative, err := canonicalAttachmentPathRelative(kind, hashHex)
+	if err != nil {
+		return attachmentRecord{}, err
+	}
 	absolutePath := filepath.Join(store.rootDir, filepath.FromSlash(pathRelative))
 
 	if existing, found, err := store.findExisting(ctx, dataPointID, hashHex); err != nil {
@@ -151,14 +194,14 @@ func (store *attachmentStore) Store(ctx context.Context, dataPointID int64, kind
 		// disk corruption); the byte content is content-addressed so
 		// re-write is safe.
 		if _, statErr := os.Stat(existing.AbsolutePath); errors.Is(statErr, os.ErrNotExist) {
-			if err := writeSidecarFile(subdir, existing.AbsolutePath, payload); err != nil {
+			if err := writeContainedAttachment(store.rootDir, existing.PathRelative, payload); err != nil {
 				return attachmentRecord{}, err
 			}
 		}
 		return existing, nil
 	}
 
-	if err := writeSidecarFile(subdir, absolutePath, payload); err != nil {
+	if err := writeContainedAttachment(store.rootDir, pathRelative, payload); err != nil {
 		return attachmentRecord{}, err
 	}
 
@@ -183,6 +226,44 @@ func (store *attachmentStore) Store(ctx context.Context, dataPointID int64, kind
 		ByteSize:     int64(len(payload)),
 		FetchedAt:    fetchedAt,
 	}, nil
+}
+
+func canonicalAttachmentPathRelative(kind, hashHex string) (string, error) {
+	if !isPortableAttachmentKind(kind) {
+		return "", fmt.Errorf("invalid attachment kind %q", kind)
+	}
+	if len(hashHex) != sha256.Size*2 {
+		return "", fmt.Errorf("invalid attachment sha256 %q", hashHex)
+	}
+	decoded, err := hex.DecodeString(hashHex)
+	if err != nil || hex.EncodeToString(decoded) != hashHex {
+		return "", fmt.Errorf("invalid attachment sha256 %q", hashHex)
+	}
+	return path.Join(kind, hashHex[:2], hashHex+attachmentFileExtension(kind)), nil
+}
+
+func isPortableAttachmentKind(kind string) bool {
+	if kind == "" || kind == "." || kind == ".." || strings.ContainsAny(kind, `<>:"/\|?*`) || strings.HasSuffix(kind, ".") || strings.HasSuffix(kind, " ") {
+		return false
+	}
+	for _, character := range kind {
+		if character < 0x20 {
+			return false
+		}
+	}
+	base := strings.ToUpper(strings.SplitN(kind, ".", 2)[0])
+	if base == "CON" || base == "PRN" || base == "AUX" || base == "NUL" {
+		return false
+	}
+	if len(base) == 4 && (strings.HasPrefix(base, "COM") || strings.HasPrefix(base, "LPT")) && base[3] >= '1' && base[3] <= '9' {
+		return false
+	}
+	for _, reserved := range []string{"COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³"} {
+		if base == reserved {
+			return false
+		}
+	}
+	return true
 }
 
 func (store *attachmentStore) findExisting(ctx context.Context, dataPointID int64, hashHex string) (attachmentRecord, bool, error) {
@@ -330,6 +411,30 @@ func resolveContainedPath(rootDir, pathRelative string) (string, error) {
 	return abs, nil
 }
 
+func readContainedAttachment(rootDir, pathRelative string, expectedSize int64, expectedRoot *attachmentRootIdentity) ([]byte, error) {
+	if _, err := resolveContainedPath(rootDir, pathRelative); err != nil {
+		return nil, err
+	}
+	return readAttachmentFileNoFollow(rootDir, pathRelative, expectedSize, expectedRoot)
+}
+
+func writeContainedAttachment(rootDir, pathRelative string, payload []byte) error {
+	if _, err := resolveContainedPath(rootDir, pathRelative); err != nil {
+		return err
+	}
+	// The Health Archive lifecycle owns root creation and validation before
+	// this helper runs. Keeping root ownership there avoids path-based mkdir
+	// races before the platform no-follow traversal opens its root handle.
+	return writeAttachmentFileNoFollow(rootDir, pathRelative, payload, nil)
+}
+
+func writeContainedSnapshotAttachment(rootDir, pathRelative string, payload []byte, expectedRoot attachmentRootIdentity) error {
+	if _, err := resolveContainedPath(rootDir, pathRelative); err != nil {
+		return err
+	}
+	return writeAttachmentFileNoFollow(rootDir, pathRelative, payload, &expectedRoot)
+}
+
 func attachmentFileExtension(kind string) string {
 	switch kind {
 	case "tcx":
@@ -337,30 +442,4 @@ func attachmentFileExtension(kind string) string {
 	default:
 		return ".bin"
 	}
-}
-
-func writeSidecarFile(subdir, absolutePath string, payload []byte) error {
-	if err := os.MkdirAll(subdir, 0o700); err != nil {
-		return fmt.Errorf("create attachment subdir: %w", err)
-	}
-	if usesPOSIXPermissions() {
-		// Tighten BOTH the per-kind dir and its child shard subdir.
-		// MkdirAll may have left a pre-existing intermediate `<kind>`
-		// dir with looser perms; re-chmod walks up one level.
-		if err := os.Chmod(subdir, 0o700); err != nil {
-			return fmt.Errorf("chmod attachment subdir: %w", err)
-		}
-		if err := os.Chmod(filepath.Dir(subdir), 0o700); err != nil {
-			return fmt.Errorf("chmod attachment kind dir: %w", err)
-		}
-	}
-	if err := os.WriteFile(absolutePath, payload, 0o600); err != nil {
-		return fmt.Errorf("write sidecar: %w", err)
-	}
-	if usesPOSIXPermissions() {
-		if err := os.Chmod(absolutePath, 0o600); err != nil {
-			return fmt.Errorf("chmod sidecar: %w", err)
-		}
-	}
-	return nil
 }
