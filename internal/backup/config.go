@@ -65,10 +65,14 @@ func defaultConfigDir() string {
 }
 
 func LoadConfig(path string) (Config, bool, error) {
-	if strings.TrimSpace(path) == "" {
-		path = DefaultConfigPath()
+	var err error
+	path, err = absoluteConfigPath(path)
+	if err != nil {
+		return Config{}, false, err
 	}
-	path = expandHome(path)
+	if err := rejectSymlinkedPathComponents(path); err != nil {
+		return Config{}, false, err
+	}
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return DefaultConfig(), false, nil
@@ -79,8 +83,11 @@ func LoadConfig(path string) (Config, bool, error) {
 	if info.Mode()&os.ModeSymlink != 0 {
 		return Config{}, false, fmt.Errorf("backup config %s must not be a symlink", path)
 	}
-	if info.IsDir() {
-		return Config{}, false, fmt.Errorf("backup config %s is a directory", path)
+	if !info.Mode().IsRegular() {
+		return Config{}, false, fmt.Errorf("backup config %s must be a regular file", path)
+	}
+	if err := validatePrivateDir(filepath.Dir(path)); err != nil {
+		return Config{}, false, err
 	}
 	if err := validatePrivateMode(path, info, 0o600); err != nil {
 		return Config{}, false, err
@@ -97,16 +104,23 @@ func LoadConfig(path string) (Config, bool, error) {
 }
 
 func SaveConfig(path string, cfg Config) error {
-	if strings.TrimSpace(path) == "" {
-		path = DefaultConfigPath()
+	var err error
+	path, err = absoluteConfigPath(path)
+	if err != nil {
+		return err
 	}
-	path = expandHome(path)
+	if err := rejectSymlinkedPathComponents(path); err != nil {
+		return err
+	}
 	if err := ensurePrivateDir(filepath.Dir(path)); err != nil {
 		return err
 	}
 	if info, err := os.Lstat(path); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("backup config %s must not be a symlink", path)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("backup config %s must be a regular file", path)
 		}
 		if err := validatePrivateMode(path, info, 0o600); err != nil {
 			return err
@@ -225,6 +239,9 @@ func resolveStatusOptions(opts Options) (Config, bool, error) {
 	cfg.Repo, err = filepath.Abs(expandHome(cfg.Repo))
 	if err != nil {
 		return Config{}, false, fmt.Errorf("resolve backup repo path: %w", err)
+	}
+	if err := rejectSymlinkedPathComponents(cfg.Repo); err != nil {
+		return Config{}, false, err
 	}
 	return cfg, found, nil
 }
@@ -430,7 +447,18 @@ func pathIsWithin(root, candidate string) (bool, error) {
 }
 
 func ensurePrivateDir(path string) error {
-	if info, err := os.Stat(path); err == nil {
+	var err error
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	if err := rejectSymlinkedPathComponents(path); err != nil {
+		return err
+	}
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("private directory %s must not be a symlink", path)
+		}
 		if !info.IsDir() {
 			return fmt.Errorf("%s is not a directory", path)
 		}
@@ -448,6 +476,48 @@ func ensurePrivateDir(path string) error {
 		return os.Chmod(path, 0o700)
 	}
 	return hardenPrivatePath(path, true)
+}
+
+func rejectSymlinkedPathComponents(path string) error {
+	current, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	current = filepath.Clean(current)
+	// Backup paths are local owner-controlled inputs. Reject stationary aliases;
+	// owner-only directory validation is the boundary against other principals.
+	// Concurrent mutation by another process running as the same owner is outside
+	// the local archive threat model because it already has equivalent file access.
+	for {
+		info, statErr := os.Lstat(current)
+		if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			parent := filepath.Dir(current)
+			if filepath.Dir(parent) != parent {
+				return fmt.Errorf("path component %s must not be a symlink", current)
+			}
+		} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return nil
+		}
+		current = parent
+	}
+}
+
+func validatePrivateDir(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("private directory %s must not be a symlink", path)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a directory", path)
+	}
+	return validatePrivateMode(path, info, 0o700)
 }
 
 func validatePrivateMode(path string, info os.FileInfo, want os.FileMode) error {

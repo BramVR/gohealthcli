@@ -12,10 +12,23 @@ import (
 )
 
 func EnsureIdentity(path string) (string, error) {
-	path = expandHome(path)
+	var err error
+	path, err = filepath.Abs(expandHome(path))
+	if err != nil {
+		return "", err
+	}
+	if err := rejectSymlinkedPathComponents(path); err != nil {
+		return "", err
+	}
 	if info, err := os.Lstat(path); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return "", fmt.Errorf("age identity %s must not be a symlink", path)
+		}
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("age identity %s must be a regular file", path)
+		}
+		if err := validatePrivateDir(filepath.Dir(path)); err != nil {
+			return "", err
 		}
 		if err := validatePrivateMode(path, info, 0o600); err != nil {
 			return "", err

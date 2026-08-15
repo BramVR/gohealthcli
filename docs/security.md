@@ -108,9 +108,9 @@ is unaffected.
 ## Encrypted Backups
 
 Backup work is explicit. `backup init` may create a Git checkout and push its
-recovery README to the configured remote; later `backup push` writes only
-age-encrypted Health Archive shards plus the documented cleartext manifest.
-No backup command refreshes the Provider implicitly.
+recovery README to the configured remote. A later accepted backup operation
+will write only age-encrypted Health Archive shards plus the documented
+cleartext manifest. No backup command refreshes the Provider implicitly.
 
 The default `backup.json` and `backup-age-identity.txt` live beside the main
 config under the XDG-style gohealthcli config directory and are owner-only.

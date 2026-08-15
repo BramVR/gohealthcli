@@ -73,6 +73,109 @@ func TestEnsureIdentityCreatesAndReusesX25519Identity(t *testing.T) {
 	assertMode(t, path, 0o600)
 }
 
+func TestPrivateFilesRejectNonRegularPaths(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name string
+		run  func(string) error
+	}{
+		{name: "load config", run: func(path string) error { _, _, err := LoadConfig(path); return err }},
+		{name: "save config", run: func(path string) error { return SaveConfig(path, Config{}) }},
+		{name: "identity", run: func(path string) error { _, err := EnsureIdentity(path); return err }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(root, strings.ReplaceAll(test.name, " ", "-"))
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := test.run(path); err == nil || !strings.Contains(err.Error(), "regular file") {
+				t.Fatalf("error = %v, want regular-file rejection", err)
+			}
+		})
+	}
+}
+
+func TestPrivateFilesRejectInsecureExistingParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode check")
+	}
+	root := t.TempDir()
+	privateDir := filepath.Join(root, "private")
+	configPath := filepath.Join(privateDir, "backup.json")
+	identityPath := filepath.Join(privateDir, "backup-age-identity.txt")
+	if err := SaveConfig(configPath, Config{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureIdentity(identityPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(privateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadConfig(configPath); err == nil || !strings.Contains(err.Error(), "not owner-only") {
+		t.Fatalf("LoadConfig error = %v, want insecure-parent rejection", err)
+	}
+	if _, err := EnsureIdentity(identityPath); err == nil || !strings.Contains(err.Error(), "not owner-only") {
+		t.Fatalf("EnsureIdentity error = %v, want insecure-parent rejection", err)
+	}
+}
+
+func TestPrivateFilesRejectSymlinkedParent(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "private")
+	if err := os.Symlink(outside, alias); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	configPath := filepath.Join(alias, "backup.json")
+	if err := SaveConfig(configPath, Config{}); err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("SaveConfig error = %v, want symlinked-parent rejection", err)
+	}
+	identityPath := filepath.Join(alias, "backup-age-identity.txt")
+	if _, err := EnsureIdentity(identityPath); err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("EnsureIdentity error = %v, want symlinked-parent rejection", err)
+	}
+	for _, path := range []string{filepath.Join(outside, "backup.json"), filepath.Join(outside, "backup-age-identity.txt")} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("outside private file was written: %v", err)
+		}
+	}
+}
+
+func TestSaveConfigUsesTheNormalizedPathItValidates(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	safe := filepath.Join(root, "safe")
+	outside := filepath.Join(root, "outside")
+	for _, dir := range []string{safe, filepath.Join(outside, "nested")} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(safe, "link")
+	if err := os.Symlink(filepath.Join(outside, "nested"), link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	requested := link + string(filepath.Separator) + ".." + string(filepath.Separator) + "backup.json"
+	if err := SaveConfig(requested, Config{}); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(safe, "backup.json")); err != nil {
+		t.Fatalf("normalized config was not written: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "backup.json")); !os.IsNotExist(err) {
+		t.Fatalf("config escaped through cleaned-away symlink: %v", err)
+	}
+}
+
 func TestValidateRecipientsRejectsInvalidRecipient(t *testing.T) {
 	t.Parallel()
 	if err := ValidateRecipients([]string{"not-an-age-recipient"}); err == nil || !strings.Contains(err.Error(), "parse age recipient") {
@@ -412,6 +515,57 @@ func TestInitRejectsSymlinkedGitMetadataBeforeWritingPrivateState(t *testing.T) 
 	for _, path := range []string{configPath, identityPath, filepath.Join(outsideRepo, recoveryReadmeFilename)} {
 		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
 			t.Fatalf("state written after symlinked Git metadata rejection: %s: %v", path, statErr)
+		}
+	}
+}
+
+func TestInitRejectsSymlinkedCheckoutBeforeOutsideWrite(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	outsideRepo := filepath.Join(root, "outside")
+	if err := os.Mkdir(outsideRepo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	checkout := filepath.Join(root, "checkout")
+	if err := os.Symlink(outsideRepo, checkout); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	configPath := filepath.Join(root, "private", "backup.json")
+	identityPath := filepath.Join(root, "private", "backup-age-identity.txt")
+
+	_, err := Init(context.Background(), Options{ConfigPath: configPath, Repo: checkout, Identity: identityPath, Push: false})
+	if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("Init error = %v, want symlinked-checkout rejection", err)
+	}
+	for _, path := range []string{configPath, identityPath, filepath.Join(outsideRepo, recoveryReadmeFilename), filepath.Join(outsideRepo, ".git")} {
+		if _, statErr := os.Lstat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("state written after symlinked checkout rejection: %s: %v", path, statErr)
+		}
+	}
+}
+
+func TestInitRejectsSymlinkedCheckoutAncestorBeforeOutsideWrite(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(outside, alias); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	checkout := filepath.Join(alias, "nested", "checkout")
+	configPath := filepath.Join(root, "private", "backup.json")
+	identityPath := filepath.Join(root, "private", "backup-age-identity.txt")
+
+	_, err := Init(context.Background(), Options{ConfigPath: configPath, Repo: checkout, Identity: identityPath, Push: false})
+	if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("Init error = %v, want symlinked-ancestor rejection", err)
+	}
+	for _, path := range []string{configPath, identityPath, filepath.Join(outside, "nested")} {
+		if _, statErr := os.Lstat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("state written after symlinked checkout-ancestor rejection: %s: %v", path, statErr)
 		}
 	}
 }
@@ -1051,7 +1205,7 @@ func TestGitSafeEnvironmentDropsRepositoryAndProcessOverrides(t *testing.T) {
 	}
 }
 
-func TestInitRejectsConfigIdentityCollisionThroughSymlinkedParent(t *testing.T) {
+func TestInitRejectsConfigSymlinkedParent(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	realDir := filepath.Join(root, "real")
@@ -1070,8 +1224,8 @@ func TestInitRejectsConfigIdentityCollisionThroughSymlinkedParent(t *testing.T) 
 		Identity:   identityPath,
 		Push:       false,
 	})
-	if err == nil || !strings.Contains(err.Error(), "paths must be different") {
-		t.Fatalf("Init error = %v, want aliased path collision", err)
+	if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("Init error = %v, want symlinked-parent rejection", err)
 	}
 	if _, statErr := os.Stat(identityPath); !os.IsNotExist(statErr) {
 		t.Fatalf("aliased identity/config path was written: %v", statErr)

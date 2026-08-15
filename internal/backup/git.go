@@ -15,6 +15,9 @@ import (
 )
 
 func ensureRepo(ctx context.Context, cfg Config) error {
+	if err := rejectSymlinkedPathComponents(cfg.Repo); err != nil {
+		return err
+	}
 	gitDir := filepath.Join(cfg.Repo, ".git")
 	if info, err := os.Lstat(gitDir); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
@@ -31,7 +34,10 @@ func ensureRepo(ctx context.Context, cfg Config) error {
 		return err
 	}
 
-	if info, err := os.Stat(cfg.Repo); err == nil {
+	if info, err := os.Lstat(cfg.Repo); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("backup repo path %s must not be a symlink", cfg.Repo)
+		}
 		if !info.IsDir() {
 			return fmt.Errorf("backup repo path %s is not a directory", cfg.Repo)
 		}
