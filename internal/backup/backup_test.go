@@ -382,6 +382,40 @@ func TestInitRejectsSymlinkedRecoveryReadmeWithoutOutsideWrite(t *testing.T) {
 	}
 }
 
+func TestInitRejectsSymlinkedGitMetadataBeforeWritingPrivateState(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	outsideRepo := filepath.Join(root, "outside")
+	if err := os.Mkdir(outsideRepo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, outsideRepo, "init", "-b", "main")
+	checkout := filepath.Join(root, "checkout")
+	if err := os.Mkdir(checkout, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outsideRepo, ".git"), filepath.Join(checkout, ".git")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	configPath := filepath.Join(root, "private", "backup.json")
+	identityPath := filepath.Join(root, "private", "backup-age-identity.txt")
+
+	_, err := Init(context.Background(), Options{
+		ConfigPath: configPath,
+		Repo:       checkout,
+		Identity:   identityPath,
+		Push:       false,
+	})
+	if err == nil || !strings.Contains(err.Error(), "symlinked .git") {
+		t.Fatalf("Init error = %v, want symlinked Git metadata rejection", err)
+	}
+	for _, path := range []string{configPath, identityPath, filepath.Join(outsideRepo, recoveryReadmeFilename)} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("state written after symlinked Git metadata rejection: %s: %v", path, statErr)
+		}
+	}
+}
+
 func TestInitDefaultsIdentityBesideExplicitConfig(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

@@ -16,7 +16,10 @@ import (
 
 func ensureRepo(ctx context.Context, cfg Config) error {
 	gitDir := filepath.Join(cfg.Repo, ".git")
-	if info, err := os.Stat(gitDir); err == nil {
+	if info, err := os.Lstat(gitDir); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("backup checkout %s has a symlinked .git entry", cfg.Repo)
+		}
 		if !info.IsDir() {
 			return fmt.Errorf("backup checkout %s has a non-directory .git entry", cfg.Repo)
 		}

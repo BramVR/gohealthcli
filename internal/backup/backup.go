@@ -266,7 +266,7 @@ const backupReadmeBody = `# backup-gohealthcli
 
 Encrypted Git backup for a local gohealthcli Health Archive.
 
-The backup payload written by ` + "`gohealthcli backup push`" + ` is encrypted with age before Git sees it. The repository still exposes cleartext metadata: backup time, public recipients, logical table names, record counts, shard paths, encrypted sizes, plaintext hashes, cadence, and changed shards.
+Backup payloads are encrypted with age before Git sees them. ` + "`gohealthcli backup init`" + ` only prepares the repository, config, and age identity; it does not export Health Archive data. When encrypted payloads are added, the repository still exposes cleartext metadata: backup time, public recipients, logical table names, record counts, shard paths, encrypted sizes, plaintext hashes, cadence, and changed shards.
 
 Keep repository write access restricted. Never commit the local age identity, gohealthcli config, OAuth client secret, Credential Store material, raw SQLite Health Archive, or plaintext Attachment Store. Anyone who can write this repository can replace encrypted content even though they cannot decrypt it.
 
