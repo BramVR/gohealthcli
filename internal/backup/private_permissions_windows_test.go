@@ -27,9 +27,15 @@ $acl.AddAccessRule($rule)
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := exec.CommandContext(context.Background(), powershellPath, "-NoProfile", "-NonInteractive", "-Command", grantEveryone)
+	ctx, cancel := context.WithTimeout(context.Background(), windowsACLCommandTimeout)
+	defer cancel()
+	command := exec.CommandContext(ctx, powershellPath, "-NoProfile", "-NonInteractive", "-Command", grantEveryone)
 	command.Env = append(os.Environ(), "GOHEALTHCLI_TEST_PRIVATE_PATH="+dir)
-	if output, err := command.CombinedOutput(); err != nil {
+	output, err := command.CombinedOutput()
+	if err != nil {
+		if ctx.Err() != nil {
+			t.Fatalf("seed broad ACL: %v", ctx.Err())
+		}
 		t.Fatalf("seed broad ACL: %v: %s", err, output)
 	}
 	if err := hardenPrivatePath(dir, true); err != nil {
