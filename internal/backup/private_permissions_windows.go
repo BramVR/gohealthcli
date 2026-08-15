@@ -8,7 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
+
+const windowsACLCommandTimeout = 30 * time.Second
 
 const windowsHardenPrivatePathScript = `$ErrorActionPreference = 'Stop'
 $path = $env:GOHEALTHCLI_PRIVATE_PATH
@@ -73,9 +76,14 @@ func validatePlatformPrivatePath(path string, _ bool) error {
 }
 
 func runWindowsACLScript(script, path string) error {
-	command := exec.CommandContext(context.Background(), "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+	ctx, cancel := context.WithTimeout(context.Background(), windowsACLCommandTimeout)
+	defer cancel()
+	command := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
 	command.Env = append(os.Environ(), "GOHEALTHCLI_PRIVATE_PATH="+path)
 	output, err := command.CombinedOutput()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
 	}
