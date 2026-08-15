@@ -307,6 +307,9 @@ func gitSafeEnvironment(environ []string) []string {
 		"GIT_SSH_COMMAND":                  {},
 		"GIT_TEMPLATE_DIR":                 {},
 		"GIT_WORK_TREE":                    {},
+		"SSH_ASKPASS":                      {},
+		"SSH_ASKPASS_REQUIRE":              {},
+		"DISPLAY":                          {},
 	}
 	out := make([]string, 0, len(environ))
 	for _, entry := range environ {
