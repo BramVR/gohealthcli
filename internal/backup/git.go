@@ -264,12 +264,19 @@ func gitOutput(ctx context.Context, dir string, args ...string) (string, error) 
 }
 
 func executeGit(ctx context.Context, dir string, args ...string) (string, error) {
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		return "", fmt.Errorf("find Git executable: %w", err)
+	}
+	if !filepath.IsAbs(gitPath) {
+		return "", fmt.Errorf("refusing non-absolute Git executable path %q", gitPath)
+	}
 	disabledHooksPath := "/dev/null"
 	if runtime.GOOS == "windows" {
 		disabledHooksPath = "NUL"
 	}
 	gitArgs := append([]string{"-c", "core.hooksPath=" + disabledHooksPath}, args...)
-	cmd := exec.CommandContext(ctx, "git", gitArgs...) // #nosec G204 -- arguments are fixed operations plus configured local paths/remotes.
+	cmd := exec.CommandContext(ctx, gitPath, gitArgs...) // #nosec G204 -- executable is an absolute LookPath result; arguments are fixed operations plus configured local paths/remotes.
 	cmd.Dir = dir
 	cmd.Env = append(gitSafeEnvironment(os.Environ()),
 		"GIT_AUTHOR_NAME=gohealthcli",

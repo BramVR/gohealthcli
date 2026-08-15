@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 const windowsACLCommandTimeout = 30 * time.Second
@@ -76,9 +79,13 @@ func validatePlatformPrivatePath(path string, _ bool) error {
 }
 
 func runWindowsACLScript(script, path string) error {
+	powershellPath, err := systemPowerShellPath()
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), windowsACLCommandTimeout)
 	defer cancel()
-	command := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+	command := exec.CommandContext(ctx, powershellPath, "-NoProfile", "-NonInteractive", "-Command", script)
 	command.Env = append(os.Environ(), "GOHEALTHCLI_PRIVATE_PATH="+path)
 	output, err := command.CombinedOutput()
 	if ctx.Err() != nil {
@@ -88,4 +95,23 @@ func runWindowsACLScript(script, path string) error {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func systemPowerShellPath() (string, error) {
+	systemDir, err := windows.GetSystemDirectory()
+	if err != nil {
+		return "", fmt.Errorf("resolve Windows system directory: %w", err)
+	}
+	path := filepath.Join(systemDir, "WindowsPowerShell", "v1.0", "powershell.exe")
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("Windows system PowerShell path %q is not absolute", path)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("inspect Windows system PowerShell: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("Windows system PowerShell %s is not a regular file", path)
+	}
+	return path, nil
 }

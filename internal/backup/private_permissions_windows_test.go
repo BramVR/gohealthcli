@@ -23,7 +23,11 @@ $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($everyone,
 $acl.AddAccessRule($rule)
 [System.IO.Directory]::SetAccessControl($path, $acl)
 `
-	command := exec.CommandContext(context.Background(), "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", grantEveryone)
+	powershellPath, err := systemPowerShellPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.CommandContext(context.Background(), powershellPath, "-NoProfile", "-NonInteractive", "-Command", grantEveryone)
 	command.Env = append(os.Environ(), "GOHEALTHCLI_TEST_PRIVATE_PATH="+dir)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("seed broad ACL: %v: %s", err, output)
