@@ -42,7 +42,7 @@ type backupInitOutput struct {
 func runBackup(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	action, parseArgs := extractBackupAction(args)
 	name := "backup"
-	if action != "" {
+	if action == "init" || action == "status" {
 		name += " " + action
 	}
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)

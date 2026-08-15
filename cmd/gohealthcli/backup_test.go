@@ -81,9 +81,18 @@ func TestBackupStatusMissingConfigIsExplicitlyUninitialized(t *testing.T) {
 }
 
 func TestBackupRejectsUnknownAction(t *testing.T) {
-	code, _, stderr := runCommand(t, "backup", "definitely-not-an-action")
+	const action = "definitely-not-an-action"
+	code, _, stderr := runCommand(t, "backup", action)
 	if code != 1 || !strings.Contains(stderr.String(), "unknown backup action") {
 		t.Fatalf("exit = %d, stderr = %q", code, stderr.String())
+	}
+
+	code, _, stderr = runCommand(t, "backup", action, "--db", "synthetic.db")
+	if code == 0 || !strings.Contains(stderr.String(), "not supported by backup") {
+		t.Fatalf("unsupported global exit = %d, stderr = %q", code, stderr.String())
+	}
+	if strings.Contains(stderr.String(), "backup "+action) {
+		t.Fatalf("unsupported global error included unvalidated action: %q", stderr.String())
 	}
 }
 
