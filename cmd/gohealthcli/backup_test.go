@@ -50,7 +50,7 @@ func TestBackupInitAndStatusCLI(t *testing.T) {
 	}
 	wantLines := []string{
 		"status: backup_empty",
-		"repo_path: " + repoPath,
+		"repo_path: " + escapePlainControlChars(repoPath),
 		"encrypted: false",
 		"shard_count: 0",
 	}
