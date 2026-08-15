@@ -715,7 +715,7 @@ func TestValidateRemoteRejectsQueryAndFragmentSyntax(t *testing.T) {
 
 func TestValidateRemoteAcceptsWindowsPathsAndSSHUsernames(t *testing.T) {
 	t.Parallel()
-	for _, remote := range []string{`C:\backups\gohealth.git`, `\\server\share\gohealth.git`, `\\?\C:\backups\gohealth.git`, `\\?\UNC\server\share\gohealth.git`, "ssh://git@github.com/owner/backup.git", "git@github.com:owner/backup.git", "github.com:owner/backup.git"} {
+	for _, remote := range []string{`C:\backups\gohealth.git`, `\\server\share\gohealth.git`, `\\?\C:\backups\gohealth.git`, `\\?\UNC\server\share\gohealth.git`, "ssh://git@github.com/owner/backup.git", "git@github.com:owner/backup.git", "git@github.com:owner/repo@backup.git", "github.com:owner/backup.git"} {
 		if err := validateRemote(remote); err != nil {
 			t.Errorf("validateRemote(%q): %v", remote, err)
 		}

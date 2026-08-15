@@ -347,6 +347,8 @@ func validateRemote(remote string) error {
 		return errors.New("backup Git remote must not contain query parameters or fragments")
 	}
 	if isSCPLikeSSHRemote(remote) {
+		// SCP syntax has no password field: the first colon starts an opaque
+		// repository path, where characters such as '@' are ordinary path data.
 		return nil
 	}
 	parsed, err := url.Parse(remote)
@@ -383,7 +385,8 @@ func validateRemote(remote string) error {
 }
 
 func isWindowsLocalPath(path string) bool {
-	return len(path) >= 3 && ((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) && path[1] == ':' && (path[2] == '\\' || path[2] == '/') || strings.HasPrefix(path, `\\`)
+	isDrivePath := len(path) >= 3 && ((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) && path[1] == ':' && (path[2] == '\\' || path[2] == '/')
+	return isDrivePath || strings.HasPrefix(path, `\\`)
 }
 
 func isSCPLikeSSHRemote(remote string) bool {
