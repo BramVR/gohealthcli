@@ -104,6 +104,12 @@ func Init(ctx context.Context, opts Options) (InitResult, error) {
 			return InitResult{}, fmt.Errorf("backup %s path must be outside the Git checkout", label)
 		}
 	}
+	if err := validatePrivateParentIfPresent(configPath); err != nil {
+		return InitResult{}, err
+	}
+	if err := preflightIdentity(cfg.Identity); err != nil {
+		return InitResult{}, err
+	}
 	if err := ensureRepo(ctx, cfg); err != nil {
 		return InitResult{}, err
 	}

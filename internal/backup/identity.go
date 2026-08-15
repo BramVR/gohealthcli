@@ -12,30 +12,12 @@ import (
 )
 
 func EnsureIdentity(path string) (string, error) {
-	var err error
-	path, err = filepath.Abs(expandHome(path))
+	path, recipient, found, err := inspectIdentity(path)
 	if err != nil {
 		return "", err
 	}
-	if err := rejectSymlinkedPathComponents(path); err != nil {
-		return "", err
-	}
-	if info, err := os.Lstat(path); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			return "", fmt.Errorf("age identity %s must not be a symlink", path)
-		}
-		if !info.Mode().IsRegular() {
-			return "", fmt.Errorf("age identity %s must be a regular file", path)
-		}
-		if err := validatePrivateDir(filepath.Dir(path)); err != nil {
-			return "", err
-		}
-		if err := validatePrivateMode(path, info, 0o600); err != nil {
-			return "", err
-		}
-		return recipientFromIdentityFile(path)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", err
+	if found {
+		return recipient, nil
 	}
 
 	identity, err := age.GenerateX25519Identity()
@@ -80,6 +62,48 @@ func EnsureIdentity(path string) (string, error) {
 		return "", err
 	}
 	return identity.Recipient().String(), nil
+}
+
+func preflightIdentity(path string) error {
+	_, _, _, err := inspectIdentity(path)
+	return err
+}
+
+func inspectIdentity(path string) (string, string, bool, error) {
+	path, err := filepath.Abs(expandHome(path))
+	if err != nil {
+		return "", "", false, err
+	}
+	if err := rejectSymlinkedPathComponents(path); err != nil {
+		return "", "", false, err
+	}
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := validatePrivateParentIfPresent(path); err != nil {
+			return "", "", false, err
+		}
+		return path, "", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", "", false, fmt.Errorf("age identity %s must not be a symlink", path)
+	}
+	if !info.Mode().IsRegular() {
+		return "", "", false, fmt.Errorf("age identity %s must be a regular file", path)
+	}
+	if err := validatePrivateDir(filepath.Dir(path)); err != nil {
+		return "", "", false, err
+	}
+	if err := validatePrivateMode(path, info, 0o600); err != nil {
+		return "", "", false, err
+	}
+	recipient, err := recipientFromIdentityFile(path)
+	if err != nil {
+		return "", "", false, err
+	}
+	return path, recipient, true, nil
 }
 
 func ValidateRecipients(values []string) error {

@@ -528,6 +528,16 @@ func validatePrivateDir(path string) error {
 	return validatePrivateMode(path, info, 0o700)
 }
 
+func validatePrivateParentIfPresent(path string) error {
+	parent := filepath.Dir(path)
+	if _, err := os.Lstat(parent); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return validatePrivateDir(parent)
+}
+
 func validatePrivateMode(path string, info os.FileInfo, want os.FileMode) error {
 	if runtime.GOOS == "windows" {
 		return validatePlatformPrivatePath(path, info.IsDir())

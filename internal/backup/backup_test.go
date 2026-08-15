@@ -148,6 +148,19 @@ func TestPrivateFilesRejectSymlinkedParent(t *testing.T) {
 			t.Fatalf("outside private file was written: %v", err)
 		}
 	}
+	checkout := filepath.Join(root, "checkout")
+	_, err := Init(context.Background(), Options{
+		ConfigPath: filepath.Join(root, "safe", "backup.json"),
+		Repo:       checkout,
+		Identity:   identityPath,
+		Push:       false,
+	})
+	if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("Init error = %v, want identity parent rejection", err)
+	}
+	if _, err := os.Lstat(checkout); !os.IsNotExist(err) {
+		t.Fatalf("checkout was written before identity path rejection: %v", err)
+	}
 }
 
 func TestSaveConfigUsesTheNormalizedPathItValidates(t *testing.T) {
