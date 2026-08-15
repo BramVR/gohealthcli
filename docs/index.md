@@ -8,7 +8,7 @@ description: gohealthcli is a local-first, read-only Google Health CLI that arch
 
 `gohealthcli` connects to the Google Health API, stores raw provider JSON in a local SQLite **Health Archive**, and offers scriptable commands for sync, status, query, raw API exploration, and CSV or JSONL exports.
 
-It is for **local inspection and personal data archiving**. It does not write health data, delete health data, run a server, upload in the background, or share plaintext archives or exports. Explicit backup commands use an owner-configured Git remote and age-encrypt Health Archive payloads before Git sees them.
+It is for **local inspection and personal data archiving**. It does not write health data, delete health data, run a server, upload in the background, or share plaintext archives or exports. `backup init` may use an owner-configured Git remote but does not export Health Archive payloads; future payload-writing backup commands must age-encrypt them before Git sees them.
 
 ## Try it
 
@@ -34,7 +34,7 @@ Normalised CSV or JSONL exports cover every Data Type the catalog supports. Roll
 
 ## What it isn't
 
-`gohealthcli` is not a cloud service. It does not run in the background, phone home, or write back to the provider. The archive sits on disk under your control. Only an explicit `backup` command touches its configured Git checkout or remote, and health payloads are encrypted before Git sees them.
+`gohealthcli` is not a cloud service. It does not run in the background, phone home, or write back to the provider. The archive sits on disk under your control. Only an explicit `backup` command touches its configured Git checkout or remote. The current init/status surface does not export Health Archive payloads; future payload-writing commands must encrypt them before Git sees them.
 
 ## Project
 

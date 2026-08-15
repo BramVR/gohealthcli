@@ -19,8 +19,9 @@ raw API exploration, and CSV/JSONL exports.
 
 It is for local inspection and personal data archiving. It does not write health
 data, delete health data, run a server, upload in the background, or share
-plaintext archives or exports. Explicit backup commands use an owner-configured
-Git remote and encrypt Health Archive payloads with age before Git sees them.
+plaintext archives or exports. `backup init` may use an owner-configured Git
+remote but does not export Health Archive payloads; future payload-writing
+backup commands must encrypt them with age before Git sees them.
 
 ## Status
 
