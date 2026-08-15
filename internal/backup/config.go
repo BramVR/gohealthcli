@@ -337,7 +337,7 @@ func validateRemote(remote string) error {
 	if remote == "" {
 		return nil
 	}
-	if strings.HasPrefix(remote, "-") || strings.Contains(remote, "::") {
+	if strings.HasPrefix(remote, "-") || hasExternalHelperSyntax(remote) {
 		return errors.New("backup Git remote uses unsupported option-like or external-helper syntax")
 	}
 	if isWindowsLocalPath(remote) {
@@ -405,6 +405,17 @@ func isSCPLikeSSHRemote(remote string) bool {
 		return false
 	}
 	return true
+}
+
+func hasExternalHelperSyntax(remote string) bool {
+	colon := strings.IndexByte(remote, ':')
+	if colon < 0 || colon+1 >= len(remote) || remote[colon+1] != ':' {
+		return false
+	}
+	if colon == 0 {
+		return true
+	}
+	return !strings.ContainsAny(remote[:colon], `/\`)
 }
 
 func normalizeLocalRemote(remote string) (string, error) {

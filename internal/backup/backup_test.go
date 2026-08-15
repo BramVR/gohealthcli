@@ -705,9 +705,18 @@ func TestInitRedactsCredentialFromMalformedRemote(t *testing.T) {
 
 func TestValidateRemoteRejectsOptionAndExternalHelperSyntax(t *testing.T) {
 	t.Parallel()
-	for _, remote := range []string{"--upload-pack=synthetic-command", "ext::synthetic-command"} {
+	for _, remote := range []string{"--upload-pack=synthetic-command", "::address", "ext::synthetic-command", "synthetic::address"} {
 		if err := validateRemote(remote); err == nil {
 			t.Errorf("validateRemote(%q) succeeded", remote)
+		}
+	}
+}
+
+func TestValidateRemoteAcceptsIPv6URLs(t *testing.T) {
+	t.Parallel()
+	for _, remote := range []string{"ssh://git@[fe80::1]/backup.git", "https://[2001:db8::1]/backup.git"} {
+		if err := validateRemote(remote); err != nil {
+			t.Errorf("validateRemote(%q): %v", remote, err)
 		}
 	}
 }
