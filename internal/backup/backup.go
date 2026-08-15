@@ -160,6 +160,9 @@ func Status(_ context.Context, opts Options) (StatusResult, error) {
 		if configFound {
 			return result, fmt.Errorf("configured backup repo path %s does not exist", cfg.Repo)
 		}
+		if strings.TrimSpace(opts.Repo) != "" {
+			return result, fmt.Errorf("backup repo path %s does not exist", cfg.Repo)
+		}
 		return result, nil
 	} else if err != nil {
 		return result, err

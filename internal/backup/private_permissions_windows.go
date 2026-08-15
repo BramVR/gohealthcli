@@ -5,12 +5,13 @@ package backup
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
 
 const windowsHardenPrivatePathScript = `$ErrorActionPreference = 'Stop'
-$path = $args[0]
+$path = $env:GOHEALTHCLI_PRIVATE_PATH
 $isDirectory = [System.IO.Directory]::Exists($path)
 $current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
 if ($isDirectory) {
@@ -38,7 +39,7 @@ if ($isDirectory) {
 `
 
 const windowsValidatePrivatePathScript = `$ErrorActionPreference = 'Stop'
-$path = $args[0]
+$path = $env:GOHEALTHCLI_PRIVATE_PATH
 $isDirectory = [System.IO.Directory]::Exists($path)
 $current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $allowed = @($current, 'S-1-5-18', 'S-1-5-32-544')
@@ -72,7 +73,8 @@ func validatePlatformPrivatePath(path string, _ bool) error {
 }
 
 func runWindowsACLScript(script, path string) error {
-	command := exec.CommandContext(context.Background(), "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script, path)
+	command := exec.CommandContext(context.Background(), "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+	command.Env = append(os.Environ(), "GOHEALTHCLI_PRIVATE_PATH="+path)
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))

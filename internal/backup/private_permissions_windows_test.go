@@ -16,13 +16,15 @@ func TestWindowsPrivatePathHardeningRemovesEveryoneAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	const grantEveryone = `$ErrorActionPreference = 'Stop'
-$acl = [System.IO.Directory]::GetAccessControl($args[0])
+$path = $env:GOHEALTHCLI_TEST_PRIVATE_PATH
+$acl = [System.IO.Directory]::GetAccessControl($path)
 $everyone = New-Object System.Security.Principal.SecurityIdentifier -ArgumentList 'S-1-1-0'
 $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($everyone, 'Read', 'ContainerInherit, ObjectInherit', 'None', 'Allow')
 $acl.AddAccessRule($rule)
-[System.IO.Directory]::SetAccessControl($args[0], $acl)
+[System.IO.Directory]::SetAccessControl($path, $acl)
 `
-	command := exec.CommandContext(context.Background(), "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", grantEveryone, dir)
+	command := exec.CommandContext(context.Background(), "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", grantEveryone)
+	command.Env = append(os.Environ(), "GOHEALTHCLI_TEST_PRIVATE_PATH="+dir)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("seed broad ACL: %v: %s", err, output)
 	}

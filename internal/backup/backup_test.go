@@ -1273,6 +1273,20 @@ func TestStatusConfiguredMissingRepoReturnsError(t *testing.T) {
 	}
 }
 
+func TestStatusExplicitMissingRepoReturnsError(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	missingRepo := filepath.Join(root, "missing-checkout")
+
+	_, err := Status(context.Background(), Options{
+		ConfigPath: filepath.Join(root, "missing-config.json"),
+		Repo:       missingRepo,
+	})
+	if err == nil || !strings.Contains(err.Error(), "backup repo path") || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("Status error = %v, want explicit missing checkout error", err)
+	}
+}
+
 func TestStatusDoesNotRequireInitializationIdentityDefaults(t *testing.T) {
 	t.Run("missing config without HOME", func(t *testing.T) {
 		root := t.TempDir()
