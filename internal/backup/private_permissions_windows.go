@@ -11,7 +11,7 @@ import (
 
 const windowsHardenPrivatePathScript = `$ErrorActionPreference = 'Stop'
 $path = $args[0]
-$isDirectory = [System.Convert]::ToBoolean($args[1])
+$isDirectory = [System.IO.Directory]::Exists($path)
 $current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
 if ($isDirectory) {
   $acl = New-Object System.Security.AccessControl.DirectorySecurity
@@ -39,7 +39,7 @@ if ($isDirectory) {
 
 const windowsValidatePrivatePathScript = `$ErrorActionPreference = 'Stop'
 $path = $args[0]
-$isDirectory = [System.Convert]::ToBoolean($args[1])
+$isDirectory = [System.IO.Directory]::Exists($path)
 $current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $allowed = @($current, 'S-1-5-18', 'S-1-5-32-544')
 if ($isDirectory) {
@@ -58,21 +58,21 @@ if ($bad.Count -ne 0) { throw 'ACL grants access to another identity' }
 `
 
 func hardenPrivatePath(path string, isDirectory bool) error {
-	if err := runWindowsACLScript(windowsHardenPrivatePathScript, path, isDirectory); err != nil {
+	if err := runWindowsACLScript(windowsHardenPrivatePathScript, path); err != nil {
 		return fmt.Errorf("enforce owner-only Windows ACL for %s: %w", path, err)
 	}
 	return validatePlatformPrivatePath(path, isDirectory)
 }
 
-func validatePlatformPrivatePath(path string, isDirectory bool) error {
-	if err := runWindowsACLScript(windowsValidatePrivatePathScript, path, isDirectory); err != nil {
+func validatePlatformPrivatePath(path string, _ bool) error {
+	if err := runWindowsACLScript(windowsValidatePrivatePathScript, path); err != nil {
 		return fmt.Errorf("%s is not owner-only: %w", path, err)
 	}
 	return nil
 }
 
-func runWindowsACLScript(script, path string, isDirectory bool) error {
-	command := exec.CommandContext(context.Background(), "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script, path, fmt.Sprint(isDirectory))
+func runWindowsACLScript(script, path string) error {
+	command := exec.CommandContext(context.Background(), "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script, path)
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
