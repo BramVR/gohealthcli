@@ -30,14 +30,23 @@ $administrators = New-Object System.Security.Principal.SecurityIdentifier -Argum
 foreach ($sid in @($current, $system, $administrators)) {
   $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid, $rights, $inheritance, $propagation, $allow)))
 }
-Set-Acl -LiteralPath $path -AclObject $acl
+if ($isDirectory) {
+  [System.IO.Directory]::SetAccessControl($path, $acl)
+} else {
+  [System.IO.File]::SetAccessControl($path, $acl)
+}
 `
 
 const windowsValidatePrivatePathScript = `$ErrorActionPreference = 'Stop'
 $path = $args[0]
+$isDirectory = [System.Convert]::ToBoolean($args[1])
 $current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $allowed = @($current, 'S-1-5-18', 'S-1-5-32-544')
-$acl = Get-Acl -LiteralPath $path
+if ($isDirectory) {
+  $acl = [System.IO.Directory]::GetAccessControl($path)
+} else {
+  $acl = [System.IO.File]::GetAccessControl($path)
+}
 if (-not $acl.AreAccessRulesProtected) { throw 'ACL inheritance is enabled' }
 $owner = ([System.Security.Principal.NTAccount]$acl.Owner).Translate([System.Security.Principal.SecurityIdentifier]).Value
 if ($allowed -notcontains $owner) { throw 'owner is not the current user, SYSTEM, or Administrators' }

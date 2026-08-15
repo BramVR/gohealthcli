@@ -16,11 +16,11 @@ func TestWindowsPrivatePathHardeningRemovesEveryoneAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	const grantEveryone = `$ErrorActionPreference = 'Stop'
-$acl = Get-Acl -LiteralPath $args[0]
+$acl = [System.IO.Directory]::GetAccessControl($args[0])
 $everyone = New-Object System.Security.Principal.SecurityIdentifier -ArgumentList 'S-1-1-0'
 $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($everyone, 'Read', 'ContainerInherit, ObjectInherit', 'None', 'Allow')
 $acl.AddAccessRule($rule)
-Set-Acl -LiteralPath $args[0] -AclObject $acl
+[System.IO.Directory]::SetAccessControl($args[0], $acl)
 `
 	command := exec.CommandContext(context.Background(), "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", grantEveryone, dir)
 	if output, err := command.CombinedOutput(); err != nil {
