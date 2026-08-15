@@ -154,13 +154,13 @@ func SaveConfig(path string, cfg Config) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
+	if err := hardenPrivatePath(tempPath, false); err != nil {
+		return err
+	}
 	if err := os.Rename(tempPath, path); err != nil {
 		return err
 	}
-	if err := hardenPrivatePath(path, false); err != nil {
-		return err
-	}
-	return nil
+	return validatePlatformPrivatePath(path, false)
 }
 
 func ResolveOptions(opts Options) (Config, error) {

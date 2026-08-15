@@ -49,7 +49,7 @@ if ($isDirectory) {
   $acl = [System.IO.File]::GetAccessControl($path)
 }
 if (-not $acl.AreAccessRulesProtected) { throw 'ACL inheritance is enabled' }
-$owner = ([System.Security.Principal.NTAccount]$acl.Owner).Translate([System.Security.Principal.SecurityIdentifier]).Value
+$owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
 if ($allowed -notcontains $owner) { throw 'owner is not the current user, SYSTEM, or Administrators' }
 $bad = @($acl.Access | Where-Object {
   $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
