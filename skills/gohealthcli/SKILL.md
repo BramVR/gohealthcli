@@ -25,9 +25,10 @@ requests. Treat every command result as sensitive personal health data.
 - Never print tokens, OAuth client JSON, raw Provider payloads, private paths,
   or exported health records in chat or public logs. Summarize structure and
   counts; redact identifying values.
-- Do not upload or share an archive or export. Do not schedule background
-  collection. Do not provide medical interpretation, diagnosis, or treatment
-  advice.
+- Do not upload or share a plaintext archive or export. Invoke explicit encrypted
+  backup Git operations only when the user asks for that exact operation. Do not
+  schedule background backup or collection. Do not provide medical
+  interpretation, diagnosis, or treatment advice.
 
 ## Archive-first workflow
 

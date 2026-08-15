@@ -18,7 +18,9 @@ local SQLite archive, and provides scriptable commands for sync, status, query,
 raw API exploration, and CSV/JSONL exports.
 
 It is for local inspection and personal data archiving. It does not write health
-data, delete health data, run a server, upload archives, or share exports.
+data, delete health data, run a server, upload in the background, or share
+plaintext archives or exports. Explicit backup commands use an owner-configured
+Git remote and encrypt Health Archive payloads with age before Git sees them.
 
 ## Status
 
@@ -26,7 +28,8 @@ The full command surface is live: setup (`init`, `doctor`), Provider catalog
 verification (`catalog verify`), OAuth and
 identity snapshots (`connect` through `irn-profile`), archiving (`sync`,
 with heartbeat-backed `sync --status` observability and auto-fencing of
-abandoned runs), raw provider exploration (`raw`), and a stable read
+abandoned runs), encrypted backup setup/status (`backup init`, `backup status`),
+raw provider exploration (`raw`), and a stable read
 surface (`status`,
 `query`, `export`, `describe-schema`) with predictable `--plain` /
 `--json` contracts for scripted and LLM consumers (PRD #144). The Tier 1 daily + hydration catalog slice is
@@ -47,6 +50,7 @@ sync with `gohealthcli --help`.
 - `devices`: Archive a Paired Devices Snapshot from the provider.
 - `irn-profile`: Archive an IRN Profile Snapshot from the provider.
 - `sync`: Archive Google Health Data Points and supported Rollups.
+- `backup`: Initialize and inspect encrypted Health Archive backups.
 - `status`: Summarise archive counts and newest synced timestamps.
 - `query`: Run guarded read-only SQL over the Health Archive.
 - `export`: Write a normalised dataset to CSV or JSONL.
@@ -517,6 +521,8 @@ Default local paths:
 
 - config: `~/.config/gohealthcli/config.toml`
 - archive: `~/.local/share/gohealthcli/gohealthcli.sqlite`
+- backup config: `~/.config/gohealthcli/backup.json`
+- backup age identity: `~/.config/gohealthcli/backup-age-identity.txt`
 
 Default runtime token storage is OS-native:
 
@@ -539,10 +545,35 @@ Use `doctor --plain` to check local setup without provider calls. Use
 `doctor --online --plain` only when you want token refresh and Google Health
 reachability checks.
 
+## Encrypted backup setup
+
+`backup init` creates or reuses an X25519 age identity, records the backup
+checkout/remote/recipients in an owner-only config, initializes or clones the
+Git checkout, and commits a recovery README. It pushes that setup commit unless
+`--no-push` is set. Use an explicit local or remote target while evaluating:
+
+```bash
+gohealthcli backup init --remote /path/to/backup-gohealthcli.git --no-push --plain
+gohealthcli backup status --plain
+```
+
+`backup status` is a read-only manifest inspection path. It works without the
+private age identity and reports a clear `backup_uninitialized` or
+`backup_empty` state before the first encrypted archive manifest exists. Once a
+manifest exists it reports encryption, export time, shard count, and Health
+Archive counts without decrypting health data or opening the live archive.
+
+The config and private identity never belong in the Git checkout. Keep a
+private recovery copy of the identity: losing every configured identity makes
+the encrypted backup unrecoverable. The repository still exposes metadata such
+as public recipients, table names, counts, encrypted sizes, plaintext hashes,
+backup cadence, and changed shards.
+
 ## Safety
 
 - Read-only provider behavior: no health writes or deletes.
-- Local-first archive: no cloud service and no background upload.
+- Local-first archive: no cloud service and no background upload; backup Git
+  operations happen only through an explicit `backup` command.
 - OAuth token values are not printed in normal command output.
 - OAuth endpoints from the client JSON are pinned to https Google hosts,
   and the client file must stay owner-only — enforced both at `connect`
@@ -553,7 +584,8 @@ reachability checks.
   provider data cannot inject terminal escape sequences.
 - Data Point Attachment paths are validated against path traversal before
   they are joined to the attachments root.
-- Keep the SQLite archive, token files, and exported CSV/JSONL files private.
+- Keep the SQLite archive, token files, backup config/identity, and exported
+  CSV/JSONL files private.
 
 ## Release
 

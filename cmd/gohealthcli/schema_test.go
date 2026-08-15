@@ -48,7 +48,7 @@ func TestRunSchemaIncludesEveryUserFacingSubcommand(t *testing.T) {
 		}
 	}
 
-	want := []string{"init", "doctor", "catalog", "connect", "identity", "profile", "settings", "devices", "irn-profile", "describe-schema", "sync", "status", "query", "export", "raw", "completion"}
+	want := []string{"init", "doctor", "catalog", "connect", "identity", "profile", "settings", "devices", "irn-profile", "describe-schema", "sync", "backup", "status", "query", "export", "raw", "completion"}
 	for _, name := range want {
 		if !visible[name] {
 			t.Errorf("registry missing user-facing command %q", name)
