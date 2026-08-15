@@ -2,22 +2,43 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"sort"
 )
 
-var ErrHealthArchiveSnapshotUnsupportedAttachments = errors.New("Data Point Attachments are not supported by Health Archive Snapshot")
-
 type HealthArchiveSnapshot struct {
-	SchemaVersion      int
-	Connections        []HealthArchiveSnapshotConnection
-	DataPoints         []HealthArchiveSnapshotDataPoint
-	DataPointRevisions []HealthArchiveSnapshotDataPointRevision
-	Rollups            []HealthArchiveSnapshotRollup
-	IdentitySnapshots  []HealthArchiveSnapshotIdentitySnapshot
-	SyncRuns           []HealthArchiveSnapshotSyncRun
-	SyncCursors        []HealthArchiveSnapshotSyncCursor
+	SchemaVersion        int
+	Connections          []HealthArchiveSnapshotConnection
+	DataPoints           []HealthArchiveSnapshotDataPoint
+	DataPointRevisions   []HealthArchiveSnapshotDataPointRevision
+	DataPointAttachments []HealthArchiveSnapshotDataPointAttachment
+	AttachmentPayloads   []HealthArchiveSnapshotAttachmentPayload
+	Rollups              []HealthArchiveSnapshotRollup
+	IdentitySnapshots    []HealthArchiveSnapshotIdentitySnapshot
+	SyncRuns             []HealthArchiveSnapshotSyncRun
+	SyncCursors          []HealthArchiveSnapshotSyncCursor
+}
+
+type HealthArchiveSnapshotDataPointAttachment struct {
+	ID           int64
+	DataPointID  int64
+	Kind         string
+	SHA256       string
+	PathRelative string
+	ByteSize     int64
+	FetchedAt    string
+}
+
+type HealthArchiveSnapshotAttachmentPayload struct {
+	SHA256       string
+	PathRelative string
+	ByteSize     int64
+	Payload      []byte
 }
 
 type HealthArchiveSnapshotConnection struct {
@@ -128,14 +149,6 @@ func ExportHealthArchiveSnapshot(ctx context.Context, archivePath string) (Healt
 		}
 	}()
 
-	var attachmentCount int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM data_point_attachments`).Scan(&attachmentCount); err != nil {
-		return HealthArchiveSnapshot{}, fmt.Errorf("inspect Data Point Attachments: %w", err)
-	}
-	if attachmentCount > 0 {
-		return HealthArchiveSnapshot{}, fmt.Errorf("%w yet; archives with Data Point Attachment rows cannot be snapshotted until attachment portability lands", ErrHealthArchiveSnapshotUnsupportedAttachments)
-	}
-
 	snapshot := HealthArchiveSnapshot{SchemaVersion: handle.schemaVersion}
 	if snapshot.Connections, err = exportSnapshotConnections(ctx, tx); err != nil {
 		return HealthArchiveSnapshot{}, err
@@ -144,6 +157,9 @@ func ExportHealthArchiveSnapshot(ctx context.Context, archivePath string) (Healt
 		return HealthArchiveSnapshot{}, err
 	}
 	if snapshot.DataPointRevisions, err = exportSnapshotDataPointRevisions(ctx, tx); err != nil {
+		return HealthArchiveSnapshot{}, err
+	}
+	if snapshot.DataPointAttachments, snapshot.AttachmentPayloads, err = exportSnapshotDataPointAttachments(ctx, tx, archivePath); err != nil {
 		return HealthArchiveSnapshot{}, err
 	}
 	if snapshot.Rollups, err = exportSnapshotRollups(ctx, tx); err != nil {
@@ -221,6 +237,56 @@ func ValidateHealthArchiveSnapshot(snapshot HealthArchiveSnapshot) error {
 		}
 	}
 
+	attachmentIDs := map[int64]struct{}{}
+	attachmentIdentities := map[string]struct{}{}
+	attachmentPayloadRefs := map[string]HealthArchiveSnapshotDataPointAttachment{}
+	for _, attachment := range snapshot.DataPointAttachments {
+		if attachment.ID <= 0 {
+			return fmt.Errorf("Data Point Attachment has invalid id %d", attachment.ID)
+		}
+		if _, exists := attachmentIDs[attachment.ID]; exists {
+			return fmt.Errorf("duplicate Data Point Attachment id %d", attachment.ID)
+		}
+		attachmentIDs[attachment.ID] = struct{}{}
+		if _, exists := dataPointIDs[attachment.DataPointID]; !exists {
+			return fmt.Errorf("Data Point Attachment %d references unknown Data Point %d", attachment.ID, attachment.DataPointID)
+		}
+		identity := fmt.Sprintf("%d\x00%s", attachment.DataPointID, attachment.SHA256)
+		if _, exists := attachmentIdentities[identity]; exists {
+			return fmt.Errorf("duplicate Data Point Attachment identity for id %d", attachment.ID)
+		}
+		attachmentIdentities[identity] = struct{}{}
+		if err := validateSnapshotAttachmentRow(attachment); err != nil {
+			return fmt.Errorf("Data Point Attachment %d: %w", attachment.ID, err)
+		}
+		if previous, exists := attachmentPayloadRefs[attachment.PathRelative]; exists && (previous.SHA256 != attachment.SHA256 || previous.ByteSize != attachment.ByteSize) {
+			return fmt.Errorf("Data Point Attachment %d conflicts with payload metadata for path %q", attachment.ID, attachment.PathRelative)
+		}
+		attachmentPayloadRefs[attachment.PathRelative] = attachment
+	}
+	attachmentPayloads := map[string]struct{}{}
+	for _, payload := range snapshot.AttachmentPayloads {
+		if _, exists := attachmentPayloads[payload.PathRelative]; exists {
+			return fmt.Errorf("ambiguous duplicate Attachment payload path %q", payload.PathRelative)
+		}
+		attachmentPayloads[payload.PathRelative] = struct{}{}
+		if err := validateSnapshotAttachmentPayload(payload); err != nil {
+			return fmt.Errorf("Attachment payload %q: %w", payload.PathRelative, err)
+		}
+		attachment, exists := attachmentPayloadRefs[payload.PathRelative]
+		if !exists {
+			return fmt.Errorf("Attachment payload path %q has no Data Point Attachment row", payload.PathRelative)
+		}
+		if attachment.SHA256 != payload.SHA256 || attachment.ByteSize != payload.ByteSize {
+			return fmt.Errorf("Attachment payload path %q does not match its Data Point Attachment metadata", payload.PathRelative)
+		}
+	}
+	for pathRelative := range attachmentPayloadRefs {
+		if _, exists := attachmentPayloads[pathRelative]; !exists {
+			return fmt.Errorf("Data Point Attachment payload %q is missing", pathRelative)
+		}
+	}
+
 	rollupIDs := map[int64]struct{}{}
 	rollupIdentities := map[string]struct{}{}
 	for _, rollup := range snapshot.Rollups {
@@ -285,19 +351,39 @@ func ValidateHealthArchiveSnapshot(snapshot HealthArchiveSnapshot) error {
 	return nil
 }
 
-func RestoreHealthArchiveSnapshot(ctx context.Context, snapshot HealthArchiveSnapshot, archivePath string) error {
+func RestoreHealthArchiveSnapshot(ctx context.Context, snapshot HealthArchiveSnapshot, archivePath string) (err error) {
 	if err := ValidateHealthArchiveSnapshot(snapshot); err != nil {
+		return err
+	}
+	attachmentRoot := attachmentRootDirForArchive(archivePath)
+	if err := validateSnapshotRestoreAttachmentRoot(attachmentRoot); err != nil {
 		return err
 	}
 	lifecycle := healthArchiveLifecycle{path: archivePath}
 	if err := lifecycle.Create(ctx); err != nil {
 		return err
 	}
+	restoreSucceeded := false
+	var rootIdentity attachmentRootIdentity
+	rootIdentityReady := false
+	defer func() {
+		if restoreSucceeded {
+			return
+		}
+		if cleanupErr := cleanupFailedHealthArchiveSnapshotRestore(archivePath, attachmentRoot, rootIdentity, rootIdentityReady, snapshot.AttachmentPayloads); cleanupErr != nil {
+			err = errors.Join(err, fmt.Errorf("clean up failed Health Archive Snapshot restore: %w", cleanupErr))
+		}
+	}()
 	handle, err := lifecycle.Open(ctx, writeArchive)
 	if err != nil {
 		return err
 	}
 	defer handle.Close()
+	rootIdentity, err = captureAttachmentRootIdentity(attachmentRoot)
+	if err != nil {
+		return err
+	}
+	rootIdentityReady = true
 
 	tx, err := handle.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -389,6 +475,32 @@ func RestoreHealthArchiveSnapshot(ctx context.Context, snapshot HealthArchiveSna
 			revision.ReplacementReason,
 		); err != nil {
 			return fmt.Errorf("restore Data Point Revision %d: %w", revision.ID, err)
+		}
+	}
+	for _, attachment := range snapshot.DataPointAttachments {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO data_point_attachments (
+			id,
+			data_point_id,
+			kind,
+			sha256,
+			path_relative,
+			byte_size,
+			fetched_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			attachment.ID,
+			attachment.DataPointID,
+			attachment.Kind,
+			attachment.SHA256,
+			attachment.PathRelative,
+			attachment.ByteSize,
+			attachment.FetchedAt,
+		); err != nil {
+			return fmt.Errorf("restore Data Point Attachment %d: %w", attachment.ID, err)
+		}
+	}
+	for _, payload := range snapshot.AttachmentPayloads {
+		if err := writeContainedSnapshotAttachment(attachmentRoot, payload.PathRelative, payload.Payload, rootIdentity); err != nil {
+			return fmt.Errorf("restore Data Point Attachment payload %q: %w", payload.PathRelative, err)
 		}
 	}
 	for _, rollup := range snapshot.Rollups {
@@ -501,7 +613,23 @@ func RestoreHealthArchiveSnapshot(ctx context.Context, snapshot HealthArchiveSna
 		return err
 	}
 	committed = true
+	restoreSucceeded = true
 	return nil
+}
+
+func cleanupFailedHealthArchiveSnapshotRestore(archivePath, attachmentRoot string, rootIdentity attachmentRootIdentity, rootIdentityReady bool, payloads []HealthArchiveSnapshotAttachmentPayload) error {
+	var cleanupErrors []error
+	if rootIdentityReady {
+		for _, payload := range payloads {
+			if err := removeAttachmentFileNoFollow(attachmentRoot, payload.PathRelative, rootIdentity); err != nil && !errors.Is(err, os.ErrNotExist) {
+				cleanupErrors = append(cleanupErrors, err)
+			}
+		}
+	}
+	if err := os.Remove(archivePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		cleanupErrors = append(cleanupErrors, err)
+	}
+	return errors.Join(cleanupErrors...)
 }
 
 type healthArchiveSnapshotQuerier interface {
@@ -621,6 +749,99 @@ func exportSnapshotDataPointRevisions(ctx context.Context, db healthArchiveSnaps
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func exportSnapshotDataPointAttachments(ctx context.Context, db healthArchiveSnapshotQuerier, archivePath string) ([]HealthArchiveSnapshotDataPointAttachment, []HealthArchiveSnapshotAttachmentPayload, error) {
+	rows, err := db.QueryContext(ctx, `SELECT
+		id,
+		data_point_id,
+		kind,
+		sha256,
+		path_relative,
+		byte_size,
+		fetched_at
+	FROM data_point_attachments ORDER BY id`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	var items []HealthArchiveSnapshotDataPointAttachment
+	payloadsByPath := map[string]HealthArchiveSnapshotAttachmentPayload{}
+	var rootIdentity attachmentRootIdentity
+	rootIdentityReady := false
+	for rows.Next() {
+		var item HealthArchiveSnapshotDataPointAttachment
+		if err := rows.Scan(&item.ID, &item.DataPointID, &item.Kind, &item.SHA256, &item.PathRelative, &item.ByteSize, &item.FetchedAt); err != nil {
+			return nil, nil, err
+		}
+		if err := validateSnapshotAttachmentRow(item); err != nil {
+			return nil, nil, fmt.Errorf("export Data Point Attachment %d: %w", item.ID, err)
+		}
+		if previous, exists := payloadsByPath[item.PathRelative]; exists {
+			if previous.SHA256 != item.SHA256 || previous.ByteSize != item.ByteSize {
+				return nil, nil, fmt.Errorf("export Data Point Attachment %d: conflicting metadata for payload path %q", item.ID, item.PathRelative)
+			}
+		} else {
+			if !rootIdentityReady {
+				rootIdentity, err = captureAttachmentRootIdentity(attachmentRootDirForArchive(archivePath))
+				if err != nil {
+					return nil, nil, fmt.Errorf("export Data Point Attachment root: %w", err)
+				}
+				rootIdentityReady = true
+			}
+			payload, err := readContainedAttachment(attachmentRootDirForArchive(archivePath), item.PathRelative, item.ByteSize, &rootIdentity)
+			if err != nil {
+				return nil, nil, fmt.Errorf("export Data Point Attachment %d payload: %w", item.ID, err)
+			}
+			entry := HealthArchiveSnapshotAttachmentPayload{
+				SHA256:       item.SHA256,
+				PathRelative: item.PathRelative,
+				ByteSize:     item.ByteSize,
+				Payload:      payload,
+			}
+			if err := validateSnapshotAttachmentPayload(entry); err != nil {
+				return nil, nil, fmt.Errorf("export Data Point Attachment %d: %w", item.ID, err)
+			}
+			payloadsByPath[item.PathRelative] = entry
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	payloads := make([]HealthArchiveSnapshotAttachmentPayload, 0, len(payloadsByPath))
+	for _, payload := range payloadsByPath {
+		payloads = append(payloads, payload)
+	}
+	sort.Slice(payloads, func(i, j int) bool {
+		return payloads[i].PathRelative < payloads[j].PathRelative
+	})
+	return items, payloads, nil
+}
+
+func validateSnapshotAttachmentRow(attachment HealthArchiveSnapshotDataPointAttachment) error {
+	wantPath, err := canonicalAttachmentPathRelative(attachment.Kind, attachment.SHA256)
+	if err != nil {
+		return err
+	}
+	if attachment.PathRelative != wantPath {
+		return fmt.Errorf("path_relative %q, want canonical path %q", attachment.PathRelative, wantPath)
+	}
+	if attachment.ByteSize < 0 {
+		return fmt.Errorf("byte_size %d must not be negative", attachment.ByteSize)
+	}
+	return nil
+}
+
+func validateSnapshotAttachmentPayload(payload HealthArchiveSnapshotAttachmentPayload) error {
+	if payload.ByteSize != int64(len(payload.Payload)) {
+		return fmt.Errorf("byte_size %d does not match payload size %d", payload.ByteSize, len(payload.Payload))
+	}
+	hash := sha256.Sum256(payload.Payload)
+	if got := hex.EncodeToString(hash[:]); got != payload.SHA256 {
+		return fmt.Errorf("sha256 %q does not match payload hash %q", payload.SHA256, got)
+	}
+	return nil
 }
 
 func exportSnapshotRollups(ctx context.Context, db healthArchiveSnapshotQuerier) ([]HealthArchiveSnapshotRollup, error) {

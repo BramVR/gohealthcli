@@ -64,6 +64,20 @@ func TestAttachmentStoreStoreWritesSidecarAndRow(t *testing.T) {
 	}
 }
 
+func TestCanonicalAttachmentPathRejectsWindowsNormalizationSensitiveKinds(t *testing.T) {
+	t.Parallel()
+	hash := strings.Repeat("a", 64)
+	for _, kind := range []string{".. ", "tcx.", "tcx ", "CON", "nul.txt", "COM1", "LPT9", "COM¹", "LPT³.bin", "tcx:stream", "tcx?"} {
+		kind := kind
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			if _, err := canonicalAttachmentPathRelative(kind, hash); err == nil {
+				t.Fatalf("canonicalAttachmentPathRelative(%q) err = nil, want portable-path rejection", kind)
+			}
+		})
+	}
+}
+
 // TestAttachmentStoreStoreIsContentAddressedAndIdempotent pins ADR-0009:
 // storing the same bytes twice returns the same sha256, reuses the
 // same sidecar path, and does NOT insert a duplicate row.
@@ -149,6 +163,64 @@ func TestAttachmentStoreSidecarFilesAreOwnerOnly(t *testing.T) {
 	}
 	if parentInfo.Mode().Perm() != 0o700 {
 		t.Fatalf("parent dir mode = %04o, want 0700", parentInfo.Mode().Perm())
+	}
+}
+
+func TestAttachmentStoreDoesNotTruncateHardLinkedTarget(t *testing.T) {
+	t.Parallel()
+	if !usesPOSIXPermissions() {
+		t.Skip("hard-link safety proof uses POSIX filesystem semantics")
+	}
+	tempDir := t.TempDir()
+	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+	insertExportDataPoint(t, archivePath, exportDataPointFixture{
+		dataType: "exercise", resourceName: "users/me/dataTypes/exercise/dataPoints/hardlink",
+		recordKind: "session", startUTC: "2026-06-08T17:00:00Z", endUTC: "2026-06-08T17:30:00Z",
+		startCivil: "2026-06-08T18:00:00", endCivil: "2026-06-08T18:30:00", civilDate: "2026-06-08",
+		dataSource: `{}`, rawJSON: `{}`,
+	})
+	payload := []byte("restored attachment bytes")
+	hash := sha256.Sum256(payload)
+	hashHex := hex.EncodeToString(hash[:])
+	pathRelative, err := canonicalAttachmentPathRelative("tcx", hashHex)
+	if err != nil {
+		t.Fatalf("canonical Attachment path: %v", err)
+	}
+	targetPath := filepath.Join(attachmentRootDirForArchive(archivePath), filepath.FromSlash(pathRelative))
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
+		t.Fatalf("create target dir: %v", err)
+	}
+	outsidePath := filepath.Join(tempDir, "outside.txt")
+	originalOutside := []byte("outside must remain unchanged")
+	if err := os.WriteFile(outsidePath, originalOutside, 0o600); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+	if err := os.Link(outsidePath, targetPath); err != nil {
+		t.Fatalf("hard-link Attachment target: %v", err)
+	}
+
+	store, err := openAttachmentStoreMode(archivePath, writeArchive)
+	if err != nil {
+		t.Fatalf("open Attachment Store: %v", err)
+	}
+	defer store.Close()
+	if _, err := store.Store(context.Background(), 1, "tcx", payload, "2026-06-08T17:35:00Z"); err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+	outside, err := os.ReadFile(outsidePath)
+	if err != nil {
+		t.Fatalf("read outside file: %v", err)
+	}
+	if !bytes.Equal(outside, originalOutside) {
+		t.Fatalf("hard-linked outside file changed to %q", outside)
+	}
+	stored, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("read installed Attachment: %v", err)
+	}
+	if !bytes.Equal(stored, payload) {
+		t.Fatalf("installed Attachment = %q, want %q", stored, payload)
 	}
 }
 

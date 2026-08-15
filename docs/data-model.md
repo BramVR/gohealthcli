@@ -193,6 +193,13 @@ before the HTTP call — exercise Data Points still archive, but no TCX
 sidecar is fetched and no round-trip is wasted on a guaranteed-403
 endpoint. The 403 graceful-skip remains as belt-and-suspenders.
 
+Health Archive Snapshot export carries Data Point Attachment rows plus one
+deduplicated payload entry per content-addressed sidecar path. Export and
+restore validate canonical paths, byte sizes, SHA-256 hashes, row references,
+and symlink containment before using payload bytes. Restore recreates sidecars
+with owner-only permissions; callers do not derive the sidecar layout, and the
+restored archive must pass the same Attachment orphan checks used by `doctor`.
+
 ## LLM-facing schema discovery
 
 `gohealthcli describe-schema --json` emits the curated JSON catalog
