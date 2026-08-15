@@ -1,0 +1,1588 @@
+package backup
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+func TestConfigRoundTripUsesOwnerOnlyFiles(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	path := filepath.Join(root, "config", "backup.json")
+	want := Config{
+		Repo:       filepath.Join(root, "checkout"),
+		Remote:     filepath.Join(root, "remote.git"),
+		Identity:   filepath.Join(root, "config", "backup-age-identity.txt"),
+		Recipients: []string{"age1example"},
+	}
+	if err := SaveConfig(path, want); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	got, found, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !found || !reflect.DeepEqual(got, want) {
+		t.Fatalf("LoadConfig = (%+v, %t), want (%+v, true)", got, found, want)
+	}
+	assertMode(t, filepath.Dir(path), 0o700)
+	assertMode(t, path, 0o600)
+	want.Remote = "https://example.invalid/updated.git"
+	if err := SaveConfig(path, want); err != nil {
+		t.Fatalf("replace SaveConfig: %v", err)
+	}
+	got, found, err = LoadConfig(path)
+	if err != nil || !found || !reflect.DeepEqual(got, want) {
+		t.Fatalf("replaced LoadConfig = (%+v, %t, %v), want (%+v, true, nil)", got, found, err, want)
+	}
+}
+
+func TestEnsureIdentityCreatesAndReusesX25519Identity(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "private", "backup-age-identity.txt")
+	first, err := EnsureIdentity(path)
+	if err != nil {
+		t.Fatalf("first EnsureIdentity: %v", err)
+	}
+	if !strings.HasPrefix(first, "age1") {
+		t.Fatalf("recipient = %q, want age1 prefix", first)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read identity: %v", err)
+	}
+	second, err := EnsureIdentity(path)
+	if err != nil {
+		t.Fatalf("second EnsureIdentity: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read reused identity: %v", err)
+	}
+	if second != first || !reflect.DeepEqual(after, before) {
+		t.Fatal("EnsureIdentity did not reuse the existing identity")
+	}
+	assertMode(t, filepath.Dir(path), 0o700)
+	assertMode(t, path, 0o600)
+}
+
+func TestPrivateFilesRejectNonRegularPaths(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name string
+		run  func(string) error
+	}{
+		{name: "load config", run: func(path string) error { _, _, err := LoadConfig(path); return err }},
+		{name: "save config", run: func(path string) error { return SaveConfig(path, Config{}) }},
+		{name: "identity", run: func(path string) error { _, err := EnsureIdentity(path); return err }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(root, strings.ReplaceAll(test.name, " ", "-"))
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := test.run(path); err == nil || !strings.Contains(err.Error(), "regular file") {
+				t.Fatalf("error = %v, want regular-file rejection", err)
+			}
+		})
+	}
+}
+
+func TestPrivateFilesRejectInsecureExistingParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode check")
+	}
+	root := t.TempDir()
+	privateDir := filepath.Join(root, "private")
+	configPath := filepath.Join(privateDir, "backup.json")
+	identityPath := filepath.Join(privateDir, "backup-age-identity.txt")
+	if err := SaveConfig(configPath, Config{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureIdentity(identityPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(privateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadConfig(configPath); err == nil || !strings.Contains(err.Error(), "not owner-only") {
+		t.Fatalf("LoadConfig error = %v, want insecure-parent rejection", err)
+	}
+	if _, err := EnsureIdentity(identityPath); err == nil || !strings.Contains(err.Error(), "not owner-only") {
+		t.Fatalf("EnsureIdentity error = %v, want insecure-parent rejection", err)
+	}
+}
+
+func TestPrivateFilesRejectSymlinkedParent(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "private")
+	if err := os.Symlink(outside, alias); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	configPath := filepath.Join(alias, "backup.json")
+	if err := SaveConfig(configPath, Config{}); err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("SaveConfig error = %v, want symlinked-parent rejection", err)
+	}
+	identityPath := filepath.Join(alias, "backup-age-identity.txt")
+	if _, err := EnsureIdentity(identityPath); err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("EnsureIdentity error = %v, want symlinked-parent rejection", err)
+	}
+	for _, path := range []string{filepath.Join(outside, "backup.json"), filepath.Join(outside, "backup-age-identity.txt")} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("outside private file was written: %v", err)
+		}
+	}
+	checkout := filepath.Join(root, "checkout")
+	_, err := Init(context.Background(), Options{
+		ConfigPath: filepath.Join(root, "safe", "backup.json"),
+		Repo:       checkout,
+		Identity:   identityPath,
+		Push:       false,
+	})
+	if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("Init error = %v, want identity parent rejection", err)
+	}
+	if _, err := os.Lstat(checkout); !os.IsNotExist(err) {
+		t.Fatalf("checkout was written before identity path rejection: %v", err)
+	}
+}
+
+func TestSaveConfigUsesTheNormalizedPathItValidates(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	safe := filepath.Join(root, "safe")
+	outside := filepath.Join(root, "outside")
+	for _, dir := range []string{safe, filepath.Join(outside, "nested")} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(safe, "link")
+	if err := os.Symlink(filepath.Join(outside, "nested"), link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	requested := link + string(filepath.Separator) + ".." + string(filepath.Separator) + "backup.json"
+	if err := SaveConfig(requested, Config{}); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(safe, "backup.json")); err != nil {
+		t.Fatalf("normalized config was not written: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "backup.json")); !os.IsNotExist(err) {
+		t.Fatalf("config escaped through cleaned-away symlink: %v", err)
+	}
+}
+
+func TestValidateRecipientsRejectsInvalidRecipient(t *testing.T) {
+	t.Parallel()
+	if err := ValidateRecipients([]string{"not-an-age-recipient"}); err == nil || !strings.Contains(err.Error(), "parse age recipient") {
+		t.Fatalf("ValidateRecipients error = %v, want parse age recipient", err)
+	}
+	if err := ValidateRecipients(nil); err == nil || !strings.Contains(err.Error(), "at least one") {
+		t.Fatalf("ValidateRecipients(nil) error = %v, want at least one", err)
+	}
+}
+
+func TestInitAndStatusAgainstTemporaryBareRemote(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Remote:     remote,
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	result, err := Init(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if !result.Changed || result.Pushed {
+		t.Fatalf("Init result = %+v, want changed local commit without push", result)
+	}
+	gitCommand(t, result.RepoPath, "rev-parse", "HEAD")
+	if out := gitCommand(t, "", "--git-dir", remote, "for-each-ref", "--format=%(refname)"); strings.TrimSpace(out) != "" {
+		t.Fatalf("--no-push remote refs = %q, want empty", out)
+	}
+
+	status, err := Status(context.Background(), Options{ConfigPath: opts.ConfigPath})
+	if err != nil {
+		t.Fatalf("Status before manifest: %v", err)
+	}
+	if status.Status != StatusEmpty || status.Encrypted || status.ShardCount != 0 || status.ExportedAt != "" || status.Counts != nil {
+		t.Fatalf("Status before manifest = %+v, want explicit empty state", status)
+	}
+
+	manifest := Manifest{
+		Format:     1,
+		Encrypted:  true,
+		ExportedAt: "2026-08-15T10:00:00Z",
+		Recipients: []string{result.Recipient},
+		Counts: Counts{
+			Connections:          1,
+			DataPoints:           7,
+			DataPointRevisions:   2,
+			DataPointAttachments: 1,
+			AttachmentPayloads:   1,
+		},
+		Shards: []ShardEntry{{Table: "data_points", Path: "data/data_points.jsonl.gz.age", Rows: 7, SHA256: strings.Repeat("a", 64), Bytes: 128}},
+	}
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(result.RepoPath, ManifestFilename), append(data, '\n'), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	status, err = Status(context.Background(), Options{ConfigPath: opts.ConfigPath})
+	if err != nil {
+		t.Fatalf("Status with manifest: %v", err)
+	}
+	if status.Status != StatusReady || !status.Encrypted || status.ShardCount != 1 || status.ExportedAt != manifest.ExportedAt || status.Counts == nil || *status.Counts != manifest.Counts {
+		t.Fatalf("Status with manifest = %+v, want manifest metadata", status)
+	}
+}
+
+func TestInitPushesSetupCommitToTemporaryBareRemote(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+	result, err := Init(context.Background(), Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Remote:     remote,
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       true,
+	})
+	if err != nil {
+		t.Fatalf("Init with push: %v", err)
+	}
+	if !result.Changed || !result.Pushed {
+		t.Fatalf("Init result = %+v, want changed and pushed", result)
+	}
+	if out := gitCommand(t, "", "--git-dir", remote, "for-each-ref", "--format=%(refname)"); !strings.Contains(out, "refs/heads/") {
+		t.Fatalf("remote refs = %q, want pushed branch", out)
+	}
+}
+
+func TestInitPushesPreviouslyLocalSetupCommit(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Remote:     remote,
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("local Init: %v", err)
+	}
+	opts.Push = true
+	result, err := Init(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("pushing Init retry: %v", err)
+	}
+	if result.Changed || !result.Pushed {
+		t.Fatalf("retry result = %+v, want unchanged but pushed", result)
+	}
+	if out := gitCommand(t, "", "--git-dir", remote, "for-each-ref", "--format=%(refname)"); !strings.Contains(out, "refs/heads/") {
+		t.Fatalf("remote refs = %q, want pushed setup commit", out)
+	}
+}
+
+func TestInitRejectsExistingCheckoutWithDifferentOrigin(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	repo := filepath.Join(root, "checkout")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repo, "init", "-b", "main")
+	gitCommand(t, repo, "remote", "add", "origin", filepath.Join(root, "wrong.git"))
+	configPath := filepath.Join(root, "private", "backup.json")
+	identityPath := filepath.Join(root, "private", "backup-age-identity.txt")
+	_, err := Init(context.Background(), Options{
+		ConfigPath: configPath,
+		Repo:       repo,
+		Remote:     filepath.Join(root, "expected.git"),
+		Identity:   identityPath,
+		Push:       false,
+	})
+	if err == nil || !strings.Contains(err.Error(), "checkout origin") {
+		t.Fatalf("Init error = %v, want checkout origin mismatch", err)
+	}
+	for _, path := range []string{configPath, identityPath} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("Init wrote %s despite remote mismatch: %v", path, statErr)
+		}
+	}
+}
+
+func TestInitKeepsLocalIdentityWithAdditionalRecipients(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	additionalIdentity := filepath.Join(root, "additional", "identity.txt")
+	additionalRecipient, err := EnsureIdentity(additionalIdentity)
+	if err != nil {
+		t.Fatalf("additional EnsureIdentity: %v", err)
+	}
+	configPath := filepath.Join(root, "private", "backup.json")
+	result, err := Init(context.Background(), Options{
+		ConfigPath: configPath,
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Recipients: []string{additionalRecipient, additionalRecipient},
+		Push:       false,
+	})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	cfg, found, err := LoadConfig(configPath)
+	if err != nil || !found {
+		t.Fatalf("LoadConfig = found %t, err %v", found, err)
+	}
+	want := []string{result.Recipient, additionalRecipient}
+	if !reflect.DeepEqual(cfg.Recipients, want) {
+		t.Fatalf("recipients = %v, want local identity plus deduplicated additional %v", cfg.Recipients, want)
+	}
+	if cfg.LocalRecipient != result.Recipient {
+		t.Fatalf("local recipient = %q, want %q", cfg.LocalRecipient, result.Recipient)
+	}
+}
+
+func TestInitIdentityRotationDropsPreviousLocalRecipient(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	configPath := filepath.Join(root, "private", "backup.json")
+	first, err := Init(context.Background(), Options{
+		ConfigPath: configPath,
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   filepath.Join(root, "private", "first-identity.txt"),
+		Push:       false,
+	})
+	if err != nil {
+		t.Fatalf("first Init: %v", err)
+	}
+	second, err := Init(context.Background(), Options{
+		ConfigPath: configPath,
+		Identity:   filepath.Join(root, "private", "second-identity.txt"),
+		Push:       false,
+	})
+	if err != nil {
+		t.Fatalf("rotating Init: %v", err)
+	}
+	cfg, found, err := LoadConfig(configPath)
+	if err != nil || !found {
+		t.Fatalf("LoadConfig = found %t, err %v", found, err)
+	}
+	if cfg.LocalRecipient != second.Recipient || !reflect.DeepEqual(cfg.Recipients, []string{second.Recipient}) {
+		t.Fatalf("rotated config = local %q recipients %v, want only %q", cfg.LocalRecipient, cfg.Recipients, second.Recipient)
+	}
+	if first.Recipient == second.Recipient {
+		t.Fatal("test generated identical recipients for two identities")
+	}
+}
+
+func TestInitIdentityRotationKeepsExplicitPreviousRecipient(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	configPath := filepath.Join(root, "private", "backup.json")
+	first, err := Init(context.Background(), Options{
+		ConfigPath: configPath,
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   filepath.Join(root, "private", "first-identity.txt"),
+		Push:       false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Init(context.Background(), Options{
+		ConfigPath: configPath,
+		Identity:   filepath.Join(root, "private", "second-identity.txt"),
+		Recipients: []string{first.Recipient},
+		Push:       false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{second.Recipient, first.Recipient}
+	if !reflect.DeepEqual(cfg.Recipients, want) {
+		t.Fatalf("recipients = %v, want explicitly retained old recipient %v", cfg.Recipients, want)
+	}
+}
+
+func TestInitPropagatesCloneFailureWithoutWritingPrivateState(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	configPath := filepath.Join(root, "private", "backup.json")
+	identityPath := filepath.Join(root, "private", "backup-age-identity.txt")
+	_, err := Init(context.Background(), Options{
+		ConfigPath: configPath,
+		Repo:       filepath.Join(root, "checkout"),
+		Remote:     filepath.Join(root, "missing-remote.git"),
+		Identity:   identityPath,
+		Push:       false,
+	})
+	if err == nil || !strings.Contains(err.Error(), "git clone") {
+		t.Fatalf("Init error = %v, want clone failure", err)
+	}
+	for _, path := range []string{configPath, identityPath} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("Init wrote %s after clone failure: %v", path, statErr)
+		}
+	}
+}
+
+func TestInitRejectsSymlinkedRecoveryReadmeWithoutOutsideWrite(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo := filepath.Join(root, "checkout")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repo, "init", "-b", "main")
+	outside := filepath.Join(root, "outside.md")
+	if err := os.Symlink(outside, filepath.Join(repo, "README.md")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	_, err := Init(context.Background(), Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       repo,
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	})
+	if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("Init error = %v, want symlink rejection", err)
+	}
+	if _, statErr := os.Stat(outside); !os.IsNotExist(statErr) {
+		t.Fatalf("outside README was written: %v", statErr)
+	}
+}
+
+func TestInitRejectsSymlinkedGitMetadataBeforeWritingPrivateState(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	outsideRepo := filepath.Join(root, "outside")
+	if err := os.Mkdir(outsideRepo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, outsideRepo, "init", "-b", "main")
+	checkout := filepath.Join(root, "checkout")
+	if err := os.Mkdir(checkout, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outsideRepo, ".git"), filepath.Join(checkout, ".git")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	configPath := filepath.Join(root, "private", "backup.json")
+	identityPath := filepath.Join(root, "private", "backup-age-identity.txt")
+
+	_, err := Init(context.Background(), Options{
+		ConfigPath: configPath,
+		Repo:       checkout,
+		Identity:   identityPath,
+		Push:       false,
+	})
+	if err == nil || !strings.Contains(err.Error(), "symlinked .git") {
+		t.Fatalf("Init error = %v, want symlinked Git metadata rejection", err)
+	}
+	for _, path := range []string{configPath, identityPath, filepath.Join(outsideRepo, recoveryReadmeFilename)} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("state written after symlinked Git metadata rejection: %s: %v", path, statErr)
+		}
+	}
+}
+
+func TestInitRejectsSymlinkedCheckoutBeforeOutsideWrite(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	outsideRepo := filepath.Join(root, "outside")
+	if err := os.Mkdir(outsideRepo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	checkout := filepath.Join(root, "checkout")
+	if err := os.Symlink(outsideRepo, checkout); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	configPath := filepath.Join(root, "private", "backup.json")
+	identityPath := filepath.Join(root, "private", "backup-age-identity.txt")
+
+	_, err := Init(context.Background(), Options{ConfigPath: configPath, Repo: checkout, Identity: identityPath, Push: false})
+	if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("Init error = %v, want symlinked-checkout rejection", err)
+	}
+	for _, path := range []string{configPath, identityPath, filepath.Join(outsideRepo, recoveryReadmeFilename), filepath.Join(outsideRepo, ".git")} {
+		if _, statErr := os.Lstat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("state written after symlinked checkout rejection: %s: %v", path, statErr)
+		}
+	}
+}
+
+func TestInitRejectsSymlinkedCheckoutAncestorBeforeOutsideWrite(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(outside, alias); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	checkout := filepath.Join(alias, "nested", "checkout")
+	configPath := filepath.Join(root, "private", "backup.json")
+	identityPath := filepath.Join(root, "private", "backup-age-identity.txt")
+
+	_, err := Init(context.Background(), Options{ConfigPath: configPath, Repo: checkout, Identity: identityPath, Push: false})
+	if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("Init error = %v, want symlinked-ancestor rejection", err)
+	}
+	for _, path := range []string{configPath, identityPath, filepath.Join(outside, "nested")} {
+		if _, statErr := os.Lstat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("state written after symlinked checkout-ancestor rejection: %s: %v", path, statErr)
+		}
+	}
+}
+
+func TestInitDefaultsIdentityBesideExplicitConfig(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	configPath := filepath.Join(root, "isolated", "backup.json")
+	result, err := Init(context.Background(), Options{
+		ConfigPath: configPath,
+		Repo:       filepath.Join(root, "checkout"),
+		Push:       false,
+	})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	want := filepath.Join(filepath.Dir(configPath), "backup-age-identity.txt")
+	if result.Identity != want {
+		t.Fatalf("identity = %q, want %q", result.Identity, want)
+	}
+}
+
+func TestInitCommitsOnlyGeneratedReadmeAndLeavesOtherIndexEntriesStaged(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo := filepath.Join(root, "checkout")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repo, "init", "-b", "main")
+	sensitive := filepath.Join(repo, "private.sqlite")
+	if err := os.WriteFile(sensitive, []byte("synthetic private archive marker"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repo, "add", "--", "private.sqlite")
+	if _, err := Init(context.Background(), Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       repo,
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	committed := gitCommand(t, repo, "show", "--pretty=format:", "--name-only", "HEAD")
+	if strings.Contains(committed, "private.sqlite") || !strings.Contains(committed, recoveryReadmeFilename) {
+		t.Fatalf("committed paths = %q, want only recovery README", committed)
+	}
+	staged := gitCommand(t, repo, "diff", "--cached", "--name-only")
+	if !strings.Contains(staged, "private.sqlite") {
+		t.Fatalf("unrelated staged entry was consumed: %q", staged)
+	}
+}
+
+func TestInitRejectsAndPreservesStagedReadmeChange(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo := filepath.Join(root, "checkout")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repo, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(repo, recoveryReadmeFilename), []byte("user README\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repo, "add", "--", recoveryReadmeFilename)
+	stagedBefore := gitCommand(t, repo, "show", ":"+recoveryReadmeFilename)
+	configPath := filepath.Join(root, "private", "backup.json")
+	identityPath := filepath.Join(root, "private", "backup-age-identity.txt")
+
+	_, err := Init(context.Background(), Options{
+		ConfigPath: configPath,
+		Repo:       repo,
+		Identity:   identityPath,
+		Push:       false,
+	})
+	if err == nil || !strings.Contains(err.Error(), "staged changes") {
+		t.Fatalf("Init error = %v, want staged README rejection", err)
+	}
+	if stagedAfter := gitCommand(t, repo, "show", ":"+recoveryReadmeFilename); stagedAfter != stagedBefore {
+		t.Fatalf("staged README changed: got %q, want %q", stagedAfter, stagedBefore)
+	}
+	for _, path := range []string{configPath, identityPath} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("private setup file written after staged README rejection: %s: %v", path, statErr)
+		}
+	}
+}
+
+func TestInitRejectsCredentialBearingRemoteBeforeWritingState(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	const secret = "synthetic-secret"
+	remote := "https://backup-user:" + secret + "@example.invalid/owner/backup.git?token=" + secret
+	configPath := filepath.Join(root, "private", "backup.json")
+	_, err := Init(context.Background(), Options{
+		ConfigPath: configPath,
+		Repo:       filepath.Join(root, "checkout"),
+		Remote:     remote,
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	})
+	if err == nil || strings.Contains(err.Error(), secret) {
+		t.Fatalf("Init error = %q, want credential-safe rejection", err)
+	}
+	if _, statErr := os.Stat(configPath); !os.IsNotExist(statErr) {
+		t.Fatalf("config written after credential remote rejection: %v", statErr)
+	}
+}
+
+func TestInitRedactsCredentialFromMalformedRemote(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	const secret = "synthetic-malformed-secret"
+	_, err := Init(context.Background(), Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Remote:     "https://user:" + secret + "@example.invalid/%zz",
+		Push:       false,
+	})
+	if err == nil || strings.Contains(err.Error(), secret) {
+		t.Fatalf("Init error = %q, want credential-safe malformed URL rejection", err)
+	}
+}
+
+func TestValidateRemoteRejectsOptionAndExternalHelperSyntax(t *testing.T) {
+	t.Parallel()
+	for _, remote := range []string{"--upload-pack=synthetic-command", "::address", "ext::synthetic-command", "synthetic::address"} {
+		if err := validateRemote(remote); err == nil {
+			t.Errorf("validateRemote(%q) succeeded", remote)
+		}
+	}
+}
+
+func TestValidateRemoteAcceptsIPv6URLs(t *testing.T) {
+	t.Parallel()
+	for _, remote := range []string{"ssh://git@[fe80::1]/backup.git", "https://[2001:db8::1]/backup.git"} {
+		if err := validateRemote(remote); err != nil {
+			t.Errorf("validateRemote(%q): %v", remote, err)
+		}
+	}
+}
+
+func TestValidateRemoteRejectsQueryAndFragmentSyntax(t *testing.T) {
+	t.Parallel()
+	for _, remote := range []string{
+		"https://example.invalid/backup.git?token=synthetic",
+		"example.invalid/backup.git?token=synthetic",
+		"git@example.invalid:backup.git#synthetic",
+		"/local/backup.git#synthetic",
+		`C:\backups\gohealth.git?token=synthetic`,
+		`\\server\share\gohealth.git?token=synthetic`,
+		`\\?\C:\backups\gohealth.git?token=synthetic`,
+	} {
+		if err := validateRemote(remote); err == nil || !strings.Contains(err.Error(), "query parameters or fragments") {
+			t.Errorf("validateRemote(%q) error = %v, want query/fragment rejection", remote, err)
+		}
+	}
+}
+
+func TestValidateRemoteAcceptsWindowsPathsAndSSHUsernames(t *testing.T) {
+	t.Parallel()
+	for _, remote := range []string{`C:\backups\gohealth.git`, `\\server\share\gohealth.git`, `\\?\C:\backups\gohealth.git`, `\\?\UNC\server\share\gohealth.git`, "ssh://git@github.com/owner/backup.git", "git@github.com:owner/backup.git", "git@github.com:owner/repo@backup.git", "github.com:owner/backup.git"} {
+		if err := validateRemote(remote); err != nil {
+			t.Errorf("validateRemote(%q): %v", remote, err)
+		}
+	}
+	for _, remote := range []string{"ssh://git:secret@example.invalid/repo.git", "https://token@example.invalid/repo.git"} {
+		if err := validateRemote(remote); err == nil {
+			t.Errorf("validateRemote(%q) accepted inline credential", remote)
+		}
+	}
+}
+
+func TestInitRejectsInvalidRecipientBeforeMutation(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	configPath := filepath.Join(root, "private", "backup.json")
+	identityPath := filepath.Join(root, "private", "identity.txt")
+	repo := filepath.Join(root, "checkout")
+	_, err := Init(context.Background(), Options{
+		ConfigPath: configPath,
+		Repo:       repo,
+		Identity:   identityPath,
+		Recipients: []string{"not-an-age-recipient"},
+		Push:       false,
+	})
+	if err == nil || !strings.Contains(err.Error(), "parse age recipient") {
+		t.Fatalf("Init error = %v, want recipient rejection", err)
+	}
+	for _, path := range []string{configPath, identityPath, repo} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("Init mutated %s before recipient rejection: %v", path, statErr)
+		}
+	}
+}
+
+func TestStatusRejectsUnencryptedManifest(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "private", "backup.json")
+	if err := SaveConfig(configPath, Config{Repo: repo, Identity: filepath.Join(root, "private", "identity.txt")}); err != nil {
+		t.Fatal(err)
+	}
+	manifest := Manifest{Format: 1, Encrypted: false, ExportedAt: "2026-08-15T10:00:00Z"}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ManifestFilename), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Status(context.Background(), Options{ConfigPath: configPath})
+	if err == nil || !strings.Contains(err.Error(), "encrypted=false") {
+		t.Fatalf("Status error = %v, want unencrypted rejection", err)
+	}
+}
+
+func TestInitRefusesToPushArbitraryExistingHistory(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+	repo := filepath.Join(root, "checkout")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repo, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(repo, recoveryReadmeFilename), []byte(backupReadmeBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "private.sqlite"), []byte("synthetic private marker"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repo, "add", ".")
+	gitCommand(t, repo, "-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-m", "unrelated history")
+	gitCommand(t, repo, "remote", "add", "origin", remote)
+	_, err := Init(context.Background(), Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       repo,
+		Remote:     remote,
+		Push:       true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "refusing to push existing backup checkout history") {
+		t.Fatalf("Init error = %v, want history rejection", err)
+	}
+	if refs := gitCommand(t, "", "--git-dir", remote, "for-each-ref", "--format=%(refname)"); strings.TrimSpace(refs) != "" {
+		t.Fatalf("arbitrary history reached remote: %q", refs)
+	}
+}
+
+func TestInitPushRefusalLeavesGeneratedReadmeUnstagedAndRetryable(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+	repo := filepath.Join(root, "checkout")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repo, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(repo, "unrelated.txt"), []byte("unrelated history\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repo, "add", "--", "unrelated.txt")
+	gitCommand(t, repo, "-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-m", "unrelated history")
+	gitCommand(t, repo, "remote", "add", "origin", remote)
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       repo,
+		Remote:     remote,
+		Push:       true,
+	}
+
+	_, err := Init(context.Background(), opts)
+	if err == nil || !strings.Contains(err.Error(), "not present on origin") {
+		t.Fatalf("Init error = %v, want history rejection", err)
+	}
+	if staged := gitCommand(t, repo, "diff", "--cached", "--name-only", "--", recoveryReadmeFilename); strings.TrimSpace(staged) != "" {
+		t.Fatalf("generated README left staged after rejection: %q", staged)
+	}
+	opts.Push = false
+	result, err := Init(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("no-push retry: %v", err)
+	}
+	if !result.Changed || result.Pushed {
+		t.Fatalf("no-push retry result = %+v, want local commit only", result)
+	}
+}
+
+func TestInitDisablesRepositoryHooks(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo := filepath.Join(root, "checkout")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repo, "init", "-b", "main")
+	gitCommand(t, repo, "config", "commit.gpgSign", "true")
+	gitCommand(t, repo, "config", "user.signingKey", filepath.Join(root, "missing-signing-key"))
+	hook := filepath.Join(repo, ".git", "hooks", "pre-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       repo,
+		Push:       false,
+	}
+
+	result, err := Init(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if !result.Changed {
+		t.Fatalf("Init result = %+v, want setup commit", result)
+	}
+}
+
+func TestInitPrunesStaleOriginRefsBeforePushAuthorization(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	remote := filepath.Join(root, "empty-remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+	repo := filepath.Join(root, "checkout")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repo, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(repo, recoveryReadmeFilename), []byte(backupReadmeBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "private.sqlite"), []byte("synthetic private marker"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repo, "add", ".")
+	gitCommand(t, repo, "-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-m", "unrelated history")
+	gitCommand(t, repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+	gitCommand(t, repo, "remote", "add", "origin", remote)
+	_, err := Init(context.Background(), Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       repo,
+		Remote:     remote,
+		Push:       true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "refusing to push existing backup checkout history") {
+		t.Fatalf("Init error = %v, want stale-ref-safe rejection", err)
+	}
+	if refs := gitCommand(t, "", "--git-dir", remote, "for-each-ref", "--format=%(refname)"); strings.TrimSpace(refs) != "" {
+		t.Fatalf("arbitrary history reached remote: %q", refs)
+	}
+}
+
+func TestInitRetriesSetupCommitOnVerifiedRemoteParent(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+	seed := filepath.Join(root, "seed")
+	if err := os.Mkdir(seed, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, seed, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(seed, "existing.txt"), []byte("public backup repository metadata\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, seed, "add", "existing.txt")
+	gitCommand(t, seed, "-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-m", "existing remote history")
+	gitCommand(t, seed, "remote", "add", "origin", remote)
+	gitCommand(t, seed, "push", "-u", "origin", "main")
+	gitCommand(t, "", "--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Remote:     remote,
+		Push:       false,
+	}
+	first, err := Init(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("local Init: %v", err)
+	}
+	if !first.Changed || first.Pushed {
+		t.Fatalf("local Init result = %+v", first)
+	}
+	opts.Push = true
+	second, err := Init(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("retrying Init: %v", err)
+	}
+	if second.Changed || !second.Pushed {
+		t.Fatalf("retry result = %+v, want unchanged and pushed", second)
+	}
+	remoteHead := strings.TrimSpace(gitCommand(t, "", "--git-dir", remote, "rev-parse", "refs/heads/main"))
+	localHead := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD"))
+	if remoteHead != localHead {
+		t.Fatalf("remote HEAD %s != local setup HEAD %s", remoteHead, localHead)
+	}
+}
+
+func TestInitRejectsMismatchedOriginPushURL(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	fetchRemote := filepath.Join(root, "fetch.git")
+	pushRemote := filepath.Join(root, "push.git")
+	gitCommand(t, "", "init", "--bare", fetchRemote)
+	gitCommand(t, "", "init", "--bare", pushRemote)
+	repo := filepath.Join(root, "checkout")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repo, "init", "-b", "main")
+	gitCommand(t, repo, "remote", "add", "origin", fetchRemote)
+	gitCommand(t, repo, "remote", "set-url", "--push", "origin", pushRemote)
+	_, err := Init(context.Background(), Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       repo,
+		Remote:     fetchRemote,
+		Push:       false,
+	})
+	if err == nil || !strings.Contains(err.Error(), "push URL") {
+		t.Fatalf("Init error = %v, want mismatched push URL rejection", err)
+	}
+}
+
+func TestInitIsIdempotentWithWhitespaceInLocalRemotePath(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	remote := filepath.Join(root, "Health Backup.git")
+	gitCommand(t, "", "init", "--bare", remote)
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Remote:     remote,
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("first Init: %v", err)
+	}
+	result, err := Init(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("second Init: %v", err)
+	}
+	if result.Changed || result.Pushed {
+		t.Fatalf("second Init result = %+v, want unchanged local setup", result)
+	}
+}
+
+func TestStatusRejectsSymlinkedAndOversizedManifest(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		setup func(t *testing.T, manifestPath, outsidePath string)
+		want  string
+	}{
+		{
+			name: "symlink",
+			setup: func(t *testing.T, manifestPath, outsidePath string) {
+				t.Helper()
+				if err := os.WriteFile(outsidePath, []byte(`{"format":1,"encrypted":true}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outsidePath, manifestPath); err != nil {
+					t.Skipf("symlink unavailable: %v", err)
+				}
+			},
+			want: "regular file",
+		},
+		{
+			name: "oversized",
+			setup: func(t *testing.T, manifestPath, _ string) {
+				t.Helper()
+				file, err := os.Create(manifestPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := file.Truncate(maxManifestBytes + 1); err != nil {
+					_ = file.Close()
+					t.Fatal(err)
+				}
+				if err := file.Close(); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "too large",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			repo := filepath.Join(root, "repo")
+			if err := os.Mkdir(repo, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			configPath := filepath.Join(root, "private", "backup.json")
+			if err := SaveConfig(configPath, Config{Repo: repo, Identity: filepath.Join(root, "private", "identity.txt")}); err != nil {
+				t.Fatal(err)
+			}
+			test.setup(t, filepath.Join(repo, ManifestFilename), filepath.Join(root, "outside.json"))
+			_, err := Status(context.Background(), Options{ConfigPath: configPath})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Status error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestStatusRejectsManifestTimestampWithOutputControls(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "private", "backup.json")
+	if err := SaveConfig(configPath, Config{Repo: repo, Identity: filepath.Join(root, "private", "identity.txt")}); err != nil {
+		t.Fatal(err)
+	}
+	manifest := Manifest{Format: 1, Encrypted: true, ExportedAt: "2026-08-15T10:00:00Z\nforged: true"}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ManifestFilename), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Status(context.Background(), Options{ConfigPath: configPath})
+	if err == nil || !strings.Contains(err.Error(), "not RFC3339") {
+		t.Fatalf("Status error = %v, want timestamp validation", err)
+	}
+}
+
+func TestStatusInspectsExplicitRepoWithoutBackupConfig(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := Manifest{Format: 1, Encrypted: true, ExportedAt: "2026-08-15T10:00:00Z", Shards: []ShardEntry{{Path: "data/example.age"}}}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ManifestFilename), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status, err := Status(context.Background(), Options{ConfigPath: filepath.Join(root, "missing.json"), Repo: repo})
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if status.Status != StatusReady || !status.Encrypted || status.ShardCount != 1 {
+		t.Fatalf("Status = %+v, want explicit repo manifest", status)
+	}
+}
+
+func TestCloneRequiresOwnerOnlyExistingCheckout(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode check")
+	}
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+	repo := filepath.Join(root, "checkout")
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Init(context.Background(), Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       repo,
+		Remote:     remote,
+		Push:       false,
+	})
+	if err == nil || !strings.Contains(err.Error(), "not owner-only") {
+		t.Fatalf("Init error = %v, want owner-only checkout rejection", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(repo, ".git")); !os.IsNotExist(statErr) {
+		t.Fatalf("clone wrote into insecure checkout: %v", statErr)
+	}
+}
+
+func TestInitRejectsInsecureExistingCheckoutBeforeGitOperation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode check")
+	}
+	root := t.TempDir()
+	repo := filepath.Join(root, "checkout")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repo, "init", "-b", "main")
+	if err := os.Chmod(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "private", "backup.json")
+	_, err := Init(context.Background(), Options{ConfigPath: configPath, Repo: repo, Push: false})
+	if err == nil || !strings.Contains(err.Error(), "not owner-only") {
+		t.Fatalf("Init error = %v, want existing checkout permission rejection", err)
+	}
+	if _, statErr := os.Stat(configPath); !os.IsNotExist(statErr) {
+		t.Fatalf("config written despite insecure checkout: %v", statErr)
+	}
+}
+
+func TestInitRejectsConfigIdentityPathCollisionBeforeWriting(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	sharedPath := filepath.Join(root, "private", "shared.json")
+	_, err := Init(context.Background(), Options{
+		ConfigPath: sharedPath,
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   sharedPath,
+		Push:       false,
+	})
+	if err == nil || !strings.Contains(err.Error(), "paths must be different") {
+		t.Fatalf("Init error = %v, want path collision rejection", err)
+	}
+	if _, statErr := os.Stat(sharedPath); !os.IsNotExist(statErr) {
+		t.Fatalf("colliding path was written: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "checkout")); !os.IsNotExist(statErr) {
+		t.Fatalf("checkout was created before path collision rejection: %v", statErr)
+	}
+}
+
+func TestGitErrorRedactsResolvedRemoteURLs(t *testing.T) {
+	t.Parallel()
+	const secret = "synthetic-query-secret"
+	message := "fatal: unable to access 'https://backup.example/repo.git?token=" + secret + "': connection failed"
+	got := redactGitError(message, []string{"push", "origin", "HEAD"})
+	if strings.Contains(got, secret) || !strings.Contains(got, "https://backup.example/repo.git") {
+		t.Fatalf("redacted Git error = %q", got)
+	}
+}
+
+func TestGitSafeEnvironmentDropsRepositoryAndProcessOverrides(t *testing.T) {
+	t.Parallel()
+	input := []string{
+		"PATH=/usr/bin",
+		"SSH_AUTH_SOCK=/private/agent.sock",
+		"GIT_DIR=/outside/repo.git",
+		"GIT_WORK_TREE=/outside/tree",
+		"GIT_INDEX_FILE=/outside/index",
+		"GIT_SSH_COMMAND=synthetic-command",
+		"GIT_CONFIG_GLOBAL=/outside/global.gitconfig",
+		"GIT_CONFIG_SYSTEM=/outside/system.gitconfig",
+		"GIT_CONFIG_NOSYSTEM=1",
+		"SSH_ASKPASS=/outside/askpass",
+		"SSH_ASKPASS_REQUIRE=force",
+		"DISPLAY=:99",
+		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=core.hooksPath",
+		"GIT_CONFIG_VALUE_0=/outside/hooks",
+		"Git_Dir=/outside/mixed-case.git",
+		"git_work_tree=/outside/mixed-case-tree",
+	}
+	got := gitSafeEnvironment(input)
+	want := []string{"PATH=/usr/bin", "SSH_AUTH_SOCK=/private/agent.sock"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("gitSafeEnvironment = %v, want %v", got, want)
+	}
+}
+
+func TestInitRejectsConfigSymlinkedParent(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	realDir := filepath.Join(root, "real")
+	if err := os.Mkdir(realDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	aliasDir := filepath.Join(root, "alias")
+	if err := os.Symlink(realDir, aliasDir); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	configPath := filepath.Join(aliasDir, "shared.json")
+	identityPath := filepath.Join(realDir, "shared.json")
+	_, err := Init(context.Background(), Options{
+		ConfigPath: configPath,
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   identityPath,
+		Push:       false,
+	})
+	if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("Init error = %v, want symlinked-parent rejection", err)
+	}
+	if _, statErr := os.Stat(identityPath); !os.IsNotExist(statErr) {
+		t.Fatalf("aliased identity/config path was written: %v", statErr)
+	}
+}
+
+func TestPrivatePathRecheckDetectsAliasCreatedAfterIdentity(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hard links require platform-specific privileges")
+	}
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "backup.json")
+	identityPath := filepath.Join(root, "backup-age-identity.txt")
+	if same, err := pathsReferToSameFile(configPath, identityPath); err != nil || same {
+		t.Fatalf("initial path comparison = (%t, %v), want distinct nonexistent paths", same, err)
+	}
+	if _, err := EnsureIdentity(identityPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(identityPath, configPath); err != nil {
+		t.Fatal(err)
+	}
+	if same, err := pathsReferToSameFile(configPath, identityPath); err != nil || !same {
+		t.Fatalf("post-creation path comparison = (%t, %v), want same file", same, err)
+	}
+}
+
+func TestInitRejectsPrivatePathsInsideCheckout(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		configPath func(root, repo string) string
+		identity   func(root, repo string) string
+	}{
+		{
+			name:       "config",
+			configPath: func(_, repo string) string { return filepath.Join(repo, "private", "backup.json") },
+			identity:   func(root, _ string) string { return filepath.Join(root, "private", "identity.txt") },
+		},
+		{
+			name:       "identity",
+			configPath: func(root, _ string) string { return filepath.Join(root, "private", "backup.json") },
+			identity:   func(_, repo string) string { return filepath.Join(repo, "private", "identity.txt") },
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			repo := filepath.Join(root, "checkout")
+			_, err := Init(context.Background(), Options{
+				ConfigPath: test.configPath(root, repo),
+				Repo:       repo,
+				Identity:   test.identity(root, repo),
+				Push:       false,
+			})
+			if err == nil || !strings.Contains(err.Error(), "must be outside the Git checkout") {
+				t.Fatalf("Init error = %v, want private-path containment rejection", err)
+			}
+			if _, statErr := os.Stat(repo); !os.IsNotExist(statErr) {
+				t.Fatalf("checkout created despite path rejection: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestResolveOptionsMakesRelativeLocalRemoteAbsolute(t *testing.T) {
+	t.Parallel()
+	cfg, err := ResolveOptions(Options{
+		ConfigPath: filepath.Join(t.TempDir(), "backup.json"),
+		Repo:       filepath.Join(t.TempDir(), "repo"),
+		Identity:   filepath.Join(t.TempDir(), "identity.txt"),
+		Remote:     filepath.Join("relative", "remote.git"),
+	})
+	if err != nil {
+		t.Fatalf("ResolveOptions: %v", err)
+	}
+	if !filepath.IsAbs(cfg.Remote) {
+		t.Fatalf("remote = %q, want absolute local path", cfg.Remote)
+	}
+}
+
+func TestSaveConfigFailurePreservesExistingConfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX directory mode failure")
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, "private")
+	path := filepath.Join(dir, "backup.json")
+	want := Config{Repo: filepath.Join(root, "original"), Identity: filepath.Join(dir, "identity.txt")}
+	if err := SaveConfig(path, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	err := SaveConfig(path, Config{Repo: filepath.Join(root, "replacement"), Identity: want.Identity})
+	if chmodErr := os.Chmod(dir, 0o700); chmodErr != nil {
+		t.Fatal(chmodErr)
+	}
+	if err == nil {
+		t.Fatal("SaveConfig unexpectedly succeeded in non-writable directory")
+	}
+	got, found, loadErr := LoadConfig(path)
+	if loadErr != nil || !found || !reflect.DeepEqual(got, want) {
+		t.Fatalf("preserved config = (%+v, %t, %v), want %+v", got, found, loadErr, want)
+	}
+}
+
+func TestInitAddsRemoteAfterLocalOnlyInitialization(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+	configPath := filepath.Join(root, "private", "backup.json")
+	repo := filepath.Join(root, "checkout")
+	if _, err := Init(context.Background(), Options{ConfigPath: configPath, Repo: repo, Push: false}); err != nil {
+		t.Fatalf("local Init: %v", err)
+	}
+	if _, err := Init(context.Background(), Options{ConfigPath: configPath, Remote: remote, Push: false}); err != nil {
+		t.Fatalf("remote-configuring Init: %v", err)
+	}
+	if got := strings.TrimSpace(gitCommand(t, repo, "remote", "get-url", "origin")); got != remote {
+		t.Fatalf("origin = %q, want %q", got, remote)
+	}
+}
+
+func TestInitRejectsDifferentExistingReadme(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo := filepath.Join(root, "checkout")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repo, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(repo, recoveryReadmeFilename), []byte("unrelated repository\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Init(context.Background(), Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       repo,
+		Push:       false,
+	})
+	if err == nil || !strings.Contains(err.Error(), "different content") {
+		t.Fatalf("Init error = %v, want README content rejection", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "private", "backup.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("config written despite README rejection: %v", statErr)
+	}
+}
+
+func TestResolveOptionsMakesPersistedPathsAbsolute(t *testing.T) {
+	t.Parallel()
+	cfg, err := ResolveOptions(Options{
+		ConfigPath: filepath.Join(t.TempDir(), "backup.json"),
+		Repo:       filepath.Join("relative", "backup-repo"),
+		Identity:   filepath.Join("relative", "identity.txt"),
+	})
+	if err != nil {
+		t.Fatalf("ResolveOptions: %v", err)
+	}
+	if !filepath.IsAbs(cfg.Repo) || !filepath.IsAbs(cfg.Identity) {
+		t.Fatalf("resolved paths = repo %q identity %q, want absolute", cfg.Repo, cfg.Identity)
+	}
+}
+
+func TestStatusMissingConfigStaysUninitializedWhenDefaultRepoExists(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	defaultRepo := filepath.Join(root, "home", "Projects", "backup-gohealthcli")
+	if err := os.MkdirAll(defaultRepo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	status, err := Status(context.Background(), Options{})
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if status.Status != StatusUninitialized {
+		t.Fatalf("status = %q, want %q", status.Status, StatusUninitialized)
+	}
+}
+
+func TestStatusConfiguredMissingRepoReturnsError(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	configPath := filepath.Join(root, "private", "backup.json")
+	missingRepo := filepath.Join(root, "missing-checkout")
+	if err := SaveConfig(configPath, Config{
+		Repo:     missingRepo,
+		Identity: filepath.Join(root, "private", "backup-age-identity.txt"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Status(context.Background(), Options{ConfigPath: configPath})
+	if err == nil || !strings.Contains(err.Error(), "configured backup repo path") || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("Status error = %v, want missing configured checkout error", err)
+	}
+}
+
+func TestStatusExplicitMissingRepoReturnsError(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	missingRepo := filepath.Join(root, "missing-checkout")
+
+	_, err := Status(context.Background(), Options{
+		ConfigPath: filepath.Join(root, "missing-config.json"),
+		Repo:       missingRepo,
+	})
+	if err == nil || !strings.Contains(err.Error(), "backup repo path") || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("Status error = %v, want explicit missing checkout error", err)
+	}
+}
+
+func TestStatusDoesNotRequireInitializationIdentityDefaults(t *testing.T) {
+	t.Run("missing config without HOME", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv("HOME", "")
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+		status, err := Status(context.Background(), Options{})
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if status.Status != StatusUninitialized {
+			t.Fatalf("status = %q, want %q", status.Status, StatusUninitialized)
+		}
+	})
+
+	t.Run("saved repo without identity", func(t *testing.T) {
+		root := t.TempDir()
+		repo := filepath.Join(root, "repo")
+		if err := os.Mkdir(repo, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		configPath := filepath.Join(root, "private", "backup.json")
+		if err := SaveConfig(configPath, Config{Repo: repo}); err != nil {
+			t.Fatal(err)
+		}
+		status, err := Status(context.Background(), Options{ConfigPath: configPath})
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if status.Status != StatusEmpty {
+			t.Fatalf("status = %q, want %q", status.Status, StatusEmpty)
+		}
+	})
+}
+
+func TestInitWithoutRemoteRequiresNoPushBeforeWritingState(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	configPath := filepath.Join(root, "private", "backup.json")
+	identityPath := filepath.Join(root, "private", "backup-age-identity.txt")
+	_, err := Init(context.Background(), Options{
+		ConfigPath: configPath,
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   identityPath,
+		Push:       true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "pass --remote or use --no-push") {
+		t.Fatalf("Init error = %v, want remote/no-push guidance", err)
+	}
+	for _, path := range []string{configPath, identityPath} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("Init wrote %s before rejecting missing remote: %v", path, statErr)
+		}
+	}
+}
+
+func TestStatusDoesNotRequireOrReadPrivateIdentity(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "private", "backup.json")
+	if err := SaveConfig(configPath, Config{Repo: repo, Identity: filepath.Join(root, "missing-identity")}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := Status(context.Background(), Options{ConfigPath: configPath})
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if status.Status != StatusEmpty {
+		t.Fatalf("Status = %q, want %q", status.Status, StatusEmpty)
+	}
+}
+
+func assertMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("mode %s = %04o, want %04o", path, got, want)
+	}
+}
+
+func gitCommand(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.CommandContext(context.Background(), "git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "HOME="+t.TempDir())
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
+}

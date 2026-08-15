@@ -18,7 +18,7 @@ The First Release is read-only:
 - No deletes.
 - No webhook receiver.
 - No cloud service.
-- No automatic sharing.
+- No automatic sharing or background upload.
 
 ## OAuth
 
@@ -104,6 +104,29 @@ default and fails loudly — "cannot determine home directory; set HOME or pass
 --config/--db explicitly" — instead of silently writing personal health data to
 a current-working-directory-relative path. Passing `--config`/`--db` explicitly
 is unaffected.
+
+## Encrypted Backups
+
+Backup work is explicit. `backup init` may create a Git checkout and push its
+recovery README to the configured remote. A later accepted backup operation
+will write only age-encrypted Health Archive shards plus the documented
+cleartext manifest. No backup command refreshes the Provider implicitly.
+
+The default `backup.json` and `backup-age-identity.txt` live beside the main
+config under the XDG-style gohealthcli config directory and are owner-only.
+They must never be committed. OAuth client secrets and Credential Store token
+material are excluded from backup.
+
+The Git repository remains sensitive metadata. Its cleartext manifest may
+reveal export time, public recipients, logical table names, row counts, shard
+paths, encrypted sizes, plaintext hashes, backup cadence, and changed shards.
+Private health payloads and Attachment bytes must be encrypted before Git sees
+them. Loss of every matching age identity makes the backup unrecoverable;
+compromise of an identity can expose compatible shards retained in Git history.
+
+`backup status` reads only the backup config, checkout, and cleartext manifest.
+It does not require the private identity, decrypt shards, open the live Health
+Archive, contact the Provider, or mutate Git state.
 
 ## Exports
 
