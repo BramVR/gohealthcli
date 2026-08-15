@@ -340,11 +340,11 @@ func validateRemote(remote string) error {
 	if strings.HasPrefix(remote, "-") || hasExternalHelperSyntax(remote) {
 		return errors.New("backup Git remote uses unsupported option-like or external-helper syntax")
 	}
+	if hasQueryOrFragmentSyntax(remote) {
+		return errors.New("backup Git remote must not contain query parameters or fragments")
+	}
 	if isWindowsLocalPath(remote) {
 		return nil
-	}
-	if strings.ContainsAny(remote, "?#") {
-		return errors.New("backup Git remote must not contain query parameters or fragments")
 	}
 	if isSCPLikeSSHRemote(remote) {
 		// SCP syntax has no password field: the first colon starts an opaque
@@ -416,6 +416,13 @@ func hasExternalHelperSyntax(remote string) bool {
 		return true
 	}
 	return !strings.ContainsAny(remote[:colon], `/\`)
+}
+
+func hasQueryOrFragmentSyntax(remote string) bool {
+	if rest, ok := strings.CutPrefix(remote, `\\?\`); ok {
+		remote = rest
+	}
+	return strings.ContainsAny(remote, "?#")
 }
 
 func normalizeLocalRemote(remote string) (string, error) {

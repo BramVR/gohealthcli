@@ -728,6 +728,9 @@ func TestValidateRemoteRejectsQueryAndFragmentSyntax(t *testing.T) {
 		"example.invalid/backup.git?token=synthetic",
 		"git@example.invalid:backup.git#synthetic",
 		"/local/backup.git#synthetic",
+		`C:\backups\gohealth.git?token=synthetic`,
+		`\\server\share\gohealth.git?token=synthetic`,
+		`\\?\C:\backups\gohealth.git?token=synthetic`,
 	} {
 		if err := validateRemote(remote); err == nil || !strings.Contains(err.Error(), "query parameters or fragments") {
 			t.Errorf("validateRemote(%q) error = %v, want query/fragment rejection", remote, err)
