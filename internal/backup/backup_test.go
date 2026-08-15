@@ -699,9 +699,23 @@ func TestValidateRemoteRejectsOptionAndExternalHelperSyntax(t *testing.T) {
 	}
 }
 
+func TestValidateRemoteRejectsQueryAndFragmentSyntax(t *testing.T) {
+	t.Parallel()
+	for _, remote := range []string{
+		"https://example.invalid/backup.git?token=synthetic",
+		"example.invalid/backup.git?token=synthetic",
+		"git@example.invalid:backup.git#synthetic",
+		"/local/backup.git#synthetic",
+	} {
+		if err := validateRemote(remote); err == nil || !strings.Contains(err.Error(), "query parameters or fragments") {
+			t.Errorf("validateRemote(%q) error = %v, want query/fragment rejection", remote, err)
+		}
+	}
+}
+
 func TestValidateRemoteAcceptsWindowsPathsAndSSHUsernames(t *testing.T) {
 	t.Parallel()
-	for _, remote := range []string{`C:\backups\gohealth.git`, `\\server\share\gohealth.git`, "ssh://git@github.com/owner/backup.git", "git@github.com:owner/backup.git", "github.com:owner/backup.git"} {
+	for _, remote := range []string{`C:\backups\gohealth.git`, `\\server\share\gohealth.git`, `\\?\C:\backups\gohealth.git`, `\\?\UNC\server\share\gohealth.git`, "ssh://git@github.com/owner/backup.git", "git@github.com:owner/backup.git", "github.com:owner/backup.git"} {
 		if err := validateRemote(remote); err != nil {
 			t.Errorf("validateRemote(%q): %v", remote, err)
 		}

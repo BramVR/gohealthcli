@@ -343,6 +343,9 @@ func validateRemote(remote string) error {
 	if isWindowsLocalPath(remote) {
 		return nil
 	}
+	if strings.ContainsAny(remote, "?#") {
+		return errors.New("backup Git remote must not contain query parameters or fragments")
+	}
 	if isSCPLikeSSHRemote(remote) {
 		return nil
 	}
@@ -492,6 +495,8 @@ func rejectSymlinkedPathComponents(path string) error {
 		info, statErr := os.Lstat(current)
 		if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
 			parent := filepath.Dir(current)
+			// Root-level aliases such as macOS /var and /tmp are OS-managed;
+			// user-controlled aliases below the filesystem root are rejected.
 			if filepath.Dir(parent) != parent {
 				return fmt.Errorf("path component %s must not be a symlink", current)
 			}
