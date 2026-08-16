@@ -337,6 +337,9 @@ func pushCurrent(ctx context.Context, opts Options, build func() (PushInput, err
 			return PushResult{}, err
 		}
 	}
+	if err := runGit(ctx, cfg.Repo, "rev-parse", "--verify", "HEAD"); err != nil {
+		return PushResult{}, errors.New("backup checkout has no setup commit; run `gohealthcli backup init` first")
+	}
 	input, err := build()
 	if err != nil {
 		return PushResult{}, err

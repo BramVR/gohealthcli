@@ -546,6 +546,36 @@ func TestPushPushesSnapshotCommitToTemporaryBareRemote(t *testing.T) {
 	}
 }
 
+func TestPushRejectsCheckoutWithoutSetupCommitBeforeBuildingSnapshot(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	gitCommand(t, opts.Repo, "update-ref", "-d", "HEAD")
+
+	built := false
+	_, err := PushCurrent(context.Background(), opts, func() (PushInput, error) {
+		built = true
+		return PushInput{}, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "backup init") {
+		t.Fatalf("PushCurrent error = %v, want backup init remediation", err)
+	}
+	if built {
+		t.Fatal("PushCurrent built a Health Archive Snapshot before rejecting the uninitialized checkout")
+	}
+}
+
 func TestPushRejectsTrackedFilesOutsideCurrentManifest(t *testing.T) {
 	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -705,6 +735,17 @@ func TestPushRejectsGitContentAttributesBeforePublication(t *testing.T) {
 		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("rejected Push published path %s: %v", path, err)
 		}
+	}
+}
+
+func TestGitContentAttributesUnspecifiedAcceptsCRLF(t *testing.T) {
+	t.Parallel()
+	output := "data/example.age: filter: unspecified\r\ndata/example.age: text: unspecified\r\n"
+	if !gitContentAttributesUnspecified(output) {
+		t.Fatal("unspecified CRLF attribute output was rejected")
+	}
+	if gitContentAttributesUnspecified("data/example.age: filter: corrupt\r\n") {
+		t.Fatal("specified CRLF attribute output was accepted")
 	}
 }
 

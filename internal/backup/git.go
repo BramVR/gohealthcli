@@ -385,14 +385,21 @@ func validateNoGitContentAttributes(ctx context.Context, repo string, manifest M
 		if err != nil {
 			return fmt.Errorf("inspect Git content attributes for %q: %w", generatedPath, err)
 		}
-		for _, line := range strings.Split(strings.TrimSpace(attributes), "\n") {
-			if line == "" || strings.HasSuffix(line, ": unspecified") {
-				continue
-			}
+		if !gitContentAttributesUnspecified(attributes) {
 			return fmt.Errorf("Git content attribute applies to generated backup path %q; remove text, eol, filter, working-tree-encoding, or ident attributes before backup push", generatedPath)
 		}
 	}
 	return nil
+}
+
+func gitContentAttributesUnspecified(attributes string) bool {
+	for _, line := range strings.Split(strings.TrimSpace(attributes), "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if line != "" && !strings.HasSuffix(line, ": unspecified") {
+			return false
+		}
+	}
+	return true
 }
 
 func stageSnapshotExact(ctx context.Context, repo string, manifest Manifest) error {

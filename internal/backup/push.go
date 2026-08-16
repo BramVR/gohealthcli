@@ -119,24 +119,21 @@ func encryptJSONLShard(plaintext []byte, recipientStrings []string) ([]byte, err
 	if len(recipients) == 0 {
 		return nil, errors.New("at least one age recipient is required")
 	}
-	var compressed bytes.Buffer
-	gzipWriter := gzip.NewWriter(&compressed)
-	gzipWriter.ModTime = time.Unix(0, 0).UTC()
-	gzipWriter.Name = ""
-	gzipWriter.Comment = ""
-	if _, err := gzipWriter.Write(plaintext); err != nil {
-		_ = gzipWriter.Close()
-		return nil, err
-	}
-	if err := gzipWriter.Close(); err != nil {
-		return nil, err
-	}
 	var encrypted bytes.Buffer
 	ageWriter, err := age.Encrypt(&encrypted, recipients...)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := ageWriter.Write(compressed.Bytes()); err != nil {
+	gzipWriter := gzip.NewWriter(ageWriter)
+	gzipWriter.ModTime = time.Unix(0, 0).UTC()
+	gzipWriter.Name = ""
+	gzipWriter.Comment = ""
+	if _, err := gzipWriter.Write(plaintext); err != nil {
+		_ = gzipWriter.Close()
+		_ = ageWriter.Close()
+		return nil, err
+	}
+	if err := gzipWriter.Close(); err != nil {
 		_ = ageWriter.Close()
 		return nil, err
 	}
