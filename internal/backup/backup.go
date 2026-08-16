@@ -42,12 +42,36 @@ type ShardEntry struct {
 }
 
 type Manifest struct {
-	Format     int          `json:"format"`
-	Encrypted  bool         `json:"encrypted"`
-	ExportedAt string       `json:"exported_at"`
-	Recipients []string     `json:"recipients,omitempty"`
-	Counts     Counts       `json:"counts"`
-	Shards     []ShardEntry `json:"shards"`
+	Format                     int          `json:"format"`
+	HealthArchiveSchemaVersion int          `json:"health_archive_schema_version"`
+	Encrypted                  bool         `json:"encrypted"`
+	ExportedAt                 string       `json:"exported_at"`
+	Recipients                 []string     `json:"recipients,omitempty"`
+	Counts                     Counts       `json:"counts"`
+	Shards                     []ShardEntry `json:"shards"`
+}
+
+type PlaintextShard struct {
+	Table string
+	Path  string
+	Rows  int
+	JSONL []byte
+}
+
+type PushInput struct {
+	SchemaVersion int
+	ExportedAt    time.Time
+	Counts        Counts
+	Shards        []PlaintextShard
+}
+
+type PushResult struct {
+	RepoPath   string `json:"repo_path"`
+	Changed    bool   `json:"changed"`
+	Pushed     bool   `json:"pushed"`
+	Encrypted  bool   `json:"encrypted"`
+	ShardCount int    `json:"shard_count"`
+	Counts     Counts `json:"health_archive_counts"`
 }
 
 type InitResult struct {
@@ -68,7 +92,34 @@ type StatusResult struct {
 	Counts     *Counts `json:"health_archive_counts,omitempty"`
 }
 
-func Init(ctx context.Context, opts Options) (InitResult, error) {
+func Init(ctx context.Context, opts Options) (result InitResult, err error) {
+	configPath, err := absoluteConfigPath(opts.ConfigPath)
+	if err != nil {
+		return InitResult{}, err
+	}
+	preflightCfg, _, err := resolveOptions(opts)
+	if err != nil {
+		return InitResult{}, err
+	}
+	configInsideRepo, err := pathIsWithin(preflightCfg.Repo, configPath)
+	if err != nil {
+		return InitResult{}, err
+	}
+	if configInsideRepo {
+		return InitResult{}, errors.New("backup config path must be outside the Git checkout")
+	}
+	if err := ensurePrivateDir(filepath.Dir(configPath)); err != nil {
+		return InitResult{}, err
+	}
+	configLock, err := lockBackupConfig(configPath)
+	if err != nil {
+		return InitResult{}, fmt.Errorf("lock backup config: %w", err)
+	}
+	defer func() {
+		if unlockErr := unlockBackupConfig(configLock); unlockErr != nil {
+			err = errors.Join(err, fmt.Errorf("unlock backup config: %w", unlockErr))
+		}
+	}()
 	cfg, _, err := resolveOptions(opts)
 	if err != nil {
 		return InitResult{}, err
@@ -83,10 +134,6 @@ func Init(ctx context.Context, opts Options) (InitResult, error) {
 		if err := ValidateRecipients(cfg.Recipients); err != nil {
 			return InitResult{}, err
 		}
-	}
-	configPath, err := absoluteConfigPath(opts.ConfigPath)
-	if err != nil {
-		return InitResult{}, err
 	}
 	pathsCollide, err := pathsReferToSameFile(configPath, cfg.Identity)
 	if err != nil {
@@ -110,8 +157,33 @@ func Init(ctx context.Context, opts Options) (InitResult, error) {
 	if err := preflightIdentity(cfg.Identity); err != nil {
 		return InitResult{}, err
 	}
+	if err := prepareCheckoutLockParent(cfg.Repo); err != nil {
+		return InitResult{}, err
+	}
+	checkoutLock, err := lockBackupCheckout(cfg.Repo)
+	if err != nil {
+		return InitResult{}, fmt.Errorf("lock backup checkout: %w", err)
+	}
+	defer func() {
+		if unlockErr := unlockBackupCheckout(checkoutLock); unlockErr != nil {
+			err = errors.Join(err, fmt.Errorf("unlock backup checkout: %w", unlockErr))
+		}
+	}()
 	if err := ensureRepo(ctx, cfg); err != nil {
 		return InitResult{}, err
+	}
+	cfg, err = recoverInterruptedSnapshotPublication(ctx, cfg, configPath)
+	if err != nil {
+		return InitResult{}, err
+	}
+	cfg, migratedPending, err := migrateLegacyPendingSetupCommit(ctx, cfg)
+	if err != nil {
+		return InitResult{}, err
+	}
+	if migratedPending {
+		if err := SaveConfig(opts.ConfigPath, cfg); err != nil {
+			return InitResult{}, err
+		}
 	}
 	if err := ensureReadmeIndexClean(ctx, cfg.Repo); err != nil {
 		return InitResult{}, err
@@ -142,13 +214,218 @@ func Init(ctx context.Context, opts Options) (InitResult, error) {
 		return InitResult{}, err
 	}
 	changed, pushed, err := commitReadmeAndMaybePush(ctx, cfg, opts.Push)
-	result := InitResult{
+	savePending := false
+	switch {
+	case pushed:
+		cfg.PendingCommits = nil
+		savePending = true
+	case changed && isGeneratedReadmeCommit(ctx, cfg.Repo):
+		head, headErr := gitOutput(ctx, cfg.Repo, "rev-parse", "HEAD")
+		if headErr != nil {
+			err = errors.Join(err, headErr)
+		} else {
+			head = strings.TrimSpace(head)
+			alreadyPending := false
+			for _, pending := range cfg.PendingCommits {
+				alreadyPending = alreadyPending || pending == head
+			}
+			if !alreadyPending {
+				cfg.PendingCommits = append(cfg.PendingCommits, head)
+			}
+			savePending = true
+		}
+	}
+	if savePending {
+		if saveErr := SaveConfig(opts.ConfigPath, cfg); saveErr != nil {
+			err = errors.Join(err, saveErr)
+		}
+	}
+	result = InitResult{
 		RepoPath:  cfg.Repo,
 		Remote:    redactRemote(cfg.Remote),
 		Identity:  cfg.Identity,
 		Recipient: recipient,
 		Changed:   changed,
 		Pushed:    pushed,
+	}
+	return result, err
+}
+
+func Push(ctx context.Context, opts Options, input PushInput) (result PushResult, err error) {
+	return pushCurrent(ctx, opts, func() (PushInput, error) { return input, nil })
+}
+
+// PushCurrent holds the backup checkout lock while build captures the current
+// Health Archive Snapshot, then encrypts and commits that exact capture.
+func PushCurrent(ctx context.Context, opts Options, build func() (PushInput, error)) (result PushResult, err error) {
+	if build == nil {
+		return PushResult{}, errors.New("Health Archive Snapshot builder is required")
+	}
+	return pushCurrent(ctx, opts, build)
+}
+
+func pushCurrent(ctx context.Context, opts Options, build func() (PushInput, error)) (result PushResult, err error) {
+	configPath, err := absoluteConfigPath(opts.ConfigPath)
+	if err != nil {
+		return PushResult{}, err
+	}
+	if err := ensurePrivateDir(filepath.Dir(configPath)); err != nil {
+		return PushResult{}, err
+	}
+	configLock, err := lockBackupConfig(configPath)
+	if err != nil {
+		return PushResult{}, fmt.Errorf("lock backup config: %w", err)
+	}
+	defer func() {
+		if unlockErr := unlockBackupConfig(configLock); unlockErr != nil {
+			err = errors.Join(err, fmt.Errorf("unlock backup config: %w", unlockErr))
+		}
+	}()
+	cfg, _, err := resolveOptions(opts)
+	if err != nil {
+		return PushResult{}, err
+	}
+	if opts.Push && cfg.Remote == "" {
+		return PushResult{}, errors.New("cannot push backup: pass --remote or use --no-push")
+	}
+	if err := validateRemote(cfg.Remote); err != nil {
+		return PushResult{}, err
+	}
+	cfg.Recipients = normalizedStrings(cfg.Recipients)
+	if err := ValidateRecipients(cfg.Recipients); err != nil {
+		return PushResult{}, err
+	}
+	identityPath, localRecipient, identityFound, err := inspectIdentity(cfg.Identity)
+	if err != nil {
+		return PushResult{}, err
+	}
+	if !identityFound {
+		return PushResult{}, errors.New("backup age identity is missing; run `gohealthcli backup init` first")
+	}
+	if !containsRecipient(cfg.Recipients, localRecipient) {
+		return PushResult{}, errors.New("backup recipients do not include the local age identity; run `gohealthcli backup init` to repair the configuration")
+	}
+	identity, err := identityFromFile(identityPath)
+	if err != nil {
+		return PushResult{}, err
+	}
+	if err := prepareCheckoutLockParent(cfg.Repo); err != nil {
+		return PushResult{}, err
+	}
+	checkoutLock, err := lockBackupCheckout(cfg.Repo)
+	if err != nil {
+		return PushResult{}, fmt.Errorf("lock backup checkout: %w", err)
+	}
+	defer func() {
+		if unlockErr := unlockBackupCheckout(checkoutLock); unlockErr != nil {
+			err = errors.Join(err, fmt.Errorf("unlock backup checkout: %w", unlockErr))
+		}
+	}()
+	if err := ensureRepo(ctx, cfg); err != nil {
+		return PushResult{}, err
+	}
+	cfg, err = recoverInterruptedSnapshotPublication(ctx, cfg, configPath)
+	if err != nil {
+		return PushResult{}, err
+	}
+	cfg, migratedPending, err := migrateLegacyPendingSetupCommit(ctx, cfg)
+	if err != nil {
+		return PushResult{}, err
+	}
+	if migratedPending {
+		if err := SaveConfig(opts.ConfigPath, cfg); err != nil {
+			return PushResult{}, err
+		}
+	}
+	input, err := build()
+	if err != nil {
+		return PushResult{}, err
+	}
+	if err := validatePushInput(input); err != nil {
+		return PushResult{}, err
+	}
+	oldManifest, oldManifestFound, err := readManifestIfPresent(cfg.Repo)
+	if err != nil {
+		return PushResult{}, err
+	}
+	gitState, err := preflightSnapshotCommit(ctx, cfg, opts.Push, oldManifest, oldManifestFound, identity)
+	if err != nil {
+		return PushResult{}, err
+	}
+	manifest, ciphertexts, unchanged, err := prepareEncryptedSnapshot(cfg, input, oldManifest, oldManifestFound, identity)
+	if err != nil {
+		return PushResult{}, err
+	}
+	if err := validateNoGitContentAttributes(ctx, cfg.Repo, manifest); err != nil {
+		return PushResult{}, err
+	}
+	readmePath := filepath.Join(cfg.Repo, recoveryReadmeFilename)
+	_, readmeStatErr := os.Lstat(readmePath)
+	readmeWasMissing := errors.Is(readmeStatErr, os.ErrNotExist)
+	if readmeStatErr != nil && !readmeWasMissing {
+		return PushResult{}, readmeStatErr
+	}
+	publicationStarted := readmeWasMissing || !unchanged
+	if publicationStarted {
+		if err := beginSnapshotPublication(cfg.Repo, gitState.headOID); err != nil {
+			return PushResult{}, err
+		}
+		defer func() {
+			if !publicationStarted {
+				return
+			}
+			var recoverErr error
+			cfg, recoverErr = recoverInterruptedSnapshotPublication(ctx, cfg, configPath)
+			if recoverErr != nil {
+				err = errors.Join(err, fmt.Errorf("recover snapshot publication: %w", recoverErr))
+			}
+		}()
+	}
+	if err := writeBackupReadme(cfg.Repo); err != nil {
+		return PushResult{}, err
+	}
+	if !unchanged {
+		if err := publishEncryptedSnapshot(cfg.Repo, manifest, ciphertexts); err != nil {
+			if readmeWasMissing {
+				err = errors.Join(err, os.Remove(readmePath))
+			}
+			return PushResult{}, err
+		}
+	}
+	commitResult, err := commitSnapshotAndMaybePush(ctx, cfg, opts.Push, gitState, manifest)
+	if err != nil && !commitResult.Changed && (!unchanged || readmeWasMissing) {
+		if restoreErr := restorePublishedSnapshot(ctx, cfg.Repo, oldManifest, oldManifestFound, manifest); restoreErr != nil {
+			err = errors.Join(err, fmt.Errorf("restore previous backup snapshot after Git failure: %w", restoreErr))
+		}
+	}
+	if commitResult.Pushed {
+		previousPending := append([]string(nil), cfg.PendingCommits...)
+		cfg.PendingCommits = nil
+		if saveErr := SaveConfig(opts.ConfigPath, cfg); saveErr != nil {
+			cfg.PendingCommits = previousPending
+			err = errors.Join(err, saveErr)
+		}
+	} else if commitResult.Changed {
+		previousPending := append([]string(nil), cfg.PendingCommits...)
+		cfg.PendingCommits = append(cfg.PendingCommits, commitResult.HeadOID)
+		if saveErr := SaveConfig(opts.ConfigPath, cfg); saveErr != nil {
+			if rollbackErr := rollbackUnprovenancedSnapshotCommit(ctx, cfg.Repo, gitState.headOID, commitResult.HeadOID, oldManifest, oldManifestFound, manifest); rollbackErr != nil {
+				saveErr = errors.Join(saveErr, rollbackErr)
+			}
+			cfg.PendingCommits = previousPending
+			if restoreConfigErr := SaveConfig(opts.ConfigPath, cfg); restoreConfigErr != nil {
+				saveErr = errors.Join(saveErr, restoreConfigErr)
+			}
+			err = errors.Join(err, saveErr)
+		}
+	}
+	result = PushResult{
+		RepoPath:   cfg.Repo,
+		Changed:    commitResult.Changed,
+		Pushed:     commitResult.Pushed,
+		Encrypted:  true,
+		ShardCount: len(manifest.Shards),
+		Counts:     manifest.Counts,
 	}
 	return result, err
 }
@@ -246,14 +523,14 @@ func writeBackupReadme(repo string) error {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("backup README %s is not a regular file", path)
 		}
-		if info.Size() != int64(len(backupReadmeBody)) {
+		if info.Size() != int64(len(backupReadmeBody)) && info.Size() != int64(len(legacyBackupReadmeBody)) {
 			return fmt.Errorf("backup README %s already exists with different content", path)
 		}
 		data, err := os.ReadFile(path) // #nosec G304 -- regular repository path validated above.
 		if err != nil {
 			return err
 		}
-		if string(data) != backupReadmeBody {
+		if string(data) != backupReadmeBody && string(data) != legacyBackupReadmeBody {
 			return fmt.Errorf("backup README %s already exists with different content", path)
 		}
 		return nil
@@ -271,11 +548,32 @@ func writeBackupReadme(repo string) error {
 	return file.Close()
 }
 
-const backupReadmeBody = `# backup-gohealthcli
+const legacyBackupReadmeBody = `# backup-gohealthcli
 
 Encrypted Git backup for a local gohealthcli Health Archive.
 
 Backup payloads are encrypted with age before Git sees them. ` + "`gohealthcli backup init`" + ` only prepares the repository, config, and age identity; it does not export Health Archive data. When encrypted payloads are added, the repository still exposes cleartext metadata: backup time, public recipients, logical table names, record counts, shard paths, encrypted sizes, plaintext hashes, cadence, and changed shards.
+
+Keep repository write access restricted. Never commit the local age identity, gohealthcli config, OAuth client secret, Credential Store material, raw SQLite Health Archive, or plaintext Attachment Store. Anyone who can write this repository can replace encrypted content even though they cannot decrypt it.
+
+Store a private recovery copy of the age identity outside this repository. If every matching identity is lost, the encrypted backup cannot be restored. Removing a recipient protects future backups but does not rewrite old Git history.
+`
+
+const backupReadmeBody = `# backup-gohealthcli
+
+Encrypted Git backup for a local gohealthcli Health Archive.
+
+` + "`gohealthcli backup push`" + ` exports the current local Health Archive as deterministic JSONL, compresses each logical shard with fixed gzip metadata, and encrypts every shard with age before Git sees it. It does not sync or contact Google Health.
+
+## Layout
+
+` + "```text" + `
+README.md
+manifest.json
+data/*.jsonl.gz.age
+` + "```" + `
+
+` + "`manifest.json`" + ` is cleartext. It reveals format and Health Archive schema versions, export time, public recipients, logical table names, record counts, shard paths, encrypted sizes, plaintext hashes, backup cadence, and which shards changed. Raw health JSON, Identity Snapshot payloads, Data Point values, and Data Point Attachment bytes stay inside age-encrypted shards.
 
 Keep repository write access restricted. Never commit the local age identity, gohealthcli config, OAuth client secret, Credential Store material, raw SQLite Health Archive, or plaintext Attachment Store. Anyone who can write this repository can replace encrypted content even though they cannot decrypt it.
 

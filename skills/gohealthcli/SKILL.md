@@ -129,7 +129,23 @@ The example uses export dataset `daily-steps`. The output contains private
 health data even though it comes from a read-only Normalized View. Keep the
 file local and report its path and row count without quoting records.
 
-### 7. Use raw Provider reads last
+### 7. Back up only when explicitly requested
+
+`backup push` snapshots the current local Health Archive only. It performs no
+Provider request, sync, Identity Snapshot refresh, Credential Store read, or
+token refresh. It writes deterministic JSONL gzip shards encrypted with age
+before Git sees them, commits locally, and pushes unless `--no-push` is set:
+
+```bash
+gohealthcli backup push --no-push --plain
+```
+
+Treat the cleartext manifest as sensitive metadata: it exposes backup time,
+public recipients, logical collection names, counts, encrypted sizes, plaintext
+hashes, cadence, and changed shards. Never quote decrypted records or identity
+material in reports.
+
+### 8. Use raw Provider reads last
 
 Use raw reads only when local status, schema, and archived data cannot answer
 the question. Choose a fresh, user-approved private destination. Set

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +13,78 @@ import (
 	"testing"
 	"time"
 )
+
+func TestHealthArchiveSnapshotJSONLShardsAreDeterministic(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertHealthArchiveSnapshotFixture(t, archivePath)
+	storeSnapshotAttachment(t, archivePath, []byte(`<?xml version="1.0"?><TrainingCenterDatabase><Courses/></TrainingCenterDatabase>`))
+
+	snapshot, err := ExportHealthArchiveSnapshot(ctx, archivePath)
+	if err != nil {
+		t.Fatalf("ExportHealthArchiveSnapshot: %v", err)
+	}
+	first, err := EncodeHealthArchiveSnapshotJSONL(snapshot)
+	if err != nil {
+		t.Fatalf("EncodeHealthArchiveSnapshotJSONL: %v", err)
+	}
+	second, err := EncodeHealthArchiveSnapshotJSONL(snapshot)
+	if err != nil {
+		t.Fatalf("second EncodeHealthArchiveSnapshotJSONL: %v", err)
+	}
+	if !reflect.DeepEqual(first, second) {
+		t.Fatal("Health Archive Snapshot JSONL shards are not deterministic")
+	}
+
+	wantTables := []string{
+		"connections",
+		"data_points",
+		"data_point_revisions",
+		"data_point_attachments",
+		"attachment_payloads",
+		"rollups",
+		"identity_snapshots",
+		"sync_runs",
+		"sync_cursors",
+	}
+	if len(first) != len(wantTables) {
+		t.Fatalf("shard count = %d, want %d", len(first), len(wantTables))
+	}
+	for index, shard := range first {
+		if shard.Table != wantTables[index] {
+			t.Errorf("shard %d table = %q, want %q", index, shard.Table, wantTables[index])
+		}
+		wantPath := "data/" + wantTables[index] + ".jsonl.gz.age"
+		if shard.Path != wantPath {
+			t.Errorf("shard %q path = %q, want %q", shard.Table, shard.Path, wantPath)
+		}
+		lines := bytes.Split(bytes.TrimSuffix(shard.JSONL, []byte{'\n'}), []byte{'\n'})
+		if shard.Rows == 0 {
+			if len(shard.JSONL) != 0 {
+				t.Errorf("empty shard %q JSONL = %q, want empty", shard.Table, shard.JSONL)
+			}
+			continue
+		}
+		if len(lines) != shard.Rows || !bytes.HasSuffix(shard.JSONL, []byte{'\n'}) {
+			t.Errorf("shard %q has %d JSONL lines for %d rows", shard.Table, len(lines), shard.Rows)
+		}
+		for _, line := range lines {
+			var row map[string]any
+			if err := json.Unmarshal(line, &row); err != nil {
+				t.Errorf("shard %q has invalid JSONL row: %v", shard.Table, err)
+			}
+		}
+	}
+	var firstConnection map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(first[0].JSONL), &firstConnection); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := firstConnection["google_health_user_id"]; !ok {
+		t.Fatalf("Connection JSONL keys = %v, want stable snake_case names", firstConnection)
+	}
+}
 
 func TestHealthArchiveSnapshotRoundTripPreservesVisibleArchiveState(t *testing.T) {
 	t.Parallel()

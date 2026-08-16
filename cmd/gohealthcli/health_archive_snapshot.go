@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -25,110 +27,175 @@ type HealthArchiveSnapshot struct {
 }
 
 type HealthArchiveSnapshotDataPointAttachment struct {
-	ID           int64
-	DataPointID  int64
-	Kind         string
-	SHA256       string
-	PathRelative string
-	ByteSize     int64
-	FetchedAt    string
+	ID           int64  `json:"id"`
+	DataPointID  int64  `json:"data_point_id"`
+	Kind         string `json:"kind"`
+	SHA256       string `json:"sha256"`
+	PathRelative string `json:"path_relative"`
+	ByteSize     int64  `json:"byte_size"`
+	FetchedAt    string `json:"fetched_at"`
 }
 
 type HealthArchiveSnapshotAttachmentPayload struct {
-	SHA256       string
-	PathRelative string
-	ByteSize     int64
-	Payload      []byte
+	SHA256       string `json:"sha256"`
+	PathRelative string `json:"path_relative"`
+	ByteSize     int64  `json:"byte_size"`
+	Payload      []byte `json:"payload"`
 }
 
 type HealthArchiveSnapshotConnection struct {
-	ID                 string
-	ProviderName       string
-	GoogleHealthUserID string
-	LegacyFitbitUserID *string
-	TokenMetadataJSON  string
-	CreatedAt          string
-	UpdatedAt          string
-	GoogleIdentityJSON string
+	ID                 string  `json:"id"`
+	ProviderName       string  `json:"provider_name"`
+	GoogleHealthUserID string  `json:"google_health_user_id"`
+	LegacyFitbitUserID *string `json:"legacy_fitbit_user_id"`
+	TokenMetadataJSON  string  `json:"token_metadata_json"`
+	CreatedAt          string  `json:"created_at"`
+	UpdatedAt          string  `json:"updated_at"`
+	GoogleIdentityJSON string  `json:"google_identity_json"`
 }
 
 type HealthArchiveSnapshotDataPoint struct {
-	ID                   int64
-	ProviderName         string
-	ConnectionID         string
-	DataType             string
-	UpstreamResourceName *string
-	RecordKind           string
-	StartTimeUTC         *string
-	EndTimeUTC           *string
-	StartCivilTime       *string
-	EndCivilTime         *string
-	ProviderCivilDate    *string
-	TimezoneMetadata     *string
-	DataSourceJSON       string
-	RawJSON              string
-	InsertedAt           string
-	UpdatedAt            string
-	SourceFamilyFilter   *string
+	ID                   int64   `json:"id"`
+	ProviderName         string  `json:"provider_name"`
+	ConnectionID         string  `json:"connection_id"`
+	DataType             string  `json:"data_type"`
+	UpstreamResourceName *string `json:"upstream_resource_name"`
+	RecordKind           string  `json:"record_kind"`
+	StartTimeUTC         *string `json:"start_time_utc"`
+	EndTimeUTC           *string `json:"end_time_utc"`
+	StartCivilTime       *string `json:"start_civil_time"`
+	EndCivilTime         *string `json:"end_civil_time"`
+	ProviderCivilDate    *string `json:"provider_civil_date"`
+	TimezoneMetadata     *string `json:"timezone_metadata"`
+	DataSourceJSON       string  `json:"data_source_json"`
+	RawJSON              string  `json:"raw_json"`
+	InsertedAt           string  `json:"inserted_at"`
+	UpdatedAt            string  `json:"updated_at"`
+	SourceFamilyFilter   *string `json:"source_family_filter"`
 }
 
 type HealthArchiveSnapshotDataPointRevision struct {
-	ID                int64
-	DataPointID       int64
-	PreviousRawJSON   string
-	ReplacedAt        string
-	ReplacementReason *string
+	ID                int64   `json:"id"`
+	DataPointID       int64   `json:"data_point_id"`
+	PreviousRawJSON   string  `json:"previous_raw_json"`
+	ReplacedAt        string  `json:"replaced_at"`
+	ReplacementReason *string `json:"replacement_reason"`
 }
 
 type HealthArchiveSnapshotRollup struct {
-	ID               int64
-	ProviderName     string
-	ConnectionID     string
-	DataType         string
-	RollupKind       string
-	WindowStartUTC   *string
-	WindowEndUTC     *string
-	CivilDate        *string
-	TimezoneMetadata *string
-	RawJSON          string
-	InsertedAt       string
-	UpdatedAt        string
+	ID               int64   `json:"id"`
+	ProviderName     string  `json:"provider_name"`
+	ConnectionID     string  `json:"connection_id"`
+	DataType         string  `json:"data_type"`
+	RollupKind       string  `json:"rollup_kind"`
+	WindowStartUTC   *string `json:"window_start_utc"`
+	WindowEndUTC     *string `json:"window_end_utc"`
+	CivilDate        *string `json:"civil_date"`
+	TimezoneMetadata *string `json:"timezone_metadata"`
+	RawJSON          string  `json:"raw_json"`
+	InsertedAt       string  `json:"inserted_at"`
+	UpdatedAt        string  `json:"updated_at"`
 }
 
 type HealthArchiveSnapshotIdentitySnapshot struct {
-	ID           int64
-	ProviderName string
-	ConnectionID string
-	RawJSON      string
-	FetchedAt    string
-	SnapshotKind string
+	ID           int64  `json:"id"`
+	ProviderName string `json:"provider_name"`
+	ConnectionID string `json:"connection_id"`
+	RawJSON      string `json:"raw_json"`
+	FetchedAt    string `json:"fetched_at"`
+	SnapshotKind string `json:"snapshot_kind"`
 }
 
 type HealthArchiveSnapshotSyncRun struct {
-	ID                 int64
-	ProviderName       string
-	ConnectionID       *string
-	DataTypesRequested string
-	RangeRequestedJSON string
-	EndpointFamily     string
-	Status             string
-	SeenCount          int
-	NewCount           int
-	UpdatedCount       int
-	StartedAt          string
-	FinishedAt         *string
-	ErrorSummary       *string
-	SourceFamilyFilter *string
-	LastProgressAt     *string
+	ID                 int64   `json:"id"`
+	ProviderName       string  `json:"provider_name"`
+	ConnectionID       *string `json:"connection_id"`
+	DataTypesRequested string  `json:"data_types_requested"`
+	RangeRequestedJSON string  `json:"range_requested_json"`
+	EndpointFamily     string  `json:"endpoint_family"`
+	Status             string  `json:"status"`
+	SeenCount          int     `json:"seen_count"`
+	NewCount           int     `json:"new_count"`
+	UpdatedCount       int     `json:"updated_count"`
+	StartedAt          string  `json:"started_at"`
+	FinishedAt         *string `json:"finished_at"`
+	ErrorSummary       *string `json:"error_summary"`
+	SourceFamilyFilter *string `json:"source_family_filter"`
+	LastProgressAt     *string `json:"last_progress_at"`
 }
 
 type HealthArchiveSnapshotSyncCursor struct {
-	ConnectionID       string
-	DataType           string
-	SourceFamilyFilter string
-	RollupKind         string
-	CursorTime         string
-	AdvancedAt         string
+	ConnectionID       string `json:"connection_id"`
+	DataType           string `json:"data_type"`
+	SourceFamilyFilter string `json:"source_family_filter"`
+	RollupKind         string `json:"rollup_kind"`
+	CursorTime         string `json:"cursor_time"`
+	AdvancedAt         string `json:"advanced_at"`
+}
+
+type HealthArchiveSnapshotJSONLShard struct {
+	Table string
+	Path  string
+	Rows  int
+	JSONL []byte
+}
+
+func EncodeHealthArchiveSnapshotJSONL(snapshot HealthArchiveSnapshot) ([]HealthArchiveSnapshotJSONLShard, error) {
+	if err := ValidateHealthArchiveSnapshot(snapshot); err != nil {
+		return nil, err
+	}
+	shards := make([]HealthArchiveSnapshotJSONLShard, 0, 9)
+	add := func(table string, rows int, encode func(*bytes.Buffer) error) error {
+		var buffer bytes.Buffer
+		if err := encode(&buffer); err != nil {
+			return fmt.Errorf("encode Health Archive Snapshot %s JSONL: %w", table, err)
+		}
+		shards = append(shards, HealthArchiveSnapshotJSONLShard{
+			Table: table,
+			Path:  "data/" + table + ".jsonl.gz.age",
+			Rows:  rows,
+			JSONL: buffer.Bytes(),
+		})
+		return nil
+	}
+	if err := add("connections", len(snapshot.Connections), func(buffer *bytes.Buffer) error { return encodeSnapshotJSONL(buffer, snapshot.Connections) }); err != nil {
+		return nil, err
+	}
+	if err := add("data_points", len(snapshot.DataPoints), func(buffer *bytes.Buffer) error { return encodeSnapshotJSONL(buffer, snapshot.DataPoints) }); err != nil {
+		return nil, err
+	}
+	if err := add("data_point_revisions", len(snapshot.DataPointRevisions), func(buffer *bytes.Buffer) error { return encodeSnapshotJSONL(buffer, snapshot.DataPointRevisions) }); err != nil {
+		return nil, err
+	}
+	if err := add("data_point_attachments", len(snapshot.DataPointAttachments), func(buffer *bytes.Buffer) error { return encodeSnapshotJSONL(buffer, snapshot.DataPointAttachments) }); err != nil {
+		return nil, err
+	}
+	if err := add("attachment_payloads", len(snapshot.AttachmentPayloads), func(buffer *bytes.Buffer) error { return encodeSnapshotJSONL(buffer, snapshot.AttachmentPayloads) }); err != nil {
+		return nil, err
+	}
+	if err := add("rollups", len(snapshot.Rollups), func(buffer *bytes.Buffer) error { return encodeSnapshotJSONL(buffer, snapshot.Rollups) }); err != nil {
+		return nil, err
+	}
+	if err := add("identity_snapshots", len(snapshot.IdentitySnapshots), func(buffer *bytes.Buffer) error { return encodeSnapshotJSONL(buffer, snapshot.IdentitySnapshots) }); err != nil {
+		return nil, err
+	}
+	if err := add("sync_runs", len(snapshot.SyncRuns), func(buffer *bytes.Buffer) error { return encodeSnapshotJSONL(buffer, snapshot.SyncRuns) }); err != nil {
+		return nil, err
+	}
+	if err := add("sync_cursors", len(snapshot.SyncCursors), func(buffer *bytes.Buffer) error { return encodeSnapshotJSONL(buffer, snapshot.SyncCursors) }); err != nil {
+		return nil, err
+	}
+	return shards, nil
+}
+
+func encodeSnapshotJSONL[T any](buffer *bytes.Buffer, rows []T) error {
+	encoder := json.NewEncoder(buffer)
+	for _, row := range rows {
+		if err := encoder.Encode(row); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ExportHealthArchiveSnapshot(ctx context.Context, archivePath string) (HealthArchiveSnapshot, error) {

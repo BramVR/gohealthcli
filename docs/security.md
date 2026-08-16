@@ -108,9 +108,11 @@ is unaffected.
 ## Encrypted Backups
 
 Backup work is explicit. `backup init` may create a Git checkout and push its
-recovery README to the configured remote. A later accepted backup operation
-will write only age-encrypted Health Archive shards plus the documented
-cleartext manifest. No backup command refreshes the Provider implicitly.
+recovery README to the configured remote. `backup push` exports only the current
+local Health Archive, writes age-encrypted JSONL gzip shards plus the documented
+cleartext manifest, commits, and pushes unless `--no-push` is set. It does not
+sync, refresh Identity Snapshots, read the Credential Store, or contact Google
+Health.
 
 The default `backup.json` and `backup-age-identity.txt` live beside the main
 config under the XDG-style gohealthcli config directory and are owner-only.
@@ -121,7 +123,9 @@ The Git repository remains sensitive metadata. Its cleartext manifest may
 reveal export time, public recipients, logical table names, row counts, shard
 paths, encrypted sizes, plaintext hashes, backup cadence, and changed shards.
 Private health payloads and Attachment bytes must be encrypted before Git sees
-them. Loss of every matching age identity makes the backup unrecoverable;
+them. Shard plaintext exists only in process memory before fixed-metadata gzip
+compression and age encryption; Git receives only ciphertext. Loss of every
+matching age identity makes the backup unrecoverable;
 compromise of an identity can expose compatible shards retained in Git history.
 
 `backup status` reads only the backup config, checkout, and cleartext manifest.
