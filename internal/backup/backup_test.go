@@ -1,8 +1,12 @@
 package backup
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +14,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"filippo.io/age"
 )
 
 func TestConfigRoundTripUsesOwnerOnlyFiles(t *testing.T) {
@@ -262,6 +269,1000 @@ func TestInitAndStatusAgainstTemporaryBareRemote(t *testing.T) {
 	}
 	if status.Status != StatusReady || !status.Encrypted || status.ShardCount != 1 || status.ExportedAt != manifest.ExportedAt || status.Counts == nil || *status.Counts != manifest.Counts {
 		t.Fatalf("Status with manifest = %+v, want manifest metadata", status)
+	}
+}
+
+func TestPushWritesEncryptedSnapshotCommitAndLeavesUnchangedRerunClean(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Remote:     remote,
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	const privateMarker = "synthetic-private-health-value"
+	input := PushInput{
+		SchemaVersion: 12,
+		ExportedAt:    time.Date(2026, 8, 16, 10, 30, 0, 0, time.UTC),
+		Counts: Counts{
+			Connections:        1,
+			DataPoints:         1,
+			AttachmentPayloads: 1,
+		},
+		Shards: []PlaintextShard{
+			{Table: "connections", Path: "data/connections.jsonl.gz.age", Rows: 1, JSONL: []byte("{\"id\":\"synthetic-connection\"}\n")},
+			{Table: "data_points", Path: "data/data_points.jsonl.gz.age", Rows: 1, JSONL: []byte("{\"raw_json\":\"" + privateMarker + "\"}\n")},
+			{Table: "attachment_payloads", Path: "data/attachment_payloads.jsonl.gz.age", Rows: 1, JSONL: []byte("{\"payload\":\"c3ludGhldGljLWF0dGFjaG1lbnQtYnl0ZXM=\"}\n")},
+		},
+	}
+	result, err := Push(context.Background(), opts, input)
+	if err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	if !result.Changed || result.Pushed || !result.Encrypted || result.ShardCount != len(input.Shards) || result.Counts != input.Counts {
+		t.Fatalf("Push result = %+v", result)
+	}
+	firstHead := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD"))
+
+	manifestData, err := os.ReadFile(filepath.Join(opts.Repo, ManifestFilename))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest Manifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	if manifest.Format != 1 || !manifest.Encrypted || manifest.HealthArchiveSchemaVersion != input.SchemaVersion || manifest.ExportedAt != input.ExportedAt.Format(time.RFC3339) || !reflect.DeepEqual(manifest.Recipients, normalizedStrings(manifest.Recipients)) || manifest.Counts != input.Counts || len(manifest.Shards) != len(input.Shards) {
+		t.Fatalf("manifest = %+v", manifest)
+	}
+
+	identityData, err := os.ReadFile(opts.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var identity age.Identity
+	for _, line := range strings.Split(string(identityData), "\n") {
+		if strings.HasPrefix(line, "AGE-SECRET-KEY-") {
+			identity, err = age.ParseX25519Identity(line)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if identity == nil {
+		t.Fatal("generated age identity not found")
+	}
+	plaintextByPath := make(map[string][]byte, len(input.Shards))
+	firstCiphertexts := make(map[string][]byte, len(input.Shards))
+	for _, shard := range input.Shards {
+		plaintextByPath[shard.Path] = shard.JSONL
+	}
+	for _, entry := range manifest.Shards {
+		ciphertext, err := os.ReadFile(filepath.Join(opts.Repo, filepath.FromSlash(entry.Path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(ciphertext, []byte(privateMarker)) || bytes.Contains(ciphertext, []byte("synthetic-attachment-bytes")) {
+			t.Fatalf("encrypted shard %q contains plaintext", entry.Path)
+		}
+		firstCiphertexts[entry.Path] = append([]byte(nil), ciphertext...)
+		decrypted, err := age.Decrypt(bytes.NewReader(ciphertext), identity)
+		if err != nil {
+			t.Fatalf("decrypt %q: %v", entry.Path, err)
+		}
+		reader, err := gzip.NewReader(decrypted)
+		if err != nil {
+			t.Fatalf("gzip %q: %v", entry.Path, err)
+		}
+		if !reader.ModTime.IsZero() {
+			t.Errorf("gzip %q modtime = %v, want fixed zero value", entry.Path, reader.ModTime)
+		}
+		plaintext, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := reader.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(plaintext, plaintextByPath[entry.Path]) {
+			t.Fatalf("decrypted shard %q mismatch", entry.Path)
+		}
+	}
+
+	input.ExportedAt = input.ExportedAt.Add(time.Hour)
+	second, err := Push(context.Background(), opts, input)
+	if err != nil {
+		t.Fatalf("unchanged Push: %v", err)
+	}
+	if second.Changed || second.Pushed {
+		t.Fatalf("unchanged Push result = %+v", second)
+	}
+	if head := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD")); head != firstHead {
+		t.Fatalf("unchanged Push HEAD = %s, want %s", head, firstHead)
+	}
+	if status := gitCommand(t, opts.Repo, "status", "--porcelain=v1", "--untracked-files=all"); strings.TrimSpace(status) != "" {
+		t.Fatalf("unchanged Push left checkout dirty: %q", status)
+	}
+	corruptedPath := filepath.Join(opts.Repo, filepath.FromSlash(manifest.Shards[0].Path))
+	corrupted, err := os.ReadFile(corruptedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrupted[len(corrupted)-1] ^= 0xff
+	if err := os.WriteFile(corruptedPath, corrupted, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, opts.Repo, "add", "--", manifest.Shards[0].Path)
+	gitCommand(t, opts.Repo, "commit", "--no-gpg-sign", "-m", "test: commit corrupted ciphertext")
+	input.ExportedAt = input.ExportedAt.Add(time.Hour)
+	repaired, err := Push(context.Background(), opts, input)
+	if err != nil {
+		t.Fatalf("corrupted-ciphertext Push: %v", err)
+	}
+	if !repaired.Changed {
+		t.Fatalf("corrupted-ciphertext Push result = %+v, want changed repair", repaired)
+	}
+	repairedCiphertext, err := os.ReadFile(corruptedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(repairedCiphertext, corrupted) {
+		t.Fatal("corrupted ciphertext was reused")
+	}
+
+	additionalIdentity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.Recipients = []string{manifest.Recipients[0], additionalIdentity.Recipient().String()}
+	input.ExportedAt = input.ExportedAt.Add(time.Hour)
+	reencrypted, err := Push(context.Background(), opts, input)
+	if err != nil {
+		t.Fatalf("recipient-change Push: %v", err)
+	}
+	if !reencrypted.Changed {
+		t.Fatalf("recipient-change Push result = %+v, want changed", reencrypted)
+	}
+	updatedManifestData, err := os.ReadFile(filepath.Join(opts.Repo, ManifestFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var updatedManifest Manifest
+	if err := json.Unmarshal(updatedManifestData, &updatedManifest); err != nil {
+		t.Fatal(err)
+	}
+	if len(updatedManifest.Recipients) != 2 {
+		t.Fatalf("recipient-change manifest recipients = %v, want two", updatedManifest.Recipients)
+	}
+	for _, entry := range updatedManifest.Shards {
+		ciphertext, err := os.ReadFile(filepath.Join(opts.Repo, filepath.FromSlash(entry.Path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Equal(ciphertext, firstCiphertexts[entry.Path]) {
+			t.Errorf("recipient change did not re-encrypt shard %q", entry.Path)
+		}
+	}
+	stalePath := filepath.Join(opts.Repo, filepath.FromSlash("data/attachment_payloads.jsonl.gz.age"))
+	input.Shards = input.Shards[:2]
+	input.Counts.AttachmentPayloads = 0
+	input.ExportedAt = input.ExportedAt.Add(time.Hour)
+	trimmed, err := Push(context.Background(), opts, input)
+	if err != nil {
+		t.Fatalf("stale-shard Push: %v", err)
+	}
+	if !trimmed.Changed {
+		t.Fatalf("stale-shard Push result = %+v, want changed", trimmed)
+	}
+	if _, err := os.Lstat(stalePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale shard still exists: %v", err)
+	}
+	manifestBeforeRejectedPush, err := os.ReadFile(filepath.Join(opts.Repo, ManifestFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorPath := filepath.Join(opts.Repo, "data", "operator-note")
+	if err := os.WriteFile(operatorPath, []byte("preserve me\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	input.ExportedAt = input.ExportedAt.Add(time.Hour)
+	if _, err := Push(context.Background(), opts, input); err == nil || !strings.Contains(err.Error(), "uncommitted changes") {
+		t.Fatalf("Push with operator file error = %v, want preflight rejection", err)
+	}
+	operatorData, err := os.ReadFile(operatorPath)
+	if err != nil || string(operatorData) != "preserve me\n" {
+		t.Fatalf("operator file after rejected Push = %q, %v", operatorData, err)
+	}
+	manifestAfterRejectedPush, err := os.ReadFile(filepath.Join(opts.Repo, ManifestFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(manifestBeforeRejectedPush, manifestAfterRejectedPush) {
+		t.Fatal("rejected Push changed the manifest")
+	}
+}
+
+func TestPushPushesSnapshotCommitToTemporaryBareRemote(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Remote:     remote,
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	opts.Push = true
+	input := PushInput{
+		SchemaVersion: 12,
+		ExportedAt:    time.Date(2026, 8, 16, 11, 0, 0, 0, time.UTC),
+		Counts:        Counts{Connections: 1},
+		Shards: []PlaintextShard{
+			{Table: "connections", Path: "data/connections.jsonl.gz.age", Rows: 1, JSONL: []byte("{\"id\":\"synthetic-connection\"}\n")},
+		},
+	}
+	result, err := Push(context.Background(), opts, input)
+	if err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	if !result.Changed || !result.Pushed {
+		t.Fatalf("Push result = %+v, want changed and pushed", result)
+	}
+	localHead := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD"))
+	remoteHead := strings.TrimSpace(gitCommand(t, "", "--git-dir", remote, "rev-parse", "HEAD"))
+	if localHead != remoteHead {
+		t.Fatalf("remote HEAD = %s, want local %s", remoteHead, localHead)
+	}
+
+	input.ExportedAt = input.ExportedAt.Add(time.Hour)
+	unchanged, err := Push(context.Background(), opts, input)
+	if err != nil {
+		t.Fatalf("unchanged Push: %v", err)
+	}
+	if unchanged.Changed || !unchanged.Pushed {
+		t.Fatalf("unchanged Push result = %+v, want unchanged push", unchanged)
+	}
+	if head := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD")); head != localHead {
+		t.Fatalf("unchanged Push created commit %s, want %s", head, localHead)
+	}
+}
+
+func TestPushRejectsCheckoutWithoutSetupCommitBeforeBuildingSnapshot(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	gitCommand(t, opts.Repo, "update-ref", "-d", "HEAD")
+
+	built := false
+	_, err := PushCurrent(context.Background(), opts, func() (PushInput, error) {
+		built = true
+		return PushInput{}, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "backup init") {
+		t.Fatalf("PushCurrent error = %v, want backup init remediation", err)
+	}
+	if built {
+		t.Fatal("PushCurrent built a Health Archive Snapshot before rejecting the uninitialized checkout")
+	}
+}
+
+func TestPushRejectsTrackedFilesOutsideCurrentManifest(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	input := PushInput{
+		SchemaVersion: 12,
+		ExportedAt:    time.Date(2026, 8, 16, 11, 30, 0, 0, time.UTC),
+		Counts:        Counts{Connections: 1},
+		Shards: []PlaintextShard{
+			{Table: "connections", Path: "data/connections.jsonl.gz.age", Rows: 1, JSONL: []byte("{\"id\":\"synthetic-connection\"}\n")},
+		},
+	}
+	if _, err := Push(context.Background(), opts, input); err != nil {
+		t.Fatalf("first Push: %v", err)
+	}
+	foreignPath := filepath.Join(opts.Repo, "data", "foreign.jsonl.gz.age")
+	if err := os.WriteFile(foreignPath, []byte("foreign tracked content\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, opts.Repo, "add", "--", "data/foreign.jsonl.gz.age")
+	gitCommand(t, opts.Repo, "commit", "--no-gpg-sign", "-m", "test: add foreign tracked backup file")
+	foreignHead := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD"))
+	input.ExportedAt = input.ExportedAt.Add(time.Hour)
+	if _, err := Push(context.Background(), opts, input); err == nil || !strings.Contains(err.Error(), "not owned by the current manifest") {
+		t.Fatalf("Push with foreign tracked file error = %v, want ownership rejection", err)
+	}
+	foreignData, err := os.ReadFile(foreignPath)
+	if err != nil || string(foreignData) != "foreign tracked content\n" {
+		t.Fatalf("foreign tracked file after rejected Push = %q, %v", foreignData, err)
+	}
+	if head := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD")); head != foreignHead {
+		t.Fatalf("rejected Push HEAD = %s, want %s", head, foreignHead)
+	}
+}
+
+func TestPushRejectsIgnoredOperatorFilesWithoutDeletingThem(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(opts.Repo, "data"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	operatorPath := filepath.Join(opts.Repo, "data", "operator-note")
+	if err := os.WriteFile(operatorPath, []byte("preserve ignored file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(opts.Repo, ".git", "info", "exclude"), []byte("data/operator-note\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	input := PushInput{
+		SchemaVersion: 12,
+		ExportedAt:    time.Date(2026, 8, 16, 11, 45, 0, 0, time.UTC),
+		Shards: []PlaintextShard{
+			{Table: "connections", Path: "data/connections.jsonl.gz.age", Rows: 0},
+		},
+	}
+	if _, err := Push(context.Background(), opts, input); err == nil || !strings.Contains(err.Error(), "not owned by the current manifest") {
+		t.Fatalf("Push with ignored operator file error = %v, want ownership rejection", err)
+	}
+	operatorData, err := os.ReadFile(operatorPath)
+	if err != nil || string(operatorData) != "preserve ignored file\n" {
+		t.Fatalf("ignored operator file after rejected Push = %q, %v", operatorData, err)
+	}
+}
+
+func TestPushForceAddsGeneratedShardsDespiteIgnoreRules(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(opts.Repo, ".git", "info", "exclude"), []byte("data/*.age\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	input := PushInput{
+		SchemaVersion: 12,
+		ExportedAt:    time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC),
+		Shards: []PlaintextShard{
+			{Table: "connections", Path: "data/connections.jsonl.gz.age", Rows: 1, JSONL: []byte("{\"id\":\"synthetic-connection\"}\n")},
+		},
+	}
+	if _, err := Push(context.Background(), opts, input); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	if got := strings.TrimSpace(gitCommand(t, opts.Repo, "ls-tree", "--name-only", "HEAD", "--", input.Shards[0].Path)); got != input.Shards[0].Path {
+		t.Fatalf("committed ignored shard = %q, want %q", got, input.Shards[0].Path)
+	}
+}
+
+func TestPushRejectsGitContentAttributesBeforePublication(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	attributesPath := filepath.Join(opts.Repo, ".gitattributes")
+	if err := os.WriteFile(attributesPath, []byte("data/*.age filter=corrupt\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, opts.Repo, "add", "--", ".gitattributes")
+	gitCommand(t, opts.Repo, "commit", "--no-gpg-sign", "-m", "test: add ciphertext filter")
+	beforeHead := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD"))
+	input := PushInput{
+		SchemaVersion: 12,
+		ExportedAt:    time.Date(2026, 8, 16, 12, 5, 0, 0, time.UTC),
+		Shards: []PlaintextShard{
+			{Table: "connections", Path: "data/connections.jsonl.gz.age", Rows: 1, JSONL: []byte("{\"id\":\"synthetic-connection\"}\n")},
+		},
+	}
+	if _, err := Push(context.Background(), opts, input); err == nil || !strings.Contains(err.Error(), "Git content attribute applies") {
+		t.Fatalf("Push with content attribute error = %v, want rejection", err)
+	}
+	if head := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD")); head != beforeHead {
+		t.Fatalf("rejected Push HEAD = %s, want %s", head, beforeHead)
+	}
+	for _, path := range []string{filepath.Join(opts.Repo, ManifestFilename), filepath.Join(opts.Repo, "data")} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("rejected Push published path %s: %v", path, err)
+		}
+	}
+}
+
+func TestGitContentAttributesUnspecifiedAcceptsCRLF(t *testing.T) {
+	t.Parallel()
+	output := "data/example.age: filter: unspecified\r\ndata/example.age: text: unspecified\r\n"
+	if !gitContentAttributesUnspecified(output) {
+		t.Fatal("unspecified CRLF attribute output was rejected")
+	}
+	if gitContentAttributesUnspecified("data/example.age: filter: corrupt\r\n") {
+		t.Fatal("specified CRLF attribute output was accepted")
+	}
+}
+
+func TestPushRestoresPreviousCheckoutWhenCommitFails(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell hook fixture is Unix-only")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	beforeHead := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD"))
+	gitDir := filepath.Join(opts.Repo, ".git")
+	if err := os.Chmod(gitDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(gitDir, 0o700) }()
+	input := PushInput{
+		SchemaVersion: 12,
+		ExportedAt:    time.Date(2026, 8, 16, 12, 15, 0, 0, time.UTC),
+		Shards: []PlaintextShard{
+			{Table: "connections", Path: "data/connections.jsonl.gz.age", Rows: 1, JSONL: []byte("{\"id\":\"synthetic-connection\"}\n")},
+		},
+	}
+	if _, err := Push(context.Background(), opts, input); err == nil {
+		t.Fatal("Push with read-only Git metadata succeeded")
+	}
+	if err := os.Chmod(gitDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if head := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD")); head != beforeHead {
+		t.Fatalf("failed Push HEAD = %s, want %s", head, beforeHead)
+	}
+	if status := strings.TrimSpace(gitCommand(t, opts.Repo, "status", "--porcelain=v1", "--untracked-files=all")); status != "" {
+		t.Fatalf("failed Push left checkout dirty: %q", status)
+	}
+	for _, path := range []string{filepath.Join(opts.Repo, ManifestFilename), filepath.Join(opts.Repo, "data")} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("failed Push left published path %s: %v", path, err)
+		}
+	}
+}
+
+func TestPushDisablesRepositoryHooksBeforeCommitting(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell hook fixture is Unix-only")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	hookMarker := filepath.Join(opts.Repo, "hook-ran")
+	hookBody := "#!/bin/sh\nprintf hook-ran > " + hookMarker + "\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(opts.Repo, ".git", "hooks", "pre-commit"), []byte(hookBody), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	input := PushInput{
+		SchemaVersion: 12,
+		ExportedAt:    time.Date(2026, 8, 16, 12, 30, 0, 0, time.UTC),
+		Shards: []PlaintextShard{
+			{Table: "connections", Path: "data/connections.jsonl.gz.age", Rows: 1, JSONL: []byte("{\"id\":\"synthetic-connection\"}\n")},
+		},
+	}
+	if _, err := Push(context.Background(), opts, input); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	if _, err := os.Lstat(hookMarker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("repository hook ran during Push: %v", err)
+	}
+	if !isGeneratedSnapshotCommit(context.Background(), opts.Repo, "HEAD") {
+		t.Fatal("Push did not create a verified generated snapshot commit")
+	}
+}
+
+func TestPushRepairsCommittedMissingReadmeWithValidatedSnapshot(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	input := PushInput{
+		SchemaVersion: 12,
+		ExportedAt:    time.Date(2026, 8, 16, 12, 45, 0, 0, time.UTC),
+		Shards: []PlaintextShard{
+			{Table: "connections", Path: "data/connections.jsonl.gz.age", Rows: 1, JSONL: []byte("{\"id\":\"synthetic-connection\"}\n")},
+		},
+	}
+	if _, err := Push(context.Background(), opts, input); err != nil {
+		t.Fatalf("first Push: %v", err)
+	}
+	if err := os.Remove(filepath.Join(opts.Repo, recoveryReadmeFilename)); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, opts.Repo, "add", "-u", "--", recoveryReadmeFilename)
+	gitCommand(t, opts.Repo, "commit", "--no-gpg-sign", "-m", "test: remove generated README")
+	input.ExportedAt = input.ExportedAt.Add(time.Hour)
+	repaired, err := Push(context.Background(), opts, input)
+	if err != nil {
+		t.Fatalf("README repair Push: %v", err)
+	}
+	if !repaired.Changed {
+		t.Fatalf("README repair Push = %+v, want changed", repaired)
+	}
+	if !isGeneratedSnapshotCommit(context.Background(), opts.Repo, "HEAD") {
+		t.Fatal("README-only repair is not a verified generated snapshot commit")
+	}
+	if status := strings.TrimSpace(gitCommand(t, opts.Repo, "status", "--porcelain=v1", "--untracked-files=all")); status != "" {
+		t.Fatalf("README repair left checkout dirty: %q", status)
+	}
+}
+
+func TestPushRejectsForgedGeneratedCommitContainingPlaintext(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Remote:     remote,
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	input := PushInput{
+		SchemaVersion: 12,
+		ExportedAt:    time.Date(2026, 8, 16, 13, 0, 0, 0, time.UTC),
+		Counts:        Counts{Connections: 1},
+		Shards: []PlaintextShard{
+			{Table: "connections", Path: "data/connections.jsonl.gz.age", Rows: 1, JSONL: []byte("{\"id\":\"synthetic-connection\"}\n")},
+		},
+	}
+	if _, err := Push(context.Background(), opts, input); err != nil {
+		t.Fatalf("first Push: %v", err)
+	}
+	manifestData, err := os.ReadFile(filepath.Join(opts.Repo, ManifestFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest Manifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	forgedPlaintext := []byte("plaintext health data in forged history\n")
+	forgedPath := filepath.Join(opts.Repo, filepath.FromSlash(manifest.Shards[0].Path))
+	if err := os.WriteFile(forgedPath, forgedPlaintext, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Shards[0].Bytes = int64(len(forgedPlaintext))
+	forgedManifest, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	forgedManifest = append(forgedManifest, '\n')
+	if err := os.WriteFile(filepath.Join(opts.Repo, ManifestFilename), forgedManifest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, opts.Repo, "add", "--", ManifestFilename, manifest.Shards[0].Path)
+	gitCommand(t, opts.Repo, "commit", "--no-gpg-sign", "-m", "backup: update encrypted Health Archive snapshot")
+	opts.Push = true
+	input.ExportedAt = input.ExportedAt.Add(time.Hour)
+	if _, err := Push(context.Background(), opts, input); err == nil || !strings.Contains(err.Error(), "authenticated backup commands") {
+		t.Fatalf("Push with forged generated history error = %v, want authenticated-history rejection", err)
+	}
+	if _, err := gitOutput(context.Background(), "", "--git-dir", remote, "rev-parse", "HEAD"); err == nil {
+		t.Fatal("forged generated history reached remote")
+	}
+}
+
+func TestGeneratedHistoryRejectsPlaintextCommitMessageBody(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	input := PushInput{
+		SchemaVersion: 12,
+		ExportedAt:    time.Date(2026, 8, 16, 13, 15, 0, 0, time.UTC),
+		Shards: []PlaintextShard{
+			{Table: "connections", Path: "data/connections.jsonl.gz.age", Rows: 1, JSONL: []byte("{\"id\":\"synthetic-connection\"}\n")},
+		},
+	}
+	if _, err := Push(context.Background(), opts, input); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	gitCommand(t, opts.Repo, "commit", "--allow-empty", "--no-gpg-sign", "-m", "backup: update encrypted Health Archive snapshot", "-m", "plaintext health data in commit body")
+	identity, err := identityFromFile(opts.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if isAuthorizedBackupHead(context.Background(), opts.Repo, identity) {
+		t.Fatal("generated history authorization accepted plaintext commit message body")
+	}
+}
+
+func TestPushDoesNotFollowAnnotatedTags(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Remote:     remote,
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	gitCommand(t, opts.Repo, "tag", "-a", "untrusted-annotation", "-m", "plaintext must not be uploaded")
+	gitCommand(t, opts.Repo, "config", "push.followTags", "true")
+	opts.Push = true
+	input := PushInput{
+		SchemaVersion: 12,
+		ExportedAt:    time.Date(2026, 8, 16, 13, 30, 0, 0, time.UTC),
+		Shards: []PlaintextShard{
+			{Table: "connections", Path: "data/connections.jsonl.gz.age", Rows: 1, JSONL: []byte("{\"id\":\"synthetic-connection\"}\n")},
+		},
+	}
+	if _, err := Push(context.Background(), opts, input); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	if _, err := gitOutput(context.Background(), "", "--git-dir", remote, "rev-parse", "refs/tags/untrusted-annotation"); err == nil {
+		t.Fatal("Push uploaded an annotated tag despite exact branch refspec")
+	}
+}
+
+func TestInitPersistsPendingCommitAfterPushFailure(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("bare remote hook fixture is Unix-only")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+	hookPath := filepath.Join(remote, "hooks", "pre-receive")
+	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Remote:     remote,
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       true,
+	}
+	if _, err := Init(context.Background(), opts); err == nil {
+		t.Fatal("Init with rejecting remote succeeded")
+	}
+	cfg, found, err := LoadConfig(opts.ConfigPath)
+	if err != nil || !found {
+		t.Fatalf("LoadConfig after failed push = (%+v, %t, %v)", cfg, found, err)
+	}
+	head := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD"))
+	if !reflect.DeepEqual(cfg.PendingCommits, []string{head}) {
+		t.Fatalf("pending commits after failed push = %v, want [%s]", cfg.PendingCommits, head)
+	}
+	if err := os.Remove(hookPath); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Init(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("retry Init: %v", err)
+	}
+	if result.Changed || !result.Pushed {
+		t.Fatalf("retry Init result = %+v, want unchanged push", result)
+	}
+	cfg, _, err = LoadConfig(opts.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.PendingCommits) != 0 {
+		t.Fatalf("pending commits after successful retry = %v, want empty", cfg.PendingCommits)
+	}
+}
+
+func TestInitMigratesLegacyPendingSetupCommit(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Remote:     remote,
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	cfg, _, err := LoadConfig(opts.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.PendingCommits = nil
+	if err := SaveConfig(opts.ConfigPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	opts.Push = true
+	result, err := Init(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("legacy retry Init: %v", err)
+	}
+	if result.Changed || !result.Pushed {
+		t.Fatalf("legacy retry Init result = %+v, want unchanged push", result)
+	}
+	cfg, _, err = LoadConfig(opts.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.PendingCommits) != 0 {
+		t.Fatalf("pending commits after legacy migration push = %v, want empty", cfg.PendingCommits)
+	}
+}
+
+func TestPushRollsBackWhenPendingCommitCannotBeSaved(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("directory mode failure fixture is Unix-only")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	privateDir := filepath.Join(root, "private")
+	opts := Options{
+		ConfigPath: filepath.Join(privateDir, "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   filepath.Join(privateDir, "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	beforeHead := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD"))
+	beforeConfig, err := os.ReadFile(opts.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(privateDir, 0o700) }()
+	input := PushInput{
+		SchemaVersion: 12,
+		ExportedAt:    time.Date(2026, 8, 16, 13, 45, 0, 0, time.UTC),
+		Shards: []PlaintextShard{
+			{Table: "connections", Path: "data/connections.jsonl.gz.age", Rows: 1, JSONL: []byte("{\"id\":\"synthetic-connection\"}\n")},
+		},
+	}
+	if _, err := PushCurrent(context.Background(), opts, func() (PushInput, error) {
+		if err := os.Chmod(privateDir, 0o500); err != nil {
+			return PushInput{}, err
+		}
+		return input, nil
+	}); err == nil {
+		t.Fatal("Push with unwritable config directory succeeded")
+	}
+	if err := os.Chmod(privateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if head := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD")); head != beforeHead {
+		t.Fatalf("failed Push HEAD = %s, want %s", head, beforeHead)
+	}
+	if status := strings.TrimSpace(gitCommand(t, opts.Repo, "status", "--porcelain=v1", "--untracked-files=all")); status != "" {
+		t.Fatalf("failed Push left checkout dirty: %q", status)
+	}
+	afterConfig, err := os.ReadFile(opts.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(beforeConfig, afterConfig) {
+		t.Fatal("failed Push changed pending commit provenance")
+	}
+}
+
+func TestInterruptedPublicationRecoversCheckoutFromHead(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	head := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD"))
+	if err := beginSnapshotPublication(opts.Repo, head); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(opts.Repo, "data"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(opts.Repo, "data", "connections.jsonl.gz.age"), []byte("partial encrypted shard"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(opts.Repo, ManifestFilename), []byte("partial manifest\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadConfig(opts.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := recoverInterruptedSnapshotPublication(context.Background(), cfg, opts.ConfigPath); err != nil {
+		t.Fatalf("recoverInterruptedSnapshotPublication: %v", err)
+	}
+	if status := strings.TrimSpace(gitCommand(t, opts.Repo, "status", "--porcelain=v1", "--untracked-files=all")); status != "" {
+		t.Fatalf("recovered checkout is dirty: %q", status)
+	}
+	if _, err := os.Lstat(filepath.Join(opts.Repo, ".git", publicationMarkerFilename)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("publication marker remains after recovery: %v", err)
+	}
+}
+
+func TestInterruptedCommittedPublicationRecoversPendingProvenance(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	opts := Options{
+		ConfigPath: filepath.Join(root, "private", "backup.json"),
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Push:       false,
+	}
+	if _, err := Init(context.Background(), opts); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	oldHead := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD"))
+	input := PushInput{
+		SchemaVersion: 12,
+		ExportedAt:    time.Date(2026, 8, 16, 14, 0, 0, 0, time.UTC),
+		Shards: []PlaintextShard{
+			{Table: "connections", Path: "data/connections.jsonl.gz.age", Rows: 1, JSONL: []byte("{\"id\":\"synthetic-connection\"}\n")},
+		},
+	}
+	if _, err := Push(context.Background(), opts, input); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	newHead := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD"))
+	cfg, _, err := LoadConfig(opts.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.PendingCommits = []string{oldHead}
+	if err := SaveConfig(opts.ConfigPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := beginSnapshotPublication(opts.Repo, oldHead); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordSnapshotPublicationCommit(opts.Repo, newHead); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = recoverInterruptedSnapshotPublication(context.Background(), cfg, opts.ConfigPath)
+	if err != nil {
+		t.Fatalf("recoverInterruptedSnapshotPublication: %v", err)
+	}
+	if !reflect.DeepEqual(cfg.PendingCommits, []string{oldHead, newHead}) {
+		t.Fatalf("recovered pending commits = %v, want [%s %s]", cfg.PendingCommits, oldHead, newHead)
 	}
 }
 
@@ -1579,7 +2580,14 @@ func gitCommand(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.CommandContext(context.Background(), "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "HOME="+t.TempDir())
+	cmd.Env = append(os.Environ(),
+		"GIT_CONFIG_NOSYSTEM=1",
+		"HOME="+t.TempDir(),
+		"GIT_AUTHOR_NAME=gohealthcli test",
+		"GIT_AUTHOR_EMAIL=test@example.invalid",
+		"GIT_COMMITTER_NAME=gohealthcli test",
+		"GIT_COMMITTER_EMAIL=test@example.invalid",
+	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)

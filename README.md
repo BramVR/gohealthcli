@@ -19,9 +19,8 @@ raw API exploration, and CSV/JSONL exports.
 
 It is for local inspection and personal data archiving. It does not write health
 data, delete health data, run a server, upload in the background, or share
-plaintext archives or exports. `backup init` may use an owner-configured Git
-remote but does not export Health Archive payloads; future payload-writing
-backup commands must encrypt them with age before Git sees them.
+plaintext archives or exports. Explicit `backup push` encrypts Health Archive
+payloads with age before Git sees them.
 
 ## Status
 
@@ -29,7 +28,8 @@ The full command surface is live: setup (`init`, `doctor`), Provider catalog
 verification (`catalog verify`), OAuth and
 identity snapshots (`connect` through `irn-profile`), archiving (`sync`,
 with heartbeat-backed `sync --status` observability and auto-fencing of
-abandoned runs), encrypted backup setup/status (`backup init`, `backup status`),
+abandoned runs), encrypted backup setup/push/status (`backup init`, `backup push`,
+`backup status`),
 raw provider exploration (`raw`), and a stable read
 surface (`status`,
 `query`, `export`, `describe-schema`) with predictable `--plain` /
@@ -51,7 +51,7 @@ sync with `gohealthcli --help`.
 - `devices`: Archive a Paired Devices Snapshot from the provider.
 - `irn-profile`: Archive an IRN Profile Snapshot from the provider.
 - `sync`: Archive Google Health Data Points and supported Rollups.
-- `backup`: Initialize and inspect encrypted Health Archive backups.
+- `backup`: Initialize, push, and inspect encrypted Health Archive backups.
 - `status`: Summarise archive counts and newest synced timestamps.
 - `query`: Run guarded read-only SQL over the Health Archive.
 - `export`: Write a normalised dataset to CSV or JSONL.
@@ -546,7 +546,7 @@ Use `doctor --plain` to check local setup without provider calls. Use
 `doctor --online --plain` only when you want token refresh and Google Health
 reachability checks.
 
-## Encrypted backup setup
+## Encrypted backups
 
 `backup init` creates or reuses an X25519 age identity, records the backup
 checkout/remote/recipients in an owner-only config, initializes or clones the
@@ -555,8 +555,16 @@ Git checkout, and commits a recovery README. It pushes that setup commit unless
 
 ```bash
 gohealthcli backup init --remote /path/to/backup-gohealthcli.git --no-push --plain
+gohealthcli backup push --db /path/to/gohealthcli.sqlite --no-push --plain
 gohealthcli backup status --plain
 ```
+
+`backup push` exports the current Health Archive only. It does not run `sync`,
+refresh Identity Snapshots, read Provider credentials, or contact Google Health.
+Each logical collection becomes deterministic JSONL with fixed gzip metadata,
+then age encryption happens before the shard is written into the Git checkout.
+The command commits the encrypted shards and cleartext manifest locally, and
+pushes unless `--no-push` is set. An unchanged rerun leaves the checkout clean.
 
 `backup status` is a read-only manifest inspection path. It works without the
 private age identity and reports a clear `backup_uninitialized` or

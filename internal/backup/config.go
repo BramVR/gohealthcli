@@ -18,6 +18,7 @@ type Config struct {
 	Identity       string   `json:"identity"`
 	LocalRecipient string   `json:"local_recipient,omitempty"`
 	Recipients     []string `json:"recipients"`
+	PendingCommits []string `json:"pending_commits,omitempty"`
 }
 
 type Options struct {
