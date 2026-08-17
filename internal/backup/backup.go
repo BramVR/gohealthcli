@@ -540,14 +540,15 @@ func writeBackupReadme(repo string) error {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("backup README %s is not a regular file", path)
 		}
-		if info.Size() != int64(len(backupReadmeBody)) && info.Size() != int64(len(legacyBackupReadmeBody)) {
+		maxSize := max(len(backupReadmeBodyCRLF()), len(legacyBackupReadmeBodyCRLF()))
+		if info.Size() > int64(maxSize) {
 			return fmt.Errorf("backup README %s already exists with different content", path)
 		}
 		data, err := os.ReadFile(path) // #nosec G304 -- regular repository path validated above.
 		if err != nil {
 			return err
 		}
-		if string(data) != backupReadmeBody && string(data) != legacyBackupReadmeBody {
+		if !isKnownBackupReadmeWorktree(string(data)) {
 			return fmt.Errorf("backup README %s already exists with different content", path)
 		}
 		return nil
@@ -563,6 +564,18 @@ func writeBackupReadme(repo string) error {
 		return err
 	}
 	return file.Close()
+}
+
+func isKnownBackupReadmeWorktree(body string) bool {
+	return body == backupReadmeBody || body == legacyBackupReadmeBody || body == backupReadmeBodyCRLF() || body == legacyBackupReadmeBodyCRLF()
+}
+
+func backupReadmeBodyCRLF() string {
+	return strings.ReplaceAll(backupReadmeBody, "\n", "\r\n")
+}
+
+func legacyBackupReadmeBodyCRLF() string {
+	return strings.ReplaceAll(legacyBackupReadmeBody, "\n", "\r\n")
 }
 
 const legacyBackupReadmeBody = `# backup-gohealthcli

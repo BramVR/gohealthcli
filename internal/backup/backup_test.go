@@ -2691,6 +2691,32 @@ func TestInitRejectsDifferentExistingReadme(t *testing.T) {
 	}
 }
 
+func TestWriteBackupReadmeAcceptsGeneratedCRLFWorktree(t *testing.T) {
+	t.Parallel()
+	for name, body := range map[string]string{
+		"current": backupReadmeBodyCRLF(),
+		"legacy":  legacyBackupReadmeBodyCRLF(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := t.TempDir()
+			path := filepath.Join(repo, recoveryReadmeFilename)
+			if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeBackupReadme(repo); err != nil {
+				t.Fatalf("writeBackupReadme rejected generated CRLF worktree: %v", err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != body {
+				t.Fatal("writeBackupReadme rewrote generated CRLF worktree")
+			}
+		})
+	}
+}
+
 func TestResolveOptionsMakesPersistedPathsAbsolute(t *testing.T) {
 	t.Parallel()
 	cfg, err := ResolveOptions(Options{
