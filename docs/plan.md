@@ -33,8 +33,8 @@ provider boundaries matter more than broad Data Type coverage.
 - `identity`: fetch Google Health user ID and legacy Fitbit user ID.
 - `profile`: fetch available user profile/settings data.
 - `sync`: fetch selected Data Types over a date range.
-- `backup`: initialize, push, and inspect explicit age-encrypted Git backups;
-  a later slice adds verified restore.
+- `backup`: initialize, push, pull, and inspect explicit age-encrypted Git
+  backups, including verified restore into a fresh Health Archive path.
 - `status`: summarize local archive counts and latest Sync Runs.
 - `query`: read-only SQL over the archive.
 - `export`: export selected normalized data to CSV or JSONL.

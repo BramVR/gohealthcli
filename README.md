@@ -28,8 +28,8 @@ The full command surface is live: setup (`init`, `doctor`), Provider catalog
 verification (`catalog verify`), OAuth and
 identity snapshots (`connect` through `irn-profile`), archiving (`sync`,
 with heartbeat-backed `sync --status` observability and auto-fencing of
-abandoned runs), encrypted backup setup/push/status (`backup init`, `backup push`,
-`backup status`),
+abandoned runs), encrypted backup setup/push/pull/status (`backup init`, `backup push`,
+`backup pull`, `backup status`),
 raw provider exploration (`raw`), and a stable read
 surface (`status`,
 `query`, `export`, `describe-schema`) with predictable `--plain` /
@@ -51,7 +51,7 @@ sync with `gohealthcli --help`.
 - `devices`: Archive a Paired Devices Snapshot from the provider.
 - `irn-profile`: Archive an IRN Profile Snapshot from the provider.
 - `sync`: Archive Google Health Data Points and supported Rollups.
-- `backup`: Initialize, push, and inspect encrypted Health Archive backups.
+- `backup`: Initialize, push, pull, and inspect encrypted Health Archive backups.
 - `status`: Summarise archive counts and newest synced timestamps.
 - `query`: Run guarded read-only SQL over the Health Archive.
 - `export`: Write a normalised dataset to CSV or JSONL.
@@ -556,6 +556,7 @@ Git checkout, and commits a recovery README. It pushes that setup commit unless
 ```bash
 gohealthcli backup init --remote /path/to/backup-gohealthcli.git --no-push --plain
 gohealthcli backup push --db /path/to/gohealthcli.sqlite --no-push --plain
+gohealthcli backup pull --db /path/to/fresh-restored.sqlite --plain
 gohealthcli backup status --plain
 ```
 
@@ -565,6 +566,15 @@ Each logical collection becomes deterministic JSONL with fixed gzip metadata,
 then age encryption happens before the shard is written into the Git checkout.
 The command commits the encrypted shards and cleartext manifest locally, and
 pushes unless `--no-push` is set. An unchanged rerun leaves the checkout clean.
+
+`backup pull` pulls/rebases the configured Git checkout before reading its
+manifest. It confines every shard to the backup data tree, decrypts with the
+configured age identity, verifies the declared plaintext hashes, and validates
+the complete Health Archive Snapshot before creating the target selected by
+`--db`. The target must be a fresh path. Data Point Attachment rows and payloads
+restore together, with owner-only sidecars that pass the same orphan checks as
+`doctor`. Use a throwaway target periodically to prove recovery without touching
+the current Health Archive.
 
 `backup status` is a read-only manifest inspection path. It works without the
 private age identity and reports a clear `backup_uninitialized` or

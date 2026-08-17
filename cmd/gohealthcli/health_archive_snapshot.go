@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 )
@@ -186,6 +187,103 @@ func EncodeHealthArchiveSnapshotJSONL(snapshot HealthArchiveSnapshot) ([]HealthA
 		return nil, err
 	}
 	return shards, nil
+}
+
+func DecodeHealthArchiveSnapshotJSONL(schemaVersion int, shards []HealthArchiveSnapshotJSONLShard) (HealthArchiveSnapshot, error) {
+	snapshot := HealthArchiveSnapshot{SchemaVersion: schemaVersion}
+	seen := make(map[string]struct{}, len(shards))
+	var err error
+	for _, shard := range shards {
+		if _, duplicate := seen[shard.Table]; duplicate {
+			return HealthArchiveSnapshot{}, fmt.Errorf("duplicate Health Archive Snapshot shard table %q", shard.Table)
+		}
+		seen[shard.Table] = struct{}{}
+		wantPath := "data/" + shard.Table + ".jsonl.gz.age"
+		if shard.Path != wantPath {
+			return HealthArchiveSnapshot{}, fmt.Errorf("Health Archive Snapshot shard %q path %q, want %q", shard.Table, shard.Path, wantPath)
+		}
+		switch shard.Table {
+		case "connections":
+			if snapshot.Connections, err = decodeSnapshotJSONL[HealthArchiveSnapshotConnection](shard.JSONL, shard.Rows); err != nil {
+				return HealthArchiveSnapshot{}, err
+			}
+		case "data_points":
+			if snapshot.DataPoints, err = decodeSnapshotJSONL[HealthArchiveSnapshotDataPoint](shard.JSONL, shard.Rows); err != nil {
+				return HealthArchiveSnapshot{}, err
+			}
+		case "data_point_revisions":
+			if snapshot.DataPointRevisions, err = decodeSnapshotJSONL[HealthArchiveSnapshotDataPointRevision](shard.JSONL, shard.Rows); err != nil {
+				return HealthArchiveSnapshot{}, err
+			}
+		case "data_point_attachments":
+			if snapshot.DataPointAttachments, err = decodeSnapshotJSONL[HealthArchiveSnapshotDataPointAttachment](shard.JSONL, shard.Rows); err != nil {
+				return HealthArchiveSnapshot{}, err
+			}
+		case "attachment_payloads":
+			if snapshot.AttachmentPayloads, err = decodeSnapshotJSONL[HealthArchiveSnapshotAttachmentPayload](shard.JSONL, shard.Rows); err != nil {
+				return HealthArchiveSnapshot{}, err
+			}
+		case "rollups":
+			if snapshot.Rollups, err = decodeSnapshotJSONL[HealthArchiveSnapshotRollup](shard.JSONL, shard.Rows); err != nil {
+				return HealthArchiveSnapshot{}, err
+			}
+		case "identity_snapshots":
+			if snapshot.IdentitySnapshots, err = decodeSnapshotJSONL[HealthArchiveSnapshotIdentitySnapshot](shard.JSONL, shard.Rows); err != nil {
+				return HealthArchiveSnapshot{}, err
+			}
+		case "sync_runs":
+			if snapshot.SyncRuns, err = decodeSnapshotJSONL[HealthArchiveSnapshotSyncRun](shard.JSONL, shard.Rows); err != nil {
+				return HealthArchiveSnapshot{}, err
+			}
+		case "sync_cursors":
+			if snapshot.SyncCursors, err = decodeSnapshotJSONL[HealthArchiveSnapshotSyncCursor](shard.JSONL, shard.Rows); err != nil {
+				return HealthArchiveSnapshot{}, err
+			}
+		default:
+			return HealthArchiveSnapshot{}, fmt.Errorf("unknown Health Archive Snapshot shard table %q", shard.Table)
+		}
+	}
+	for _, table := range []string{"connections", "data_points", "data_point_revisions", "data_point_attachments", "attachment_payloads", "rollups", "identity_snapshots", "sync_runs", "sync_cursors"} {
+		if _, ok := seen[table]; !ok {
+			return HealthArchiveSnapshot{}, fmt.Errorf("Health Archive Snapshot shard %q is missing", table)
+		}
+	}
+	if err := ValidateHealthArchiveSnapshot(snapshot); err != nil {
+		return HealthArchiveSnapshot{}, err
+	}
+	return snapshot, nil
+}
+
+func decodeSnapshotJSONL[T any](data []byte, rows int) ([]T, error) {
+	if rows < 0 {
+		return nil, fmt.Errorf("row count %d must not be negative", rows)
+	}
+	if rows == 0 {
+		if len(data) != 0 {
+			return nil, errors.New("zero-row shard contains plaintext bytes")
+		}
+		return nil, nil
+	}
+	if !bytes.HasSuffix(data, []byte{'\n'}) || bytes.Count(data, []byte{'\n'}) != rows {
+		return nil, fmt.Errorf("JSONL row count does not match %d", rows)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	values := make([]T, 0, rows)
+	for index := 0; index < rows; index++ {
+		var value T
+		if err := decoder.Decode(&value); err != nil {
+			return nil, fmt.Errorf("row %d: %w", index+1, err)
+		}
+		values = append(values, value)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, errors.New("JSONL has extra values")
+		}
+		return nil, err
+	}
+	return values, nil
 }
 
 func encodeSnapshotJSONL[T any](buffer *bytes.Buffer, rows []T) error {

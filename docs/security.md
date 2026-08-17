@@ -114,6 +114,14 @@ cleartext manifest, commits, and pushes unless `--no-push` is set. It does not
 sync, refresh Identity Snapshots, read the Credential Store, or contact Google
 Health.
 
+`backup pull` refreshes the configured Git checkout, decrypts and hashes every
+manifest-owned shard in memory, then validates the complete Health Archive
+Snapshot before creating a fresh target archive. It never overwrites an existing
+archive. Attachment rows and payloads restore together through the Attachment
+Store containment and owner-only permission rules; any wrong identity, corrupt
+or missing shard, invalid JSONL, unsupported manifest, or broken Snapshot
+reference fails before a target is reported as restored.
+
 The default `backup.json` and `backup-age-identity.txt` live beside the main
 config under the XDG-style gohealthcli config directory and are owner-only.
 They must never be committed. OAuth client secrets and Credential Store token
@@ -127,6 +135,10 @@ them. Shard plaintext exists only in process memory before fixed-metadata gzip
 compression and age encryption; Git receives only ciphertext. Loss of every
 matching age identity makes the backup unrecoverable;
 compromise of an identity can expose compatible shards retained in Git history.
+Age authenticates ciphertext integrity for a recipient, not the identity of the
+Git publisher. `backup pull` therefore trusts write access to the configured
+owner-controlled remote; protect that remote and review unexpected history or
+collaborator changes before restoring.
 
 `backup status` reads only the backup config, checkout, and cleartext manifest.
 It does not require the private identity, decrypt shards, open the live Health
