@@ -114,6 +114,13 @@ cleartext manifest, commits, and pushes unless `--no-push` is set. It does not
 sync, refresh Identity Snapshots, read the Credential Store, or contact Google
 Health.
 
+Recipient changes are explicit configuration changes. `backup init` canonicalizes
+the complete desired recipient set, and the next `backup push` re-encrypts even
+unchanged Snapshot shards before committing them. Later unchanged pushes reuse
+the authenticated ciphertext. Removing a recipient affects only the current and
+future backup tree; compatible ciphertext remains recoverable from earlier Git
+history by identities that could decrypt it then.
+
 `backup pull` refreshes the configured Git checkout, decrypts and hashes every
 manifest-owned shard in memory, then validates the complete Health Archive
 Snapshot before creating a fresh target archive. It never overwrites an existing

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -469,6 +470,16 @@ func TestPushWritesEncryptedSnapshotCommitAndLeavesUnchangedRerunClean(t *testin
 	if _, err := os.Lstat(stalePath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("stale shard still exists: %v", err)
 	}
+	trimmedManifest, found, err := readManifestIfPresent(opts.Repo)
+	if err != nil || !found {
+		t.Fatalf("read trimmed manifest = found %t, err %v", found, err)
+	}
+	if _, found := trimmedManifest.entry("data/attachment_payloads.jsonl.gz.age"); found {
+		t.Fatal("trimmed manifest still owns stale shard")
+	}
+	if tree := gitCommand(t, opts.Repo, "ls-tree", "-r", "--name-only", "HEAD"); strings.Contains(tree, "data/attachment_payloads.jsonl.gz.age") {
+		t.Fatalf("committed backup tree still contains stale shard: %s", tree)
+	}
 	manifestBeforeRejectedPush, err := os.ReadFile(filepath.Join(opts.Repo, ManifestFilename))
 	if err != nil {
 		t.Fatal(err)
@@ -544,6 +555,133 @@ func TestPushPushesSnapshotCommitToTemporaryBareRemote(t *testing.T) {
 	}
 	if head := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD")); head != localHead {
 		t.Fatalf("unchanged Push created commit %s, want %s", head, localHead)
+	}
+}
+
+func TestRecipientAdditionReencryptsForSecondIdentityAndThenReusesShards(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("combined Git end-to-end exceeds the Windows CI budget; focused recipient, push, pull, and cleanup regressions still run natively")
+	}
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	ctx := context.Background()
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+
+	firstConfig := filepath.Join(root, "first-private", "backup.json")
+	firstRepo := filepath.Join(root, "first-checkout")
+	firstIdentity := filepath.Join(root, "first-private", "identity.txt")
+	firstInit, err := Init(ctx, Options{
+		ConfigPath: firstConfig,
+		Repo:       firstRepo,
+		Remote:     remote,
+		Identity:   firstIdentity,
+		Push:       true,
+	})
+	if err != nil {
+		t.Fatalf("first Init: %v", err)
+	}
+	input := pullTestInput("recipient-rotation")
+	if _, err := Push(ctx, Options{ConfigPath: firstConfig, Push: true}, input); err != nil {
+		t.Fatalf("first Push: %v", err)
+	}
+	firstHead := strings.TrimSpace(gitCommand(t, firstRepo, "rev-parse", "HEAD"))
+	firstManifest, found, err := readManifestIfPresent(firstRepo)
+	if err != nil || !found {
+		t.Fatalf("read first manifest = found %t, err %v", found, err)
+	}
+	firstCiphertexts := readTestCiphertexts(t, firstRepo, firstManifest)
+
+	secondIdentity := filepath.Join(root, "second-private", "identity.txt")
+	secondRecipient, err := EnsureIdentity(secondIdentity)
+	if err != nil {
+		t.Fatalf("second EnsureIdentity: %v", err)
+	}
+	if _, err := Init(ctx, Options{
+		ConfigPath: firstConfig,
+		Recipients: []string{"", "  " + secondRecipient + "  ", secondRecipient},
+		Push:       false,
+	}); err != nil {
+		t.Fatalf("add second recipient: %v", err)
+	}
+
+	input.ExportedAt = input.ExportedAt.Add(time.Hour)
+	rotated, err := Push(ctx, Options{ConfigPath: firstConfig, Push: true}, input)
+	if err != nil {
+		t.Fatalf("recipient-addition Push: %v", err)
+	}
+	if !rotated.Changed || !rotated.Pushed {
+		t.Fatalf("recipient-addition Push result = %+v, want changed and pushed", rotated)
+	}
+	rotatedHead := strings.TrimSpace(gitCommand(t, firstRepo, "rev-parse", "HEAD"))
+	if rotatedHead == firstHead {
+		t.Fatal("recipient addition did not create a backup commit")
+	}
+	rotatedManifest, found, err := readManifestIfPresent(firstRepo)
+	if err != nil || !found {
+		t.Fatalf("read rotated manifest = found %t, err %v", found, err)
+	}
+	wantRecipients := []string{firstInit.Recipient, secondRecipient}
+	sort.Strings(wantRecipients)
+	if !reflect.DeepEqual(rotatedManifest.Recipients, wantRecipients) {
+		t.Fatalf("rotated manifest recipients = %v, want %v", rotatedManifest.Recipients, wantRecipients)
+	}
+	rotatedCiphertexts := readTestCiphertexts(t, firstRepo, rotatedManifest)
+	for shardPath, firstCiphertext := range firstCiphertexts {
+		if bytes.Equal(rotatedCiphertexts[shardPath], firstCiphertext) {
+			t.Errorf("recipient addition reused old ciphertext for %q", shardPath)
+		}
+	}
+
+	secondConfig := filepath.Join(root, "second-private", "backup.json")
+	secondRepo := filepath.Join(root, "second-checkout")
+	if _, err := Init(ctx, Options{
+		ConfigPath: secondConfig,
+		Repo:       secondRepo,
+		Remote:     remote,
+		Identity:   secondIdentity,
+		Push:       false,
+	}); err != nil {
+		t.Fatalf("second-machine Init: %v", err)
+	}
+	var restored PullInput
+	pulled, err := PullCurrent(ctx, Options{ConfigPath: secondConfig}, func(input PullInput) error {
+		restored = input
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("second-machine PullCurrent: %v", err)
+	}
+	if !pulled.Changed || !pulled.Encrypted || pulled.ShardCount != len(input.Shards) {
+		t.Fatalf("second-machine PullCurrent result = %+v", pulled)
+	}
+	if restored.SchemaVersion != input.SchemaVersion || restored.Counts != input.Counts || !reflect.DeepEqual(testShardsByPath(restored.Shards), testShardsByPath(input.Shards)) {
+		t.Fatalf("second-machine restored input = %+v, want original Snapshot", restored)
+	}
+
+	input.ExportedAt = input.ExportedAt.Add(time.Hour)
+	repeated, err := Push(ctx, Options{ConfigPath: firstConfig, Push: false}, input)
+	if err != nil {
+		t.Fatalf("unchanged repeated Push: %v", err)
+	}
+	if repeated.Changed || repeated.Pushed {
+		t.Fatalf("unchanged repeated Push result = %+v", repeated)
+	}
+	if head := strings.TrimSpace(gitCommand(t, firstRepo, "rev-parse", "HEAD")); head != rotatedHead {
+		t.Fatalf("unchanged repeated Push HEAD = %s, want %s", head, rotatedHead)
+	}
+	repeatedManifest, found, err := readManifestIfPresent(firstRepo)
+	if err != nil || !found {
+		t.Fatalf("read repeated manifest = found %t, err %v", found, err)
+	}
+	if got := readTestCiphertexts(t, firstRepo, repeatedManifest); !reflect.DeepEqual(got, rotatedCiphertexts) {
+		t.Fatal("unchanged repeated Push did not reuse encrypted shards")
+	}
+	if status := gitCommand(t, firstRepo, "status", "--porcelain=v1", "--untracked-files=all"); strings.TrimSpace(status) != "" {
+		t.Fatalf("unchanged repeated Push left checkout dirty: %q", status)
 	}
 }
 
@@ -1674,11 +1812,75 @@ func TestInitKeepsLocalIdentityWithAdditionalRecipients(t *testing.T) {
 		t.Fatalf("LoadConfig = found %t, err %v", found, err)
 	}
 	want := []string{result.Recipient, additionalRecipient}
+	sort.Strings(want)
 	if !reflect.DeepEqual(cfg.Recipients, want) {
 		t.Fatalf("recipients = %v, want local identity plus deduplicated additional %v", cfg.Recipients, want)
 	}
 	if cfg.LocalRecipient != result.Recipient {
 		t.Fatalf("local recipient = %q, want %q", cfg.LocalRecipient, result.Recipient)
+	}
+}
+
+func TestInitNormalizesConfiguredRecipientsDeterministically(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	additional := make([]string, 0, 2)
+	for _, name := range []string{"first", "second"} {
+		recipient, err := EnsureIdentity(filepath.Join(root, name, "identity.txt"))
+		if err != nil {
+			t.Fatalf("EnsureIdentity(%s): %v", name, err)
+		}
+		additional = append(additional, recipient)
+	}
+	sort.Strings(additional)
+
+	configPath := filepath.Join(root, "private", "backup.json")
+	result, err := Init(context.Background(), Options{
+		ConfigPath: configPath,
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Recipients: []string{
+			"  " + additional[1] + "  ",
+			"",
+			additional[0],
+			additional[1],
+		},
+		Push: false,
+	})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	cfg, found, err := LoadConfig(configPath)
+	if err != nil || !found {
+		t.Fatalf("LoadConfig = found %t, err %v", found, err)
+	}
+	want := append([]string{result.Recipient}, additional...)
+	sort.Strings(want)
+	if !reflect.DeepEqual(cfg.Recipients, want) {
+		t.Fatalf("recipients = %v, want canonical %v", cfg.Recipients, want)
+	}
+}
+
+func TestInitIgnoresEmptyAdditionalRecipients(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	configPath := filepath.Join(root, "private", "backup.json")
+	result, err := Init(context.Background(), Options{
+		ConfigPath: configPath,
+		Repo:       filepath.Join(root, "checkout"),
+		Identity:   filepath.Join(root, "private", "backup-age-identity.txt"),
+		Recipients: []string{"", "   "},
+		Push:       false,
+	})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	cfg, found, err := LoadConfig(configPath)
+	if err != nil || !found {
+		t.Fatalf("LoadConfig = found %t, err %v", found, err)
+	}
+	if !reflect.DeepEqual(cfg.Recipients, []string{result.Recipient}) {
+		t.Fatalf("recipients = %v, want only local recipient %q", cfg.Recipients, result.Recipient)
 	}
 }
 
@@ -1742,6 +1944,7 @@ func TestInitIdentityRotationKeepsExplicitPreviousRecipient(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{second.Recipient, first.Recipient}
+	sort.Strings(want)
 	if !reflect.DeepEqual(cfg.Recipients, want) {
 		t.Fatalf("recipients = %v, want explicitly retained old recipient %v", cfg.Recipients, want)
 	}
@@ -2981,6 +3184,27 @@ func writePullTestManifest(t *testing.T, repo string, manifest Manifest) {
 	if err := os.WriteFile(filepath.Join(repo, ManifestFilename), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func readTestCiphertexts(t *testing.T, repo string, manifest Manifest) map[string][]byte {
+	t.Helper()
+	ciphertexts := make(map[string][]byte, len(manifest.Shards))
+	for _, shard := range manifest.Shards {
+		ciphertext, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(shard.Path)))
+		if err != nil {
+			t.Fatalf("read encrypted shard %q: %v", shard.Path, err)
+		}
+		ciphertexts[shard.Path] = ciphertext
+	}
+	return ciphertexts
+}
+
+func testShardsByPath(shards []PlaintextShard) map[string]PlaintextShard {
+	byPath := make(map[string]PlaintextShard, len(shards))
+	for _, shard := range shards {
+		byPath[shard.Path] = shard
+	}
+	return byPath
 }
 
 func gitCommand(t *testing.T, dir string, args ...string) string {
