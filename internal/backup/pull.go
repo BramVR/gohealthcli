@@ -331,11 +331,11 @@ func validatePulledSnapshotTreeAtCommit(ctx context.Context, repo, commit string
 		return errors.New("pulled backup recovery README is missing")
 	}
 	readmeSize, err := strconv.ParseInt(strings.TrimSpace(readmeSizeText), 10, 64)
-	if err != nil || readmeSize != int64(len(backupReadmeBody)) && readmeSize != int64(len(legacyBackupReadmeBody)) {
+	if err != nil || readmeSize < 0 || readmeSize > int64(maxKnownBackupReadmeSize()) {
 		return errors.New("pulled backup recovery README has unexpected size")
 	}
 	readme, err := gitOutput(ctx, repo, "show", commit+":"+recoveryReadmeFilename)
-	if err != nil || readme != backupReadmeBody && readme != legacyBackupReadmeBody {
+	if err != nil || !isKnownBackupReadme(readme) {
 		return errors.New("pulled backup recovery README is missing or has unexpected content")
 	}
 	for _, shard := range manifest.Shards {

@@ -789,7 +789,7 @@ func isGeneratedSnapshotCommit(ctx context.Context, repo, commit string) bool {
 		}
 	}
 	readme, err := gitOutput(ctx, repo, "show", commit+":"+recoveryReadmeFilename)
-	if err != nil || readme != backupReadmeBody && readme != legacyBackupReadmeBody {
+	if err != nil || !isKnownBackupReadme(readme) {
 		return false
 	}
 	treePaths, err := gitOutput(ctx, repo, "ls-tree", "-r", "--name-only", commit, "--", recoveryReadmeFilename, ManifestFilename, "data")
@@ -984,7 +984,7 @@ func isGeneratedReadmeCommitAt(ctx context.Context, repo, commit string) bool {
 		return false
 	}
 	readme, err := gitOutput(ctx, repo, "show", commit+":"+recoveryReadmeFilename)
-	return err == nil && (readme == backupReadmeBody || readme == legacyBackupReadmeBody)
+	return err == nil && isKnownBackupReadme(readme)
 }
 
 func verifyRepoRemote(ctx context.Context, cfg Config) error {

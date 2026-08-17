@@ -2745,6 +2745,31 @@ func TestWriteBackupReadmeAcceptsGeneratedCRLFWorktree(t *testing.T) {
 	}
 }
 
+func TestGeneratedSnapshotCommitAndPulledTreeAcceptExactCRLFReadme(t *testing.T) {
+	_, _, repo, _ := setupPullTestBackup(t, pullTestInput("crlf"))
+	readmePath := filepath.Join(repo, recoveryReadmeFilename)
+	if err := os.WriteFile(readmePath, []byte(backupReadmeBodyCRLF()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := runGit(ctx, repo, "add", "--", recoveryReadmeFilename); err != nil {
+		t.Fatal(err)
+	}
+	if err := runGit(ctx, repo, "commit", "--amend", "--no-edit", "--no-gpg-sign"); err != nil {
+		t.Fatal(err)
+	}
+	if !isGeneratedSnapshotCommit(ctx, repo, "HEAD") {
+		t.Fatal("generated Snapshot commit with exact CRLF README was rejected")
+	}
+	manifest, found, err := readManifestIfPresent(repo)
+	if err != nil || !found {
+		t.Fatalf("read manifest: found=%t err=%v", found, err)
+	}
+	if err := validatePulledSnapshotTreeAtCommit(ctx, repo, "HEAD", manifest); err != nil {
+		t.Fatalf("validate pulled CRLF Snapshot tree: %v", err)
+	}
+}
+
 func TestResolveOptionsMakesPersistedPathsAbsolute(t *testing.T) {
 	t.Parallel()
 	cfg, err := ResolveOptions(Options{

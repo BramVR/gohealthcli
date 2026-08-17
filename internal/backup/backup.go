@@ -540,15 +540,14 @@ func writeBackupReadme(repo string) error {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("backup README %s is not a regular file", path)
 		}
-		maxSize := max(len(backupReadmeBodyCRLF()), len(legacyBackupReadmeBodyCRLF()))
-		if info.Size() > int64(maxSize) {
+		if info.Size() > int64(maxKnownBackupReadmeSize()) {
 			return fmt.Errorf("backup README %s already exists with different content", path)
 		}
 		data, err := os.ReadFile(path) // #nosec G304 -- regular repository path validated above.
 		if err != nil {
 			return err
 		}
-		if !isKnownBackupReadmeWorktree(string(data)) {
+		if !isKnownBackupReadme(string(data)) {
 			return fmt.Errorf("backup README %s already exists with different content", path)
 		}
 		return nil
@@ -566,8 +565,12 @@ func writeBackupReadme(repo string) error {
 	return file.Close()
 }
 
-func isKnownBackupReadmeWorktree(body string) bool {
+func isKnownBackupReadme(body string) bool {
 	return body == backupReadmeBody || body == legacyBackupReadmeBody || body == backupReadmeBodyCRLF() || body == legacyBackupReadmeBodyCRLF()
+}
+
+func maxKnownBackupReadmeSize() int {
+	return max(len(backupReadmeBodyCRLF()), len(legacyBackupReadmeBodyCRLF()))
 }
 
 func backupReadmeBodyCRLF() string {
