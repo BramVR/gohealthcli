@@ -59,6 +59,55 @@ func TestRunSchemaIncludesEveryUserFacingSubcommand(t *testing.T) {
 	}
 }
 
+func TestRunSchemaIncludesBackupRecoveryContract(t *testing.T) {
+	t.Parallel()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if code := runSchemaWithRegistry(nil, commands, stdout, stderr, nil); code != 0 {
+		t.Fatalf("runSchemaWithRegistry exit code = %d; stderr=%q", code, stderr.String())
+	}
+	var doc schemaDocument
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+		t.Fatalf("schema output is not valid JSON: %v", err)
+	}
+
+	var backup *commandDef
+	for index := range doc.Commands {
+		if doc.Commands[index].Name == "backup" {
+			backup = &doc.Commands[index]
+			break
+		}
+	}
+	if backup == nil {
+		t.Fatal("schema document does not contain backup entry")
+	}
+	for _, phrase := range []string{
+		"`backup init`",
+		"`backup push`",
+		"`backup pull`",
+		"`backup status`",
+		"`--no-push`",
+		"fresh Health Archive path",
+		"Data Point Attachment",
+		"`doctor`",
+		"Credential Store token material",
+		"OAuth client secrets",
+		"Secret Provider contents",
+		"cannot be restored",
+		"cleartext metadata",
+	} {
+		if !strings.Contains(backup.Long, phrase) {
+			t.Errorf("backup.long missing %q", phrase)
+		}
+	}
+	gotFlags := flagNames(backup.Flags)
+	for _, want := range []string{"config", "db", "json", "plain", "repo", "remote", "identity", "recipient", "no-push"} {
+		if !contains(gotFlags, want) {
+			t.Errorf("backup flags missing %q; got %v", want, gotFlags)
+		}
+	}
+}
+
 func TestRunSchemaIncludesDoctor(t *testing.T) {
 	t.Parallel()
 	stdout := &bytes.Buffer{}
