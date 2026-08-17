@@ -567,6 +567,22 @@ then age encryption happens before the shard is written into the Git checkout.
 The command commits the encrypted shards and cleartext manifest locally, and
 pushes unless `--no-push` is set. An unchanged rerun leaves the checkout clean.
 
+To add another machine, obtain its public age recipient, then rerun `backup
+init` on the current backup machine with every desired additional recipient
+and run `backup push`:
+
+```bash
+gohealthcli backup init --recipient <second-machine-age-recipient> --no-push --plain
+gohealthcli backup push --db /path/to/gohealthcli.sqlite --plain
+```
+
+Recipient values are trimmed, deduplicated, and sorted before they are saved or
+written to the manifest. A recipient change re-encrypts every unchanged shard
+and creates a backup commit so the new identity can restore existing data. A
+following push with unchanged recipients and Health Archive data reuses the
+encrypted shards and leaves Git clean. Shards absent from the new Snapshot are
+removed from the current backup tree; earlier Git history remains unchanged.
+
 `backup pull` pulls/rebases the configured Git checkout before reading its
 manifest. It confines every shard to the backup data tree, decrypts with the
 configured age identity, verifies the declared plaintext hashes, and validates

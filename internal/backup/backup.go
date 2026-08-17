@@ -144,6 +144,7 @@ func Init(ctx context.Context, opts Options) (result InitResult, err error) {
 	if err := validateRemote(cfg.Remote); err != nil {
 		return InitResult{}, err
 	}
+	cfg.Recipients = normalizedStrings(cfg.Recipients)
 	if len(cfg.Recipients) > 0 {
 		if err := ValidateRecipients(cfg.Recipients); err != nil {
 			return InitResult{}, err
@@ -614,20 +615,7 @@ Store a private recovery copy of the age identity outside this repository. If ev
 `
 
 func recipientsWithLocalIdentity(local string, configured []string) []string {
-	out := make([]string, 0, len(configured)+1)
-	seen := make(map[string]struct{}, len(configured)+1)
-	for _, recipient := range append([]string{local}, configured...) {
-		recipient = strings.TrimSpace(recipient)
-		if recipient == "" {
-			continue
-		}
-		if _, duplicate := seen[recipient]; duplicate {
-			continue
-		}
-		seen[recipient] = struct{}{}
-		out = append(out, recipient)
-	}
-	return out
+	return normalizedStrings(append([]string{local}, configured...))
 }
 
 func withoutRecipient(recipients []string, remove string) []string {

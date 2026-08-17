@@ -145,6 +145,13 @@ public recipients, logical collection names, counts, encrypted sizes, plaintext
 hashes, cadence, and changed shards. Never quote decrypted records or identity
 material in reports.
 
+For recipient rotation, rerun `backup init` with the complete desired set of
+additional public recipients, then run `backup push`. Recipient changes
+re-encrypt unchanged shards so a newly added identity can restore existing
+Snapshot data. An unchanged repeat reuses authenticated ciphertext; stale
+shards disappear from the current backup tree, but earlier Git history is not
+rewritten.
+
 Run `backup pull` only when the user explicitly requests restore and identifies
 a fresh or throwaway Health Archive path. It pulls/rebases the configured backup
 checkout, verifies and decrypts every shard, validates the complete Snapshot,
