@@ -688,6 +688,34 @@ func TestPullWrongIdentityFailsBeforeRestore(t *testing.T) {
 	}
 }
 
+func TestPullRejectsConfigBeforeIdentityWhenBothAreInsideCheckout(t *testing.T) {
+	_, configPath, repo, _ := setupPullTestBackup(t, pullTestInput("second"))
+	cfg, _, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityData, err := os.ReadFile(cfg.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Identity = filepath.Join(repo, "private-identity.txt")
+	if err := os.WriteFile(cfg.Identity, identityData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	insideConfig := filepath.Join(repo, "private-config.json")
+	if err := SaveConfig(insideConfig, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = PullCurrent(context.Background(), Options{ConfigPath: insideConfig}, func(PullInput) error {
+		t.Fatal("private path validation reached restore callback")
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "backup config path must be outside the Git checkout") {
+		t.Fatalf("PullCurrent error = %v, want deterministic config-path failure", err)
+	}
+}
+
 func TestPullMissingShardFailsBeforeRestore(t *testing.T) {
 	_, configPath, repo, _ := setupPullTestBackup(t, pullTestInput("second"))
 	manifest, found, err := readManifestIfPresent(repo)

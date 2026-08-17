@@ -58,13 +58,20 @@ func PullCurrent(ctx context.Context, opts Options, restore func(PullInput) erro
 	if err := validateRemote(cfg.Remote); err != nil {
 		return PullResult{}, err
 	}
-	for label, privatePath := range map[string]string{"config": configPath, "age identity": cfg.Identity} {
-		inside, err := pathIsWithin(cfg.Repo, privatePath)
+	privatePaths := []struct {
+		label string
+		path  string
+	}{
+		{label: "config", path: configPath},
+		{label: "age identity", path: cfg.Identity},
+	}
+	for _, privatePath := range privatePaths {
+		inside, err := pathIsWithin(cfg.Repo, privatePath.path)
 		if err != nil {
-			return PullResult{}, fmt.Errorf("compare backup repo and %s paths: %w", label, err)
+			return PullResult{}, fmt.Errorf("compare backup repo and %s paths: %w", privatePath.label, err)
 		}
 		if inside {
-			return PullResult{}, fmt.Errorf("backup %s path must be outside the Git checkout", label)
+			return PullResult{}, fmt.Errorf("backup %s path must be outside the Git checkout", privatePath.label)
 		}
 	}
 	identityPath, _, identityFound, err := inspectIdentity(cfg.Identity)
