@@ -74,6 +74,20 @@ type PushResult struct {
 	Counts     Counts `json:"health_archive_counts"`
 }
 
+type PullInput struct {
+	SchemaVersion int
+	Counts        Counts
+	Shards        []PlaintextShard
+}
+
+type PullResult struct {
+	RepoPath   string `json:"repo_path"`
+	Changed    bool   `json:"changed"`
+	Encrypted  bool   `json:"encrypted"`
+	ShardCount int    `json:"shard_count"`
+	Counts     Counts `json:"health_archive_counts"`
+}
+
 type InitResult struct {
 	RepoPath  string `json:"repo_path"`
 	Remote    string `json:"remote,omitempty"`

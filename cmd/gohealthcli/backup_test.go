@@ -9,9 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	backupmodule "github.com/BramVR/gohealthcli/internal/backup"
 )
 
 func TestBackupInitAndStatusCLI(t *testing.T) {
@@ -214,6 +217,211 @@ func TestBackupPushCLIUsesCurrentHealthArchiveWithoutProviderContact(t *testing.
 	}
 }
 
+func TestBackupPushThenPullRestoresSeparateHealthArchive(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	sourceDir := filepath.Join(root, "source")
+	if err := ensureOwnerOnlyDir(sourceDir); err != nil {
+		t.Fatal(err)
+	}
+	_, sourcePath, _ := initializeFileCredentialSetup(t, sourceDir)
+	insertHealthArchiveSnapshotFixture(t, sourcePath)
+	payload := []byte(`<?xml version="1.0"?><TrainingCenterDatabase><Courses><Course><Name>synthetic recovery route</Name></Course></Courses></TrainingCenterDatabase>`)
+	stored := storeSnapshotAttachment(t, sourcePath, payload)
+
+	remote := filepath.Join(root, "remote.git")
+	runBackupTestGit(t, "", "init", "--bare", remote)
+	backupConfig := filepath.Join(root, "private", "backup.json")
+	repoPath := filepath.Join(root, "checkout")
+	identityPath := filepath.Join(root, "private", "backup-age-identity.txt")
+	code, stdout, stderr := runCommand(t,
+		"backup", "init",
+		"--config", backupConfig,
+		"--repo", repoPath,
+		"--remote", remote,
+		"--identity", identityPath,
+		"--plain",
+	)
+	if code != 0 {
+		t.Fatalf("backup init exit = %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+	code, stdout, stderr = runCommand(t,
+		"backup", "push",
+		"--config", backupConfig,
+		"--db", sourcePath,
+		"--plain",
+	)
+	if code != 0 {
+		t.Fatalf("backup push exit = %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	restoreDir := filepath.Join(root, "restore")
+	if err := ensureOwnerOnlyDir(restoreDir); err != nil {
+		t.Fatal(err)
+	}
+	restorePath := filepath.Join(restoreDir, "restored.sqlite")
+	code, stdout, stderr = runCommand(t,
+		"backup", "pull",
+		"--config", backupConfig,
+		"--db", restorePath,
+		"--plain",
+	)
+	if code != 0 {
+		t.Fatalf("backup pull exit = %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{
+		"status: backup_pulled",
+		"repo_path: " + escapePlainControlChars(repoPath),
+		"archive_path: " + escapePlainControlChars(restorePath),
+		"changed: true",
+		"encrypted: true",
+		"shard_count: 9",
+		"health_archive.connections: 1",
+		"health_archive.data_points: 3",
+		"health_archive.data_point_revisions: 1",
+		"health_archive.data_point_attachments: 1",
+		"health_archive.attachment_payloads: 1",
+	} {
+		if !strings.Contains(stdout.String(), want+"\n") {
+			t.Errorf("backup pull plain output missing %q\n%s", want, stdout.String())
+		}
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("backup pull stderr = %q", stderr.String())
+	}
+
+	sourceStatus := snapshotStatus(t, sourcePath)
+	restoredStatus := snapshotStatus(t, restorePath)
+	sourceStatus.ArchivePath = ""
+	restoredStatus.ArchivePath = ""
+	if !reflect.DeepEqual(restoredStatus, sourceStatus) {
+		t.Fatalf("restored status mismatch\n got: %+v\nwant: %+v", restoredStatus, sourceStatus)
+	}
+	if got, want := snapshotExportRows(t, restorePath, "daily-steps"), snapshotExportRows(t, sourcePath, "daily-steps"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("restored daily-steps export mismatch\n got: %+v\nwant: %+v", got, want)
+	}
+	query := `SELECT data_point_id, previous_raw_json, replacement_reason FROM data_point_revisions ORDER BY id`
+	if got, want := snapshotQueryRows(t, restorePath, query), snapshotQueryRows(t, sourcePath, query); !reflect.DeepEqual(got, want) {
+		t.Fatalf("restored revision query mismatch\n got: %+v\nwant: %+v", got, want)
+	}
+	restoredAttachment := filepath.Join(attachmentRootDirForArchive(restorePath), filepath.FromSlash(stored.PathRelative))
+	gotPayload, err := os.ReadFile(restoredAttachment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotPayload, payload) {
+		t.Fatal("restored Data Point Attachment payload mismatch")
+	}
+	attachmentReport, err := collectAttachmentOrphans(context.Background(), restorePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attachmentReport != nil {
+		t.Fatalf("restored Data Point Attachment orphans = %+v", attachmentReport)
+	}
+
+	jsonRestoreDir := filepath.Join(root, "json-restore")
+	if err := ensureOwnerOnlyDir(jsonRestoreDir); err != nil {
+		t.Fatal(err)
+	}
+	jsonRestorePath := filepath.Join(jsonRestoreDir, "restored.sqlite")
+	code, stdout, stderr = runCommand(t,
+		"backup", "pull",
+		"--config", backupConfig,
+		"--db", jsonRestorePath,
+		"--json",
+	)
+	if code != 0 {
+		t.Fatalf("JSON backup pull exit = %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+	var jsonResult struct {
+		Status       string              `json:"status"`
+		RepoPath     string              `json:"repo_path"`
+		ArchivePath  string              `json:"archive_path"`
+		Changed      bool                `json:"changed"`
+		Encrypted    bool                `json:"encrypted"`
+		ShardCount   int                 `json:"shard_count"`
+		ArchiveCount backupmodule.Counts `json:"health_archive_counts"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &jsonResult); err != nil {
+		t.Fatal(err)
+	}
+	if jsonResult.Status != "backup_pulled" || jsonResult.RepoPath != repoPath || jsonResult.ArchivePath != jsonRestorePath || !jsonResult.Changed || !jsonResult.Encrypted || jsonResult.ShardCount != 9 || jsonResult.ArchiveCount.DataPoints != 3 || jsonResult.ArchiveCount.DataPointAttachments != 1 {
+		t.Fatalf("JSON backup pull result = %+v", jsonResult)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("JSON backup pull stderr = %q", stderr.String())
+	}
+}
+
+func TestPulledSnapshotInvalidJSONLFailsBeforeTargetMutation(t *testing.T) {
+	input := snapshotPullInput(t)
+	for index := range input.Shards {
+		if input.Shards[index].Table == "connections" {
+			input.Shards[index].JSONL = []byte("{invalid-json}\n")
+		}
+	}
+	target := filepath.Join(t.TempDir(), "restored.sqlite")
+	err := restorePulledHealthArchiveSnapshot(context.Background(), input, target)
+	if err == nil || !strings.Contains(err.Error(), "invalid character") {
+		t.Fatalf("restorePulledHealthArchiveSnapshot error = %v, want invalid JSONL", err)
+	}
+	assertPullTargetAbsent(t, target)
+}
+
+func TestPulledSnapshotBrokenReferenceFailsBeforeTargetMutation(t *testing.T) {
+	input := snapshotPullInput(t)
+	for index := range input.Shards {
+		if input.Shards[index].Table != "data_point_revisions" {
+			continue
+		}
+		var revision map[string]any
+		if err := json.Unmarshal(bytes.TrimSpace(input.Shards[index].JSONL), &revision); err != nil {
+			t.Fatal(err)
+		}
+		revision["data_point_id"] = 999999
+		data, err := json.Marshal(revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		input.Shards[index].JSONL = append(data, '\n')
+	}
+	target := filepath.Join(t.TempDir(), "restored.sqlite")
+	err := restorePulledHealthArchiveSnapshot(context.Background(), input, target)
+	if err == nil || !strings.Contains(err.Error(), "Data Point Revision") || !strings.Contains(err.Error(), "unknown Data Point") {
+		t.Fatalf("restorePulledHealthArchiveSnapshot error = %v, want broken reference", err)
+	}
+	assertPullTargetAbsent(t, target)
+}
+
+func TestPulledSnapshotRefusesExistingHealthArchive(t *testing.T) {
+	input := snapshotPullInput(t)
+	target := filepath.Join(t.TempDir(), "existing.sqlite")
+	if err := os.Chmod(filepath.Dir(target), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := []byte("existing archive marker")
+	if err := os.WriteFile(target, marker, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := restorePulledHealthArchiveSnapshot(context.Background(), input, target)
+	if err == nil || !errors.Is(err, os.ErrExist) {
+		t.Fatalf("restorePulledHealthArchiveSnapshot error = %v, want existing-target refusal", err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, marker) {
+		t.Fatalf("existing target changed to %q", got)
+	}
+	if _, err := os.Lstat(attachmentRootDirForArchive(target)); !os.IsNotExist(err) {
+		t.Fatalf("existing-target refusal attachment root stat error = %v, want absent", err)
+	}
+}
+
 func TestBackupStatusMissingConfigIsExplicitlyUninitialized(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "xdg"))
@@ -270,9 +478,48 @@ func TestCompletionProtocolSuggestsBackupActions(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("completion exit = %d, want 0; stderr=%q", code, stderr.String())
 	}
-	for _, action := range []string{"init", "push", "status"} {
+	for _, action := range []string{"init", "push", "pull", "status"} {
 		if !strings.Contains(stdout.String(), action+"\n") {
 			t.Errorf("completion missing %q: %s", action, stdout.String())
+		}
+	}
+}
+
+func snapshotPullInput(t *testing.T) backupmodule.PullInput {
+	t.Helper()
+	root := t.TempDir()
+	_, archivePath, _ := initializeFileCredentialSetup(t, root)
+	insertHealthArchiveSnapshotFixture(t, archivePath)
+	storeSnapshotAttachment(t, archivePath, []byte(`<?xml version="1.0"?><TrainingCenterDatabase/>`))
+	snapshot, err := ExportHealthArchiveSnapshot(context.Background(), archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := EncodeHealthArchiveSnapshotJSONL(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := backupmodule.PullInput{
+		SchemaVersion: snapshot.SchemaVersion,
+		Counts:        healthArchiveSnapshotCounts(snapshot),
+		Shards:        make([]backupmodule.PlaintextShard, 0, len(encoded)),
+	}
+	for _, shard := range encoded {
+		input.Shards = append(input.Shards, backupmodule.PlaintextShard{
+			Table: shard.Table,
+			Path:  shard.Path,
+			Rows:  shard.Rows,
+			JSONL: shard.JSONL,
+		})
+	}
+	return input
+}
+
+func assertPullTargetAbsent(t *testing.T, archivePath string) {
+	t.Helper()
+	for _, target := range []string{archivePath, attachmentRootDirForArchive(archivePath)} {
+		if _, err := os.Lstat(target); !os.IsNotExist(err) {
+			t.Fatalf("failed backup pull target %s stat error = %v, want absent", target, err)
 		}
 	}
 }

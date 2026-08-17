@@ -145,6 +145,16 @@ public recipients, logical collection names, counts, encrypted sizes, plaintext
 hashes, cadence, and changed shards. Never quote decrypted records or identity
 material in reports.
 
+Run `backup pull` only when the user explicitly requests restore and identifies
+a fresh or throwaway Health Archive path. It pulls/rebases the configured backup
+checkout, verifies and decrypts every shard, validates the complete Snapshot,
+then creates the target archive and Attachment sidecars. Never point it at the
+current archive or an existing path:
+
+```bash
+gohealthcli backup pull --db /path/to/fresh-restored.sqlite --plain
+```
+
 ### 8. Use raw Provider reads last
 
 Use raw reads only when local status, schema, and archived data cannot answer

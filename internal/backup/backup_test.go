@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
@@ -543,6 +544,273 @@ func TestPushPushesSnapshotCommitToTemporaryBareRemote(t *testing.T) {
 	}
 	if head := strings.TrimSpace(gitCommand(t, opts.Repo, "rev-parse", "HEAD")); head != localHead {
 		t.Fatalf("unchanged Push created commit %s, want %s", head, localHead)
+	}
+}
+
+func TestPullRebasesConfiguredCheckoutBeforeRestoringSnapshot(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+	identity := filepath.Join(root, "private", "backup-age-identity.txt")
+	firstConfig := filepath.Join(root, "first-private", "backup.json")
+	firstRepo := filepath.Join(root, "first-checkout")
+	if _, err := Init(ctx, Options{ConfigPath: firstConfig, Repo: firstRepo, Remote: remote, Identity: identity, Push: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Push(ctx, Options{ConfigPath: firstConfig, Push: true}, pullTestInput("first")); err != nil {
+		t.Fatal(err)
+	}
+
+	secondConfig := filepath.Join(root, "second-private", "backup.json")
+	secondRepo := filepath.Join(root, "second-checkout")
+	if _, err := Init(ctx, Options{ConfigPath: secondConfig, Repo: secondRepo, Remote: remote, Identity: identity, Push: false}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Push(ctx, Options{ConfigPath: secondConfig, Push: true}, pullTestInput("second")); err != nil {
+		t.Fatal(err)
+	}
+
+	firstHeadBefore := gitCommand(t, firstRepo, "rev-parse", "HEAD")
+	secondHead := gitCommand(t, secondRepo, "rev-parse", "HEAD")
+	if firstHeadBefore == secondHead {
+		t.Fatal("first checkout was not stale before backup pull")
+	}
+	called := false
+	result, err := PullCurrent(ctx, Options{ConfigPath: firstConfig}, func(input PullInput) error {
+		called = true
+		if input.Counts.Connections != 1 {
+			t.Fatalf("pulled Connection count = %d, want remote update", input.Counts.Connections)
+		}
+		for _, shard := range input.Shards {
+			if shard.Table == "connections" && !bytes.Contains(shard.JSONL, []byte(`"marker":"second"`)) {
+				t.Fatalf("pulled Connection shard = %q, want second remote snapshot", shard.JSONL)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called || !result.Changed || result.Counts.Connections != 1 {
+		t.Fatalf("pull result = %+v, callback called=%t", result, called)
+	}
+	if got := gitCommand(t, firstRepo, "rev-parse", "HEAD"); got != secondHead {
+		t.Fatalf("pulled HEAD = %s, want %s", got, secondHead)
+	}
+}
+
+func TestPullRebasesDivergentGeneratedSnapshotAndKeepsLocalPendingSnapshot(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+	identity := filepath.Join(root, "private", "backup-age-identity.txt")
+	firstConfig := filepath.Join(root, "first-private", "backup.json")
+	firstRepo := filepath.Join(root, "first-checkout")
+	if _, err := Init(ctx, Options{ConfigPath: firstConfig, Repo: firstRepo, Remote: remote, Identity: identity, Push: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Push(ctx, Options{ConfigPath: firstConfig, Push: true}, pullTestInput("initial")); err != nil {
+		t.Fatal(err)
+	}
+
+	secondConfig := filepath.Join(root, "second-private", "backup.json")
+	secondRepo := filepath.Join(root, "second-checkout")
+	if _, err := Init(ctx, Options{ConfigPath: secondConfig, Repo: secondRepo, Remote: remote, Identity: identity, Push: false}); err != nil {
+		t.Fatal(err)
+	}
+	localInput := pullTestInput("initial")
+	localInput.Counts.DataPoints = 1
+	for index := range localInput.Shards {
+		if localInput.Shards[index].Table == "data_points" {
+			localInput.Shards[index].Rows = 1
+			localInput.Shards[index].JSONL = []byte("{\"marker\":\"local-pending\"}\n")
+		}
+	}
+	if _, err := Push(ctx, Options{ConfigPath: firstConfig, Push: false}, localInput); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Push(ctx, Options{ConfigPath: secondConfig, Push: true}, pullTestInput("remote-newer")); err != nil {
+		t.Fatal(err)
+	}
+	remoteHead := strings.TrimSpace(gitCommand(t, "", "--git-dir", remote, "rev-parse", "HEAD"))
+
+	_, err := PullCurrent(ctx, Options{ConfigPath: firstConfig}, func(input PullInput) error {
+		for _, shard := range input.Shards {
+			switch shard.Table {
+			case "connections":
+				if !bytes.Contains(shard.JSONL, []byte(`"marker":"initial"`)) {
+					t.Fatalf("pulled Connection shard = %q, want complete local pending snapshot", shard.JSONL)
+				}
+			case "data_points":
+				if !bytes.Contains(shard.JSONL, []byte(`"marker":"local-pending"`)) {
+					t.Fatalf("pulled Data Point shard = %q, want complete local pending snapshot", shard.JSONL)
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	localHead := strings.TrimSpace(gitCommand(t, firstRepo, "rev-parse", "HEAD"))
+	gitCommand(t, firstRepo, "merge-base", "--is-ancestor", remoteHead, localHead)
+	if _, err := os.Stat(filepath.Join(firstRepo, ".git", "rebase-merge")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("rebase state remains after pull: %v", err)
+	}
+	cfg, _, err := LoadConfig(firstConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.PendingCommits, []string{localHead}) {
+		t.Fatalf("pending commits = %v, want rebased local snapshot %s", cfg.PendingCommits, localHead)
+	}
+}
+
+func TestPullWrongIdentityFailsBeforeRestore(t *testing.T) {
+	ctx := context.Background()
+	root, configPath, _, _ := setupPullTestBackup(t, pullTestInput("second"))
+	wrongIdentity := filepath.Join(root, "wrong-private", "backup-age-identity.txt")
+	if _, err := EnsureIdentity(wrongIdentity); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	_, err := PullCurrent(ctx, Options{ConfigPath: configPath, Identity: wrongIdentity}, func(PullInput) error {
+		called = true
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "authenticate age ciphertext") {
+		t.Fatalf("PullCurrent error = %v, want wrong-identity failure", err)
+	}
+	if called {
+		t.Fatal("wrong identity reached Health Archive Snapshot restore callback")
+	}
+}
+
+func TestPullMissingShardFailsBeforeRestore(t *testing.T) {
+	_, configPath, repo, _ := setupPullTestBackup(t, pullTestInput("second"))
+	manifest, found, err := readManifestIfPresent(repo)
+	if err != nil || !found {
+		t.Fatalf("read manifest: found=%t err=%v", found, err)
+	}
+	missing := manifest.Shards[0].Path
+	gitCommand(t, repo, "rm", "--", missing)
+	gitCommand(t, repo, "commit", "--no-gpg-sign", "-m", "test: remove encrypted shard")
+	gitCommand(t, repo, "push", "origin", "HEAD")
+	called := false
+	_, err = PullCurrent(context.Background(), Options{ConfigPath: configPath}, func(PullInput) error {
+		called = true
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), missing) || !strings.Contains(err.Error(), "not tracked") {
+		t.Fatalf("PullCurrent error = %v, want missing-shard failure", err)
+	}
+	if called {
+		t.Fatal("missing shard reached Health Archive Snapshot restore callback")
+	}
+}
+
+func TestPullBadPlaintextHashFailsBeforeRestore(t *testing.T) {
+	_, configPath, repo, _ := setupPullTestBackup(t, pullTestInput("second"))
+	manifest, found, err := readManifestIfPresent(repo)
+	if err != nil || !found {
+		t.Fatalf("read manifest: found=%t err=%v", found, err)
+	}
+	manifest.Shards[0].SHA256 = strings.Repeat("0", sha256.Size*2)
+	writePullTestManifest(t, repo, manifest)
+	gitCommand(t, repo, "add", "--", ManifestFilename)
+	gitCommand(t, repo, "commit", "--no-gpg-sign", "-m", "test: corrupt plaintext hash")
+	gitCommand(t, repo, "push", "origin", "HEAD")
+	called := false
+	_, err = PullCurrent(context.Background(), Options{ConfigPath: configPath}, func(PullInput) error {
+		called = true
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "SHA-256") {
+		t.Fatalf("PullCurrent error = %v, want bad-hash failure", err)
+	}
+	if called {
+		t.Fatal("bad plaintext hash reached Health Archive Snapshot restore callback")
+	}
+}
+
+func TestPullCorruptCiphertextFailsBeforeRestore(t *testing.T) {
+	_, configPath, repo, _ := setupPullTestBackup(t, pullTestInput("second"))
+	manifest, found, err := readManifestIfPresent(repo)
+	if err != nil || !found {
+		t.Fatalf("read manifest: found=%t err=%v", found, err)
+	}
+	shardPath := filepath.Join(repo, filepath.FromSlash(manifest.Shards[0].Path))
+	ciphertext, err := os.ReadFile(shardPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciphertext[len(ciphertext)/2] ^= 0xff
+	if err := os.WriteFile(shardPath, ciphertext, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repo, "add", "--", manifest.Shards[0].Path)
+	gitCommand(t, repo, "commit", "--no-gpg-sign", "-m", "test: corrupt encrypted shard")
+	gitCommand(t, repo, "push", "origin", "HEAD")
+	called := false
+	_, err = PullCurrent(context.Background(), Options{ConfigPath: configPath}, func(PullInput) error {
+		called = true
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "authenticate age ciphertext") && !strings.Contains(err.Error(), "read gzip payload") {
+		t.Fatalf("PullCurrent error = %v, want corrupt-ciphertext failure", err)
+	}
+	if called {
+		t.Fatal("corrupt ciphertext reached Health Archive Snapshot restore callback")
+	}
+}
+
+func TestPullUnsupportedManifestFailsBeforeRestore(t *testing.T) {
+	_, configPath, repo, _ := setupPullTestBackup(t, pullTestInput("second"))
+	manifest, found, err := readManifestIfPresent(repo)
+	if err != nil || !found {
+		t.Fatalf("read manifest: found=%t err=%v", found, err)
+	}
+	manifest.Format++
+	writePullTestManifest(t, repo, manifest)
+	gitCommand(t, repo, "add", "--", ManifestFilename)
+	gitCommand(t, repo, "commit", "--no-gpg-sign", "-m", "test: use unsupported manifest")
+	gitCommand(t, repo, "push", "origin", "HEAD")
+	called := false
+	_, err = PullCurrent(context.Background(), Options{ConfigPath: configPath}, func(PullInput) error {
+		called = true
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported backup manifest format") {
+		t.Fatalf("PullCurrent error = %v, want unsupported-manifest failure", err)
+	}
+	if called {
+		t.Fatal("unsupported manifest reached Health Archive Snapshot restore callback")
+	}
+}
+
+func TestPullRejectsShardPathOutsideBackupDataTreeBeforeRestore(t *testing.T) {
+	_, configPath, repo, _ := setupPullTestBackup(t, pullTestInput("second"))
+	manifest, found, err := readManifestIfPresent(repo)
+	if err != nil || !found {
+		t.Fatalf("read manifest: found=%t err=%v", found, err)
+	}
+	manifest.Shards[0].Path = "data/../outside.jsonl.gz.age"
+	writePullTestManifest(t, repo, manifest)
+	gitCommand(t, repo, "add", "--", ManifestFilename)
+	gitCommand(t, repo, "commit", "--no-gpg-sign", "-m", "test: escape backup data tree")
+	gitCommand(t, repo, "push", "origin", "HEAD")
+	called := false
+	_, err = PullCurrent(context.Background(), Options{ConfigPath: configPath}, func(PullInput) error {
+		called = true
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid path") {
+		t.Fatalf("PullCurrent error = %v, want shard-path confinement failure", err)
+	}
+	if called {
+		t.Fatal("escaping shard path reached Health Archive Snapshot restore callback")
 	}
 }
 
@@ -2573,6 +2841,66 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	}
 	if got := info.Mode().Perm(); got != want {
 		t.Fatalf("mode %s = %04o, want %04o", path, got, want)
+	}
+}
+
+func pullTestInput(marker string) PushInput {
+	tables := []string{
+		"connections",
+		"data_points",
+		"data_point_revisions",
+		"data_point_attachments",
+		"attachment_payloads",
+		"rollups",
+		"identity_snapshots",
+		"sync_runs",
+		"sync_cursors",
+	}
+	shards := make([]PlaintextShard, 0, len(tables))
+	counts := Counts{}
+	for _, table := range tables {
+		shard := PlaintextShard{Table: table, Path: "data/" + table + ".jsonl.gz.age"}
+		if table == "connections" && marker != "first" {
+			shard.Rows = 1
+			shard.JSONL = []byte(`{"marker":"` + marker + `"}` + "\n")
+			counts.Connections = 1
+		}
+		shards = append(shards, shard)
+	}
+	return PushInput{
+		SchemaVersion: 1,
+		ExportedAt:    time.Date(2026, 8, 16, 13, 0, 0, 0, time.UTC),
+		Counts:        counts,
+		Shards:        shards,
+	}
+}
+
+func setupPullTestBackup(t *testing.T, input PushInput) (root, configPath, repo, remote string) {
+	t.Helper()
+	root = t.TempDir()
+	remote = filepath.Join(root, "remote.git")
+	gitCommand(t, "", "init", "--bare", remote)
+	configPath = filepath.Join(root, "private", "backup.json")
+	repo = filepath.Join(root, "checkout")
+	identity := filepath.Join(root, "private", "backup-age-identity.txt")
+	if _, err := Init(context.Background(), Options{ConfigPath: configPath, Repo: repo, Remote: remote, Identity: identity, Push: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Push(context.Background(), Options{ConfigPath: configPath, Push: true}, input); err != nil {
+		t.Fatal(err)
+	}
+	return root, configPath, repo, remote
+}
+
+func writePullTestManifest(t *testing.T, repo string, manifest Manifest) {
+	t.Helper()
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(filepath.Join(repo, ManifestFilename), data, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

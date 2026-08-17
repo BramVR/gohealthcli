@@ -44,10 +44,16 @@ type backupPushOutput struct {
 	backupmodule.PushResult
 }
 
+type backupPullOutput struct {
+	Status      string `json:"status"`
+	ArchivePath string `json:"archive_path"`
+	backupmodule.PullResult
+}
+
 func runBackup(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	action, parseArgs := extractBackupAction(args)
 	name := "backup"
-	if action == "init" || action == "push" || action == "status" {
+	if action == "init" || action == "push" || action == "pull" || action == "status" {
 		name += " " + action
 	}
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
@@ -80,13 +86,13 @@ func runBackup(args []string, globals CommonFlagValues, stdout, stderr io.Writer
 		return ReportFailure(FailureReport{Command: "backup", Status: StatusUnexpectedArgument, Message: "unexpected backup arguments: " + strings.Join(flags.Args(), " "), Mode: mode}, stdout, stderr)
 	}
 	if action == "" {
-		return ReportFailure(FailureReport{Command: "backup", Status: StatusFlagInvalid, Message: "backup requires an action: init, push, or status", Mode: mode}, stdout, stderr)
+		return ReportFailure(FailureReport{Command: "backup", Status: StatusFlagInvalid, Message: "backup requires an action: init, push, pull, or status", Mode: mode}, stdout, stderr)
 	}
-	if action != "init" && action != "push" && action != "status" {
+	if action != "init" && action != "push" && action != "pull" && action != "status" {
 		return ReportFailure(FailureReport{Command: "backup", Status: StatusFlagInvalid, Message: fmt.Sprintf("unknown backup action: %s", action), Mode: mode}, stdout, stderr)
 	}
-	if action != "push" && common.ArchivePathExplicit {
-		return ReportFailure(FailureReport{Command: "backup", Status: StatusFlagInvalid, Message: "--db is only valid with backup push", Mode: mode}, stdout, stderr)
+	if action != "push" && action != "pull" && common.ArchivePathExplicit {
+		return ReportFailure(FailureReport{Command: "backup", Status: StatusFlagInvalid, Message: "--db is only valid with backup push or backup pull", Mode: mode}, stdout, stderr)
 	}
 
 	opts := backupmodule.Options{
@@ -151,6 +157,21 @@ func runBackup(args []string, globals CommonFlagValues, stdout, stderr io.Writer
 			return reportWriteFailure("backup", err, mode, stdout, stderr)
 		}
 		return 0
+	case "pull":
+		if *noPush {
+			return ReportFailure(FailureReport{Command: "backup", Status: StatusFlagInvalid, Message: "--no-push is only valid with backup init or backup push", Mode: mode}, stdout, stderr)
+		}
+		result, err := backupmodule.PullCurrent(context.Background(), opts, func(input backupmodule.PullInput) error {
+			return restorePulledHealthArchiveSnapshot(context.Background(), input, common.ArchivePath)
+		})
+		if err != nil {
+			return backupFailure("pull", err, mode, stdout, stderr)
+		}
+		output := backupPullOutput{Status: "backup_pulled", ArchivePath: common.ArchivePath, PullResult: result}
+		if err := writeBackupPullOutput(output, mode, stdout); err != nil {
+			return reportWriteFailure("backup", err, mode, stdout, stderr)
+		}
+		return 0
 	case "status":
 		if *noPush {
 			return ReportFailure(FailureReport{Command: "backup", Status: StatusFlagInvalid, Message: "--no-push is only valid with backup init or backup push", Mode: mode}, stdout, stderr)
@@ -165,6 +186,26 @@ func runBackup(args []string, globals CommonFlagValues, stdout, stderr io.Writer
 		return 0
 	}
 	return 0
+}
+
+func restorePulledHealthArchiveSnapshot(ctx context.Context, input backupmodule.PullInput, archivePath string) error {
+	shards := make([]HealthArchiveSnapshotJSONLShard, 0, len(input.Shards))
+	for _, shard := range input.Shards {
+		shards = append(shards, HealthArchiveSnapshotJSONLShard{
+			Table: shard.Table,
+			Path:  shard.Path,
+			Rows:  shard.Rows,
+			JSONL: shard.JSONL,
+		})
+	}
+	snapshot, err := DecodeHealthArchiveSnapshotJSONL(input.SchemaVersion, shards)
+	if err != nil {
+		return err
+	}
+	if counts := healthArchiveSnapshotCounts(snapshot); counts != input.Counts {
+		return fmt.Errorf("Health Archive Snapshot counts do not match backup manifest: decoded %+v, manifest %+v", counts, input.Counts)
+	}
+	return RestoreHealthArchiveSnapshot(ctx, snapshot, archivePath)
 }
 
 func extractBackupAction(args []string) (string, []string) {
@@ -283,6 +324,40 @@ func writeBackupPushOutput(result backupPushOutput, mode outputMode, stdout io.W
 		}
 	}
 	return writer.Err()
+}
+
+func writeBackupPullOutput(result backupPullOutput, mode outputMode, stdout io.Writer) error {
+	if mode.json {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+	writer := newStickyWriter(stdout)
+	writer.Printf("status: %s\n", result.Status)
+	writer.Printf("repo_path: %s\n", escapePlainControlChars(result.RepoPath))
+	writer.Printf("archive_path: %s\n", escapePlainControlChars(result.ArchivePath))
+	writer.Printf("changed: %t\n", result.Changed)
+	writer.Printf("encrypted: %t\n", result.Encrypted)
+	writer.Printf("shard_count: %d\n", result.ShardCount)
+	writeBackupCountsPlain(writer, result.Counts)
+	if !mode.plain {
+		writer.Printf("message: encrypted Health Archive Snapshot restored\n")
+	}
+	return writer.Err()
+}
+
+func healthArchiveSnapshotCounts(snapshot HealthArchiveSnapshot) backupmodule.Counts {
+	return backupmodule.Counts{
+		Connections:          len(snapshot.Connections),
+		DataPoints:           len(snapshot.DataPoints),
+		DataPointRevisions:   len(snapshot.DataPointRevisions),
+		DataPointAttachments: len(snapshot.DataPointAttachments),
+		AttachmentPayloads:   len(snapshot.AttachmentPayloads),
+		Rollups:              len(snapshot.Rollups),
+		IdentitySnapshots:    len(snapshot.IdentitySnapshots),
+		SyncRuns:             len(snapshot.SyncRuns),
+		SyncCursors:          len(snapshot.SyncCursors),
+	}
 }
 
 func writeBackupCountsPlain(writer *stickyWriter, counts backupmodule.Counts) {
