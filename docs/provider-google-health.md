@@ -19,6 +19,19 @@ The provider client is hand-rolled REST over `net/http` against
 `https://health.googleapis.com/v4` (`internal/googlehealth/fetch.go`).
 There is no `google.golang.org/api` Go module dependency.
 
+## Offline catalog browsing
+
+`gohealthcli catalog list` serializes every compiled Data Type in canonical
+catalog order. The `selection` field separates default from opt-in Data Types;
+`raw_data_points` reports `supported` or `unsupported` independently because a
+default Data Type can be Rollup-only. `required_scopes` contains exact OAuth
+scope URLs.
+
+`gohealthcli catalog scopes` groups those exact scope URLs with catalog-ordered
+Data Type membership. It reports requirements only. It does not inspect a token
+or claim that a scope is granted. Both actions run without config, a Connection,
+credentials, a Health Archive, or network access.
+
 ## Discovery-backed catalog audit
 
 `gohealthcli catalog verify` fetches Google's unauthenticated public v4

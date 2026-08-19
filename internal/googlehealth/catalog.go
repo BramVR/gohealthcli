@@ -47,6 +47,78 @@ type googleHealthDataTypeCatalog struct {
 	order   []string
 }
 
+// CatalogDataType is the stable serialized summary of one compiled Provider
+// Data Type. Selection and raw Data Point support are separate because a
+// default Data Type can be Rollup-only.
+type CatalogDataType struct {
+	DataType       string   `json:"data_type"`
+	Selection      string   `json:"selection"`
+	RawDataPoints  string   `json:"raw_data_points"`
+	RequiredScopes []string `json:"required_scopes"`
+}
+
+// CatalogScope groups one exact OAuth scope with the Data Types that require
+// it. DataTypes preserves canonical catalog order.
+type CatalogScope struct {
+	Scope     string   `json:"scope"`
+	DataTypes []string `json:"data_types"`
+}
+
+// CatalogDataTypes returns every compiled Data Type in canonical catalog
+// order. Returned scope slices do not share mutable catalog state.
+func CatalogDataTypes() []CatalogDataType {
+	dataTypes := make([]CatalogDataType, 0, len(googleHealthDataTypes.order))
+	for _, dataType := range googleHealthDataTypes.order {
+		entry, ok := googleHealthDataTypes.Lookup(dataType)
+		if !ok {
+			continue
+		}
+		selection := "opt_in"
+		if entry.DefaultConfigType {
+			selection = "default"
+		}
+		rawDataPoints := "unsupported"
+		if SupportsSyncDataPoints(dataType) {
+			rawDataPoints = "supported"
+		}
+		dataTypes = append(dataTypes, CatalogDataType{
+			DataType:       dataType,
+			Selection:      selection,
+			RawDataPoints:  rawDataPoints,
+			RequiredScopes: append([]string(nil), entry.RequiredScopes...),
+		})
+	}
+	return dataTypes
+}
+
+// CatalogScopes returns exact OAuth scopes in lexical order. Membership for
+// each scope follows canonical Data Type order.
+func CatalogScopes() []CatalogScope {
+	members := make(map[string][]string)
+	for _, dataType := range googleHealthDataTypes.order {
+		entry, ok := googleHealthDataTypes.Lookup(dataType)
+		if !ok {
+			continue
+		}
+		for _, scope := range entry.RequiredScopes {
+			members[scope] = append(members[scope], dataType)
+		}
+	}
+	scopeNames := make([]string, 0, len(members))
+	for scope := range members {
+		scopeNames = append(scopeNames, scope)
+	}
+	sort.Strings(scopeNames)
+	scopes := make([]CatalogScope, 0, len(scopeNames))
+	for _, scope := range scopeNames {
+		scopes = append(scopes, CatalogScope{
+			Scope:     scope,
+			DataTypes: append([]string(nil), members[scope]...),
+		})
+	}
+	return scopes
+}
+
 // listEndpoints / listReconcile constructors keep entry definitions
 // terse. The previous parallel-boolean layout had ~7 fields per entry;
 // using these helpers preserves that brevity while reading from one
