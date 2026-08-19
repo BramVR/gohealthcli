@@ -592,6 +592,10 @@ restore together, with owner-only sidecars that pass the same orphan checks as
 `doctor`. Use a throwaway target periodically to prove recovery without touching
 the current Health Archive.
 
+Private Credential Store token material, OAuth client secrets, and Secret
+Provider contents are not backed up. A restored Health Archive may therefore
+need `connect` before Provider commands work.
+
 `backup status` is a read-only manifest inspection path. It works without the
 private age identity and reports a clear `backup_uninitialized` or
 `backup_empty` state before the first encrypted archive manifest exists. Once a
@@ -643,6 +647,7 @@ Release operators: see [docs/release.md](./docs/release.md).
 - [docs/commands.md](./docs/commands.md): CLI surface and output behavior.
 - [docs/data-model.md](./docs/data-model.md): archive model sketch.
 - [docs/security.md](./docs/security.md): local credentials and health data safety.
+- [docs/backups.md](./docs/backups.md): encrypted backup and recovery drills.
 - [docs/research.md](./docs/research.md): source-backed Google Health API notes.
 - [docs/plan.md](./docs/plan.md): product and implementation plan.
 - [docs/adr/](./docs/adr): short architectural decision records.

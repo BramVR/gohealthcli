@@ -131,8 +131,9 @@ reference fails before a target is reported as restored.
 
 The default `backup.json` and `backup-age-identity.txt` live beside the main
 config under the XDG-style gohealthcli config directory and are owner-only.
-They must never be committed. OAuth client secrets and Credential Store token
-material are excluded from backup.
+They must never be committed. Private Credential Store token material, OAuth
+client secrets, and Secret Provider contents are excluded from backup. A
+restored Health Archive may require `connect` before Provider commands work.
 
 The Git repository remains sensitive metadata. Its cleartext manifest may
 reveal export time, public recipients, logical table names, row counts, shard

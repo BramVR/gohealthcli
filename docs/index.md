@@ -30,6 +30,7 @@ Normalised CSV or JSONL exports cover every Data Type the catalog supports. Roll
 
 - **Install** — pick a path that works today: Homebrew, `go install`, or source build.
 - **Quickstart** — walk through OAuth setup and your first sync.
+- **Back up and restore** — create encrypted Git backups and run a throwaway recovery drill.
 - **Reference** — every subcommand and flag at a stable URL.
 
 ## What it isn't
