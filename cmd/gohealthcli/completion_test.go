@@ -431,14 +431,14 @@ func TestCompletionProtocolCatalogCandidatesAreStableAndSorted(t *testing.T) {
 	}
 }
 
-func TestCompletionProtocolSuggestsCatalogVerifyAction(t *testing.T) {
+func TestCompletionProtocolSuggestsCatalogActions(t *testing.T) {
 	t.Parallel()
 
 	code, stdout, stderr := runCommand(t, "__completeNoDesc", "catalog", "")
 	if code != 0 {
 		t.Fatalf("completion exit code = %d, want 0; stderr=%q", code, stderr.String())
 	}
-	if got, want := completionCandidates(stdout.String()), []string{"verify"}; !reflect.DeepEqual(got, want) {
+	if got, want := completionCandidates(stdout.String()), []string{"list", "scopes", "verify"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("candidates = %v, want %v", got, want)
 	}
 }

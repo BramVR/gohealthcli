@@ -180,7 +180,7 @@ func TestCatalogMissingActionPreservesGlobalJSONMode(t *testing.T) {
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
-	want := "{\"status\":\"unexpected_argument\",\"message\":\"expected action: verify\"}\n"
+	want := "{\"status\":\"unexpected_argument\",\"message\":\"expected action: list, scopes, or verify\"}\n"
 	if stdout.String() != want {
 		t.Errorf("stdout = %q, want %q", stdout.String(), want)
 	}
@@ -205,6 +205,22 @@ func TestCatalogVerifyAcceptsFlagsBeforeAction(t *testing.T) {
 	}
 }
 
+func TestCatalogFlagArgsPreservesDiscoveryValuesNamedLikeActions(t *testing.T) {
+	t.Parallel()
+
+	for _, flagName := range []string{"-discovery", "--discovery"} {
+		for _, path := range []string{"list", "scopes"} {
+			gotArgs, gotAction := catalogFlagArgs([]string{flagName, path, "verify"})
+			if gotAction != "verify" {
+				t.Errorf("catalogFlagArgs(%q, %q, verify) action = %q, want verify", flagName, path, gotAction)
+			}
+			if len(gotArgs) != 2 || gotArgs[0] != flagName || gotArgs[1] != path {
+				t.Errorf("catalogFlagArgs(%q, %q, verify) args = %v, want [%s %s]", flagName, path, gotArgs, flagName, path)
+			}
+		}
+	}
+}
+
 func TestCatalogMissingActionPreservesCatalogJSONMode(t *testing.T) {
 	t.Parallel()
 
@@ -212,7 +228,7 @@ func TestCatalogMissingActionPreservesCatalogJSONMode(t *testing.T) {
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
-	want := "{\"status\":\"unexpected_argument\",\"message\":\"expected action: verify\"}\n"
+	want := "{\"status\":\"unexpected_argument\",\"message\":\"expected action: list, scopes, or verify\"}\n"
 	if stdout.String() != want {
 		t.Errorf("stdout = %q, want %q", stdout.String(), want)
 	}

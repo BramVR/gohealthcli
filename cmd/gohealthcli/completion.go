@@ -257,7 +257,7 @@ func completeValues(policy valueCompletionPolicy, args []string, toComplete stri
 		if len(args) != 0 {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
-		return completeCatalog([]string{"verify"}, toComplete), cobra.ShellCompDirectiveNoFileComp
+		return completeCatalog([]string{"list", "scopes", "verify"}, toComplete), cobra.ShellCompDirectiveNoFileComp
 	case valueCompletionBackupAction:
 		if len(args) != 0 {
 			return nil, cobra.ShellCompDirectiveNoFileComp

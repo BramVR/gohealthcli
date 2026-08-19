@@ -3,7 +3,7 @@ title: "Data Types"
 description: "What each Google Health Data Type captures and how gohealthcli stores it."
 ---
 
-A plain-language guide to every Data Type the Google Health catalog exposes through `gohealthcli`. Each entry names the sync key you pass to `sync --types`, the upstream record shape (sample / interval / session / daily), the OAuth scope required, and what the catalog row supports. For the canonical machine-readable list, see the [README](https://github.com/BramVR/gohealthcli#readme); for storage shape, see [`docs/data-model.md`](https://github.com/BramVR/gohealthcli/blob/main/docs/data-model.md).
+A plain-language guide to every Data Type the Google Health catalog exposes through `gohealthcli`. Each entry names the sync key you pass to `sync --types`, the upstream record shape (sample / interval / session / daily), the OAuth scope required, and what the catalog row supports. Run `gohealthcli catalog list --json` for the canonical machine-readable list and `gohealthcli catalog scopes --json` for exact scope membership. For storage shape, see [`docs/data-model.md`](https://github.com/BramVR/gohealthcli/blob/main/docs/data-model.md).
 
 ## How to read this page
 

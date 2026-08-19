@@ -25,7 +25,7 @@ payloads with age before Git sees them.
 ## Status
 
 The full command surface is live: setup (`init`, `doctor`), Provider catalog
-verification (`catalog verify`), OAuth and
+browsing and verification (`catalog list`, `catalog scopes`, `catalog verify`), OAuth and
 identity snapshots (`connect` through `irn-profile`), archiving (`sync`,
 with heartbeat-backed `sync --status` observability and auto-fencing of
 abandoned runs), encrypted backup setup/push/pull/status (`backup init`, `backup push`,
@@ -43,7 +43,7 @@ sync with `gohealthcli --help`.
 
 - `init`: Create local config and an empty Health Archive.
 - `doctor`: Validate local setup and provider reachability.
-- `catalog`: Verify the Provider catalog against Google discovery.
+- `catalog`: Browse and verify the compiled Provider catalog.
 - `connect`: Run the browser OAuth flow and anchor one Google Identity.
 - `identity`: Refresh the archived Google Identity metadata.
 - `profile`: Archive a Profile Snapshot from the provider.
@@ -136,6 +136,13 @@ above or the caveat sentence.
 For a plain-language description of each Data Type — what it captures,
 the upstream record shape, required scope, and the normalized view it
 projects into — see [docs/data-types.md](./docs/data-types.md).
+
+Run `gohealthcli catalog list --json` for every compiled Data Type in catalog
+order. Each row reports `selection` (`default` or `opt_in`),
+`raw_data_points` (`supported` or `unsupported`), and the exact
+`required_scopes`. Run `gohealthcli catalog scopes --json` to group those exact
+scope URLs by Data Type membership. Both actions are offline and do not read
+config, a Connection, the Credential Store, or a Health Archive.
 
 Run `gohealthcli catalog verify` to compare this catalog with Google's live
 public v4 discovery document without reading config, credentials, a Connection,

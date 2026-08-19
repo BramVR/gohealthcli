@@ -66,10 +66,18 @@ Google Identity match, and Provider reachability stay explicitly unchecked.
 Use the installed binary as the catalog instead of memorizing names:
 
 ```bash
+gohealthcli catalog list --json
+gohealthcli catalog scopes --json
 gohealthcli catalog verify --json
 gohealthcli describe-schema --json --no-input
 gohealthcli describe-schema --sql --no-input
 ```
+
+`catalog list` returns every compiled Data Type in canonical order. Use its
+`selection`, `raw_data_points`, and `required_scopes` fields instead of copying
+Data Type support into prompts or scripts. `catalog scopes` groups each exact
+required OAuth scope with the Data Types that use it. Both actions are offline
+and do not inspect the current token or claim that a scope is granted.
 
 `catalog verify` compares the public Google Health discovery document with the
 compiled Provider catalog. It needs no config, archive, Connection, or

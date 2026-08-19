@@ -428,6 +428,77 @@ func TestGoogleHealthDataTypeCatalogCompletionViews(t *testing.T) {
 	}
 }
 
+func TestCatalogBrowseProjectionsCoverCanonicalFacts(t *testing.T) {
+	t.Parallel()
+
+	dataTypes := CatalogDataTypes()
+	if len(dataTypes) != len(googleHealthDataTypes.order) {
+		t.Fatalf("CatalogDataTypes returned %d rows, want %d canonical rows", len(dataTypes), len(googleHealthDataTypes.order))
+	}
+	wantScopeMembers := make(map[string][]string)
+	for index, dataType := range googleHealthDataTypes.order {
+		entry, ok := googleHealthDataTypes.Lookup(dataType)
+		if !ok {
+			t.Fatalf("catalog order contains missing Data Type %q", dataType)
+		}
+		got := dataTypes[index]
+		if got.DataType != dataType {
+			t.Errorf("CatalogDataTypes()[%d].DataType = %q, want %q", index, got.DataType, dataType)
+		}
+		wantSelection := "opt_in"
+		if entry.DefaultConfigType {
+			wantSelection = "default"
+		}
+		if got.Selection != wantSelection {
+			t.Errorf("CatalogDataTypes()[%d].Selection = %q, want %q", index, got.Selection, wantSelection)
+		}
+		wantRaw := "unsupported"
+		if SupportsSyncDataPoints(dataType) {
+			wantRaw = "supported"
+		}
+		if got.RawDataPoints != wantRaw {
+			t.Errorf("CatalogDataTypes()[%d].RawDataPoints = %q, want %q", index, got.RawDataPoints, wantRaw)
+		}
+		if !slices.Equal(got.RequiredScopes, entry.RequiredScopes) {
+			t.Errorf("CatalogDataTypes()[%d].RequiredScopes = %v, want %v", index, got.RequiredScopes, entry.RequiredScopes)
+		}
+		for _, scope := range entry.RequiredScopes {
+			wantScopeMembers[scope] = append(wantScopeMembers[scope], dataType)
+		}
+	}
+
+	scopes := CatalogScopes()
+	if len(scopes) != len(wantScopeMembers) {
+		t.Fatalf("CatalogScopes returned %d rows, want %d exact scopes", len(scopes), len(wantScopeMembers))
+	}
+	if !sort.SliceIsSorted(scopes, func(i, j int) bool { return scopes[i].Scope < scopes[j].Scope }) {
+		t.Errorf("CatalogScopes order is not lexical: %v", scopes)
+	}
+	for _, scope := range scopes {
+		want, ok := wantScopeMembers[scope.Scope]
+		if !ok {
+			t.Errorf("CatalogScopes returned unknown scope %q", scope.Scope)
+			continue
+		}
+		if !slices.Equal(scope.DataTypes, want) {
+			t.Errorf("CatalogScopes membership for %q = %v, want catalog order %v", scope.Scope, scope.DataTypes, want)
+		}
+		delete(wantScopeMembers, scope.Scope)
+	}
+	if len(wantScopeMembers) != 0 {
+		t.Errorf("CatalogScopes omitted required scopes: %v", wantScopeMembers)
+	}
+
+	dataTypes[0].RequiredScopes[0] = "mutated"
+	if CatalogDataTypes()[0].RequiredScopes[0] == "mutated" {
+		t.Fatal("CatalogDataTypes returned shared scope state")
+	}
+	scopes[0].DataTypes[0] = "mutated"
+	if CatalogScopes()[0].DataTypes[0] == "mutated" {
+		t.Fatal("CatalogScopes returned shared membership state")
+	}
+}
+
 func TestGoogleHealthSourceFamilyCompletionView(t *testing.T) {
 	t.Parallel()
 

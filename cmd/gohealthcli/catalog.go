@@ -32,17 +32,17 @@ func runCatalogWithRuntime(args []string, globals CommonFlagValues, stdout, stde
 		JSONOutput:  globals.JSONOutput,
 		PlainOutput: globals.PlainOutput,
 	})
-	discoveryPath := flags.String("discovery", "", "read a Google Health discovery document from PATH instead of the public endpoint")
+	discoveryPath := flags.String("discovery", "", "with verify: read a Google Health discovery document from PATH instead of the public endpoint")
 
-	parseArgs, hasVerifyAction := catalogVerifyFlagArgs(args)
+	parseArgs, action := catalogFlagArgs(args)
 	if err := ParseCommon(flags, common, parseArgs, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	mode := commonOutputMode(*common)
 	if flags.NArg() != 0 {
 		message := fmt.Sprintf("unexpected catalog action: %s", flags.Arg(0))
-		if hasVerifyAction {
-			message = fmt.Sprintf("unexpected catalog verify argument: %s", flags.Arg(0))
+		if action != "" {
+			message = fmt.Sprintf("unexpected catalog %s argument: %s", action, flags.Arg(0))
 		}
 		return ReportFailure(FailureReport{
 			Command: "catalog",
@@ -51,13 +51,53 @@ func runCatalogWithRuntime(args []string, globals CommonFlagValues, stdout, stde
 			Mode:    mode,
 		}, stdout, stderr)
 	}
-	if !hasVerifyAction {
+	if action == "" {
 		return ReportFailure(FailureReport{
 			Command: "catalog",
 			Status:  StatusUnexpectedArgument,
-			Message: "expected action: verify",
+			Message: "expected action: list, scopes, or verify",
 			Mode:    mode,
 		}, stdout, stderr)
+	}
+	if action == "list" {
+		if *discoveryPath != "" {
+			return ReportFailure(FailureReport{
+				Command: "catalog list",
+				Status:  StatusFlagInvalid,
+				Message: "--discovery is supported only by catalog verify",
+				Mode:    mode,
+			}, stdout, stderr)
+		}
+		err := writeCatalogDataTypes(googlehealth.CatalogDataTypes(), mode, stdout)
+		if err != nil {
+			return ReportFailure(FailureReport{
+				Command: "catalog list",
+				Status:  StatusArchiveUnwritable,
+				Message: fmt.Sprintf("write output: %v", err),
+				Mode:    mode,
+			}, stdout, stderr)
+		}
+		return 0
+	}
+	if action == "scopes" {
+		if *discoveryPath != "" {
+			return ReportFailure(FailureReport{
+				Command: "catalog scopes",
+				Status:  StatusFlagInvalid,
+				Message: "--discovery is supported only by catalog verify",
+				Mode:    mode,
+			}, stdout, stderr)
+		}
+		err := writeCatalogScopes(googlehealth.CatalogScopes(), mode, stdout)
+		if err != nil {
+			return ReportFailure(FailureReport{
+				Command: "catalog scopes",
+				Status:  StatusArchiveUnwritable,
+				Message: fmt.Sprintf("write output: %v", err),
+				Mode:    mode,
+			}, stdout, stderr)
+		}
+		return 0
 	}
 
 	payload, source, err := loadCatalogDiscovery(*discoveryPath, runtime.withDefaults())
@@ -82,13 +122,76 @@ func runCatalogWithRuntime(args []string, globals CommonFlagValues, stdout, stde
 	return 0
 }
 
-// catalogVerifyFlagArgs removes the fixed verify action before handing the
-// remaining arguments to flag.FlagSet, allowing flags on either side of the
-// action. A literal "verify" consumed as --discovery's value remains a path,
-// so a file with that name is never mistaken for the action.
-func catalogVerifyFlagArgs(args []string) ([]string, bool) {
+func writeCatalogScopes(scopes []googlehealth.CatalogScope, mode outputMode, stdout io.Writer) error {
+	if mode.json {
+		payload, err := json.Marshal(struct {
+			Scopes []googlehealth.CatalogScope `json:"scopes"`
+		}{Scopes: scopes})
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "%s\n", payload)
+		return err
+	}
+
+	writer := newStickyWriter(stdout)
+	if mode.plain {
+		for index, scope := range scopes {
+			writer.Printf("scope.%d.scope: %s\n", index, scope.Scope)
+			writer.Printf("scope.%d.data_types: %s\n", index, strings.Join(scope.DataTypes, ","))
+		}
+		return writer.Err()
+	}
+
+	writer.Printf("Google Health OAuth Scopes (%d)\n", len(scopes))
+	for _, scope := range scopes {
+		writer.Printf("- %s\n", scope.Scope)
+		writer.Printf("  Data Types: %s\n", strings.Join(scope.DataTypes, ", "))
+	}
+	return writer.Err()
+}
+
+func writeCatalogDataTypes(dataTypes []googlehealth.CatalogDataType, mode outputMode, stdout io.Writer) error {
+	if mode.json {
+		payload, err := json.Marshal(struct {
+			DataTypes []googlehealth.CatalogDataType `json:"data_types"`
+		}{DataTypes: dataTypes})
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "%s\n", payload)
+		return err
+	}
+
+	writer := newStickyWriter(stdout)
+	if mode.plain {
+		for index, dataType := range dataTypes {
+			writer.Printf("data_type.%d.data_type: %s\n", index, dataType.DataType)
+			writer.Printf("data_type.%d.selection: %s\n", index, dataType.Selection)
+			writer.Printf("data_type.%d.raw_data_points: %s\n", index, dataType.RawDataPoints)
+			writer.Printf("data_type.%d.required_scopes: %s\n", index, strings.Join(dataType.RequiredScopes, ","))
+		}
+		return writer.Err()
+	}
+
+	writer.Printf("Google Health Data Types (%d)\n", len(dataTypes))
+	for _, dataType := range dataTypes {
+		selection := strings.ReplaceAll(dataType.Selection, "_", "-")
+		scopeLabel := "scopes"
+		if len(dataType.RequiredScopes) == 1 {
+			scopeLabel = "scope"
+		}
+		writer.Printf("- %s: %s; raw Data Points %s; %s %s\n", dataType.DataType, selection, dataType.RawDataPoints, scopeLabel, strings.Join(dataType.RequiredScopes, ", "))
+	}
+	return writer.Err()
+}
+
+// catalogFlagArgs removes one fixed action before handing the remaining
+// arguments to flag.FlagSet, allowing flags on either side of the action. An
+// action word consumed as --discovery's value remains a path.
+func catalogFlagArgs(args []string) ([]string, string) {
 	flagArgs := make([]string, 0, len(args))
-	hasVerify := false
+	action := ""
 	discoveryValueNext := false
 	for _, arg := range args {
 		if discoveryValueNext {
@@ -101,13 +204,13 @@ func catalogVerifyFlagArgs(args []string) ([]string, bool) {
 			discoveryValueNext = true
 			continue
 		}
-		if arg == "verify" && !hasVerify {
-			hasVerify = true
+		if action == "" && (arg == "list" || arg == "scopes" || arg == "verify") {
+			action = arg
 			continue
 		}
 		flagArgs = append(flagArgs, arg)
 	}
-	return flagArgs, hasVerify
+	return flagArgs, action
 }
 
 func loadCatalogDiscovery(path string, runtime runtimeAdapters) ([]byte, string, error) {
