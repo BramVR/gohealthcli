@@ -63,6 +63,11 @@ Current explicit exceptions are:
   [public Data Types catalog](https://developers.google.com/health/data-types)
   even though their discovery descriptions call them details rather than
   collections.
+- Upstream write-only: `menstrual-period`, `moods`, `ovulation-test`,
+  `symptoms`. Revision `20260817` adds them to the Data Point union, but Google
+  documents only `create`, `update`, and `batchDelete` operations under
+  write-only scopes. They stay outside gohealthcli's read-only compiled
+  catalog.
 
 An otherwise matching document therefore reports
 `verified_with_known_gaps`. Unexpected additions, removals, reference or shape
