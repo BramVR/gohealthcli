@@ -8,6 +8,81 @@ import (
 	"testing"
 )
 
+func TestVerifyCatalogDiscoveryRevision20260817IsClean(t *testing.T) {
+	t.Parallel()
+
+	payload, err := os.ReadFile("testdata/google-health-discovery-v4.json")
+	if err != nil {
+		t.Fatalf("read discovery fixture: %v", err)
+	}
+	result := VerifyCatalogDiscovery(payload, "file")
+	if result.DiscoveryRevision != "20260817" {
+		t.Errorf("discovery revision = %q, want 20260817", result.DiscoveryRevision)
+	}
+	if result.Status != CatalogVerifiedWithKnownGaps {
+		t.Errorf("status = %q, want %q; drift=%#v", result.Status, CatalogVerifiedWithKnownGaps, result.Drift)
+	}
+	if len(result.Drift) != 0 {
+		t.Errorf("drift = %#v, want none", result.Drift)
+	}
+	wantWriteOnly := map[string]bool{
+		"menstrual-period": true,
+		"moods":            true,
+		"ovulation-test":   true,
+		"symptoms":         true,
+	}
+	if got := knownGapDataTypes(result.KnownGaps, "upstream_write_only"); !reflect.DeepEqual(got, wantWriteOnly) {
+		t.Errorf("upstream_write_only = %#v, want %#v", got, wantWriteOnly)
+	}
+}
+
+func TestDiscoverySnapshotClassifiesWriteOnlyDataTypes(t *testing.T) {
+	t.Parallel()
+
+	document := loadCatalogDiscoveryDocument(t)
+	discovered, err := discoveryDataTypes(document)
+	if err != nil {
+		t.Fatalf("parse discovery fixture: %v", err)
+	}
+	want := map[string]discoveredDataType{
+		"menstrual-period": {
+			DataType: "menstrual-period", JSONField: "menstrualPeriod", RecordKind: "interval",
+			SchemaRef: "MenstrualPeriod", Shape: "interval:ObservationTimeInterval:",
+		},
+		"moods": {
+			DataType: "moods", JSONField: "moods", RecordKind: "sample",
+			SchemaRef: "Moods", Shape: "sampleTime:ObservationSampleTime:",
+		},
+		"ovulation-test": {
+			DataType: "ovulation-test", JSONField: "ovulationTest", RecordKind: "sample",
+			SchemaRef: "OvulationTest", Shape: "sampleTime:ObservationSampleTime:",
+		},
+		"symptoms": {
+			DataType: "symptoms", JSONField: "symptoms", RecordKind: "sample",
+			SchemaRef: "Symptoms", Shape: "sampleTime:ObservationSampleTime:",
+		},
+	}
+	for dataType, expected := range want {
+		if got := discovered[dataType]; got != expected {
+			t.Errorf("%s = %#v, want %#v", dataType, got, expected)
+		}
+	}
+}
+
+func TestWriteOnlyDataTypesStayOutOfOperationalCatalog(t *testing.T) {
+	t.Parallel()
+
+	writeOnly := knownGapDataTypes(catalogKnownGaps, "upstream_write_only")
+	for _, dataType := range []string{"menstrual-period", "moods", "ovulation-test", "symptoms"} {
+		if !writeOnly[dataType] {
+			t.Errorf("%s is not declared upstream_write_only", dataType)
+		}
+		if _, ok := googleHealthDataTypes.Lookup(dataType); ok {
+			t.Errorf("write-only Data Type %s must not enter the compiled operational catalog", dataType)
+		}
+	}
+}
+
 func TestVerifyCatalogDiscoveryDetectsSchemaReferenceChange(t *testing.T) {
 	t.Parallel()
 
@@ -259,6 +334,17 @@ func TestCompareCatalogDetectsStaleKnownGapDeclarations(t *testing.T) {
 			},
 			want: CatalogDrift{Kind: "known_gap_stale", DataType: "food"},
 		},
+		{
+			name: "declared upstream write-only type now local",
+			mutate: func(local map[string]googleHealthDataTypeCatalogEntry) {
+				local["moods"] = googleHealthDataTypeCatalogEntry{
+					DataType:   "moods",
+					JSONField:  "moods",
+					RecordKind: "sample",
+				}
+			},
+			want: CatalogDrift{Kind: "known_gap_stale", DataType: "moods"},
+		},
 	}
 
 	for _, test := range tests {
@@ -270,8 +356,10 @@ func TestCompareCatalogDetectsStaleKnownGapDeclarations(t *testing.T) {
 			}
 			test.mutate(local)
 			order := append([]string(nil), googleHealthDataTypes.order...)
-			if _, added := local["food"]; added {
-				order = append(order, "food")
+			for _, dataType := range []string{"food", "moods"} {
+				if _, added := local[dataType]; added {
+					order = append(order, dataType)
+				}
 			}
 			drift := compareCatalog(discovered, discovered, local, order)
 			if !containsCatalogDrift(drift, test.want) {
@@ -289,7 +377,8 @@ func TestCompareCatalogKnownGapOrderDoesNotChangeAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse discovery fixture: %v", err)
 	}
-	reordered := []CatalogKnownGap{catalogKnownGaps[1], catalogKnownGaps[0]}
+	reordered := slices.Clone(catalogKnownGaps)
+	slices.Reverse(reordered)
 
 	got := compareCatalogWithKnownGaps(
 		discovered,

@@ -2,7 +2,7 @@
   "kind": "discovery#restDescription",
   "name": "health",
   "version": "v4",
-  "revision": "20260730",
+  "revision": "20260817",
   "schemas": {
     "DataPoint": {
       "properties": {
@@ -33,7 +33,10 @@
         "height": {"$ref": "Height", "description": "Data for points in the `height` sample data type collection."},
         "hydrationLog": {"$ref": "HydrationLog", "description": "Data for points in the `hydration-log` session data type collection."},
         "irregularRhythmNotification": {"$ref": "IrregularRhythmNotification", "description": "Data for points in the `irregular-rhythm-notification` session data type collection."},
+        "menstrualPeriod": {"$ref": "MenstrualPeriod", "description": "Data for points in the `menstrual-period` interval data type collection."},
+        "moods": {"$ref": "Moods", "description": "Data for points in the `moods` sample data type collection."},
         "nutritionLog": {"$ref": "NutritionLog", "description": "Data for points in the `nutrition-log` session data type collection."},
+        "ovulationTest": {"$ref": "OvulationTest", "description": "Data for points in the `ovulation-test` sample data type collection."},
         "oxygenSaturation": {"$ref": "OxygenSaturation", "description": "Data for points in the `oxygen-saturation` sample data type collection."},
         "respiratoryRateSleepSummary": {"$ref": "RespiratoryRateSleepSummary", "description": "Data for points in the `respiratory-rate-sleep-summary` sample data type collection."},
         "runVo2Max": {"$ref": "RunVO2Max", "description": "Data for points in the `run-vo2-max` sample data type collection."},
@@ -41,6 +44,7 @@
         "sleep": {"$ref": "Sleep", "description": "Data for points in the `sleep` session data type collection."},
         "steps": {"$ref": "Steps", "description": "Data for points in the `steps` interval data type collection."},
         "swimLengthsData": {"$ref": "SwimLengthsData", "description": "Data for points in the `swim-lengths-data` interval data type collection."},
+        "symptoms": {"$ref": "Symptoms", "description": "Data for points in the `symptoms` sample data type collection."},
         "timeInHeartRateZone": {"$ref": "TimeInHeartRateZone", "description": "Data for points in the `time-in-heart-rate-zone` interval data type collection."},
         "vo2Max": {"$ref": "VO2Max", "description": "Data for points in the `vo2-max` sample data type collection."},
         "weight": {"$ref": "Weight", "description": "Data for points in the `weight` sample data type collection."}
@@ -73,7 +77,10 @@
     "Height": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
     "HydrationLog": {"properties": {"interval": {"$ref": "SessionTimeInterval"}}},
     "IrregularRhythmNotification": {"properties": {"interval": {"$ref": "SessionTimeInterval"}}},
+    "MenstrualPeriod": {"properties": {"interval": {"$ref": "ObservationTimeInterval"}}},
+    "Moods": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
     "NutritionLog": {"properties": {"interval": {"$ref": "SessionTimeInterval"}}},
+    "OvulationTest": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
     "OxygenSaturation": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
     "RespiratoryRateSleepSummary": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
     "RunVO2Max": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
@@ -81,6 +88,7 @@
     "Sleep": {"properties": {"interval": {"$ref": "SessionTimeInterval"}}},
     "Steps": {"properties": {"interval": {"$ref": "ObservationTimeInterval"}}},
     "SwimLengthsData": {"properties": {"interval": {"$ref": "ObservationTimeInterval"}}},
+    "Symptoms": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
     "TimeInHeartRateZone": {"properties": {"interval": {"$ref": "ObservationTimeInterval"}}},
     "VO2Max": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
     "Weight": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}}

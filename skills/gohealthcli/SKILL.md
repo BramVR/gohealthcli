@@ -84,7 +84,9 @@ compiled Provider catalog. It needs no config, archive, Connection, or
 credentials and performs no Provider data operation. Treat
 `verified_with_known_gaps` as a reviewed match with explicit exceptions;
 `drift_detected` exits nonzero and needs maintainer review before relying on new
-or changed Data Types.
+or changed Data Types. An `upstream_write_only` gap means discovery contains a
+Data Point union member that Google exposes only through write operations. Do
+not treat those names as syncable or request their write-only scopes.
 
 Read `views[].dataset_name`, `views[].name`, and declared columns from the JSON
 catalog. Treat an `"unknown"` view-column type as opaque; inspect a sample row

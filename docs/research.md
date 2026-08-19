@@ -7,7 +7,7 @@ read_when:
 ---
 # Research
 
-Last checked: 2026-08-03.
+Last checked: 2026-08-20.
 
 ## Findings
 
@@ -64,6 +64,26 @@ ECG contract:
   and IRN scopes. This upstream discrepancy remains recorded here rather than
   being hidden in gohealthcli's known-gap allowlist; the current REST reference
   and dedicated scope catalog are authoritative for consent.
+
+No credential, Connection identifier, Provider payload, or Health Archive data
+was read or published for this evidence.
+
+## Women's Health write-only contract evidence (C5)
+
+Non-sensitive public evidence checked on 2026-08-20 records the current
+contract for `menstrual-period`, `moods`, `ovulation-test`, and `symptoms`:
+
+- Google's August 17 release notes introduce all four Data Types and three new
+  write-only scopes: reproductive health, mindfulness, and logged symptoms.
+- The Data Types table and Women's Health guide list only `create`, `update`,
+  and `batchDelete`. The scope catalog exposes no corresponding read scope, and
+  the `list` method's authorization scopes do not include these categories.
+- The public v4 discovery document at revision `20260817` includes all four in
+  the Data Point union. It classifies `menstrual-period` as interval-shaped and
+  the other three as sample-shaped.
+- gohealthcli therefore records the four union members as
+  `upstream_write_only` known gaps. It does not add them to the operational
+  catalog, request their scopes, or implement Provider writes.
 
 No credential, Connection identifier, Provider payload, or Health Archive data
 was read or published for this evidence.
@@ -133,6 +153,7 @@ was read or published for this evidence.
 - Google Health API setup/OAuth: https://developers.google.com/health/setup
 - Google Health API endpoints: https://developers.google.com/health/endpoints
 - Google Health API data types: https://developers.google.com/health/data-types
+- Google Health API Women's Health data types: https://developers.google.com/health/data-types/womens-health
 - Google Health API calories and energy data types (localized current catalog): https://developers.google.com/health/data-types/calories?hl=pt-br
 - Google Health API scopes: https://developers.google.com/health/scopes
 - Google Health API list method: https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/list

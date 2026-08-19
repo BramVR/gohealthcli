@@ -441,6 +441,16 @@ food-reference columns. It also retains the unexpanded `nutrients_json` array;
 the parent session and food context, the original array index, the nutrient
 enum, and nullable grams. Unknown nutrient enum values pass through unchanged.
 
+## Upstream write-only Data Types
+
+Google Health discovery revision `20260817` adds `menstrual-period`, `moods`,
+`ovulation-test`, and `symptoms` to the raw Data Point union. Google's Data
+Types table and Women's Health guide document only `create`, `update`, and
+`batchDelete` operations for them, with write-only scopes. gohealthcli does not
+write or delete Provider health data, so these four names are not sync keys and
+do not appear in `catalog list` or completion. `catalog verify` accounts for
+them under the `upstream_write_only` known gap.
+
 ## Identity, device, and settings snapshots
 
 These ride alongside the Data Point catalog and capture per-Connection metadata. They land in the `identity_snapshots` table and are exposed through normalized views.

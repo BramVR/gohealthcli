@@ -42,8 +42,8 @@ func TestCatalogVerifyOfflineFixtureJSON(t *testing.T) {
 	if got.Source != "file" {
 		t.Errorf("source = %q, want file", got.Source)
 	}
-	if got.DiscoveryRevision != "20260730" {
-		t.Errorf("discovery_revision = %q, want 20260730", got.DiscoveryRevision)
+	if got.DiscoveryRevision != "20260817" {
+		t.Errorf("discovery_revision = %q, want 20260817", got.DiscoveryRevision)
 	}
 	wantGaps := []struct {
 		Kind      string   `json:"kind"`
@@ -51,6 +51,7 @@ func TestCatalogVerifyOfflineFixtureJSON(t *testing.T) {
 	}{
 		{Kind: "local_rollup_only", DataTypes: []string{"calories-in-heart-rate-zone", "total-calories"}},
 		{Kind: "upstream_raw_only", DataTypes: []string{"food", "food-measurement-unit"}},
+		{Kind: "upstream_write_only", DataTypes: []string{"menstrual-period", "moods", "ovulation-test", "symptoms"}},
 	}
 	if !reflect.DeepEqual(got.KnownGaps, wantGaps) {
 		t.Errorf("known_gaps = %#v, want %#v", got.KnownGaps, wantGaps)
@@ -70,9 +71,10 @@ func TestCatalogVerifyOutputModes(t *testing.T) {
 		t.Fatalf("human exit=%d stderr=%q", code, humanStderr.String())
 	}
 	wantHuman := "Google Health catalog verified with known gaps.\n" +
-		"Discovery source: file (revision 20260730)\n" +
+		"Discovery source: file (revision 20260817)\n" +
 		"Known gap local_rollup_only: calories-in-heart-rate-zone, total-calories\n" +
 		"Known gap upstream_raw_only: food, food-measurement-unit\n" +
+		"Known gap upstream_write_only: menstrual-period, moods, ovulation-test, symptoms\n" +
 		"Unverifiable filter_fields: the discovery document describes shared filters but not each Data Type's accepted filter field\n" +
 		"Unverifiable operation_support: the discovery document lists shared methods but not exact per-Data-Type operation support\n"
 	if humanStdout.String() != wantHuman {
@@ -85,11 +87,13 @@ func TestCatalogVerifyOutputModes(t *testing.T) {
 	}
 	wantPlain := "status: verified_with_known_gaps\n" +
 		"source: file\n" +
-		"discovery_revision: 20260730\n" +
+		"discovery_revision: 20260817\n" +
 		"known_gap.0.kind: local_rollup_only\n" +
 		"known_gap.0.data_types: calories-in-heart-rate-zone,total-calories\n" +
 		"known_gap.1.kind: upstream_raw_only\n" +
 		"known_gap.1.data_types: food,food-measurement-unit\n" +
+		"known_gap.2.kind: upstream_write_only\n" +
+		"known_gap.2.data_types: menstrual-period,moods,ovulation-test,symptoms\n" +
 		"unverifiable.0.fact: filter_fields\n" +
 		"unverifiable.0.reason: the discovery document describes shared filters but not each Data Type's accepted filter field\n" +
 		"unverifiable.1.fact: operation_support\n" +

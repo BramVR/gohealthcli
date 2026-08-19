@@ -84,6 +84,7 @@ var discoveryNonTemporalDataTypes = map[string]string{
 var catalogKnownGaps = []CatalogKnownGap{
 	{Kind: "local_rollup_only", DataTypes: []string{"calories-in-heart-rate-zone", "total-calories"}},
 	{Kind: "upstream_raw_only", DataTypes: []string{"food", "food-measurement-unit"}},
+	{Kind: "upstream_write_only", DataTypes: []string{"menstrual-period", "moods", "ovulation-test", "symptoms"}},
 }
 
 var catalogUnverifiableFacts = []CatalogUnverifiableFact{
@@ -258,6 +259,8 @@ func compareCatalogWithKnownGaps(
 ) []CatalogDrift {
 	localRollupOnly := knownGapDataTypes(knownGaps, "local_rollup_only")
 	upstreamRawOnly := knownGapDataTypes(knownGaps, "upstream_raw_only")
+	upstreamWriteOnly := knownGapDataTypes(knownGaps, "upstream_write_only")
+	upstreamNonOperational := unionStringSets(upstreamRawOnly, upstreamWriteOnly)
 	drift := make([]CatalogDrift, 0)
 	seen := make(map[string]bool)
 	for dataType := range localRollupOnly {
@@ -267,7 +270,7 @@ func compareCatalogWithKnownGaps(
 			drift = appendCatalogDrift(drift, seen, "known_gap_stale", dataType)
 		}
 	}
-	for dataType := range upstreamRawOnly {
+	for dataType := range upstreamNonOperational {
 		_, local := localEntries[dataType]
 		_, upstreamRaw := discovered[dataType]
 		if local || !upstreamRaw {
@@ -275,7 +278,7 @@ func compareCatalogWithKnownGaps(
 		}
 	}
 	for dataType, expected := range baseline {
-		if _, local := localEntries[dataType]; !local && !upstreamRawOnly[dataType] {
+		if _, local := localEntries[dataType]; !local && !upstreamNonOperational[dataType] {
 			drift = appendCatalogDrift(drift, seen, "local_raw_missing", dataType)
 		}
 		upstream, ok := discovered[dataType]
@@ -375,4 +378,14 @@ func stringSet(values []string) map[string]bool {
 		set[value] = true
 	}
 	return set
+}
+
+func unionStringSets(sets ...map[string]bool) map[string]bool {
+	union := make(map[string]bool)
+	for _, set := range sets {
+		for value := range set {
+			union[value] = true
+		}
+	}
+	return union
 }

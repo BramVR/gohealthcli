@@ -149,8 +149,12 @@ public v4 discovery document without reading config, credentials, a Connection,
 or a Health Archive. Use `--discovery PATH` for the committed offline fixture
 or another saved discovery document. The stable status is `verified`,
 `verified_with_known_gaps`, or `drift_detected`; unexpected drift exits
-nonzero. See [the generated command reference](./docs/commands/catalog.md) for
-the machine-readable gap and unverifiable-fact fields.
+nonzero. Revision `20260817` adds four upstream write-only Data Types:
+`menstrual-period`, `moods`, `ovulation-test`, and `symptoms`. They remain out
+of the read-only compiled catalog and appear under the explicit
+`upstream_write_only` known gap. See [the generated command
+reference](./docs/commands/catalog.md) for the machine-readable gap and
+unverifiable-fact fields.
 
 Normalized export datasets. `gohealthcli export` accepts any of the
 names below as its positional argument. The list is auto-generated from
