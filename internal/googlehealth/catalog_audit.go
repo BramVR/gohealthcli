@@ -100,7 +100,8 @@ var catalogUnverifiableFacts = []CatalogUnverifiableFact{
 
 // catalogDiscoveryBaseline is a deliberately reduced copy of the public v4
 // discovery surface: DataPoint union membership plus each member's temporal
-// shape. Those are the only discovery facts the local catalog can verify.
+// shape, field names, and JSON types. Verification compares union membership
+// and temporal shape; catalog describe reports the schema field shape.
 //
 //go:embed testdata/google-health-discovery-v4.json
 var catalogDiscoveryBaseline []byte
