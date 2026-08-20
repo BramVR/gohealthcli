@@ -105,6 +105,12 @@ var catalogUnverifiableFacts = []CatalogUnverifiableFact{
 //go:embed testdata/google-health-discovery-v4.json
 var catalogDiscoveryBaseline []byte
 
+// CatalogDiscoverySnapshot returns the committed bounded v4 discovery facts.
+// Callers receive a copy so package state cannot be mutated.
+func CatalogDiscoverySnapshot() []byte {
+	return append([]byte(nil), catalogDiscoveryBaseline...)
+}
+
 // VerifyCatalogDiscovery compares the canonical local catalog with one Google
 // Health v4 discovery document. It is pure: no config, credential, archive, or
 // Provider operation is consulted while constructing the result.

@@ -68,6 +68,7 @@ Use the installed binary as the catalog instead of memorizing names:
 ```bash
 gohealthcli catalog list --json
 gohealthcli catalog scopes --json
+gohealthcli catalog describe steps --json
 gohealthcli catalog verify --json
 gohealthcli describe-schema --json --no-input
 gohealthcli describe-schema --sql --no-input
@@ -78,6 +79,15 @@ gohealthcli describe-schema --sql --no-input
 Data Type support into prompts or scripts. `catalog scopes` groups each exact
 required OAuth scope with the Data Types that use it. Both actions are offline
 and do not inspect the current token or claim that a scope is granted.
+
+`catalog describe <data-type>` returns the detailed contract for one compiled
+Data Type. Treat the `compiled` group as authoritative for endpoint families,
+filters, ranges, page policies, scopes, record kind, and Rollup modes. Treat the
+separate `discovery` group as field-shape metadata with an explicit source and
+revision. The default committed snapshot is offline. Use `--discovery PATH`
+only for an identified bounded local document, or `--live` when current public
+metadata is explicitly needed; never combine them. Neither path reads health
+records or credentials, and discovery cannot override compiled facts.
 
 `catalog verify` compares the public Google Health discovery document with the
 compiled Provider catalog. It needs no config, archive, Connection, or

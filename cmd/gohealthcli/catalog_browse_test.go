@@ -186,13 +186,14 @@ func TestCatalogRegistryDocumentsBrowseActions(t *testing.T) {
 	if definition.Short != "Browse and verify the compiled Provider catalog." {
 		t.Errorf("catalog short = %q", definition.Short)
 	}
-	if definition.PositionalArgs != "<list|scopes|verify>" {
-		t.Errorf("catalog positional_args = %q, want <list|scopes|verify>", definition.PositionalArgs)
+	if definition.PositionalArgs != "<list|scopes|verify|describe> [data-type]" {
+		t.Errorf("catalog positional_args = %q, want describe action and Data Type", definition.PositionalArgs)
 	}
 	for _, phrase := range []string{
 		"`catalog list`",
 		"`catalog scopes`",
 		"`catalog verify`",
+		"`catalog describe <data-type>`",
 		"without config, a Health Archive, Connection, credentials, or network access",
 	} {
 		if !strings.Contains(definition.Long, phrase) {
@@ -341,7 +342,7 @@ func TestCatalogBrowseActionsRejectVerifyOnlyDiscoveryFlag(t *testing.T) {
 		if code != 1 {
 			t.Fatalf("catalog %s --discovery exit code = %d, want 1", action, code)
 		}
-		want := "{\"status\":\"flag_invalid\",\"message\":\"--discovery is supported only by catalog verify\"}\n"
+		want := "{\"status\":\"flag_invalid\",\"message\":\"--discovery and --live are supported only by catalog describe or verify\"}\n"
 		if stdout.String() != want || stderr.Len() != 0 {
 			t.Errorf("catalog %s --discovery stdout=%q stderr=%q, want stdout=%q and empty stderr", action, stdout.String(), stderr.String(), want)
 		}
