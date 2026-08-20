@@ -172,12 +172,7 @@ func runCatalogDescribe(args []string, discoveryPath string, live bool, mode out
 	}
 	description, err := googlehealth.CatalogDataTypeDescription(args[0])
 	if err != nil {
-		return ReportFailure(FailureReport{
-			Command: "catalog describe",
-			Status:  StatusFlagInvalid,
-			Message: fmt.Sprintf("catalog describe Data Type %q is not in the compiled catalog", args[0]),
-			Mode:    mode,
-		}, stdout, stderr)
+		return reportCatalogDescribeCompiledFailure(err, args[0], mode, stdout, stderr)
 	}
 	payload, source, err := loadCatalogDescriptionDiscovery(discoveryPath, live, runtime)
 	if err != nil {
@@ -196,6 +191,24 @@ func runCatalogDescribe(args []string, discoveryPath string, live bool, mode out
 		}, stdout, stderr)
 	}
 	return 0
+}
+
+func reportCatalogDescribeCompiledFailure(err error, dataType string, mode outputMode, stdout, stderr io.Writer) int {
+	if errors.Is(err, googlehealth.ErrCatalogDataTypeUnknown) {
+		return ReportFailure(FailureReport{
+			Command: "catalog describe",
+			Status:  StatusFlagInvalid,
+			Message: fmt.Sprintf("catalog describe Data Type %q is not in the compiled catalog", dataType),
+			Mode:    mode,
+		}, stdout, stderr)
+	}
+	return ReportFailure(FailureReport{
+		Command: "catalog describe",
+		Status:  StatusOperationFailed,
+		Message: "compiled catalog description failed",
+		Mode:    mode,
+		Cause:   err,
+	}, stdout, stderr)
 }
 
 func loadCatalogDescriptionDiscovery(path string, live bool, runtime runtimeAdapters) ([]byte, string, error) {

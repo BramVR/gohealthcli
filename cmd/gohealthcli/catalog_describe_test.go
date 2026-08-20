@@ -219,6 +219,21 @@ func TestCatalogDescribeStableDiscoveryFailures(t *testing.T) {
 	}
 }
 
+func TestCatalogDescribeUnexpectedCompiledFailureIsOperationFailure(t *testing.T) {
+	t.Parallel()
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := reportCatalogDescribeCompiledFailure(errors.New("synthetic compiled failure"), "steps", outputMode{json: true}, stdout, stderr)
+	if code != 1 || stderr.Len() != 0 {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	want := "{\"status\":\"operation_failed\",\"message\":\"compiled catalog description failed\"}\n"
+	if stdout.String() != want {
+		t.Errorf("stdout=%q, want %q", stdout.String(), want)
+	}
+}
+
 func TestCatalogDescribePropagatesWriteErrors(t *testing.T) {
 	t.Parallel()
 
