@@ -6,91 +6,871 @@
   "schemas": {
     "DataPoint": {
       "properties": {
-        "activeEnergyBurned": {"$ref": "ActiveEnergyBurned", "description": "Data for points in the `active-energy-burned` interval data type collection."},
-        "activeMinutes": {"$ref": "ActiveMinutes", "description": "Data for points in the `active-minutes` interval data type collection."},
-        "activeZoneMinutes": {"$ref": "ActiveZoneMinutes", "description": "Data for points in the `active-zone-minutes` interval data type collection."},
-        "activityLevel": {"$ref": "ActivityLevel", "description": "Data for points in the `activity-level` daily data type collection."},
-        "altitude": {"$ref": "Altitude", "description": "Data for points in the `altitude` interval data type collection."},
-        "basalEnergyBurned": {"$ref": "BasalEnergyBurned", "description": "Data for points in the `basal-energy-burned` interval data type collection."},
-        "bloodGlucose": {"$ref": "BloodGlucose", "description": "Data for points in the `blood-glucose` sample data type collection."},
-        "bodyFat": {"$ref": "BodyFat", "description": "Data for points in the `body-fat` sample data type collection."},
-        "coreBodyTemperature": {"$ref": "CoreBodyTemperature", "description": "Data for points in the `core-body-temperature` sample data type collection."},
-        "dailyHeartRateVariability": {"$ref": "DailyHeartRateVariability", "description": "Data for points in the `daily-heart-rate-variability` daily data type collection."},
-        "dailyHeartRateZones": {"$ref": "DailyHeartRateZones", "description": "Data for points in the `daily-heart-rate-zones` daily data type collection."},
-        "dailyOxygenSaturation": {"$ref": "DailyOxygenSaturation", "description": "Data for points in the `daily-oxygen-saturation` daily data type collection."},
-        "dailyRespiratoryRate": {"$ref": "DailyRespiratoryRate", "description": "Data for points in the `daily-respiratory-rate` daily data type collection."},
-        "dailyRestingHeartRate": {"$ref": "DailyRestingHeartRate", "description": "Data for points in the `daily-resting-heart-rate` daily data type collection."},
-        "dailySleepTemperatureDerivations": {"$ref": "DailySleepTemperatureDerivations", "description": "Data for points in the `daily-sleep-temperature-derivations` daily data type collection."},
-        "dailyVo2Max": {"$ref": "DailyVO2Max", "description": "Data for points in the `daily-vo2-max` daily data type collection."},
-        "distance": {"$ref": "Distance", "description": "Data for points in the `distance` interval data type collection."},
-        "electrocardiogram": {"$ref": "Electrocardiogram", "description": "Data for points in the `electrocardiogram` session data type collection."},
-        "exercise": {"$ref": "Exercise", "description": "Data for points in the `exercise` session data type collection."},
-        "floors": {"$ref": "Floors", "description": "Data for points in the `floors` interval data type collection."},
-        "food": {"$ref": "Food", "description": "The food details."},
-        "foodMeasurementUnit": {"$ref": "FoodMeasurementUnit", "description": "The food measurement unit details."},
-        "heartRate": {"$ref": "HeartRate", "description": "Data for points in the `heart-rate` sample data type collection."},
-        "heartRateVariability": {"$ref": "HeartRateVariability", "description": "Data for points in the `heart-rate-variability` sample data type collection."},
-        "height": {"$ref": "Height", "description": "Data for points in the `height` sample data type collection."},
-        "hydrationLog": {"$ref": "HydrationLog", "description": "Data for points in the `hydration-log` session data type collection."},
-        "irregularRhythmNotification": {"$ref": "IrregularRhythmNotification", "description": "Data for points in the `irregular-rhythm-notification` session data type collection."},
-        "menstrualPeriod": {"$ref": "MenstrualPeriod", "description": "Data for points in the `menstrual-period` interval data type collection."},
-        "moods": {"$ref": "Moods", "description": "Data for points in the `moods` sample data type collection."},
-        "nutritionLog": {"$ref": "NutritionLog", "description": "Data for points in the `nutrition-log` session data type collection."},
-        "ovulationTest": {"$ref": "OvulationTest", "description": "Data for points in the `ovulation-test` sample data type collection."},
-        "oxygenSaturation": {"$ref": "OxygenSaturation", "description": "Data for points in the `oxygen-saturation` sample data type collection."},
-        "respiratoryRateSleepSummary": {"$ref": "RespiratoryRateSleepSummary", "description": "Data for points in the `respiratory-rate-sleep-summary` sample data type collection."},
-        "runVo2Max": {"$ref": "RunVO2Max", "description": "Data for points in the `run-vo2-max` sample data type collection."},
-        "sedentaryPeriod": {"$ref": "SedentaryPeriod", "description": "Data for points in the `sedentary-period` interval data type collection."},
-        "sleep": {"$ref": "Sleep", "description": "Data for points in the `sleep` session data type collection."},
-        "steps": {"$ref": "Steps", "description": "Data for points in the `steps` interval data type collection."},
-        "swimLengthsData": {"$ref": "SwimLengthsData", "description": "Data for points in the `swim-lengths-data` interval data type collection."},
-        "symptoms": {"$ref": "Symptoms", "description": "Data for points in the `symptoms` sample data type collection."},
-        "timeInHeartRateZone": {"$ref": "TimeInHeartRateZone", "description": "Data for points in the `time-in-heart-rate-zone` interval data type collection."},
-        "vo2Max": {"$ref": "VO2Max", "description": "Data for points in the `vo2-max` sample data type collection."},
-        "weight": {"$ref": "Weight", "description": "Data for points in the `weight` sample data type collection."}
+        "exercise": {
+          "$ref": "Exercise",
+          "description": "Optional. Data for points in the `exercise` session data type collection."
+        },
+        "swimLengthsData": {
+          "$ref": "SwimLengthsData",
+          "description": "Optional. Data for points in the `swim-lengths-data` interval data type collection."
+        },
+        "bloodGlucose": {
+          "$ref": "BloodGlucose",
+          "description": "Optional. Data for points in the `blood-glucose` sample data type collection."
+        },
+        "oxygenSaturation": {
+          "$ref": "OxygenSaturation",
+          "description": "Optional. Data for points in the `oxygen-saturation` sample data type collection."
+        },
+        "coreBodyTemperature": {
+          "$ref": "CoreBodyTemperature",
+          "description": "Optional. Data for points in the `core-body-temperature` sample data type collection."
+        },
+        "heartRateVariability": {
+          "$ref": "HeartRateVariability",
+          "description": "Optional. Data for points in the `heart-rate-variability` sample data type collection."
+        },
+        "dailyHeartRateZones": {
+          "$ref": "DailyHeartRateZones",
+          "description": "Optional. Data for points in the `daily-heart-rate-zones` daily data type collection."
+        },
+        "hydrationLog": {
+          "$ref": "HydrationLog",
+          "description": "Optional. Data for points in the `hydration-log` session data type collection."
+        },
+        "timeInHeartRateZone": {
+          "$ref": "TimeInHeartRateZone",
+          "description": "Optional. Data for points in the `time-in-heart-rate-zone` interval data type collection."
+        },
+        "altitude": {
+          "$ref": "Altitude",
+          "description": "Optional. Data for points in the `altitude` interval data type collection."
+        },
+        "distance": {
+          "$ref": "Distance",
+          "description": "Optional. Data for points in the `distance` interval data type collection."
+        },
+        "steps": {
+          "$ref": "Steps",
+          "description": "Optional. Data for points in the `steps` interval data type collection."
+        },
+        "electrocardiogram": {
+          "$ref": "Electrocardiogram",
+          "description": "Optional. Data for points in the `electrocardiogram` session data type collection."
+        },
+        "floors": {
+          "$ref": "Floors",
+          "description": "Optional. Data for points in the `floors` interval data type collection."
+        },
+        "sleep": {
+          "$ref": "Sleep",
+          "description": "Optional. Data for points in the `sleep` session data type collection."
+        },
+        "weight": {
+          "$ref": "Weight",
+          "description": "Optional. Data for points in the `weight` sample data type collection."
+        },
+        "ovulationTest": {
+          "$ref": "OvulationTest",
+          "description": "Optional. Data for points in the `ovulation-test` sample data type collection."
+        },
+        "runVo2Max": {
+          "$ref": "RunVO2Max",
+          "description": "Optional. Data for points in the `run-vo2-max` sample data type collection."
+        },
+        "irregularRhythmNotification": {
+          "$ref": "IrregularRhythmNotification",
+          "description": "Optional. Data for points in the `irregular-rhythm-notification` session data type collection."
+        },
+        "symptoms": {
+          "$ref": "Symptoms",
+          "description": "Optional. Data for points in the `symptoms` sample data type collection."
+        },
+        "basalEnergyBurned": {
+          "$ref": "BasalEnergyBurned",
+          "description": "Optional. Data for points in the `basal-energy-burned` interval data type collection."
+        },
+        "name": {
+          "description": "Identifier. Data point name, only supported for the subset of identifiable data types. For the majority of the data types, individual data points do not need to be identified and this field would be empty. Format: `users/{user}/dataTypes/{data_type}/dataPoints/{data_point}` Example: `users/abcd1234/dataTypes/sleep/dataPoints/a1b2c3d4-e5f6-7890-1234-567890abcdef` The `{user}` ID is a system-generated identifier, as described in Identity.health_user_id. The `{data_type}` ID corresponds to the kebab-case version of the field names in the DataPoint data union field, e.g. `heart-rate` for the `heart_rate` field. The `{data_point}` ID can be client-provided or system-generated. If client-provided, it must be a string of 4-63 characters, containing only lowercase letters, numbers, and hyphens."
+        },
+        "dailyHeartRateVariability": {
+          "$ref": "DailyHeartRateVariability",
+          "description": "Optional. Data for points in the `daily-heart-rate-variability` daily data type collection."
+        },
+        "bodyFat": {
+          "$ref": "BodyFat",
+          "description": "Optional. Data for points in the `body-fat` sample data type collection."
+        },
+        "food": {
+          "$ref": "Food",
+          "description": "Optional. The food details."
+        },
+        "activityLevel": {
+          "$ref": "ActivityLevel",
+          "description": "Optional. Data for points in the `activity-level` daily data type collection."
+        },
+        "dataSource": {
+          "$ref": "DataSource",
+          "description": "Optional. Data source information for the metric"
+        },
+        "nutritionLog": {
+          "$ref": "NutritionLog",
+          "description": "Optional. Data for points in the `nutrition-log` session data type collection."
+        },
+        "respiratoryRateSleepSummary": {
+          "$ref": "RespiratoryRateSleepSummary",
+          "description": "Optional. Data for points in the `respiratory-rate-sleep-summary` sample data type collection."
+        },
+        "sedentaryPeriod": {
+          "$ref": "SedentaryPeriod",
+          "description": "Optional. Data for points in the `sedentary-period` interval data type collection."
+        },
+        "dailySleepTemperatureDerivations": {
+          "$ref": "DailySleepTemperatureDerivations",
+          "description": "Optional. Data for points in the `daily-sleep-temperature-derivations` daily data type collection."
+        },
+        "dailyVo2Max": {
+          "$ref": "DailyVO2Max",
+          "description": "Optional. Data for points in the `daily-vo2-max` daily data type collection."
+        },
+        "dailyRestingHeartRate": {
+          "$ref": "DailyRestingHeartRate",
+          "description": "Optional. Data for points in the `daily-resting-heart-rate` daily data type collection."
+        },
+        "dailyRespiratoryRate": {
+          "$ref": "DailyRespiratoryRate",
+          "description": "Optional. Data for points in the `daily-respiratory-rate` daily data type collection."
+        },
+        "activeEnergyBurned": {
+          "$ref": "ActiveEnergyBurned",
+          "description": "Optional. Data for points in the `active-energy-burned` interval data type collection."
+        },
+        "dailyOxygenSaturation": {
+          "$ref": "DailyOxygenSaturation",
+          "description": "Optional. Data for points in the `daily-oxygen-saturation` daily data type collection."
+        },
+        "activeMinutes": {
+          "$ref": "ActiveMinutes",
+          "description": "Optional. Data for points in the `active-minutes` interval data type collection."
+        },
+        "heartRate": {
+          "$ref": "HeartRate",
+          "description": "Optional. Data for points in the `heart-rate` sample data type collection."
+        },
+        "vo2Max": {
+          "$ref": "VO2Max",
+          "description": "Optional. Data for points in the `vo2-max` sample data type collection."
+        },
+        "menstrualPeriod": {
+          "$ref": "MenstrualPeriod",
+          "description": "Optional. Data for points in the `menstrual-period` interval data type collection."
+        },
+        "height": {
+          "$ref": "Height",
+          "description": "Optional. Data for points in the `height` sample data type collection."
+        },
+        "activeZoneMinutes": {
+          "$ref": "ActiveZoneMinutes",
+          "description": "Optional. Data for points in the `active-zone-minutes` interval data type collection, measured in minutes."
+        },
+        "moods": {
+          "$ref": "Moods",
+          "description": "Optional. Data for points in the `moods` sample data type collection."
+        },
+        "foodMeasurementUnit": {
+          "$ref": "FoodMeasurementUnit",
+          "description": "Optional. The food measurement unit details."
+        }
       }
     },
-    "ActiveEnergyBurned": {"properties": {"interval": {"$ref": "ObservationTimeInterval"}}},
-    "ActiveMinutes": {"properties": {"interval": {"$ref": "ObservationTimeInterval"}}},
-    "ActiveZoneMinutes": {"properties": {"interval": {"$ref": "ObservationTimeInterval"}}},
-    "ActivityLevel": {"properties": {"interval": {"$ref": "ObservationTimeInterval"}}},
-    "Altitude": {"properties": {"interval": {"$ref": "ObservationTimeInterval"}}},
-    "BasalEnergyBurned": {"properties": {"interval": {"$ref": "ObservationTimeInterval"}}},
-    "BloodGlucose": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
-    "BodyFat": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
-    "CoreBodyTemperature": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
-    "DailyHeartRateVariability": {"properties": {"date": {"$ref": "Date"}}},
-    "DailyHeartRateZones": {"properties": {"date": {"$ref": "Date"}}},
-    "DailyOxygenSaturation": {"properties": {"date": {"$ref": "Date"}}},
-    "DailyRespiratoryRate": {"properties": {"date": {"$ref": "Date"}}},
-    "DailyRestingHeartRate": {"properties": {"date": {"$ref": "Date"}}},
-    "DailySleepTemperatureDerivations": {"properties": {"date": {"$ref": "Date"}}},
-    "DailyVO2Max": {"properties": {"date": {"$ref": "Date"}}},
-    "Distance": {"properties": {"interval": {"$ref": "ObservationTimeInterval"}}},
-    "Electrocardiogram": {"properties": {"interval": {"$ref": "SessionTimeInterval"}}},
-    "Exercise": {"properties": {"interval": {"$ref": "SessionTimeInterval"}}},
-    "Floors": {"properties": {"interval": {"$ref": "ObservationTimeInterval"}}},
-    "Food": {"properties": {}},
-    "FoodMeasurementUnit": {"properties": {}},
-    "HeartRate": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
-    "HeartRateVariability": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
-    "Height": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
-    "HydrationLog": {"properties": {"interval": {"$ref": "SessionTimeInterval"}}},
-    "IrregularRhythmNotification": {"properties": {"interval": {"$ref": "SessionTimeInterval"}}},
-    "MenstrualPeriod": {"properties": {"interval": {"$ref": "ObservationTimeInterval"}}},
-    "Moods": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
-    "NutritionLog": {"properties": {"interval": {"$ref": "SessionTimeInterval"}}},
-    "OvulationTest": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
-    "OxygenSaturation": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
-    "RespiratoryRateSleepSummary": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
-    "RunVO2Max": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
-    "SedentaryPeriod": {"properties": {"interval": {"$ref": "ObservationTimeInterval"}}},
-    "Sleep": {"properties": {"interval": {"$ref": "SessionTimeInterval"}}},
-    "Steps": {"properties": {"interval": {"$ref": "ObservationTimeInterval"}}},
-    "SwimLengthsData": {"properties": {"interval": {"$ref": "ObservationTimeInterval"}}},
-    "Symptoms": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
-    "TimeInHeartRateZone": {"properties": {"interval": {"$ref": "ObservationTimeInterval"}}},
-    "VO2Max": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}},
-    "Weight": {"properties": {"sampleTime": {"$ref": "ObservationSampleTime"}}}
+    "ActiveEnergyBurned": {
+      "properties": {
+        "interval": {
+          "$ref": "ObservationTimeInterval"
+        },
+        "kcal": {
+          "type": "number"
+        }
+      }
+    },
+    "ActiveMinutes": {
+      "properties": {
+        "activeMinutesByActivityLevel": {
+          "type": "array"
+        },
+        "interval": {
+          "$ref": "ObservationTimeInterval"
+        }
+      }
+    },
+    "ActiveZoneMinutes": {
+      "properties": {
+        "heartRateZone": {
+          "type": "string"
+        },
+        "interval": {
+          "$ref": "ObservationTimeInterval"
+        },
+        "activeZoneMinutes": {
+          "type": "string"
+        }
+      }
+    },
+    "ActivityLevel": {
+      "properties": {
+        "interval": {
+          "$ref": "ObservationTimeInterval"
+        },
+        "activityLevelType": {
+          "type": "string"
+        }
+      }
+    },
+    "Altitude": {
+      "properties": {
+        "interval": {
+          "$ref": "ObservationTimeInterval"
+        },
+        "gainMillimeters": {
+          "type": "string"
+        }
+      }
+    },
+    "BasalEnergyBurned": {
+      "properties": {
+        "interval": {
+          "$ref": "ObservationTimeInterval"
+        },
+        "kcal": {
+          "type": "number"
+        }
+      }
+    },
+    "BloodGlucose": {
+      "properties": {
+        "specimen": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "measurementTiming": {
+          "type": "string"
+        },
+        "bloodGlucoseMilligramsPerDeciliter": {
+          "type": "number"
+        },
+        "measurementSource": {
+          "type": "string"
+        },
+        "mealType": {
+          "type": "string"
+        },
+        "sampleTime": {
+          "$ref": "ObservationSampleTime"
+        }
+      }
+    },
+    "BodyFat": {
+      "properties": {
+        "sampleTime": {
+          "$ref": "ObservationSampleTime"
+        },
+        "percentage": {
+          "type": "number"
+        }
+      }
+    },
+    "CoreBodyTemperature": {
+      "properties": {
+        "sampleTime": {
+          "$ref": "ObservationSampleTime"
+        },
+        "temperatureCelsius": {
+          "type": "number"
+        },
+        "measurementLocation": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        }
+      }
+    },
+    "DailyHeartRateVariability": {
+      "properties": {
+        "date": {
+          "$ref": "Date"
+        },
+        "entropy": {
+          "type": "number"
+        },
+        "averageHeartRateVariabilityMilliseconds": {
+          "type": "number"
+        },
+        "deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds": {
+          "type": "number"
+        },
+        "nonRemHeartRateBeatsPerMinute": {
+          "type": "string"
+        }
+      }
+    },
+    "DailyHeartRateZones": {
+      "properties": {
+        "date": {
+          "$ref": "Date"
+        },
+        "heartRateZones": {
+          "type": "array"
+        }
+      }
+    },
+    "DailyOxygenSaturation": {
+      "properties": {
+        "averagePercentage": {
+          "type": "number"
+        },
+        "upperBoundPercentage": {
+          "type": "number"
+        },
+        "date": {
+          "$ref": "Date"
+        },
+        "standardDeviationPercentage": {
+          "type": "number"
+        },
+        "lowerBoundPercentage": {
+          "type": "number"
+        }
+      }
+    },
+    "DailyRespiratoryRate": {
+      "properties": {
+        "date": {
+          "$ref": "Date"
+        },
+        "breathsPerMinute": {
+          "type": "number"
+        }
+      }
+    },
+    "DailyRestingHeartRate": {
+      "properties": {
+        "beatsPerMinute": {
+          "type": "string"
+        },
+        "date": {
+          "$ref": "Date"
+        },
+        "dailyRestingHeartRateMetadata": {
+          "$ref": "DailyRestingHeartRateMetadata"
+        }
+      }
+    },
+    "DailySleepTemperatureDerivations": {
+      "properties": {
+        "baselineTemperatureCelsius": {
+          "type": "number"
+        },
+        "nightlyTemperatureCelsius": {
+          "type": "number"
+        },
+        "date": {
+          "$ref": "Date"
+        },
+        "relativeNightlyStddev30dCelsius": {
+          "type": "number"
+        }
+      }
+    },
+    "DailyVO2Max": {
+      "properties": {
+        "estimated": {
+          "type": "boolean"
+        },
+        "vo2MaxCovariance": {
+          "type": "number"
+        },
+        "cardioFitnessLevel": {
+          "type": "string"
+        },
+        "vo2Max": {
+          "type": "number"
+        },
+        "date": {
+          "$ref": "Date"
+        }
+      }
+    },
+    "DataSource": {
+      "properties": {
+        "recordingMethod": {
+          "type": "string"
+        },
+        "application": {
+          "$ref": "Application"
+        },
+        "platform": {
+          "type": "string"
+        },
+        "device": {
+          "$ref": "Device"
+        }
+      }
+    },
+    "Distance": {
+      "properties": {
+        "millimeters": {
+          "type": "string"
+        },
+        "interval": {
+          "$ref": "ObservationTimeInterval"
+        }
+      }
+    },
+    "Electrocardiogram": {
+      "properties": {
+        "interval": {
+          "$ref": "SessionTimeInterval"
+        },
+        "resultClassification": {
+          "type": "string"
+        },
+        "waveformSamples": {
+          "type": "array"
+        },
+        "samplingFrequencyHertz": {
+          "type": "integer"
+        },
+        "leadNumber": {
+          "type": "integer"
+        },
+        "millivoltsScalingFactor": {
+          "type": "integer"
+        },
+        "beatsPerMinuteAvg": {
+          "type": "string"
+        },
+        "medicalDeviceInfo": {
+          "$ref": "MedicalDeviceInfo"
+        }
+      }
+    },
+    "Exercise": {
+      "properties": {
+        "notes": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "activeDuration": {
+          "type": "string"
+        },
+        "exerciseEvents": {
+          "type": "array"
+        },
+        "createTime": {
+          "type": "string"
+        },
+        "updateTime": {
+          "type": "string"
+        },
+        "exerciseType": {
+          "type": "string"
+        },
+        "interval": {
+          "$ref": "SessionTimeInterval"
+        },
+        "splits": {
+          "type": "array"
+        },
+        "exerciseMetadata": {
+          "$ref": "ExerciseMetadata"
+        },
+        "splitSummaries": {
+          "type": "array"
+        },
+        "metricsSummary": {
+          "$ref": "MetricsSummary"
+        }
+      }
+    },
+    "Floors": {
+      "properties": {
+        "interval": {
+          "$ref": "ObservationTimeInterval"
+        },
+        "count": {
+          "type": "string"
+        }
+      }
+    },
+    "Food": {
+      "properties": {
+        "servings": {
+          "type": "array"
+        },
+        "defaultServing": {
+          "$ref": "FoodServing"
+        },
+        "accessLevel": {
+          "type": "string"
+        },
+        "totalCarbohydrate": {
+          "$ref": "WeightQuantity"
+        },
+        "description": {
+          "type": "string"
+        },
+        "energyFromFat": {
+          "$ref": "EnergyQuantity"
+        },
+        "totalFat": {
+          "$ref": "WeightQuantity"
+        },
+        "mealType": {
+          "type": "string"
+        },
+        "energyAvg": {
+          "$ref": "EnergyQuantity"
+        },
+        "energyMax": {
+          "$ref": "EnergyQuantity"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "languageCode": {
+          "type": "string"
+        },
+        "nutrients": {
+          "type": "array"
+        },
+        "energyMin": {
+          "$ref": "EnergyQuantity"
+        },
+        "brand": {
+          "type": "string"
+        }
+      }
+    },
+    "FoodMeasurementUnit": {
+      "properties": {
+        "displayName": {
+          "type": "string"
+        },
+        "pluralDisplayName": {
+          "type": "string"
+        }
+      }
+    },
+    "HeartRate": {
+      "properties": {
+        "beatsPerMinute": {
+          "type": "string"
+        },
+        "metadata": {
+          "$ref": "HeartRateMetadata"
+        },
+        "sampleTime": {
+          "$ref": "ObservationSampleTime"
+        }
+      }
+    },
+    "HeartRateVariability": {
+      "properties": {
+        "rootMeanSquareOfSuccessiveDifferencesMilliseconds": {
+          "type": "number"
+        },
+        "standardDeviationMilliseconds": {
+          "type": "number"
+        },
+        "sampleTime": {
+          "$ref": "ObservationSampleTime"
+        }
+      }
+    },
+    "Height": {
+      "properties": {
+        "heightMillimeters": {
+          "type": "string"
+        },
+        "sampleTime": {
+          "$ref": "ObservationSampleTime"
+        }
+      }
+    },
+    "HydrationLog": {
+      "properties": {
+        "interval": {
+          "$ref": "SessionTimeInterval"
+        },
+        "amountConsumed": {
+          "$ref": "VolumeQuantity"
+        }
+      }
+    },
+    "IrregularRhythmNotification": {
+      "properties": {
+        "alertWindows": {
+          "type": "array"
+        },
+        "interval": {
+          "$ref": "SessionTimeInterval"
+        },
+        "medicalDeviceInfo": {
+          "$ref": "MedicalDeviceInfo"
+        }
+      }
+    },
+    "MenstrualPeriod": {
+      "properties": {
+        "interval": {
+          "$ref": "ObservationTimeInterval"
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "Moods": {
+      "properties": {
+        "moods": {
+          "type": "array"
+        },
+        "valences": {
+          "type": "array"
+        },
+        "sampleTime": {
+          "$ref": "ObservationSampleTime"
+        }
+      }
+    },
+    "NutritionLog": {
+      "properties": {
+        "interval": {
+          "$ref": "SessionTimeInterval"
+        },
+        "serving": {
+          "$ref": "Serving"
+        },
+        "nutrients": {
+          "type": "array"
+        },
+        "energy": {
+          "$ref": "EnergyQuantity"
+        },
+        "totalCarbohydrate": {
+          "$ref": "WeightQuantity"
+        },
+        "totalFat": {
+          "$ref": "WeightQuantity"
+        },
+        "energyFromFat": {
+          "$ref": "EnergyQuantity"
+        },
+        "mealType": {
+          "type": "string"
+        },
+        "food": {
+          "type": "string"
+        },
+        "foodDisplayName": {
+          "type": "string"
+        }
+      }
+    },
+    "OvulationTest": {
+      "properties": {
+        "sampleTime": {
+          "$ref": "ObservationSampleTime"
+        },
+        "result": {
+          "type": "string"
+        }
+      }
+    },
+    "OxygenSaturation": {
+      "properties": {
+        "sampleTime": {
+          "$ref": "ObservationSampleTime"
+        },
+        "percentage": {
+          "type": "number"
+        }
+      }
+    },
+    "RespiratoryRateSleepSummary": {
+      "properties": {
+        "fullSleepStats": {
+          "$ref": "RespiratoryRateSleepSummaryStatistics"
+        },
+        "deepSleepStats": {
+          "$ref": "RespiratoryRateSleepSummaryStatistics"
+        },
+        "lightSleepStats": {
+          "$ref": "RespiratoryRateSleepSummaryStatistics"
+        },
+        "sampleTime": {
+          "$ref": "ObservationSampleTime"
+        },
+        "remSleepStats": {
+          "$ref": "RespiratoryRateSleepSummaryStatistics"
+        }
+      }
+    },
+    "RunVO2Max": {
+      "properties": {
+        "sampleTime": {
+          "$ref": "ObservationSampleTime"
+        },
+        "runVo2Max": {
+          "type": "number"
+        }
+      }
+    },
+    "SedentaryPeriod": {
+      "properties": {
+        "interval": {
+          "$ref": "ObservationTimeInterval"
+        }
+      }
+    },
+    "Sleep": {
+      "properties": {
+        "shortAwakenings": {
+          "type": "array"
+        },
+        "updateTime": {
+          "type": "string"
+        },
+        "createTime": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "outOfBedSegments": {
+          "type": "array"
+        },
+        "metadata": {
+          "$ref": "SleepMetadata"
+        },
+        "interval": {
+          "$ref": "SessionTimeInterval"
+        },
+        "summary": {
+          "$ref": "SleepSummary"
+        },
+        "stages": {
+          "type": "array"
+        }
+      }
+    },
+    "Steps": {
+      "properties": {
+        "interval": {
+          "$ref": "ObservationTimeInterval"
+        },
+        "count": {
+          "type": "string"
+        }
+      }
+    },
+    "SwimLengthsData": {
+      "properties": {
+        "strokeCount": {
+          "type": "string"
+        },
+        "swimStrokeType": {
+          "type": "string"
+        },
+        "interval": {
+          "$ref": "ObservationTimeInterval"
+        }
+      }
+    },
+    "Symptoms": {
+      "properties": {
+        "symptoms": {
+          "type": "array"
+        },
+        "sampleTime": {
+          "$ref": "ObservationSampleTime"
+        }
+      }
+    },
+    "TimeInHeartRateZone": {
+      "properties": {
+        "heartRateZoneType": {
+          "type": "string"
+        },
+        "interval": {
+          "$ref": "ObservationTimeInterval"
+        }
+      }
+    },
+    "VO2Max": {
+      "properties": {
+        "vo2Max": {
+          "type": "number"
+        },
+        "sampleTime": {
+          "$ref": "ObservationSampleTime"
+        },
+        "measurementMethod": {
+          "type": "string"
+        }
+      }
+    },
+    "Weight": {
+      "properties": {
+        "weightGrams": {
+          "type": "number"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "sampleTime": {
+          "$ref": "ObservationSampleTime"
+        }
+      }
+    },
+    "RollupDataPoint": {
+      "properties": {
+        "caloriesInHeartRateZone": {
+          "$ref": "CaloriesInHeartRateZoneRollupValue"
+        },
+        "totalCalories": {
+          "$ref": "TotalCaloriesRollupValue"
+        }
+      }
+    },
+    "DailyRollupDataPoint": {
+      "properties": {
+        "caloriesInHeartRateZone": {
+          "$ref": "CaloriesInHeartRateZoneRollupValue"
+        },
+        "totalCalories": {
+          "$ref": "TotalCaloriesRollupValue"
+        }
+      }
+    },
+    "CaloriesInHeartRateZoneRollupValue": {
+      "properties": {
+        "caloriesInHeartRateZones": {
+          "type": "array"
+        }
+      }
+    },
+    "TotalCaloriesRollupValue": {
+      "properties": {
+        "kcalSum": {
+          "type": "number"
+        }
+      }
+    }
   }
 }

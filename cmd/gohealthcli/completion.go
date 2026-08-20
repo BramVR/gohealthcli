@@ -254,10 +254,18 @@ func completeValues(policy valueCompletionPolicy, args []string, toComplete stri
 		}
 		return completeCatalog(completionShells, toComplete), cobra.ShellCompDirectiveNoFileComp
 	case valueCompletionCatalogAction:
-		if len(args) != 0 {
-			return nil, cobra.ShellCompDirectiveNoFileComp
+		if len(args) == 0 {
+			return completeCatalog([]string{"describe", "list", "scopes", "verify"}, toComplete), cobra.ShellCompDirectiveNoFileComp
 		}
-		return completeCatalog([]string{"list", "scopes", "verify"}, toComplete), cobra.ShellCompDirectiveNoFileComp
+		if len(args) == 1 && args[0] == "describe" {
+			dataTypes := googlehealth.CatalogDataTypes()
+			names := make([]string, 0, len(dataTypes))
+			for _, dataType := range dataTypes {
+				names = append(names, dataType.DataType)
+			}
+			return completeCatalog(names, toComplete), cobra.ShellCompDirectiveNoFileComp
+		}
+		return nil, cobra.ShellCompDirectiveNoFileComp
 	case valueCompletionBackupAction:
 		if len(args) != 0 {
 			return nil, cobra.ShellCompDirectiveNoFileComp

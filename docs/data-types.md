@@ -3,7 +3,7 @@ title: "Data Types"
 description: "What each Google Health Data Type captures and how gohealthcli stores it."
 ---
 
-A plain-language guide to every Data Type the Google Health catalog exposes through `gohealthcli`. Each entry names the sync key you pass to `sync --types`, the upstream record shape (sample / interval / session / daily), the OAuth scope required, and what the catalog row supports. Run `gohealthcli catalog list --json` for the canonical machine-readable list and `gohealthcli catalog scopes --json` for exact scope membership. For storage shape, see [`docs/data-model.md`](https://github.com/BramVR/gohealthcli/blob/main/docs/data-model.md).
+A plain-language guide to every Data Type the Google Health catalog exposes through `gohealthcli`. Each entry names the sync key you pass to `sync --types`, the upstream record shape (sample / interval / session / daily), the OAuth scope required, and what the catalog row supports. Run `gohealthcli catalog list --json` for the canonical machine-readable list, `gohealthcli catalog scopes --json` for exact scope membership, and `gohealthcli catalog describe <data-type> --json` for one type's compiled endpoint contract plus discovery-backed field names and JSON types. For storage shape, see [`docs/data-model.md`](https://github.com/BramVR/gohealthcli/blob/main/docs/data-model.md).
 
 ## How to read this page
 
@@ -14,6 +14,9 @@ A plain-language guide to every Data Type the Google Health catalog exposes thro
 - **Stored as** — the table the row lands in (`data_points` for raw, `rollups` for aggregates) plus the normalized view exposed for queries and `export`.
 
 The catalog is authoritative in `internal/googlehealth/catalog.go`; this page is its narrative companion.
+`catalog describe` keeps that compiled catalog authoritative: discovery facts
+are separately sourced and cannot override endpoint, filter, scope, record, or
+Rollup behavior.
 
 ## How long does each type take to sync?
 

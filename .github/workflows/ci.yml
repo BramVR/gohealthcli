@@ -123,7 +123,7 @@ jobs:
   windows-test:
     name: Windows amd64 build and test
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       GOARCH: amd64
     steps:

@@ -29,7 +29,24 @@ scope URLs.
 
 `gohealthcli catalog scopes` groups those exact scope URLs with catalog-ordered
 Data Type membership. It reports requirements only. It does not inspect a token
-or claim that a scope is granted. Both actions run without config, a Connection,
+or claim that a scope is granted.
+
+`gohealthcli catalog describe <data-type>` joins two explicitly sourced groups:
+
+- `compiled` projects endpoint families, filter fields, lower-bound-only
+  behavior, range shapes, page policies, exact scopes, record kind, and Rollup
+  modes from the canonical compiled catalog.
+- `discovery` projects the JSON field, schema reference, sorted field names,
+  and JSON types from discovery, together with its source and revision.
+
+Describe uses the committed discovery snapshot by default, so it runs offline
+without config, a Connection, credentials, or a Health Archive. `--discovery
+PATH` reads a bounded local document; `--live` reads only the fixed public v4
+discovery endpoint without authorization. The flags are mutually exclusive.
+Discovery identity and record shape must remain compatible with the compiled
+entry, and enrichment never replaces compiled facts.
+
+List, scopes, and default describe all run without config, a Connection,
 credentials, a Health Archive, or network access.
 
 ## Discovery-backed catalog audit
@@ -40,10 +57,11 @@ local catalog. `--discovery PATH` performs the same audit against an offline
 document. Neither path reads config, a Connection, credentials, or a Health
 Archive, and neither invokes a Provider data operation.
 
-The committed reduced fixture at
+The committed reduced snapshot at
 `internal/googlehealth/testdata/google-health-discovery-v4.json` records only
-the discovery facts this audit can prove: Data Type union membership, JSON
-field-to-schema references, and each schema's temporal shape. It intentionally
+the discovery facts these catalog surfaces use: Data Type union membership,
+JSON field-to-schema references, temporal shape, and direct field names and
+JSON types. It intentionally
 does not claim that discovery verifies exact per-Data-Type operation support or
 filter fields; those facts are reported as unverifiable.
 

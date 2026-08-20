@@ -438,7 +438,19 @@ func TestCompletionProtocolSuggestsCatalogActions(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("completion exit code = %d, want 0; stderr=%q", code, stderr.String())
 	}
-	if got, want := completionCandidates(stdout.String()), []string{"list", "scopes", "verify"}; !reflect.DeepEqual(got, want) {
+	if got, want := completionCandidates(stdout.String()), []string{"describe", "list", "scopes", "verify"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("candidates = %v, want %v", got, want)
+	}
+}
+
+func TestCompletionProtocolSuggestsCatalogDescribeDataTypes(t *testing.T) {
+	t.Parallel()
+
+	code, stdout, stderr := runCommand(t, "__completeNoDesc", "catalog", "describe", "hea")
+	if code != 0 {
+		t.Fatalf("completion exit code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if got, want := completionCandidates(stdout.String()), []string{"heart-rate", "heart-rate-variability"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("candidates = %v, want %v", got, want)
 	}
 }

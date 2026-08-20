@@ -25,7 +25,7 @@ payloads with age before Git sees them.
 ## Status
 
 The full command surface is live: setup (`init`, `doctor`), Provider catalog
-browsing and verification (`catalog list`, `catalog scopes`, `catalog verify`), OAuth and
+browsing and verification (`catalog list`, `catalog scopes`, `catalog describe`, `catalog verify`), OAuth and
 identity snapshots (`connect` through `irn-profile`), archiving (`sync`,
 with heartbeat-backed `sync --status` observability and auto-fencing of
 abandoned runs), encrypted backup setup/push/pull/status (`backup init`, `backup push`,
@@ -143,6 +143,16 @@ order. Each row reports `selection` (`default` or `opt_in`),
 `required_scopes`. Run `gohealthcli catalog scopes --json` to group those exact
 scope URLs by Data Type membership. Both actions are offline and do not read
 config, a Connection, the Credential Store, or a Health Archive.
+
+Run `gohealthcli catalog describe steps --json` for one Data Type's detailed
+contract. Compiled catalog facts include endpoint families, filter fields,
+lower-bound-only behavior, range shapes, page policies, exact scopes, record
+kind, and supported Rollup modes. Discovery facts include the JSON field,
+schema, field names, and JSON types. Each group names its source, and discovery
+also reports its revision. The default committed snapshot is offline; use
+`--discovery PATH` for a bounded local document or `--live` for the fixed public
+v4 discovery endpoint. Discovery is checked for compatibility and cannot
+override compiled facts.
 
 Run `gohealthcli catalog verify` to compare this catalog with Google's live
 public v4 discovery document without reading config, credentials, a Connection,
