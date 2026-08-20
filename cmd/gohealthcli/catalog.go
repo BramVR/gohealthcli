@@ -64,11 +64,19 @@ func runCatalogWithRuntime(args []string, globals CommonFlagValues, stdout, stde
 		}, stdout, stderr)
 	}
 	if action == "list" {
-		if *discoveryPath != "" || *live {
+		if *discoveryPath != "" {
 			return ReportFailure(FailureReport{
 				Command: "catalog list",
 				Status:  StatusFlagInvalid,
-				Message: "--discovery and --live are supported only by catalog describe or verify",
+				Message: "--discovery is supported only by catalog describe or verify",
+				Mode:    mode,
+			}, stdout, stderr)
+		}
+		if *live {
+			return ReportFailure(FailureReport{
+				Command: "catalog list",
+				Status:  StatusFlagInvalid,
+				Message: "--live is supported only by catalog describe",
 				Mode:    mode,
 			}, stdout, stderr)
 		}
@@ -84,11 +92,19 @@ func runCatalogWithRuntime(args []string, globals CommonFlagValues, stdout, stde
 		return 0
 	}
 	if action == "scopes" {
-		if *discoveryPath != "" || *live {
+		if *discoveryPath != "" {
 			return ReportFailure(FailureReport{
 				Command: "catalog scopes",
 				Status:  StatusFlagInvalid,
-				Message: "--discovery and --live are supported only by catalog describe or verify",
+				Message: "--discovery is supported only by catalog describe or verify",
+				Mode:    mode,
+			}, stdout, stderr)
+		}
+		if *live {
+			return ReportFailure(FailureReport{
+				Command: "catalog scopes",
+				Status:  StatusFlagInvalid,
+				Message: "--live is supported only by catalog describe",
 				Mode:    mode,
 			}, stdout, stderr)
 		}

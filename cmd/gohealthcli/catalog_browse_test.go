@@ -342,9 +342,24 @@ func TestCatalogBrowseActionsRejectVerifyOnlyDiscoveryFlag(t *testing.T) {
 		if code != 1 {
 			t.Fatalf("catalog %s --discovery exit code = %d, want 1", action, code)
 		}
-		want := "{\"status\":\"flag_invalid\",\"message\":\"--discovery and --live are supported only by catalog describe or verify\"}\n"
+		want := "{\"status\":\"flag_invalid\",\"message\":\"--discovery is supported only by catalog describe or verify\"}\n"
 		if stdout.String() != want || stderr.Len() != 0 {
 			t.Errorf("catalog %s --discovery stdout=%q stderr=%q, want stdout=%q and empty stderr", action, stdout.String(), stderr.String(), want)
+		}
+	}
+}
+
+func TestCatalogBrowseActionsRejectDescribeOnlyLiveFlag(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range []string{"list", "scopes"} {
+		code, stdout, stderr := runCommand(t, "catalog", action, "--live", "--json")
+		if code != 1 {
+			t.Fatalf("catalog %s --live exit code = %d, want 1", action, code)
+		}
+		want := "{\"status\":\"flag_invalid\",\"message\":\"--live is supported only by catalog describe\"}\n"
+		if stdout.String() != want || stderr.Len() != 0 {
+			t.Errorf("catalog %s --live stdout=%q stderr=%q, want stdout=%q and empty stderr", action, stdout.String(), stderr.String(), want)
 		}
 	}
 }
