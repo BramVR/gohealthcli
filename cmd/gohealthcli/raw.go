@@ -20,29 +20,28 @@ type rawCommandOptions struct {
 	pageSize    int64
 	pageToken   string
 	target      []string
+	plan        bool
 }
 
 func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("raw", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	// raw does not accept --json / --plain on its own slot, so failure
-	// rendering honours the GLOBAL output mode only.
-	mode := commonOutputMode(globals)
-	// raw's success output is the provider's raw bytes on stdout — it
-	// does not honour --plain / --json / --no-input. The Common Flag
-	// Set's pre-Parse scan turns those known-global flags into a
-	// targeted "--<flag> is not supported by raw" message when the user
-	// passes them on raw, instead of letting them silently lose values
-	// or fall through to stdlib's generic wording.
+	// raw accepts structured output only for --plan. Normal reads keep the
+	// provider-byte stdout contract and reject --json / --plain below.
 	common := RegisterCommon(flags, CommonFlagSpec{Accepted: rawCommonFlagNames()}, CommonFlagValues{
-		ConfigPath:  globals.ConfigPath,
-		ArchivePath: globals.ArchivePath,
+		ConfigPath:          globals.ConfigPath,
+		ArchivePath:         globals.ArchivePath,
+		JSONOutput:          globals.JSONOutput,
+		PlainOutput:         globals.PlainOutput,
+		ArchivePathExplicit: globals.ArchivePathExplicit,
+		ConfigPathExplicit:  globals.ConfigPathExplicit,
 	})
 	rawFrom := flags.String("from", "", "inclusive time-range start (where supported by the endpoint)")
 	rawTo := flags.String("to", "", "exclusive time-range end (where supported by the endpoint)")
 	rawTimezone := flags.String("timezone", "", "IANA timezone for now, today, and yesterday (Data Type lists only; default config, then UTC)")
 	rawPageSize := flags.Int64("page-size", 0, "pagination page size (positive integer; where supported by the endpoint)")
 	rawPageToken := flags.String("page-token", "", "pagination page token from a prior response")
+	rawPlan := flags.Bool("plan", false, "print the exact secret-free Provider request plan without external access")
 
 	// raw uses a bespoke usage block (`raw endpoint getIdentity` etc.)
 	// rather than the auto-generated stdlib one, because its first
@@ -90,6 +89,16 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		}
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
+	mode := commonOutputMode(*common)
+	localJSON := flagWasProvided(flags, "json")
+	localPlain := flagWasProvided(flags, "plain")
+	if !*rawPlan && (localJSON || localPlain) {
+		flagName := "--plain"
+		if localJSON {
+			flagName = "--json"
+		}
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: flagName + " is not supported by raw without --plan"}, stdout, stderr)
+	}
 	if *rawPageSize < 0 || (flagWasProvided(flags, "page-size") && *rawPageSize <= 0) {
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: "--page-size must be a positive integer", Mode: mode}, stdout, stderr)
 	}
@@ -105,22 +114,36 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		pageSize:    *rawPageSize,
 		pageToken:   *rawPageToken,
 		target:      target,
+		plan:        *rawPlan,
 	}
 	requestOptions := googlehealth.RawRequestOptions{
-		Target:           options.target,
-		From:             options.from,
-		To:               options.to,
-		Timezone:         options.timezone,
-		FromProvided:     flagWasProvided(flags, "from"),
-		ToProvided:       flagWasProvided(flags, "to"),
-		TimezoneProvided: flagWasProvided(flags, "timezone"),
-		PageSize:         options.pageSize,
-		PageToken:        options.pageToken,
+		Target:            options.target,
+		From:              options.from,
+		To:                options.to,
+		Timezone:          options.timezone,
+		FromProvided:      flagWasProvided(flags, "from"),
+		ToProvided:        flagWasProvided(flags, "to"),
+		TimezoneProvided:  flagWasProvided(flags, "timezone"),
+		PageSize:          options.pageSize,
+		PageToken:         options.pageToken,
+		PageSizeProvided:  flagWasProvided(flags, "page-size"),
+		PageTokenProvided: flagWasProvided(flags, "page-token"),
 	}
 	if err := googlehealth.ValidateRawRequestOptions(requestOptions); err != nil {
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	runtime = runtime.withDefaults()
+	requestOptions.ResolvedAt = runtime.now()
+	if options.plan {
+		requestOptions.TimezoneFallback = func() (string, error) {
+			return inspectRawPlanningTimezone(options.configPath)
+		}
+		description, err := googlehealth.DescribeRawRequest(requestOptions)
+		if err != nil {
+			return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
+		}
+		return writeRawPlan(description, requestOptions, mode, stdout, stderr)
+	}
 	config, err := inspectIdentityConfig(options.configPath, options.archivePath)
 	if err != nil {
 		cause := setupFailureRemediation(err, fmt.Sprintf("config check failed: %v", err))
@@ -129,7 +152,6 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	if requestOptions.Timezone == "" {
 		requestOptions.Timezone = config.timezone
 	}
-	requestOptions.ResolvedAt = runtime.now()
 	request, err := googlehealth.BuildRawRequest(requestOptions)
 	if err != nil {
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)

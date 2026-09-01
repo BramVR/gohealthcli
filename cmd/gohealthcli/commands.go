@@ -144,17 +144,11 @@ func identitySnapshotCommonFlagNames() []string {
 	return []string{"config", "db", "json", "plain"}
 }
 
-// rawCommonFlagNames returns the subset of common flag names `raw`
-// accepts. raw's success output is the provider's raw bytes on stdout,
-// so --json / --plain / --no-input would have no useful effect; the
-// Common Flag Set's pre-Parse scan rejects them with the targeted
-// "--<flag> is not supported by raw" wording instead of letting them
-// silently lose values. The registry entry's Flags / CommonFlags and
-// runRawWithRuntime's CommonFlagSpec all read this one function, so the
-// schema and the runtime contract cannot disagree. Returned fresh each
-// call to mirror commonFlagNames so per-entry slices stay independent.
+// rawCommonFlagNames returns the shared flags raw accepts. --json and
+// --plain shape --plan output; normal reads reject them after parsing so their
+// provider-byte stdout contract stays unchanged.
 func rawCommonFlagNames() []string {
-	return []string{"config", "db"}
+	return []string{"config", "db", "json", "plain"}
 }
 
 // withCommonSubset is the per-subcommand variant of withCommon that
@@ -490,20 +484,12 @@ var commands = []commandDef{
 			flagSpec{Name: "timezone", Type: "string", Default: "", Usage: "IANA timezone for now, today, and yesterday (Data Type lists only; default config, then UTC)", ValueCompletion: valueCompletionNone},
 			flagSpec{Name: "page-size", Type: "int", Default: "", Usage: "pagination page size (positive integer; where supported by the endpoint)", ValueCompletion: valueCompletionNone},
 			flagSpec{Name: "page-token", Type: "string", Default: "", Usage: "pagination page token from a prior response", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "plan", Type: "bool", Default: "false", Usage: "print the exact secret-free Provider request plan without external access"},
 		),
-		// raw's success output is the provider's raw bytes on stdout, so
-		// --plain / --json / --no-input would have no useful effect. Its
-		// CommonFlagSpec at the runtime layer (see runRawWithRuntime in
-		// raw.go) declares the same rawCommonFlagNames() subset;
-		// CommonFlags here mirrors that contract so the schema reflects
-		// the divergence honestly.
+		// raw's normal success output is still the Provider's exact bytes.
+		// --json and --plain apply only to --plan.
 		CommonFlags: rawCommonFlagNames(),
-		// raw owns its own range, timezone, and pagination flag
-		// surface and writes the provider's raw bytes. raw does not accept
-		// --json / --plain on its own slot, so runRawWithRuntime derives
-		// the failure-rendering mode from the GLOBAL-slot values carried
-		// in CommonFlagValues.
-		Run: runRawWithRuntime,
+		Run:         runRawWithRuntime,
 	},
 	{
 		Name:  "describe-schema",

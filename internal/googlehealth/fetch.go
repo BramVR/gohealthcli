@@ -38,16 +38,34 @@ type RawRequest struct {
 // RawRequestOptions carries the complete raw request contract, including the
 // flag provenance needed to reject range options on identity endpoints.
 type RawRequestOptions struct {
-	Target           []string
-	From             string
-	To               string
-	Timezone         string
-	FromProvided     bool
-	ToProvided       bool
-	TimezoneProvided bool
-	ResolvedAt       time.Time
-	PageSize         int64
-	PageToken        string
+	Target            []string
+	From              string
+	To                string
+	Timezone          string
+	FromProvided      bool
+	ToProvided        bool
+	TimezoneProvided  bool
+	ResolvedAt        time.Time
+	PageSize          int64
+	PageToken         string
+	PageSizeProvided  bool
+	PageTokenProvided bool
+	// TimezoneFallback resolves the command's non-secret configured timezone.
+	// The Provider calls it only for a Data Type target with no explicit
+	// timezone. Identity targets and explicit timezones never invoke it.
+	TimezoneFallback func() (string, error)
+}
+
+// RawRequestDescription is the complete secret-free description shared by
+// raw execution and planning. Request is the production request descriptor;
+// Headers contains only headers that do not depend on credentials.
+type RawRequestDescription struct {
+	Request           RawRequest
+	Range             *ResolvedRange
+	PageSize          int64
+	PageTokenProvided bool
+	Headers           map[string]string
+	SanitizedURL      string
 }
 
 // RawTargetKind is the first positional discriminator accepted by
@@ -97,29 +115,102 @@ func ValidateRawRequestOptions(options RawRequestOptions) error {
 			return fmt.Errorf("raw %s supports only --from because the Provider exposes no ECG upper-bound filter", target.dataType)
 		}
 	}
+	if !target.list {
+		for _, provided := range []struct {
+			name string
+			set  bool
+		}{
+			{name: "--page-size", set: options.PageSizeProvided},
+			{name: "--page-token", set: options.PageTokenProvided},
+		} {
+			if provided.set {
+				return fmt.Errorf("raw endpoint %s does not support %s", target.endpointName, provided.name)
+			}
+		}
+	}
 	return nil
 }
 
 func BuildRawRequest(options RawRequestOptions) (RawRequest, error) {
+	description, err := DescribeRawRequest(options)
+	if err != nil {
+		return RawRequest{}, err
+	}
+	return description.Request, nil
+}
+
+// DescribeRawRequest builds the same request returned by BuildRawRequest and
+// adds the resolved, non-secret facts needed by raw --plan.
+func DescribeRawRequest(options RawRequestOptions) (RawRequestDescription, error) {
 	target, err := parseRawRequestTarget(options)
 	if err != nil {
-		return RawRequest{}, err
+		return RawRequestDescription{}, err
 	}
+	var request RawRequest
+	var resolvedRange *ResolvedRange
 	if !target.list {
-		return RawRequest{
+		request = RawRequest{
 			EndpointName:   target.endpointName,
+			Method:         http.MethodGet,
 			URL:            target.endpointURL,
 			RequiredScopes: target.requiredScopes,
-		}, nil
+		}
+	} else {
+		if options.ResolvedAt.IsZero() {
+			return RawRequestDescription{}, errors.New("raw Data Type range resolution requires a captured clock")
+		}
+		timezone := options.Timezone
+		if timezone == "" && options.TimezoneFallback != nil {
+			timezone, err = options.TimezoneFallback()
+			if err != nil {
+				return RawRequestDescription{}, err
+			}
+		}
+		resolved, resolveErr := ResolveRawRange(options.From, options.To, timezone, options.ResolvedAt, target.rangeTarget)
+		if resolveErr != nil {
+			return RawRequestDescription{}, resolveErr
+		}
+		request, err = buildGoogleHealthDataTypeListRawRequest(target.dataType, resolved.From, resolved.To, options.PageSize, options.PageToken)
+		if err != nil {
+			return RawRequestDescription{}, err
+		}
+		resolvedRange = &resolved
 	}
-	if options.ResolvedAt.IsZero() {
-		return RawRequest{}, errors.New("raw Data Type range resolution requires a captured clock")
-	}
-	resolved, err := ResolveRawRange(options.From, options.To, options.Timezone, options.ResolvedAt, target.rangeTarget)
+	sanitizedURL, err := SanitizeRawRequestURL(request)
 	if err != nil {
-		return RawRequest{}, err
+		return RawRequestDescription{}, err
 	}
-	return buildGoogleHealthDataTypeListRawRequest(target.dataType, resolved.From, resolved.To, options.PageSize, options.PageToken)
+	return RawRequestDescription{
+		Request:           request,
+		Range:             resolvedRange,
+		PageSize:          options.PageSize,
+		PageTokenProvided: options.PageTokenProvided,
+		Headers:           rawRequestHeaders(request),
+		SanitizedURL:      sanitizedURL,
+	}, nil
+}
+
+// SanitizeRawRequestURL removes paging token material from a production-built
+// request URL while preserving its method, path, and other query inputs.
+func SanitizeRawRequestURL(request RawRequest) (string, error) {
+	parsed, err := url.Parse(request.URL)
+	if err != nil {
+		return "", fmt.Errorf("sanitize raw request URL: %w", err)
+	}
+	query := parsed.Query()
+	if query.Has("pageToken") {
+		query.Set("pageToken", "REDACTED")
+		parsed.RawQuery = query.Encode()
+	}
+	return parsed.String(), nil
+}
+
+func rawRequestHeaders(request RawRequest) map[string]string {
+	headers := map[string]string{"Accept": "application/json"}
+	if len(request.Body) != 0 {
+		headers["Content-Type"] = "application/json"
+	}
+	return headers
 }
 
 func parseRawRequestTarget(options RawRequestOptions) (rawRequestTarget, error) {
@@ -294,11 +385,10 @@ func FetchRaw(ctx context.Context, doer Doer, request RawRequest, accessToken st
 	if err != nil {
 		return nil, err
 	}
-	httpRequest.Header.Set("Authorization", "Bearer "+accessToken)
-	httpRequest.Header.Set("Accept", "application/json")
-	if len(request.Body) != 0 {
-		httpRequest.Header.Set("Content-Type", "application/json")
+	for name, value := range rawRequestHeaders(request) {
+		httpRequest.Header.Set(name, value)
 	}
+	httpRequest.Header.Set("Authorization", "Bearer "+accessToken)
 	response, err := doer.Do(httpRequest)
 	if err != nil {
 		return nil, err
