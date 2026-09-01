@@ -13,6 +13,11 @@ const rawOutputDarwinOSearch = 0x40000000 | unix.O_DIRECTORY
 
 const darwinNoACL = ^uint32(0)
 
+// x/sys intentionally deprecates its Darwin syscall constants without
+// exposing an fgetattrlist wrapper. Darwin keeps fgetattrlist at syscall 228
+// on both supported architectures.
+const darwinSysFgetattrlist = 228
+
 type darwinRawOutputAttrList struct {
 	bitmapCount uint16
 	reserved    uint16
@@ -50,7 +55,7 @@ func validateUnixRawOutputParentPlatform(parentFD int) error {
 	// fork-field extended attributes. ATTR_CMN_EXTENDED_SECURITY is a normal
 	// common attribute and is exercised here by the native ACL tests.
 	_, _, errno := unix.Syscall6(
-		unix.SYS_FGETATTRLIST,
+		darwinSysFgetattrlist,
 		uintptr(parentFD),
 		uintptr(unsafe.Pointer(&attributes)),
 		uintptr(unsafe.Pointer(&buffer[0])),

@@ -235,7 +235,7 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 			return ReportFailure(FailureReport{Command: "raw", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 		}
 		writer := newStickyWriter(stderr)
-		if _, err := writer.Write([]byte(fmt.Sprintf("raw: wrote %d bytes to %q\n", byteCount, options.outputPath))); err != nil {
+		if _, err := fmt.Fprintf(writer, "raw: wrote %d bytes to %q\n", byteCount, options.outputPath); err != nil {
 			return reportWriteFailure("raw", err, mode, stdout, stderr)
 		}
 		return 0

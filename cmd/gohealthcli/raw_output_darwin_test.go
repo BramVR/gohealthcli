@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -16,10 +17,10 @@ func TestRawOutputRejectsMacOSParentACL(t *testing.T) {
 	if err := os.Mkdir(parent, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if output, err := exec.Command("/bin/chmod", "+a", "everyone allow add_file,delete_child,file_inherit", parent).CombinedOutput(); err != nil {
+	if output, err := exec.CommandContext(context.Background(), "/bin/chmod", "+a", "everyone allow add_file,delete_child,file_inherit", parent).CombinedOutput(); err != nil {
 		t.Fatalf("add parent ACL: %v: %s", err, output)
 	}
-	t.Cleanup(func() { _ = exec.Command("/bin/chmod", "-N", parent).Run() })
+	t.Cleanup(func() { _ = exec.CommandContext(context.Background(), "/bin/chmod", "-N", parent).Run() })
 
 	_, err := prepareRawOutputFile(filepath.Join(parent, "response.json"))
 	var validationError *rawOutputValidationError
