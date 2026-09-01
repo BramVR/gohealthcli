@@ -157,6 +157,14 @@ Archive, contact the Provider, or mutate Git state.
 Exports can reveal sensitive health history. Commands should require explicit
 output paths or explicit `--stdout`. Avoid silent background exports.
 
+Raw Provider file output carries the same sensitivity. `raw --output` accepts
+only a new destination, refuses symbolic links and every overwrite, and removes
+the staged file after a failed or short write. It creates mode `0600` on Linux
+and macOS. On Windows, no-replace publication prevents overwrite but the file
+inherits its parent directory ACL. Choose a directory whose ACL already grants
+access only to the intended identities. Other build targets reject file output
+if atomic no-replace rename is unavailable.
+
 ## Out of Scope
 
 - Remote secret storage.

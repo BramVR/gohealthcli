@@ -189,6 +189,7 @@ gohealthcli raw endpoint getIdentity --plan --json
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --plan --json
 gohealthcli raw endpoint getIdentity
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels
+gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --output ./steps-response.json
 ```
 
 Run the plan first. It prints the exact method, sanitized production URL,
@@ -196,7 +197,12 @@ non-secret headers, required scopes, resolved Data Type range and timezone,
 and paging inputs. Its Provider, credential, token, Health Archive, migration,
 Sync Cursor, and sidecar effects are all false. `--json` and `--plain` shape
 plan output only. A normal raw read keeps the Provider's response bytes
-unchanged on stdout.
+unchanged on stdout. Add `--output PATH` to write those exact bytes to a new
+file instead. The command refuses existing files, symbolic links, directories,
+and invalid parents. It creates mode `0600` on Linux and macOS and reports only
+the quoted path and byte count on stderr. Windows publishes without replacement
+but inherits the parent directory ACL, so use an ACL-private directory. Other
+build targets reject file output if atomic no-replace rename is unavailable.
 
 ## Where next
 

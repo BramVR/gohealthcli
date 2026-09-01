@@ -408,6 +408,7 @@ gohealthcli raw endpoint getIdentity --plan --json
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --plan --json
 gohealthcli raw endpoint getIdentity
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels
+gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --output ./steps-response.json
 ```
 
 Raw Data Type lists share `sync`'s exact range grammar and timezone precedence.
@@ -416,8 +417,14 @@ Add `--plan` before a raw read to inspect its exact method, sanitized production
 URL, non-secret headers, scopes, resolved range, and paging inputs. Every plan
 reports Provider, credential, token, Health Archive, migration, Sync Cursor,
 and sidecar effects as false. It never opens the Health Archive or contacts the
-Provider. `--json` and `--plain` apply to plans only; normal raw reads keep the
-Provider's exact response bytes on stdout.
+Provider. `--json` and `--plain` apply to plans only. A normal raw read keeps
+the Provider's exact response bytes on stdout. Pass `--output PATH` to put
+those exact bytes in a new file instead. File output refuses every existing
+destination, creates mode `0600` on Linux and macOS, emits no Provider bytes to
+stdout, and reports only the quoted path and byte count on stderr. Windows
+publishes without replacement but inherits the parent directory ACL, so choose
+a directory whose ACL is already private. Other build targets reject file
+output when atomic no-replace rename is unavailable.
 
 Query the local archive:
 
@@ -496,8 +503,9 @@ contract:
   as a JSON envelope, `--plain` as plain key/value lines. See
   [docs/commands/export.md](./docs/commands/export.md).
 - `raw --plan` supports `--plain` and `--json`. A normal raw read writes the
-  Provider's exact bytes to stdout and rejects command-local `--plain`,
-  `--json`, and `--no-input`.
+  Provider's exact bytes to stdout or to a new `--output PATH` and rejects
+  command-local `--plain`, `--json`, and `--no-input`. File output never
+  overwrites and cannot be combined with `--plan`.
 
 ## Read surface
 
@@ -648,6 +656,12 @@ backup cadence, and changed shards.
   and on the token auto-refresh path.
 - Exports can reveal health history; commands require explicit `--stdout` or
   `--output`, and `export` refuses to write through a symlinked `--output`.
+- Raw Provider responses can contain health history. `raw --output` requires a
+  new destination, refuses symbolic links and every overwrite, and removes an
+  incomplete staging file after a failed or short write. Linux and macOS files
+  are mode `0600`. Windows files inherit the parent ACL, so use an ACL-private
+  directory. Other build targets reject file output if they cannot publish with
+  atomic no-replace rename.
 - `query` and `status` plain output escapes control characters, so archived
   provider data cannot inject terminal escape sequences.
 - Data Point Attachment paths are validated against path traversal before

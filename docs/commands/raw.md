@@ -9,7 +9,9 @@ First positional argument is `endpoint <name>` (for example `endpoint getIdentit
 
 `--plan` prints the exact secret-free request description without contacting the Provider, reading the Credential Store, loading or refreshing a token, opening or writing the Health Archive, migrating, changing a Sync Cursor, or creating an Attachment sidecar. The plan contains the method, sanitized production URL, non-secret headers, required scopes, resolved range and timezone for Data Type targets, paging inputs, and an all-false effect report. Page-token material is redacted. A lower-bound-only target omits `range.to` and the human mode labels the missing Provider upper bound. Use `--json` or `--plain` with `--plan` for structured output.
 
-Without `--plan`, `raw` is provider-shaped on purpose. The JSON you see is what the Provider returns, not the normalized shape the archive stores. Normal reads preserve the Provider's exact response bytes on stdout and reject command-local `--json` or `--plain`; their only possible write remains persisting an existing OAuth token refresh.
+Without `--plan`, `raw` is Provider-shaped on purpose. The JSON you see is what the Provider returns, not the normalized shape the archive stores. Normal reads preserve the Provider's exact response bytes on stdout and reject command-local `--json` or `--plain`; their only possible write remains persisting an existing OAuth token refresh.
+
+Pass `--output PATH` to write those same exact bytes to a new file instead of stdout. The command refuses every existing destination, including symbolic links and directories, and never overwrites. On Linux and macOS it creates the file as owner-only mode `0600`, writes no Provider content to stdout, and reports only the quoted path and byte count on stderr. A failed, short, permission, close, or publish write never creates the final destination. Windows uses atomic no-replace publication and rejects a pre-existing reparse destination, but the new file inherits its parent directory ACL; choose a directory whose ACL is already private. Other build targets reject file output because the required atomic no-replace rename is unavailable. `--output` cannot be combined with `--plan`.
 
 Failures route through the unified Failure Reporter: a Provider outage (network failure or non-auth upstream HTTP error) reports status `provider_unreachable`, while other operation errors, including an upstream HTTP 401 auth rejection with the `Google Health rejected stored Connection token` message, report `operation_failed`.
 
@@ -35,3 +37,4 @@ gohealthcli raw <target> [<args>...]
 | `--page-size` | int | — | pagination page size (positive integer; where supported by the endpoint) |
 | `--page-token` | string | — | pagination page token from a prior response |
 | `--plan` | bool | `false` | print the exact secret-free Provider request plan without external access |
+| `--output` | string | — | write exact Provider response bytes to a new private file |

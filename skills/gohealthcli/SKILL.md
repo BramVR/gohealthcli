@@ -197,31 +197,36 @@ effect is false. Planning does not contact the Provider, read credentials,
 load or refresh a token, open the Health Archive, change a Sync Cursor, or
 create a sidecar.
 
-For the actual read, choose a fresh, user-approved private destination. Set
-owner-only file creation and no-clobber in the same shell before redirecting
-stdout. On a POSIX shell:
+For the actual read, choose a fresh, user-approved private destination. Use the
+built-in exact-byte output path instead of shell redirection. On a POSIX shell:
 
 ```bash
-umask 077
-set -o noclobber
-gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels > ./raw-health-response.json
+gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --output ./raw-health-response.json
 ```
 
-On PowerShell, create a unique file inside the current user's ACL-protected
-local application-data directory:
+The command requires a new path, refuses symbolic links and every overwrite,
+and creates mode `0600` on Linux and macOS. It writes no Provider content to
+stdout and reports only the quoted path and byte count on stderr. A failed or
+short file write removes the staged response before the final path exists.
+
+On PowerShell, choose a new path inside the current user's ACL-protected local
+application-data directory. Do not create the file first:
 
 ```powershell
 $rawPath = Join-Path $env:LOCALAPPDATA ("gohealthcli-raw-{0}.json" -f [guid]::NewGuid())
-New-Item -ItemType File -Path $rawPath -ErrorAction Stop | Out-Null
-gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels | Set-Content -LiteralPath $rawPath -Encoding utf8
+gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --output $rawPath
 ```
 
+Windows uses no-replace publication but inherits the parent directory ACL. Verify
+that ACL before the read. The command does not claim that a Unix mode changes
+Windows access rules. Other build targets reject file output if atomic
+no-replace rename is unavailable.
+
 This example reads Data Type `steps` from the Provider using the same named
-range and timezone resolution as `sync`, then redirects its raw JSON without
-archiving the response. It may refresh Connection token metadata locally. If
-the destination already exists, choose another path instead of
-overwriting it. Keep the file private, minimize the time range, and never paste
-the payload into chat or logs.
+range and timezone resolution as `sync`, then writes the exact response without
+archiving it. It may refresh Connection token metadata locally. If the
+destination already exists, choose another path. Keep the file private,
+minimize the time range, and never paste the payload into chat or logs.
 
 ## Report
 
