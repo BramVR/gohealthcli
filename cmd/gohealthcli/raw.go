@@ -52,9 +52,9 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	// stderr copy would surface twice otherwise, so we route only on
 	// genuine parse errors here.
 	rawUsage := func(w io.Writer) {
-		fmt.Fprintln(w, "usage: gohealthcli raw endpoint getIdentity")
-		fmt.Fprintln(w, "usage: gohealthcli raw endpoint dataTypes.<data-type>.list --from <boundary> [--to <boundary>] [--timezone <IANA>]")
-		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> --from <boundary> [--to <boundary>] [--timezone <IANA>]")
+		fmt.Fprintln(w, "usage: gohealthcli raw endpoint getIdentity [--plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw endpoint dataTypes.<data-type>.list --from <boundary> [--to <boundary>] [--timezone <IANA>] [--plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> --from <boundary> [--to <boundary>] [--timezone <IANA>] [--plan [--json|--plain]]")
 	}
 	// stdlib's flag package calls fs.Usage on BOTH `-h` and a parse
 	// error. Suppress that auto-call entirely and emit the bespoke

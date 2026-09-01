@@ -113,11 +113,8 @@ func TestMigratedSubcommandsFlowConfigAndDBThrough(t *testing.T) {
 	}
 }
 
-// TestRawRejectsUnsupportedCommonFlags pins acceptance criterion of issue
-// #180: `raw`'s flag spec declares only {config, db}, so a stray --plain,
-// --json, or --no-input on `raw` yields the Common Flag Set's targeted
-// "--<flag> is not supported by raw" wording instead of the legacy
-// hand-written walker's "raw: unknown flag" prefix.
+// TestRawRejectsUnsupportedCommonFlags pins the normal-read contract:
+// --plain and --json require --plan, while --no-input remains unsupported.
 func TestRawRejectsUnsupportedCommonFlags(t *testing.T) {
 	t.Parallel()
 	for _, flagName := range []string{"plain", "json", "no-input"} {

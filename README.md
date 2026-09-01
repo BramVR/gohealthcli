@@ -55,7 +55,7 @@ sync with `gohealthcli --help`.
 - `status`: Summarise archive counts and newest synced timestamps.
 - `query`: Run guarded read-only SQL over the Health Archive.
 - `export`: Write a normalised dataset to CSV or JSONL.
-- `raw`: Print raw provider JSON for endpoint exploration.
+- `raw`: Print raw Provider JSON or plan a Provider request with zero effects.
 - `describe-schema`: Self-describe the Health Archive for LLM consumption.
 - `completion`: Generate a shell completion script.
 
@@ -404,12 +404,20 @@ gohealthcli export total-calories-rollups --format csv --output calories.csv
 Explore raw provider JSON:
 
 ```bash
+gohealthcli raw endpoint getIdentity --plan --json
+gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --plan --json
 gohealthcli raw endpoint getIdentity
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels
 ```
 
 Raw Data Type lists share `sync`'s exact range grammar and timezone precedence.
 Identity endpoints reject range and timezone flags instead of ignoring them.
+Add `--plan` before a raw read to inspect its exact method, sanitized production
+URL, non-secret headers, scopes, resolved range, and paging inputs. Every plan
+reports Provider, credential, token, Health Archive, migration, Sync Cursor,
+and sidecar effects as false. It never opens the Health Archive or contacts the
+Provider. `--json` and `--plain` apply to plans only; normal raw reads keep the
+Provider's exact response bytes on stdout.
 
 Query the local archive:
 
@@ -487,9 +495,9 @@ contract:
   honour the requested mode — `export <dataset> --json` reports failures
   as a JSON envelope, `--plain` as plain key/value lines. See
   [docs/commands/export.md](./docs/commands/export.md).
-- `raw` writes the provider's raw bytes to stdout and ignores `--plain`,
-  `--json`, and `--no-input`; passing any of them directly on `raw` is
-  rejected at parse time with a targeted "not supported by raw" message.
+- `raw --plan` supports `--plain` and `--json`. A normal raw read writes the
+  Provider's exact bytes to stdout and rejects command-local `--plain`,
+  `--json`, and `--no-input`.
 
 ## Read surface
 

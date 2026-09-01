@@ -40,19 +40,19 @@ The Provider package owns this description:
 
 ```go
 type RawRequestDescription struct {
-    Request          RawRequest
-    Range            *ResolvedRange
-    PageSize         int64
+    Request           RawRequest
+    Range             *ResolvedRange
+    PageSize          int64
     PageTokenProvided bool
-    Headers          map[string]string
+    Headers           map[string]string
+    SanitizedURL      string
 }
 
 func DescribeRawRequest(RawRequestOptions) (RawRequestDescription, error)
 func BuildRawRequest(RawRequestOptions) (RawRequest, error)
-func SanitizeRawRequestURL(RawRequest) (string, error)
 ```
 
-`DescribeRawRequest` parses and validates the target, resolves the range once, calls the production request builder, derives the non-secret headers used by execution, and sanitizes paging material for display. `BuildRawRequest` returns the description's request, so a normal read and its plan cannot select different methods or URLs. The command owns only flag-mode rules, optional non-secret timezone config lookup, plan result types, effect constants, and output formatting.
+`RawRequestOptions` also carries a lazy `TimezoneFallback func() (string, error)`. `DescribeRawRequest` calls it only for a Data Type target with no explicit timezone. It parses and validates the target, resolves the range once, calls the production request builder, derives the non-secret headers used by execution, and sanitizes paging material for display. `BuildRawRequest` returns the description's request, so a normal read and its plan cannot select different methods or URLs. The command owns only flag-mode rules, optional non-secret timezone config lookup, plan result types, effect constants, and output formatting.
 
 This interface hides the Provider catalog, filter grammar, URL query layout, header policy, and sanitization behind one call. Callers still supply user inputs and the captured clock because those are command facts. Planning never accepts a base URL, token, Connection, archive handle, or cursor.
 

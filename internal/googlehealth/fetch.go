@@ -176,7 +176,7 @@ func DescribeRawRequest(options RawRequestOptions) (RawRequestDescription, error
 		}
 		resolvedRange = &resolved
 	}
-	sanitizedURL, err := SanitizeRawRequestURL(request)
+	sanitizedURL, err := sanitizeRawRequestURL(request)
 	if err != nil {
 		return RawRequestDescription{}, err
 	}
@@ -190,9 +190,9 @@ func DescribeRawRequest(options RawRequestOptions) (RawRequestDescription, error
 	}, nil
 }
 
-// SanitizeRawRequestURL removes paging token material from a production-built
+// sanitizeRawRequestURL removes paging token material from a production-built
 // request URL while preserving its method, path, and other query inputs.
-func SanitizeRawRequestURL(request RawRequest) (string, error) {
+func sanitizeRawRequestURL(request RawRequest) (string, error) {
 	parsed, err := url.Parse(request.URL)
 	if err != nil {
 		return "", fmt.Errorf("sanitize raw request URL: %w", err)

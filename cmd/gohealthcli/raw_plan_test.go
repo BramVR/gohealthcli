@@ -184,6 +184,49 @@ func TestRawPlanReadsOnlyConfiguredTimezoneWhenNeeded(t *testing.T) {
 	}
 }
 
+func TestRawPlanLeavesArchiveAndSidecarPathsUntouched(t *testing.T) {
+	t.Parallel()
+	directory := t.TempDir()
+	archivePath := filepath.Join(directory, "health.sqlite")
+	archiveBytes := []byte("synthetic archive sentinel")
+	if err := os.WriteFile(archivePath, archiveBytes, 0o600); err != nil {
+		t.Fatalf("write archive sentinel: %v", err)
+	}
+	sidecarPath := attachmentRootDirForArchive(archivePath)
+	if err := os.Mkdir(sidecarPath, 0o700); err != nil {
+		t.Fatalf("create sidecar sentinel directory: %v", err)
+	}
+	sidecarSentinel := filepath.Join(sidecarPath, "sentinel")
+	if err := os.WriteFile(sidecarSentinel, []byte("unchanged"), 0o600); err != nil {
+		t.Fatalf("write sidecar sentinel: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runWithRuntime([]string{
+		"raw", "data-type", "steps", "--from", "2026-01-01", "--timezone", "UTC",
+		"--plan", "--json", "--config", filepath.Join(directory, "missing-config"), "--db", archivePath,
+	}, &stdout, &stderr, forbiddenRawPlanRuntime(t))
+	if code != 0 {
+		t.Fatalf("exit = %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+	gotArchive, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatalf("read archive sentinel: %v", err)
+	}
+	gotSidecar, err := os.ReadFile(sidecarSentinel)
+	if err != nil {
+		t.Fatalf("read sidecar sentinel: %v", err)
+	}
+	if !bytes.Equal(gotArchive, archiveBytes) || string(gotSidecar) != "unchanged" {
+		t.Fatalf("planning changed archive or sidecar sentinel")
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if _, err := os.Stat(archivePath + suffix); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("planning created %s", archivePath+suffix)
+		}
+	}
+}
+
 func TestRawPlanInvalidTargetsAndConflictsUseFailureReporterBeforeAccess(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
