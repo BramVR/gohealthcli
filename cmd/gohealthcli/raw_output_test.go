@@ -3,12 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -78,21 +78,27 @@ func TestRawOutputRefusesEveryExistingDestinationWithoutProviderRead(t *testing.
 		name string
 		seed func(string) error
 	}{
-		{name: "regular file", seed: func(path string) error { return os.WriteFile(path, []byte("keep"), 0o600) }},
-		{name: "directory", seed: func(path string) error { return os.Mkdir(path, 0o700) }},
-	}
-	if runtime.GOOS != "windows" {
-		tests = append(tests, struct {
-			name string
-			seed func(string) error
-		}{name: "symbolic link", seed: func(path string) error {
-			target := filepath.Join(tempDir, "symlink-target")
-			if err := os.WriteFile(target, []byte("keep-target"), 0o600); err != nil {
+		{name: "regular file", seed: func(path string) error {
+			if err := os.WriteFile(path, []byte("keep"), 0o644); err != nil {
 				return err
 			}
-			return os.Symlink(target, path)
-		}})
+			if usesPOSIXPermissions() {
+				return os.Chmod(path, 0o644)
+			}
+			return nil
+		}},
+		{name: "directory", seed: func(path string) error { return os.Mkdir(path, 0o700) }},
 	}
+	tests = append(tests, struct {
+		name string
+		seed func(string) error
+	}{name: "symbolic link", seed: func(path string) error {
+		target := filepath.Join(tempDir, "symlink-target")
+		if err := os.WriteFile(target, []byte("keep-target"), 0o600); err != nil {
+			return err
+		}
+		return os.Symlink(target, path)
+	}})
 
 	for _, test := range tests {
 		test := test
@@ -100,9 +106,13 @@ func TestRawOutputRefusesEveryExistingDestinationWithoutProviderRead(t *testing.
 			t.Parallel()
 			outputPath := filepath.Join(tempDir, strings.ReplaceAll(test.name, " ", "-"))
 			if err := test.seed(outputPath); err != nil {
+				if test.name == "symbolic link" {
+					t.Skipf("symbolic link setup is unavailable: %v", err)
+				}
 				t.Fatalf("seed destination: %v", err)
 			}
 			before, _ := os.ReadFile(outputPath)
+			beforeInfo, _ := os.Lstat(outputPath)
 			testRuntime := runtimeAdapters{
 				fetchRawProvider: func(context.Context, googlehealth.RawRequest, string) ([]byte, error) {
 					t.Fatal("Provider must not run for an invalid --output destination")
@@ -134,6 +144,15 @@ func TestRawOutputRefusesEveryExistingDestinationWithoutProviderRead(t *testing.
 				if !bytes.Equal(after, before) {
 					t.Fatalf("existing destination changed from %q to %q", before, after)
 				}
+				if usesPOSIXPermissions() {
+					afterInfo, err := os.Lstat(outputPath)
+					if err != nil {
+						t.Fatalf("lstat existing destination: %v", err)
+					}
+					if afterInfo.Mode().Perm() != beforeInfo.Mode().Perm() {
+						t.Fatalf("existing destination mode changed from %04o to %04o", beforeInfo.Mode().Perm(), afterInfo.Mode().Perm())
+					}
+				}
 			}
 		})
 	}
@@ -141,79 +160,210 @@ func TestRawOutputRefusesEveryExistingDestinationWithoutProviderRead(t *testing.
 
 func TestRawOutputRejectsInvalidParentTypeBeforeProviderRead(t *testing.T) {
 	t.Parallel()
-	parentPath := filepath.Join(t.TempDir(), "not-a-directory")
-	if err := os.WriteFile(parentPath, []byte("keep-parent"), 0o600); err != nil {
+	tempDir := t.TempDir()
+	fileParent := filepath.Join(tempDir, "not-a-directory")
+	if err := os.WriteFile(fileParent, []byte("keep-parent"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	testRuntime := runtimeAdapters{
-		fetchRawProvider: func(context.Context, googlehealth.RawRequest, string) ([]byte, error) {
-			t.Fatal("Provider must not run for an invalid --output parent")
-			return nil, nil
-		},
+	for _, test := range []struct {
+		name       string
+		parentPath string
+		want       string
+	}{
+		{name: "file", parentPath: fileParent, want: "is not a directory"},
+		{name: "missing", parentPath: filepath.Join(tempDir, "missing"), want: "inspect --output parent"},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			testRuntime := runtimeAdapters{
+				fetchRawProvider: func(context.Context, googlehealth.RawRequest, string) ([]byte, error) {
+					t.Fatal("Provider must not run for an invalid --output parent")
+					return nil, nil
+				},
+			}
+			stdout := new(bytes.Buffer)
+			stderr := new(bytes.Buffer)
+			code := runWithRuntime([]string{
+				"raw", "endpoint", "getIdentity",
+				"--config", filepath.Join(t.TempDir(), "missing-config.toml"),
+				"--db", filepath.Join(t.TempDir(), "missing-archive.sqlite"),
+				"--output", filepath.Join(test.parentPath, "response.json"),
+			}, stdout, stderr, testRuntime)
+			if code == 0 {
+				t.Fatalf("raw --output exit code = 0, want invalid-parent refusal")
+			}
+			if !strings.Contains(stderr.String(), "parent") || !strings.Contains(stderr.String(), test.want) {
+				t.Fatalf("stderr = %q, want parent error %q", stderr.String(), test.want)
+			}
+		})
 	}
-	stdout := new(bytes.Buffer)
-	stderr := new(bytes.Buffer)
-	code := runWithRuntime([]string{
-		"raw", "endpoint", "getIdentity",
-		"--config", filepath.Join(t.TempDir(), "missing-config.toml"),
-		"--db", filepath.Join(t.TempDir(), "missing-archive.sqlite"),
-		"--output", filepath.Join(parentPath, "response.json"),
-	}, stdout, stderr, testRuntime)
-	if code == 0 {
-		t.Fatalf("raw --output exit code = 0, want invalid-parent refusal")
+}
+
+func TestRawOutputRejectsInvalidFlagCombinationsBeforeSetup(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "plan", args: []string{"--plan", "--output", "response.json"}, want: "--output is not supported with --plan"},
+		{name: "empty path", args: []string{"--output", ""}, want: "--output requires a non-empty path"},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			testRuntime := runtimeAdapters{
+				fetchRawProvider: func(context.Context, googlehealth.RawRequest, string) ([]byte, error) {
+					t.Fatal("Provider must not run for invalid --output flags")
+					return nil, nil
+				},
+			}
+			args := append([]string{"raw", "endpoint", "getIdentity"}, test.args...)
+			stdout := new(bytes.Buffer)
+			stderr := new(bytes.Buffer)
+			code := runWithRuntime(args, stdout, stderr, testRuntime)
+			if code == 0 {
+				t.Fatalf("raw invalid --output exit code = 0, want failure")
+			}
+			if !strings.Contains(stderr.String(), test.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), test.want)
+			}
+		})
 	}
-	if !strings.Contains(stderr.String(), "parent") || !strings.Contains(stderr.String(), "directory") {
-		t.Fatalf("stderr = %q, want invalid parent type", stderr.String())
-	}
 }
 
-type shortRawOutputFile struct {
-	*os.File
+type shortRawOutputDestination struct {
+	rawOutputDestination
 }
 
-func (file *shortRawOutputFile) Write(payload []byte) (int, error) {
-	return file.File.Write(payload[:len(payload)/2])
+func (destination *shortRawOutputDestination) Write(payload []byte) (int, error) {
+	return destination.rawOutputDestination.Write(payload[:len(payload)/2])
 }
 
-type failingRawOutputFile struct {
-	*os.File
+type failingRawOutputDestination struct {
+	rawOutputDestination
 }
 
-func (file *failingRawOutputFile) Write(payload []byte) (int, error) {
-	written, _ := file.File.Write(payload[:1])
+type chmodFailingRawOutputDestination struct {
+	rawOutputDestination
+}
+
+func (destination *chmodFailingRawOutputDestination) Chmod(os.FileMode) error {
+	return errSyntheticRawOutputWrite
+}
+
+type closeFailingRawOutputDestination struct {
+	rawOutputDestination
+}
+
+func (destination *closeFailingRawOutputDestination) Close() error {
+	_ = destination.rawOutputDestination.Close()
+	return errSyntheticRawOutputWrite
+}
+
+func (destination *failingRawOutputDestination) Write(payload []byte) (int, error) {
+	written, _ := destination.rawOutputDestination.Write(payload[:1])
 	return written, errSyntheticRawOutputWrite
+}
+
+type racingCommitRawOutputDestination struct {
+	rawOutputDestination
+	targetPath string
+}
+
+func (destination *racingCommitRawOutputDestination) Commit() error {
+	if err := os.WriteFile(destination.targetPath, []byte("concurrent replacement"), 0o600); err != nil {
+		return err
+	}
+	return destination.rawOutputDestination.Commit()
 }
 
 func TestWriteRawOutputFileCleansUpShortAndFailedWrites(t *testing.T) {
 	t.Parallel()
 	payload := []byte("synthetic-provider-response")
-	for _, test := range []struct {
+	tests := []struct {
 		name      string
-		wrap      func(*os.File) rawOutputFile
+		wrap      func(rawOutputDestination) rawOutputDestination
 		wantError error
 	}{
-		{name: "short write", wrap: func(file *os.File) rawOutputFile { return &shortRawOutputFile{File: file} }, wantError: io.ErrShortWrite},
-		{name: "write error", wrap: func(file *os.File) rawOutputFile { return &failingRawOutputFile{File: file} }, wantError: errSyntheticRawOutputWrite},
-	} {
+		{name: "short write", wrap: func(destination rawOutputDestination) rawOutputDestination {
+			return &shortRawOutputDestination{rawOutputDestination: destination}
+		}, wantError: io.ErrShortWrite},
+		{name: "write error", wrap: func(destination rawOutputDestination) rawOutputDestination {
+			return &failingRawOutputDestination{rawOutputDestination: destination}
+		}, wantError: errSyntheticRawOutputWrite},
+		{name: "close error", wrap: func(destination rawOutputDestination) rawOutputDestination {
+			return &closeFailingRawOutputDestination{rawOutputDestination: destination}
+		}, wantError: errSyntheticRawOutputWrite},
+	}
+	if usesPOSIXPermissions() {
+		tests = append(tests, struct {
+			name      string
+			wrap      func(rawOutputDestination) rawOutputDestination
+			wantError error
+		}{name: "chmod error", wrap: func(destination rawOutputDestination) rawOutputDestination {
+			return &chmodFailingRawOutputDestination{rawOutputDestination: destination}
+		}, wantError: errSyntheticRawOutputWrite})
+	}
+	for _, test := range tests {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			outputPath := filepath.Join(t.TempDir(), "response.json")
-			openFile := func(path string) (rawOutputFile, error) {
-				file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|exportOpenNoFollow, 0o600)
+			openDestination := func(path string) (rawOutputDestination, error) {
+				destination, err := openStagedRawOutput(path)
 				if err != nil {
 					return nil, err
 				}
-				return test.wrap(file), nil
+				return test.wrap(destination), nil
 			}
-			_, err := writeRawOutputFileWithOpen(outputPath, payload, openFile, os.Remove)
+			_, err := writeRawOutputFileWithOpen(outputPath, payload, openDestination)
 			if !errors.Is(err, test.wantError) {
 				t.Fatalf("writeRawOutputFileWithOpen error = %v, want %v", err, test.wantError)
 			}
 			if _, statErr := os.Lstat(outputPath); !errors.Is(statErr, os.ErrNotExist) {
 				t.Fatalf("failed raw output left destination behind: %v", statErr)
 			}
+			stagingFiles, err := filepath.Glob(filepath.Join(filepath.Dir(outputPath), ".gohealthcli-raw-*"))
+			if err != nil {
+				t.Fatalf("glob staging files: %v", err)
+			}
+			if len(stagingFiles) != 0 {
+				t.Fatalf("failed raw output left staging files: %v", stagingFiles)
+			}
 		})
+	}
+}
+
+func TestRawOutputPublishPreservesConcurrentReplacement(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	outputPath := filepath.Join(tempDir, "response.json")
+	openDestination := func(path string) (rawOutputDestination, error) {
+		destination, err := openStagedRawOutput(path)
+		if err != nil {
+			return nil, err
+		}
+		return &racingCommitRawOutputDestination{rawOutputDestination: destination, targetPath: path}, nil
+	}
+	_, err := writeRawOutputFileWithOpen(outputPath, []byte("synthetic-provider-response"), openDestination)
+	if err == nil {
+		t.Fatal("writeRawOutputFileWithOpen error = nil, want no-clobber failure")
+	}
+	replacement, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read replacement: %v", err)
+	}
+	if string(replacement) != "concurrent replacement" {
+		t.Fatalf("replacement = %q, want unchanged", replacement)
+	}
+	stagingFiles, err := filepath.Glob(filepath.Join(tempDir, ".gohealthcli-raw-*"))
+	if err != nil {
+		t.Fatalf("glob staging files: %v", err)
+	}
+	if len(stagingFiles) != 0 {
+		t.Fatalf("failed publish left staging files: %v", stagingFiles)
 	}
 }
 
@@ -248,6 +398,85 @@ func TestRawOutputErrorNeverContainsProviderBytes(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), errSyntheticRawOutputWrite.Error()) {
 		t.Fatalf("stderr = %q, want write failure", stderr.String())
+	}
+}
+
+func TestRawOutputFailureUsesOperationFailedStatus(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(googlehealth.RawRequest) []byte {
+		return []byte("synthetic-provider-response")
+	})
+	testRuntime.writeRawOutput = func(string, []byte) (int, error) {
+		return 0, errSyntheticRawOutputWrite
+	}
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{
+		"--json",
+		"raw", "endpoint", "getIdentity",
+		"--config", configPath,
+		"--db", archivePath,
+		"--output", filepath.Join(t.TempDir(), "response.json"),
+	}, stdout, stderr, testRuntime)
+	if code == 0 {
+		t.Fatal("raw --output JSON failure exit code = 0, want failure")
+	}
+	var failure failureJSONEnvelope
+	if err := json.Unmarshal(stdout.Bytes(), &failure); err != nil {
+		t.Fatalf("decode raw --output failure: %v; stdout=%q", err, stdout.String())
+	}
+	if failure.Status != StatusOperationFailed {
+		t.Fatalf("failure status = %q, want %q", failure.Status, StatusOperationFailed)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty JSON failure stream", stderr.String())
+	}
+}
+
+func TestRawOutputNoClobberCheckRepeatsAfterProviderRead(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	payload := []byte("synthetic-provider-response")
+	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(googlehealth.RawRequest) []byte { return payload })
+	outputPath := filepath.Join(t.TempDir(), "response.json")
+	testRuntime.writeRawOutput = func(path string, body []byte) (int, error) {
+		if err := os.WriteFile(path, []byte("racing destination"), 0o600); err != nil {
+			t.Fatalf("seed racing destination: %v", err)
+		}
+		return writeRawOutputFile(path, body)
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{
+		"raw", "endpoint", "getIdentity",
+		"--config", configPath,
+		"--db", archivePath,
+		"--output", outputPath,
+	}, stdout, stderr, testRuntime)
+	if code == 0 {
+		t.Fatal("raw racing --output exit code = 0, want no-clobber failure")
+	}
+	got, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read racing destination: %v", err)
+	}
+	if string(got) != "racing destination" {
+		t.Fatalf("racing destination = %q, want unchanged", got)
+	}
+	if bytes.Contains(append(stdout.Bytes(), stderr.Bytes()...), payload) {
+		t.Fatalf("racing destination error leaked Provider bytes")
 	}
 }
 

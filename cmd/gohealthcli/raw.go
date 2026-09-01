@@ -61,9 +61,9 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	// stderr copy would surface twice otherwise, so we route only on
 	// genuine parse errors here.
 	rawUsage := func(w io.Writer) {
-		fmt.Fprintln(w, "usage: gohealthcli raw endpoint getIdentity [--plan [--json|--plain]]")
-		fmt.Fprintln(w, "usage: gohealthcli raw endpoint dataTypes.<data-type>.list --from <boundary> [--to <boundary>] [--timezone <IANA>] [--plan [--json|--plain]]")
-		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> --from <boundary> [--to <boundary>] [--timezone <IANA>] [--plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw endpoint getIdentity [--output <path> | --plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw endpoint dataTypes.<data-type>.list --from <boundary> [--to <boundary>] [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> --from <boundary> [--to <boundary>] [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
 	}
 	// stdlib's flag package calls fs.Usage on BOTH `-h` and a parse
 	// error. Suppress that auto-call entirely and emit the bespoke
@@ -108,6 +108,12 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		}
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: flagName + " is not supported by raw without --plan"}, stdout, stderr)
 	}
+	if *rawPlan && flagWasProvided(flags, "output") {
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: "--output is not supported with --plan", Mode: mode}, stdout, stderr)
+	}
+	if flagWasProvided(flags, "output") && *rawOutput == "" {
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: "--output requires a non-empty path", Mode: mode}, stdout, stderr)
+	}
 	if *rawPageSize < 0 || (flagWasProvided(flags, "page-size") && *rawPageSize <= 0) {
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: "--page-size must be a positive integer", Mode: mode}, stdout, stderr)
 	}
@@ -141,6 +147,11 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	}
 	if err := googlehealth.ValidateRawRequestOptions(requestOptions); err != nil {
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
+	}
+	if options.outputPath != "" {
+		if err := validateRawOutputDestination(options.outputPath); err != nil {
+			return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
+		}
 	}
 	runtime = runtime.withDefaults()
 	requestOptions.ResolvedAt = runtime.now()
@@ -190,16 +201,16 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	if options.outputPath != "" {
 		byteCount, err := runtime.writeRawOutput(options.outputPath, body)
 		if err != nil {
-			return ReportFailure(FailureReport{Command: "raw", Status: StatusArchiveUnwritable, Message: err.Error(), Mode: mode}, stdout, stderr)
+			return ReportFailure(FailureReport{Command: "raw", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 		}
 		writer := newStickyWriter(stderr)
-		writer.Printf("raw: wrote %d bytes to %q\n", byteCount, options.outputPath)
-		if err := writer.Err(); err != nil {
+		if _, err := writer.Write([]byte(fmt.Sprintf("raw: wrote %d bytes to %q\n", byteCount, options.outputPath))); err != nil {
 			return reportWriteFailure("raw", err, mode, stdout, stderr)
 		}
 		return 0
 	}
-	if _, err := stdout.Write(body); err != nil {
+	writer := newStickyWriter(stdout)
+	if _, err := writer.Write(body); err != nil {
 		return reportWriteFailure("raw", err, mode, stdout, stderr)
 	}
 	return 0
