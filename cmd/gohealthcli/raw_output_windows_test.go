@@ -43,6 +43,33 @@ func TestWindowsRawOutputRejectsUnstableWin32Leaves(t *testing.T) {
 	}
 }
 
+func TestWindowsRawOutputPreparedParentBlocksPathReplacement(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "requested-parent")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	destination, err := openStagedRawOutput(filepath.Join(parent, "response.json"))
+	if err != nil {
+		t.Fatalf("open staged output: %v", err)
+	}
+	movedParent := filepath.Join(root, "replacement-parent")
+	if err := os.Rename(parent, movedParent); err == nil {
+		_ = destination.Abort()
+		t.Fatal("prepared Windows parent was renamed while its handles were pinned")
+	}
+	if err := destination.Abort(); err != nil {
+		t.Fatalf("abort prepared output: %v", err)
+	}
+	stagingFiles, err := filepath.Glob(filepath.Join(parent, ".gohealthcli-raw-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stagingFiles) != 0 {
+		t.Fatalf("abort left staging files: %v", stagingFiles)
+	}
+}
+
 func TestCleanupWindowsRawOutputSetupRemovesCreatedStage(t *testing.T) {
 	for _, duplicate := range []bool{false, true} {
 		t.Run(map[bool]string{false: "original handle", true: "duplicate handle"}[duplicate], func(t *testing.T) {
