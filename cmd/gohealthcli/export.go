@@ -408,14 +408,14 @@ func validateExportFormat(format string) error {
 
 func writeExportFile(rows []exportRow, spec exportDatasetSpec, format, path string) error {
 	if usesPOSIXPermissions() {
-		if err := restrictExistingExportOutput(path); err != nil {
+		if err := validateOutputPathNoFollow(path); err != nil {
 			return err
 		}
 	}
 	// exportOpenNoFollow (O_NOFOLLOW on POSIX) makes this open fail rather than
 	// follow a symlink at the final path component, closing the TOCTOU window
-	// between restrictExistingExportOutput's Lstat check and this open.
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|exportOpenNoFollow, 0o600)
+	// between validateOutputPathNoFollow's Lstat check and this open.
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|outputOpenNoFollow, 0o600)
 	if err != nil {
 		return err
 	}
@@ -437,12 +437,12 @@ func writeExportFile(rows []exportRow, spec exportDatasetSpec, format, path stri
 // target; the caller surfaces this as a flag-invalid failure.
 var errExportOutputSymlink = errors.New("symbolic link")
 
-// restrictExistingExportOutput validates the --output path before the export
+// validateOutputPathNoFollow inspects the --output path before the export
 // writer opens it: it refuses a symbolic link (so the link target is never
 // chmod'd or truncated) and a directory. Permission tightening of the written
 // file happens fd-based in writeExportFile (fchmod), not here, so there is no
 // path-based chmod that a raced symlink could redirect.
-func restrictExistingExportOutput(path string) error {
+func validateOutputPathNoFollow(path string) error {
 	// os.Lstat does not follow symlinks, so it sees the link itself. Check it
 	// BEFORE os.Stat (which follows symlinks) so a symlinked --output is
 	// refused rather than chmod'd or truncated through the link target. This

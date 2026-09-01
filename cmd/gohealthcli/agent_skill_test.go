@@ -202,8 +202,8 @@ func TestAgentSkillPinsSafetyBoundaries(t *testing.T) {
 		"Never reconnect an existing archive to a different identity",
 		"Never infer a cursor from the newest archived timestamp",
 		"user-approved private destination",
-		"umask 077",
-		"set -o noclobber",
+		"built-in exact-byte output path",
+		"refuses symbolic links and every overwrite",
 		"ACL-protected local application-data directory",
 	}
 	for _, phrase := range required {
@@ -214,8 +214,9 @@ func TestAgentSkillPinsSafetyBoundaries(t *testing.T) {
 	for _, invocation := range agentSkillInvocations(readAgentSkill(t)) {
 		redirected := strings.Contains(invocation, ">") || strings.Contains(invocation, "| Set-Content ")
 		planned := strings.Contains(invocation, " --plan")
-		if strings.HasPrefix(invocation, "gohealthcli raw ") && !planned && !redirected {
-			t.Errorf("raw Provider invocation must redirect sensitive stdout: %q", invocation)
+		fileOutput := strings.Contains(invocation, " --output ")
+		if strings.HasPrefix(invocation, "gohealthcli raw ") && !planned && !redirected && !fileOutput {
+			t.Errorf("raw Provider invocation must use safe file output or redirect sensitive stdout: %q", invocation)
 		}
 	}
 }

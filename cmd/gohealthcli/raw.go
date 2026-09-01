@@ -21,6 +21,7 @@ type rawCommandOptions struct {
 	pageToken   string
 	target      []string
 	plan        bool
+	outputPath  string
 }
 
 type rawPlanningConfigError struct {
@@ -49,6 +50,7 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	rawPageSize := flags.Int64("page-size", 0, "pagination page size (positive integer; where supported by the endpoint)")
 	rawPageToken := flags.String("page-token", "", "pagination page token from a prior response")
 	rawPlan := flags.Bool("plan", false, "print the exact secret-free Provider request plan without external access")
+	rawOutput := flags.String("output", "", "write exact Provider response bytes to a new private file")
 
 	// raw uses a bespoke usage block (`raw endpoint getIdentity` etc.)
 	// rather than the auto-generated stdlib one, because its first
@@ -59,9 +61,9 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	// stderr copy would surface twice otherwise, so we route only on
 	// genuine parse errors here.
 	rawUsage := func(w io.Writer) {
-		fmt.Fprintln(w, "usage: gohealthcli raw endpoint getIdentity [--plan [--json|--plain]]")
-		fmt.Fprintln(w, "usage: gohealthcli raw endpoint dataTypes.<data-type>.list --from <boundary> [--to <boundary>] [--timezone <IANA>] [--plan [--json|--plain]]")
-		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> --from <boundary> [--to <boundary>] [--timezone <IANA>] [--plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw endpoint getIdentity [--output <path> | --plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw endpoint dataTypes.<data-type>.list --from <boundary> [--to <boundary>] [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> --from <boundary> [--to <boundary>] [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
 	}
 	// stdlib's flag package calls fs.Usage on BOTH `-h` and a parse
 	// error. Suppress that auto-call entirely and emit the bespoke
@@ -106,6 +108,12 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		}
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: flagName + " is not supported by raw without --plan"}, stdout, stderr)
 	}
+	if *rawPlan && flagWasProvided(flags, "output") {
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: "--output is not supported with --plan", Mode: mode}, stdout, stderr)
+	}
+	if flagWasProvided(flags, "output") && *rawOutput == "" {
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: "--output requires a non-empty path", Mode: mode}, stdout, stderr)
+	}
 	if *rawPageSize < 0 || (flagWasProvided(flags, "page-size") && *rawPageSize <= 0) {
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: "--page-size must be a positive integer", Mode: mode}, stdout, stderr)
 	}
@@ -122,6 +130,7 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		pageToken:   *rawPageToken,
 		target:      target,
 		plan:        *rawPlan,
+		outputPath:  *rawOutput,
 	}
 	requestOptions := googlehealth.RawRequestOptions{
 		Target:            options.target,
@@ -160,8 +169,33 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		}
 		return writeRawPlan(description, requestOptions, mode, stdout, stderr)
 	}
+	var preparedOutput preparedRawOutput
+	preparedOutputSettled := false
+	if options.outputPath != "" {
+		var prepareErr error
+		preparedOutput, prepareErr = runtime.prepareRawOutput(options.outputPath)
+		if prepareErr != nil {
+			status := StatusOperationFailed
+			var validationError *rawOutputValidationError
+			if errors.As(prepareErr, &validationError) {
+				status = StatusFlagInvalid
+			}
+			return ReportFailure(FailureReport{Command: "raw", Status: status, Message: prepareErr.Error(), Mode: mode}, stdout, stderr)
+		}
+		// Explicit error paths below surface cleanup errors. This fallback keeps
+		// future post-preparation returns from leaking the staging resource.
+		defer func() {
+			if !preparedOutputSettled {
+				_ = preparedOutput.Abort(fmt.Errorf("raw stopped before output completion"))
+			}
+		}()
+	}
 	config, err := inspectIdentityConfig(options.configPath, options.archivePath)
 	if err != nil {
+		if preparedOutput != nil {
+			err = preparedOutput.Abort(err)
+			preparedOutputSettled = true
+		}
 		cause := setupFailureRemediation(err, fmt.Sprintf("config check failed: %v", err))
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusOperationFailed, Message: cause.Error(), Mode: mode, Cause: cause}, stdout, stderr)
 	}
@@ -170,10 +204,20 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	}
 	request, err := googlehealth.BuildRawRequest(requestOptions)
 	if err != nil {
+		if preparedOutput != nil {
+			err = preparedOutput.Abort(err)
+			preparedOutputSettled = true
+		}
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
+	// rawSetupWithRuntime contains every remaining archive, Connection, and
+	// Provider failure path. Its single returned error aborts the prepared file.
 	body, err := rawSetupWithRuntime(options.configPath, options.archivePath, config, request, runtime)
 	if err != nil {
+		if preparedOutput != nil {
+			err = preparedOutput.Abort(err)
+			preparedOutputSettled = true
+		}
 		// Provider outage (non-auth HTTP failure or network error) maps
 		// to the documented provider_unreachable failure status so JSON
 		// consumers can tell it apart from local misconfiguration
@@ -184,7 +228,20 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		}
 		return ReportFailure(FailureReport{Command: "raw", Status: status, Message: err.Error(), Mode: mode, Cause: err}, stdout, stderr)
 	}
-	if _, err := stdout.Write(body); err != nil {
+	if options.outputPath != "" {
+		byteCount, err := preparedOutput.Complete(body)
+		preparedOutputSettled = true
+		if err != nil {
+			return ReportFailure(FailureReport{Command: "raw", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
+		}
+		writer := newStickyWriter(stderr)
+		if _, err := fmt.Fprintf(writer, "raw: wrote %d bytes to %q\n", byteCount, options.outputPath); err != nil {
+			return reportWriteFailure("raw", err, mode, stdout, stderr)
+		}
+		return 0
+	}
+	writer := newStickyWriter(stdout)
+	if _, err := writer.Write(body); err != nil {
 		return reportWriteFailure("raw", err, mode, stdout, stderr)
 	}
 	return 0
