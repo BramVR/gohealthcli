@@ -21,6 +21,7 @@ type rawCommandOptions struct {
 	pageToken   string
 	target      []string
 	plan        bool
+	outputPath  string
 }
 
 type rawPlanningConfigError struct {
@@ -49,6 +50,7 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	rawPageSize := flags.Int64("page-size", 0, "pagination page size (positive integer; where supported by the endpoint)")
 	rawPageToken := flags.String("page-token", "", "pagination page token from a prior response")
 	rawPlan := flags.Bool("plan", false, "print the exact secret-free Provider request plan without external access")
+	rawOutput := flags.String("output", "", "write exact Provider response bytes to a new private file")
 
 	// raw uses a bespoke usage block (`raw endpoint getIdentity` etc.)
 	// rather than the auto-generated stdlib one, because its first
@@ -122,6 +124,7 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		pageToken:   *rawPageToken,
 		target:      target,
 		plan:        *rawPlan,
+		outputPath:  *rawOutput,
 	}
 	requestOptions := googlehealth.RawRequestOptions{
 		Target:            options.target,
@@ -183,6 +186,18 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 			status = StatusProviderUnreachable
 		}
 		return ReportFailure(FailureReport{Command: "raw", Status: status, Message: err.Error(), Mode: mode, Cause: err}, stdout, stderr)
+	}
+	if options.outputPath != "" {
+		byteCount, err := runtime.writeRawOutput(options.outputPath, body)
+		if err != nil {
+			return ReportFailure(FailureReport{Command: "raw", Status: StatusArchiveUnwritable, Message: err.Error(), Mode: mode}, stdout, stderr)
+		}
+		writer := newStickyWriter(stderr)
+		writer.Printf("raw: wrote %d bytes to %q\n", byteCount, options.outputPath)
+		if err := writer.Err(); err != nil {
+			return reportWriteFailure("raw", err, mode, stdout, stderr)
+		}
+		return 0
 	}
 	if _, err := stdout.Write(body); err != nil {
 		return reportWriteFailure("raw", err, mode, stdout, stderr)
