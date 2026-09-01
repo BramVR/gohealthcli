@@ -129,7 +129,9 @@ func writeRawPlanPlain(writer *stickyWriter, result rawPlanResult) {
 	}
 	if result.Range != nil {
 		writer.Printf("range.from: %s\n", result.Range.From)
-		writer.Printf("range.to: %s\n", result.Range.To)
+		if result.Range.To != "" {
+			writer.Printf("range.to: %s\n", result.Range.To)
+		}
 		writer.Printf("range.timezone: %s\n", result.Range.Timezone)
 		writer.Printf("range.resolved_at: %s\n", result.Range.ResolvedAt)
 	}
@@ -146,7 +148,11 @@ func writeRawPlanHuman(writer *stickyWriter, result rawPlanResult) {
 	writer.Printf("Headers: Accept=%s\n", result.Request.Headers["Accept"])
 	writer.Printf("Required scopes: %s\n", joinPlanValues(result.RequiredScopes))
 	if result.Range != nil {
-		writer.Printf("Range: %s to %s\n", result.Range.From, result.Range.To)
+		if result.Range.To == "" {
+			writer.Printf("Range: %s (no Provider upper bound)\n", result.Range.From)
+		} else {
+			writer.Printf("Range: %s to %s\n", result.Range.From, result.Range.To)
+		}
 		writer.Printf("Timezone: %s (resolved at %s)\n", result.Range.Timezone, result.Range.ResolvedAt)
 	}
 	writer.Printf("Paging: page size %d, page token provided %t\n", result.Paging.PageSize, result.Paging.PageTokenProvided)

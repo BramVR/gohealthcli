@@ -96,6 +96,7 @@ type rawRequestTarget struct {
 	requiredScopes []string
 	dataType       string
 	rangeTarget    RangeTarget
+	lowerBoundOnly bool
 	list           bool
 }
 
@@ -173,6 +174,14 @@ func DescribeRawRequest(options RawRequestOptions) (RawRequestDescription, error
 		request, err = buildGoogleHealthDataTypeListRawRequest(target.dataType, resolved.From, resolved.To, options.PageSize, options.PageToken)
 		if err != nil {
 			return RawRequestDescription{}, err
+		}
+		// The shared resolver still captures the default upper boundary, but
+		// lower-bound-only Provider filters do not apply it. The description
+		// reports the range the production request actually carries.
+		if target.lowerBoundOnly {
+			resolved.To = ""
+			resolved.ToInstant = time.Time{}
+			resolved.ToNamed = false
 		}
 		resolvedRange = &resolved
 	}
@@ -269,7 +278,11 @@ func parseRawDataTypeTarget(dataType string) (rawRequestTarget, error) {
 	if err != nil {
 		return rawRequestTarget{}, err
 	}
-	return rawRequestTarget{dataType: dataType, rangeTarget: rangeTarget, list: true}, nil
+	support, err := googleHealthDataTypeFilterSupport(dataType, endpointFamilyList)
+	if err != nil {
+		return rawRequestTarget{}, err
+	}
+	return rawRequestTarget{dataType: dataType, rangeTarget: rangeTarget, lowerBoundOnly: support.LowerBoundOnly, list: true}, nil
 }
 
 func buildGoogleHealthDataTypeListRawRequest(dataType, from, to string, pageSize int64, pageToken string) (RawRequest, error) {

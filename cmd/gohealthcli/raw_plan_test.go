@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -224,6 +225,60 @@ func TestRawPlanLeavesArchiveAndSidecarPathsUntouched(t *testing.T) {
 		if _, err := os.Stat(archivePath + suffix); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("planning created %s", archivePath+suffix)
 		}
+	}
+}
+
+func TestRawPlanConfigFailureUsesSetupFailureContract(t *testing.T) {
+	t.Parallel()
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatalf("secure synthetic config directory: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := runWithRuntime([]string{
+		"raw", "data-type", "steps", "--from", "2026-01-01", "--plan", "--json",
+		"--config", filepath.Join(directory, "missing-config"),
+		"--db", filepath.Join(directory, "missing-archive"),
+	}, &stdout, &stderr, forbiddenRawPlanRuntime(t))
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+	var got failureJSONEnvelope
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("decode failure: %v", err)
+	}
+	if got.Status != StatusOperationFailed || !slices.Equal(got.Remediation, []string{"gohealthcli doctor", "gohealthcli init"}) {
+		t.Fatalf("failure = %+v, want operation_failed with setup remediation", got)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestRawPlanECGOpenEndedRangeOutput(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name        string
+		flag        string
+		want        string
+		mustNotHave string
+	}{
+		{name: "human", want: "Range: 2026-01-01 (no Provider upper bound)\n", mustNotHave: "Range: 2026-01-01 to "},
+		{name: "plain", flag: "--plain", want: "range.from: 2026-01-01\n", mustNotHave: "range.to:"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			args := []string{"raw", "data-type", "electrocardiogram", "--from", "2026-01-01", "--timezone", "UTC", "--plan"}
+			if test.flag != "" {
+				args = append(args, test.flag)
+			}
+			var stdout, stderr bytes.Buffer
+			if code := runWithRuntime(args, &stdout, &stderr, forbiddenRawPlanRuntime(t)); code != 0 {
+				t.Fatalf("exit = %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stdout.String(), test.want) || strings.Contains(stdout.String(), test.mustNotHave) {
+				t.Fatalf("stdout = %q, want %q and no %q", stdout.String(), test.want, test.mustNotHave)
+			}
+		})
 	}
 }
 

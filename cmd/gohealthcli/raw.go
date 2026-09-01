@@ -23,6 +23,13 @@ type rawCommandOptions struct {
 	plan        bool
 }
 
+type rawPlanningConfigError struct {
+	err error
+}
+
+func (err *rawPlanningConfigError) Error() string { return err.err.Error() }
+func (err *rawPlanningConfigError) Unwrap() error { return err.err }
+
 func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("raw", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -136,10 +143,19 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	requestOptions.ResolvedAt = runtime.now()
 	if options.plan {
 		requestOptions.TimezoneFallback = func() (string, error) {
-			return inspectRawPlanningTimezone(options.configPath)
+			timezone, err := inspectRawPlanningTimezone(options.configPath)
+			if err != nil {
+				return "", &rawPlanningConfigError{err: err}
+			}
+			return timezone, nil
 		}
 		description, err := googlehealth.DescribeRawRequest(requestOptions)
 		if err != nil {
+			var configErr *rawPlanningConfigError
+			if errors.As(err, &configErr) {
+				cause := setupFailureRemediation(configErr.err, fmt.Sprintf("config check failed: %v", configErr.err))
+				return ReportFailure(FailureReport{Command: "raw", Status: StatusOperationFailed, Message: cause.Error(), Mode: mode, Cause: cause}, stdout, stderr)
+			}
 			return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 		}
 		return writeRawPlan(description, requestOptions, mode, stdout, stderr)

@@ -311,6 +311,24 @@ func TestDescribeRawIdentityDoesNotResolveTimezone(t *testing.T) {
 	}
 }
 
+func TestDescribeRawECGRangeMatchesAppliedLowerBoundOnlyFilter(t *testing.T) {
+	t.Parallel()
+	description, err := DescribeRawRequest(RawRequestOptions{
+		Target:     []string{"data-type", "electrocardiogram"},
+		From:       "2026-01-01",
+		ResolvedAt: time.Date(2026, 3, 30, 10, 15, 30, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("describe ECG request: %v", err)
+	}
+	if description.Range == nil || description.Range.From != "2026-01-01" || description.Range.To != "" {
+		t.Fatalf("range = %+v, want open-ended from 2026-01-01", description.Range)
+	}
+	if strings.Contains(description.Request.URL, "+AND+") {
+		t.Fatalf("ECG request unexpectedly contains an upper-bound clause: %s", description.Request.URL)
+	}
+}
+
 func TestGoogleHealthRawFilterPreservesFractionalRFC3339Bounds(t *testing.T) {
 	t.Parallel()
 	filter, err := googleHealthDataTypeListFilter("heart-rate", "2026-01-01T00:00:00.500Z", "2026-01-01T01:02:03.123456789+02:00")
