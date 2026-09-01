@@ -421,10 +421,15 @@ Provider. `--json` and `--plain` apply to plans only. A normal raw read keeps
 the Provider's exact response bytes on stdout. Pass `--output PATH` to put
 those exact bytes in a new file instead. File output refuses every existing
 destination, creates mode `0600` on Linux and macOS, emits no Provider bytes to
-stdout, and reports only the quoted path and byte count on stderr. Windows
-publishes without replacement but inherits the parent directory ACL, so choose
-a directory whose ACL is already private. Other build targets reject file
-output when atomic no-replace rename is unavailable.
+stdout, and reports only the quoted path and byte count on stderr. On Linux and
+macOS, the effective user must own the parent and group or other users must not be able to write there; macOS also
+rejects parent directories with an extended ACL. Windows local
+volumes publish without replacement but inherit the parent directory ACL, so
+choose a directory whose ACL is already private. Special Win32 filenames are
+rejected. UNC paths and mapped network
+drives, including parent links that resolve to them, are rejected before the
+Provider read. Other build targets reject file output when atomic no-replace
+rename is unavailable.
 
 Query the local archive:
 
@@ -659,9 +664,12 @@ backup cadence, and changed shards.
 - Raw Provider responses can contain health history. `raw --output` requires a
   new destination, refuses symbolic links and every overwrite, and removes an
   incomplete staging file after a failed or short write. Linux and macOS files
-  are mode `0600`. Windows files inherit the parent ACL, so use an ACL-private
-  directory. Other build targets reject file output if they cannot publish with
-  atomic no-replace rename.
+  are mode `0600`; their parent must be owned by the effective user and not be group- or other-writable. Windows
+  local-volume files inherit the parent ACL, so use an
+  ACL-private directory. Special Win32 filenames are rejected. UNC paths and mapped network drives are rejected before
+  the Provider read, including parent links that resolve to them. Other build
+  targets reject file output if they cannot publish with atomic no-replace
+  rename.
 - `query` and `status` plain output escapes control characters, so archived
   provider data cannot inject terminal escape sequences.
 - Data Point Attachment paths are validated against path traversal before

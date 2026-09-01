@@ -27,7 +27,7 @@ type runtimeAdapters struct {
 	fetchSettings      func(string) (googleSettings, error)
 	fetchIRNProfile    func(string) (googleIRNProfile, error)
 	fetchRawProvider   func(context.Context, googlehealth.RawRequest, string) ([]byte, error)
-	writeRawOutput     func(string, []byte) (int, error)
+	prepareRawOutput   func(string) (preparedRawOutput, error)
 	retrySleeper       googlehealth.RetrySleeper
 	// openHealthArchiveWriter opens the Health Archive write handle the
 	// Sync Run lifecycle uses after inspection-only planning succeeds.
@@ -97,7 +97,7 @@ func productionRuntimeAdapters() runtimeAdapters {
 		fetchSettings:                    productionFetchSettings,
 		fetchIRNProfile:                  productionFetchIRNProfile,
 		fetchRawProvider:                 productionFetchRawProvider,
-		writeRawOutput:                   writeRawOutputFile,
+		prepareRawOutput:                 prepareRawOutputFile,
 		openHealthArchiveWriter:          openHealthArchiveWriter,
 		openSyncPlanningArchive:          openSyncPlanningArchive,
 		now:                              productionNow,
@@ -201,8 +201,8 @@ func (adapters runtimeAdapters) withDefaults() runtimeAdapters {
 			return googlehealth.FetchRaw(ctx, adapters.httpDoer, request, accessToken)
 		}
 	}
-	if adapters.writeRawOutput == nil {
-		adapters.writeRawOutput = production.writeRawOutput
+	if adapters.prepareRawOutput == nil {
+		adapters.prepareRawOutput = production.prepareRawOutput
 	}
 	if adapters.openHealthArchiveWriter == nil {
 		adapters.openHealthArchiveWriter = openHealthArchiveWriter

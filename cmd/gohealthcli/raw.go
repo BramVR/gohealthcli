@@ -148,11 +148,6 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	if err := googlehealth.ValidateRawRequestOptions(requestOptions); err != nil {
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
-	if options.outputPath != "" {
-		if err := validateRawOutputDestination(options.outputPath); err != nil {
-			return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
-		}
-	}
 	runtime = runtime.withDefaults()
 	requestOptions.ResolvedAt = runtime.now()
 	if options.plan {
@@ -174,8 +169,33 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		}
 		return writeRawPlan(description, requestOptions, mode, stdout, stderr)
 	}
+	var preparedOutput preparedRawOutput
+	preparedOutputSettled := false
+	if options.outputPath != "" {
+		var prepareErr error
+		preparedOutput, prepareErr = runtime.prepareRawOutput(options.outputPath)
+		if prepareErr != nil {
+			status := StatusOperationFailed
+			var validationError *rawOutputValidationError
+			if errors.As(prepareErr, &validationError) {
+				status = StatusFlagInvalid
+			}
+			return ReportFailure(FailureReport{Command: "raw", Status: status, Message: prepareErr.Error(), Mode: mode}, stdout, stderr)
+		}
+		// Explicit error paths below surface cleanup errors. This fallback keeps
+		// future post-preparation returns from leaking the staging resource.
+		defer func() {
+			if !preparedOutputSettled {
+				_ = preparedOutput.Abort(fmt.Errorf("raw stopped before output completion"))
+			}
+		}()
+	}
 	config, err := inspectIdentityConfig(options.configPath, options.archivePath)
 	if err != nil {
+		if preparedOutput != nil {
+			err = preparedOutput.Abort(err)
+			preparedOutputSettled = true
+		}
 		cause := setupFailureRemediation(err, fmt.Sprintf("config check failed: %v", err))
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusOperationFailed, Message: cause.Error(), Mode: mode, Cause: cause}, stdout, stderr)
 	}
@@ -184,10 +204,20 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	}
 	request, err := googlehealth.BuildRawRequest(requestOptions)
 	if err != nil {
+		if preparedOutput != nil {
+			err = preparedOutput.Abort(err)
+			preparedOutputSettled = true
+		}
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
+	// rawSetupWithRuntime contains every remaining archive, Connection, and
+	// Provider failure path. Its single returned error aborts the prepared file.
 	body, err := rawSetupWithRuntime(options.configPath, options.archivePath, config, request, runtime)
 	if err != nil {
+		if preparedOutput != nil {
+			err = preparedOutput.Abort(err)
+			preparedOutputSettled = true
+		}
 		// Provider outage (non-auth HTTP failure or network error) maps
 		// to the documented provider_unreachable failure status so JSON
 		// consumers can tell it apart from local misconfiguration
@@ -199,7 +229,8 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		return ReportFailure(FailureReport{Command: "raw", Status: status, Message: err.Error(), Mode: mode, Cause: err}, stdout, stderr)
 	}
 	if options.outputPath != "" {
-		byteCount, err := runtime.writeRawOutput(options.outputPath, body)
+		byteCount, err := preparedOutput.Complete(body)
+		preparedOutputSettled = true
 		if err != nil {
 			return ReportFailure(FailureReport{Command: "raw", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 		}

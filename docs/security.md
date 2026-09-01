@@ -160,10 +160,15 @@ output paths or explicit `--stdout`. Avoid silent background exports.
 Raw Provider file output carries the same sensitivity. `raw --output` accepts
 only a new destination, refuses symbolic links and every overwrite, and removes
 the staged file after a failed or short write. It creates mode `0600` on Linux
-and macOS. On Windows, no-replace publication prevents overwrite but the file
-inherits its parent directory ACL. Choose a directory whose ACL already grants
-access only to the intended identities. Other build targets reject file output
-if atomic no-replace rename is unavailable.
+and macOS, where the effective user must own the parent directory and group or
+other users must not be able to write there. macOS also rejects any extended parent ACL. On local Windows volumes,
+no-replace publication prevents overwrite,
+but the file inherits its parent directory ACL. Choose a directory whose ACL
+already grants access only to the intended identities. Special Win32 filenames
+are rejected. UNC paths and mapped
+network drives, including parent links that resolve to them, are rejected before
+the Provider read. Other build targets reject file output if atomic no-replace
+rename is unavailable.
 
 ## Out of Scope
 

@@ -200,9 +200,15 @@ plan output only. A normal raw read keeps the Provider's response bytes
 unchanged on stdout. Add `--output PATH` to write those exact bytes to a new
 file instead. The command refuses existing files, symbolic links, directories,
 and invalid parents. It creates mode `0600` on Linux and macOS and reports only
-the quoted path and byte count on stderr. Windows publishes without replacement
-but inherits the parent directory ACL, so use an ACL-private directory. Other
-build targets reject file output if atomic no-replace rename is unavailable.
+the quoted path and byte count on stderr. The effective user must own the Linux
+or macOS parent, and group or other users must not be able to write there;
+macOS also rejects an extended parent
+ACL. Windows local
+volumes publish without
+replacement but inherit the parent directory ACL, so use an ACL-private
+directory. UNC paths and mapped network drives are rejected before the Provider
+read, including parent links that resolve to them. Other build targets reject
+file output if atomic no-replace rename is unavailable.
 
 ## Where next
 

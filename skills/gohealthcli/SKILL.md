@@ -217,10 +217,18 @@ $rawPath = Join-Path $env:LOCALAPPDATA ("gohealthcli-raw-{0}.json" -f [guid]::Ne
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --output $rawPath
 ```
 
-Windows uses no-replace publication but inherits the parent directory ACL. Verify
-that ACL before the read. The command does not claim that a Unix mode changes
-Windows access rules. Other build targets reject file output if atomic
-no-replace rename is unavailable.
+Windows local volumes use no-replace publication but inherit the parent
+directory ACL. Verify that ACL before the read. UNC paths and mapped network
+drives, including parent links that resolve to them, are rejected before the
+Provider read. The command does not claim that a Unix mode changes Windows
+access rules. Use an ordinary Win32 filename; special trailing dots or spaces,
+reserved device names, and alternate streams are rejected. Other build targets
+reject file output if atomic no-replace rename is unavailable.
+
+On Linux and macOS, choose a parent directory owned by the effective user and
+not writable by group or other users. macOS also rejects parent directories
+with an extended ACL. The command rejects these unsafe parents before reading
+from the Provider.
 
 This example reads Data Type `steps` from the Provider using the same named
 range and timezone resolution as `sync`, then writes the exact response without

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -18,15 +20,45 @@ type rawOutputDestination interface {
 
 type openRawOutputDestinationFunc func(string) (rawOutputDestination, error)
 
-type stagedRawOutput struct {
-	targetPath string
-	stagePath  string
-	file       *os.File
-	closed     bool
+type preparedRawOutput interface {
+	Complete([]byte) (int, error)
+	Abort(error) error
+}
+
+type preparedRawOutputFile struct {
+	path        string
+	destination rawOutputDestination
+}
+
+type rawOutputValidationError struct {
+	err error
+}
+
+func (validationError *rawOutputValidationError) Error() string { return validationError.err.Error() }
+func (validationError *rawOutputValidationError) Unwrap() error { return validationError.err }
+
+func prepareRawOutputFile(path string) (preparedRawOutput, error) {
+	destination, err := openStagedRawOutput(path)
+	if err != nil {
+		return nil, err
+	}
+	return &preparedRawOutputFile{path: path, destination: destination}, nil
+}
+
+func (output *preparedRawOutputFile) Complete(payload []byte) (int, error) {
+	return writePreparedRawOutput(output.path, payload, output.destination)
+}
+
+func (output *preparedRawOutputFile) Abort(primary error) error {
+	return abortRawOutput(output.destination, primary)
 }
 
 func writeRawOutputFile(path string, payload []byte) (int, error) {
-	return writeRawOutputFileWithOpen(path, payload, openStagedRawOutput)
+	output, err := prepareRawOutputFile(path)
+	if err != nil {
+		return 0, err
+	}
+	return output.Complete(payload)
 }
 
 func writeRawOutputFileWithOpen(path string, payload []byte, openDestination openRawOutputDestinationFunc) (int, error) {
@@ -34,6 +66,10 @@ func writeRawOutputFileWithOpen(path string, payload []byte, openDestination ope
 	if err != nil {
 		return 0, err
 	}
+	return writePreparedRawOutput(path, payload, destination)
+}
+
+func writePreparedRawOutput(path string, payload []byte, destination rawOutputDestination) (int, error) {
 	written, writeErr := destination.Write(payload)
 	if writeErr == nil && written != len(payload) {
 		writeErr = io.ErrShortWrite
@@ -56,6 +92,9 @@ func writeRawOutputFileWithOpen(path string, payload []byte, openDestination ope
 }
 
 func validateRawOutputDestination(path string) error {
+	if err := rawOutputPlatformSupported(); err != nil {
+		return err
+	}
 	parent := filepath.Dir(path)
 	info, err := os.Stat(parent)
 	if err != nil {
@@ -77,64 +116,17 @@ func validateRawOutputDestination(path string) error {
 
 func openStagedRawOutput(path string) (rawOutputDestination, error) {
 	if err := validateRawOutputDestination(path); err != nil {
-		return nil, err
+		return nil, &rawOutputValidationError{err: err}
 	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".gohealthcli-raw-")
-	if err != nil {
-		return nil, fmt.Errorf("create --output staging file: %w", err)
-	}
-	stagePath := file.Name()
-	if usesPOSIXPermissions() {
-		if err := file.Chmod(0o600); err != nil {
-			_ = file.Close()
-			_ = os.Remove(stagePath)
-			return nil, fmt.Errorf("set --output staging file owner-only: %w", err)
-		}
-	}
-	return &stagedRawOutput{
-		targetPath: path,
-		stagePath:  stagePath,
-		file:       file,
-	}, nil
+	return openPlatformRawOutput(path)
 }
 
-func (output *stagedRawOutput) Write(payload []byte) (int, error) {
-	return output.file.Write(payload)
-}
-
-func (output *stagedRawOutput) Chmod(mode os.FileMode) error {
-	return output.file.Chmod(mode)
-}
-
-func (output *stagedRawOutput) Close() error {
-	if output.closed {
-		return nil
+func randomRawOutputLeaf() (string, error) {
+	var value [12]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", err
 	}
-	output.closed = true
-	return output.file.Close()
-}
-
-func (output *stagedRawOutput) Commit() error {
-	if !output.closed {
-		return fmt.Errorf("staged output is still open")
-	}
-	if err := publishStagedRawOutput(output.stagePath, output.targetPath); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (output *stagedRawOutput) Abort() error {
-	closeErr := output.Close()
-	fileErr := os.Remove(output.stagePath)
-	var cleanupErr error
-	if closeErr != nil {
-		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("close staged --output: %w", closeErr))
-	}
-	if fileErr != nil && !errors.Is(fileErr, os.ErrNotExist) {
-		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove staged --output: %w", fileErr))
-	}
-	return cleanupErr
+	return ".gohealthcli-raw-" + hex.EncodeToString(value[:]), nil
 }
 
 func abortRawOutput(destination rawOutputDestination, primary error) error {

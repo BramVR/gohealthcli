@@ -17,8 +17,16 @@ import (
 
 var errSyntheticRawOutputWrite = errors.New("synthetic output write failure")
 
+func requireRawOutputPlatform(t *testing.T) {
+	t.Helper()
+	if err := rawOutputPlatformSupported(); err != nil {
+		t.Skip(err)
+	}
+}
+
 func TestRawOutputWritesExactProviderBytesToNewPrivateFile(t *testing.T) {
 	t.Parallel()
+	requireRawOutputPlatform(t)
 	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
@@ -73,6 +81,7 @@ func TestRawOutputWritesExactProviderBytesToNewPrivateFile(t *testing.T) {
 
 func TestRawOutputRefusesEveryExistingDestinationWithoutProviderRead(t *testing.T) {
 	t.Parallel()
+	requireRawOutputPlatform(t)
 	tempDir := t.TempDir()
 	tests := []struct {
 		name string
@@ -160,6 +169,7 @@ func TestRawOutputRefusesEveryExistingDestinationWithoutProviderRead(t *testing.
 
 func TestRawOutputRejectsInvalidParentTypeBeforeProviderRead(t *testing.T) {
 	t.Parallel()
+	requireRawOutputPlatform(t)
 	tempDir := t.TempDir()
 	fileParent := filepath.Join(tempDir, "not-a-directory")
 	if err := os.WriteFile(fileParent, []byte("keep-parent"), 0o600); err != nil {
@@ -281,6 +291,7 @@ func (destination *racingCommitRawOutputDestination) Commit() error {
 
 func TestWriteRawOutputFileCleansUpShortAndFailedWrites(t *testing.T) {
 	t.Parallel()
+	requireRawOutputPlatform(t)
 	payload := []byte("synthetic-provider-response")
 	tests := []struct {
 		name      string
@@ -338,6 +349,7 @@ func TestWriteRawOutputFileCleansUpShortAndFailedWrites(t *testing.T) {
 
 func TestRawOutputPublishPreservesConcurrentReplacement(t *testing.T) {
 	t.Parallel()
+	requireRawOutputPlatform(t)
 	tempDir := t.TempDir()
 	outputPath := filepath.Join(tempDir, "response.json")
 	openDestination := func(path string) (rawOutputDestination, error) {
@@ -369,6 +381,7 @@ func TestRawOutputPublishPreservesConcurrentReplacement(t *testing.T) {
 
 func TestRawOutputErrorNeverContainsProviderBytes(t *testing.T) {
 	t.Parallel()
+	requireRawOutputPlatform(t)
 	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
@@ -377,8 +390,12 @@ func TestRawOutputErrorNeverContainsProviderBytes(t *testing.T) {
 	})
 	payload := []byte("{\"syntheticSensitiveValue\":\"never-print-this\"}")
 	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(googlehealth.RawRequest) []byte { return payload })
-	testRuntime.writeRawOutput = func(string, []byte) (int, error) {
-		return 0, errSyntheticRawOutputWrite
+	testRuntime.prepareRawOutput = func(path string) (preparedRawOutput, error) {
+		destination, err := openStagedRawOutput(path)
+		if err != nil {
+			return nil, err
+		}
+		return &preparedRawOutputFile{path: path, destination: &failingRawOutputDestination{rawOutputDestination: destination}}, nil
 	}
 
 	stdout := new(bytes.Buffer)
@@ -403,6 +420,7 @@ func TestRawOutputErrorNeverContainsProviderBytes(t *testing.T) {
 
 func TestRawOutputFailureUsesOperationFailedStatus(t *testing.T) {
 	t.Parallel()
+	requireRawOutputPlatform(t)
 	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
@@ -412,8 +430,12 @@ func TestRawOutputFailureUsesOperationFailedStatus(t *testing.T) {
 	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(googlehealth.RawRequest) []byte {
 		return []byte("synthetic-provider-response")
 	})
-	testRuntime.writeRawOutput = func(string, []byte) (int, error) {
-		return 0, errSyntheticRawOutputWrite
+	testRuntime.prepareRawOutput = func(path string) (preparedRawOutput, error) {
+		destination, err := openStagedRawOutput(path)
+		if err != nil {
+			return nil, err
+		}
+		return &preparedRawOutputFile{path: path, destination: &failingRawOutputDestination{rawOutputDestination: destination}}, nil
 	}
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
@@ -439,7 +461,7 @@ func TestRawOutputFailureUsesOperationFailedStatus(t *testing.T) {
 	}
 }
 
-func TestRawOutputNoClobberCheckRepeatsAfterProviderRead(t *testing.T) {
+func TestRawOutputPreparationIOFailureUsesOperationFailedStatus(t *testing.T) {
 	t.Parallel()
 	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
@@ -447,15 +469,54 @@ func TestRawOutputNoClobberCheckRepeatsAfterProviderRead(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	payload := []byte("synthetic-provider-response")
-	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(googlehealth.RawRequest) []byte { return payload })
+	testRuntime.prepareRawOutput = func(string) (preparedRawOutput, error) {
+		return nil, errSyntheticRawOutputWrite
+	}
+	testRuntime.fetchRawProvider = func(context.Context, googlehealth.RawRequest, string) ([]byte, error) {
+		t.Fatal("Provider must not run after output preparation failure")
+		return nil, nil
+	}
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{
+		"--json",
+		"raw", "endpoint", "getIdentity",
+		"--config", configPath,
+		"--db", archivePath,
+		"--output", filepath.Join(t.TempDir(), "response.json"),
+	}, stdout, stderr, testRuntime)
+	if code == 0 {
+		t.Fatal("raw preparation failure exit code = 0, want failure")
+	}
+	var failure failureJSONEnvelope
+	if err := json.Unmarshal(stdout.Bytes(), &failure); err != nil {
+		t.Fatalf("decode raw preparation failure: %v; stdout=%q", err, stdout.String())
+	}
+	if failure.Status != StatusOperationFailed {
+		t.Fatalf("failure status = %q, want %q", failure.Status, StatusOperationFailed)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty JSON failure stream", stderr.String())
+	}
+}
+
+func TestRawOutputNoClobberCheckRepeatsAfterProviderRead(t *testing.T) {
+	t.Parallel()
+	requireRawOutputPlatform(t)
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
 	outputPath := filepath.Join(t.TempDir(), "response.json")
-	testRuntime.writeRawOutput = func(path string, body []byte) (int, error) {
-		if err := os.WriteFile(path, []byte("racing destination"), 0o600); err != nil {
+	payload := []byte("synthetic-provider-response")
+	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(googlehealth.RawRequest) []byte {
+		if err := os.WriteFile(outputPath, []byte("racing destination"), 0o600); err != nil {
 			t.Fatalf("seed racing destination: %v", err)
 		}
-		return writeRawOutputFile(path, body)
-	}
+		return payload
+	})
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
@@ -477,6 +538,71 @@ func TestRawOutputNoClobberCheckRepeatsAfterProviderRead(t *testing.T) {
 	}
 	if bytes.Contains(append(stdout.Bytes(), stderr.Bytes()...), payload) {
 		t.Fatalf("racing destination error leaked Provider bytes")
+	}
+}
+
+func TestRawOutputProviderFailureCleansPreparedStagingFile(t *testing.T) {
+	t.Parallel()
+	requireRawOutputPlatform(t)
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	testRuntime.fetchRawProvider = func(context.Context, googlehealth.RawRequest, string) ([]byte, error) {
+		return nil, errSyntheticRawOutputWrite
+	}
+	outputDir := t.TempDir()
+	outputPath := filepath.Join(outputDir, "response.json")
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{
+		"raw", "endpoint", "getIdentity",
+		"--config", configPath,
+		"--db", archivePath,
+		"--output", outputPath,
+	}, stdout, stderr, testRuntime)
+	if code == 0 {
+		t.Fatal("raw Provider failure exit code = 0, want failure")
+	}
+	if _, err := os.Lstat(outputPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Provider failure created final output: %v", err)
+	}
+	stagingFiles, err := filepath.Glob(filepath.Join(outputDir, ".gohealthcli-raw-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stagingFiles) != 0 {
+		t.Fatalf("Provider failure left staging files: %v", stagingFiles)
+	}
+}
+
+func TestRawOutputConfigFailureCleansPreparedStagingFile(t *testing.T) {
+	t.Parallel()
+	requireRawOutputPlatform(t)
+	outputDir := t.TempDir()
+	outputPath := filepath.Join(outputDir, "response.json")
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{
+		"raw", "endpoint", "getIdentity",
+		"--config", filepath.Join(t.TempDir(), "missing-config.toml"),
+		"--db", filepath.Join(t.TempDir(), "missing-archive.sqlite"),
+		"--output", outputPath,
+	}, stdout, stderr, runtimeAdapters{})
+	if code == 0 {
+		t.Fatal("raw config failure exit code = 0, want failure")
+	}
+	if _, err := os.Lstat(outputPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("config failure created final output: %v", err)
+	}
+	stagingFiles, err := filepath.Glob(filepath.Join(outputDir, ".gohealthcli-raw-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stagingFiles) != 0 {
+		t.Fatalf("config failure left staging files: %v", stagingFiles)
 	}
 }
 
@@ -508,6 +634,7 @@ func TestRawStdoutTreatsShortWriteAsFailure(t *testing.T) {
 
 func TestRawOutputStatusTreatsShortWriteAsFailureWithoutDeletingCompleteFile(t *testing.T) {
 	t.Parallel()
+	requireRawOutputPlatform(t)
 	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
