@@ -185,7 +185,19 @@ gohealthcli backup pull --db /path/to/fresh-restored.sqlite --plain
 ### 8. Use raw Provider reads last
 
 Use raw reads only when local status, schema, and archived data cannot answer
-the question. Choose a fresh, user-approved private destination. Set
+the question. Plan the request first:
+
+```bash
+gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --plan --json
+```
+
+The plan reports the exact method, sanitized production URL, non-secret
+headers, required scopes, resolved range, and paging inputs. Every reported
+effect is false. Planning does not contact the Provider, read credentials,
+load or refresh a token, open the Health Archive, change a Sync Cursor, or
+create a sidecar.
+
+For the actual read, choose a fresh, user-approved private destination. Set
 owner-only file creation and no-clobber in the same shell before redirecting
 stdout. On a POSIX shell:
 

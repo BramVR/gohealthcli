@@ -213,7 +213,8 @@ func TestAgentSkillPinsSafetyBoundaries(t *testing.T) {
 	}
 	for _, invocation := range agentSkillInvocations(readAgentSkill(t)) {
 		redirected := strings.Contains(invocation, ">") || strings.Contains(invocation, "| Set-Content ")
-		if strings.HasPrefix(invocation, "gohealthcli raw ") && !redirected {
+		planned := strings.Contains(invocation, " --plan")
+		if strings.HasPrefix(invocation, "gohealthcli raw ") && !planned && !redirected {
 			t.Errorf("raw Provider invocation must redirect sensitive stdout: %q", invocation)
 		}
 	}

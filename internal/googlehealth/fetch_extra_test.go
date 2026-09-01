@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BramVR/gohealthcli/internal/archived"
 )
@@ -256,6 +257,75 @@ func TestRawTargetNamesProjectAcceptedKinds(t *testing.T) {
 	got[0] = "mutated"
 	if fresh := RawTargetNames(); !slices.Equal(fresh, []string{"data-type", "endpoint"}) {
 		t.Fatalf("RawTargetNames returned shared state: %v", fresh)
+	}
+}
+
+func TestDescribeRawRequestMatchesProductionBuilder(t *testing.T) {
+	t.Parallel()
+	options := RawRequestOptions{
+		Target:            []string{"data-type", "steps"},
+		From:              "yesterday",
+		To:                "today",
+		Timezone:          "Europe/Brussels",
+		ResolvedAt:        time.Date(2026, 3, 30, 10, 15, 30, 0, time.UTC),
+		PageSize:          12,
+		PageToken:         "synthetic-page-secret",
+		PageTokenProvided: true,
+	}
+	description, err := DescribeRawRequest(options)
+	if err != nil {
+		t.Fatalf("describe raw request: %v", err)
+	}
+	request, err := BuildRawRequest(options)
+	if err != nil {
+		t.Fatalf("build raw request: %v", err)
+	}
+	if description.Request.Method != request.Method || description.Request.URL != request.URL || description.Request.EndpointName != request.EndpointName {
+		t.Fatalf("description request = %+v, builder request = %+v", description.Request, request)
+	}
+	if description.Headers["Accept"] != "application/json" || len(description.Headers) != 1 {
+		t.Fatalf("headers = %#v, want only non-secret Accept", description.Headers)
+	}
+	if strings.Contains(description.SanitizedURL, "synthetic-page-secret") || !strings.Contains(description.SanitizedURL, "REDACTED") {
+		t.Fatalf("sanitized URL = %q", description.SanitizedURL)
+	}
+	if description.Range == nil || description.Range.Timezone != "Europe/Brussels" {
+		t.Fatalf("range = %+v", description.Range)
+	}
+}
+
+func TestDescribeRawIdentityDoesNotResolveTimezone(t *testing.T) {
+	t.Parallel()
+	description, err := DescribeRawRequest(RawRequestOptions{
+		Target: []string{"endpoint", "getIdentity"},
+		TimezoneFallback: func() (string, error) {
+			t.Fatal("identity description resolved a timezone")
+			return "", nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("describe identity: %v", err)
+	}
+	if description.Request.Method != http.MethodGet || description.Range != nil {
+		t.Fatalf("description = %+v", description)
+	}
+}
+
+func TestDescribeRawECGRangeMatchesAppliedLowerBoundOnlyFilter(t *testing.T) {
+	t.Parallel()
+	description, err := DescribeRawRequest(RawRequestOptions{
+		Target:     []string{"data-type", "electrocardiogram"},
+		From:       "2026-01-01",
+		ResolvedAt: time.Date(2026, 3, 30, 10, 15, 30, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("describe ECG request: %v", err)
+	}
+	if description.Range == nil || description.Range.From != "2026-01-01" || description.Range.To != "" {
+		t.Fatalf("range = %+v, want open-ended from 2026-01-01", description.Range)
+	}
+	if strings.Contains(description.Request.URL, "+AND+") {
+		t.Fatalf("ECG request unexpectedly contains an upper-bound clause: %s", description.Request.URL)
 	}
 }
 

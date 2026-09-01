@@ -144,17 +144,11 @@ func identitySnapshotCommonFlagNames() []string {
 	return []string{"config", "db", "json", "plain"}
 }
 
-// rawCommonFlagNames returns the subset of common flag names `raw`
-// accepts. raw's success output is the provider's raw bytes on stdout,
-// so --json / --plain / --no-input would have no useful effect; the
-// Common Flag Set's pre-Parse scan rejects them with the targeted
-// "--<flag> is not supported by raw" wording instead of letting them
-// silently lose values. The registry entry's Flags / CommonFlags and
-// runRawWithRuntime's CommonFlagSpec all read this one function, so the
-// schema and the runtime contract cannot disagree. Returned fresh each
-// call to mirror commonFlagNames so per-entry slices stay independent.
+// rawCommonFlagNames returns the shared flags raw accepts. --json and
+// --plain shape --plan output; normal reads reject them after parsing so their
+// provider-byte stdout contract stays unchanged.
 func rawCommonFlagNames() []string {
-	return []string{"config", "db"}
+	return []string{"config", "db", "json", "plain"}
 }
 
 // withCommonSubset is the per-subcommand variant of withCommon that
@@ -480,8 +474,8 @@ var commands = []commandDef{
 	},
 	{
 		Name:                 "raw",
-		Short:                "Print raw provider JSON for endpoint exploration.",
-		Long:                 "Fetch a single upstream Google Health API response and print the raw body to stdout. Useful for endpoint exploration without committing the response to the Health Archive.\n\nFirst positional argument is `endpoint <name>` (for example `endpoint getIdentity`) or `data-type <data-type>` (for example `data-type steps --from yesterday --to today`). Data Type list targets accept the same exact range grammar as `sync`: `now`, `today`, `yesterday`, `YYYY-MM-DD`, or RFC3339. Named boundaries use `--timezone`, then the configured timezone, then UTC; one captured clock and the provider Data Type's physical, civil, or daily filter shape determine the exact range. Identity endpoints reject `--from`, `--to`, and `--timezone` because those flags have no meaning there. Google's ECG list endpoint accepts only a physical `electrocardiogram.interval.start_time >= ...` lower bound, so `raw data-type electrocardiogram` rejects an explicit `--to` rather than claiming to narrow the provider-shaped response. `--page-size` and `--page-token` drive pagination.\n\n`raw` is provider-shaped on purpose — the JSON you see is what the provider returns, not the normalised shape the archive stores. It does not archive the response; its only possible write remains persisting an existing OAuth token refresh.\n\nFailures route through the unified Failure Reporter: a Provider outage (network failure or non-auth upstream HTTP error) reports status `provider_unreachable`, while other operation errors — including an upstream HTTP 401 auth rejection, which carries the `Google Health rejected stored Connection token` message — report `operation_failed`." + authRemediationCommandHelp,
+		Short:                "Print raw provider JSON or plan a Provider request.",
+		Long:                 "Fetch a single upstream Google Health API response and print the raw body to stdout. Useful for endpoint exploration without committing the response to the Health Archive.\n\nFirst positional argument is `endpoint <name>` (for example `endpoint getIdentity`) or `data-type <data-type>` (for example `data-type steps --from yesterday --to today`). Data Type list targets accept the same exact range grammar as `sync`: `now`, `today`, `yesterday`, `YYYY-MM-DD`, or RFC3339. Named boundaries use `--timezone`, then the configured timezone, then UTC; one captured clock and the provider Data Type's physical, civil, or daily filter shape determine the exact range. Identity endpoints reject `--from`, `--to`, and `--timezone` because those flags have no meaning there. Google's ECG list endpoint accepts only a physical `electrocardiogram.interval.start_time >= ...` lower bound, so `raw data-type electrocardiogram` rejects an explicit `--to` rather than claiming to narrow the provider-shaped response. `--page-size` and `--page-token` drive pagination. Identity endpoints reject those paging flags.\n\n`--plan` prints the exact secret-free request description without contacting the Provider, reading the Credential Store, loading or refreshing a token, opening or writing the Health Archive, migrating, changing a Sync Cursor, or creating an Attachment sidecar. The plan contains the method, sanitized production URL, non-secret headers, required scopes, resolved range and timezone for Data Type targets, paging inputs, and an all-false effect report. Page-token material is redacted. A lower-bound-only target omits `range.to` and the human mode labels the missing Provider upper bound. Use `--json` or `--plain` with `--plan` for structured output.\n\nWithout `--plan`, `raw` is provider-shaped on purpose. The JSON you see is what the Provider returns, not the normalized shape the archive stores. Normal reads preserve the Provider's exact response bytes on stdout and reject command-local `--json` or `--plain`; their only possible write remains persisting an existing OAuth token refresh.\n\nFailures route through the unified Failure Reporter: a Provider outage (network failure or non-auth upstream HTTP error) reports status `provider_unreachable`, while other operation errors, including an upstream HTTP 401 auth rejection with the `Google Health rejected stored Connection token` message, report `operation_failed`." + authRemediationCommandHelp,
 		PositionalArgs:       "<target> [<args>...]",
 		PositionalCompletion: valueCompletionRawPositionals,
 		Flags: withCommonSubset(rawCommonFlagNames(),
@@ -490,20 +484,12 @@ var commands = []commandDef{
 			flagSpec{Name: "timezone", Type: "string", Default: "", Usage: "IANA timezone for now, today, and yesterday (Data Type lists only; default config, then UTC)", ValueCompletion: valueCompletionNone},
 			flagSpec{Name: "page-size", Type: "int", Default: "", Usage: "pagination page size (positive integer; where supported by the endpoint)", ValueCompletion: valueCompletionNone},
 			flagSpec{Name: "page-token", Type: "string", Default: "", Usage: "pagination page token from a prior response", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "plan", Type: "bool", Default: "false", Usage: "print the exact secret-free Provider request plan without external access"},
 		),
-		// raw's success output is the provider's raw bytes on stdout, so
-		// --plain / --json / --no-input would have no useful effect. Its
-		// CommonFlagSpec at the runtime layer (see runRawWithRuntime in
-		// raw.go) declares the same rawCommonFlagNames() subset;
-		// CommonFlags here mirrors that contract so the schema reflects
-		// the divergence honestly.
+		// raw's normal success output is still the Provider's exact bytes.
+		// --json and --plain apply only to --plan.
 		CommonFlags: rawCommonFlagNames(),
-		// raw owns its own range, timezone, and pagination flag
-		// surface and writes the provider's raw bytes. raw does not accept
-		// --json / --plain on its own slot, so runRawWithRuntime derives
-		// the failure-rendering mode from the GLOBAL-slot values carried
-		// in CommonFlagValues.
-		Run: runRawWithRuntime,
+		Run:         runRawWithRuntime,
 	},
 	{
 		Name:  "describe-schema",

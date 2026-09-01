@@ -320,6 +320,34 @@ func inspectIdentityConfig(configPath, archivePath string) (fullConfigCheck, err
 	}, nil
 }
 
+// inspectRawPlanningTimezone reads only the non-secret timezone needed when a
+// Data Type plan omits --timezone. It does not validate archive, OAuth client,
+// or Credential Store fields and never opens those resources.
+func inspectRawPlanningTimezone(configPath string) (string, error) {
+	if err := validateOwnerOnlyDir(filepath.Dir(configPath)); err != nil {
+		return "", err
+	}
+	info, err := os.Stat(configPath)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("%s is a directory", configPath)
+	}
+	if usesPOSIXPermissions() && info.Mode().Perm() != 0o600 {
+		return "", fmt.Errorf("%s is not owner-only: mode %04o, want 0600", configPath, info.Mode().Perm())
+	}
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", err
+	}
+	config, err := parseConfig(string(configBytes))
+	if err != nil {
+		return "", err
+	}
+	return resolveConfigTimezone(config)
+}
+
 func parseConfig(content string) (parsedConfig, error) {
 	var config parsedConfig
 	section := ""
