@@ -142,12 +142,16 @@ stable JSON, plain, and human output.
 - Aggregate over arbitrary time windows.
 - Used for hourly, weekly, and custom summaries, including total calories.
 - Total-calories requests have a 14-day maximum physical span.
+- `raw data-type <data-type> rollup` exposes one exact response for a
+  catalog-supported `--window`; it refuses ranges that need sync chunking.
 
 `dailyRollUp`
 
 - Civil-day aggregate.
 - Used for steps, floors, heart-rate, and total-calories daily summaries.
 - Total-calories requests have a 14-day maximum civil span.
+- `raw data-type <data-type> daily-rollup` exposes one exact response and
+  refuses ranges that need sync chunking.
 
 ## Retry behavior
 

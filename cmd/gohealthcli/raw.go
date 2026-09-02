@@ -20,6 +20,7 @@ type rawCommandOptions struct {
 	pageSize     int64
 	pageToken    string
 	sourceFamily string
+	window       string
 	id           string
 	target       []string
 	plan         bool
@@ -52,6 +53,7 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	rawPageSize := flags.Int64("page-size", 0, "pagination page size (positive integer; where supported by the endpoint)")
 	rawPageToken := flags.String("page-token", "", "pagination page token from a prior response")
 	rawSourceFamily := flags.String("source-family", "", syncSourceFamilyUsage())
+	rawWindow := flags.String("window", "", "physical Rollup window duration (data-type rollup only; catalog-supported granularities)")
 	rawID := flags.String("id", "", "opaque Provider Data Point ID (data-type get only)")
 	rawPlan := flags.Bool("plan", false, "print the exact secret-free Provider request plan without external access")
 	rawOutput := flags.String("output", "", "write exact Provider response bytes to a new private file")
@@ -70,6 +72,8 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> --from <boundary> [--to <boundary>] [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
 		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> get --id <provider-id> [--output <path> | --plan [--json|--plain]]")
 		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> reconcile --source-family <family> --from <boundary> [--to <boundary>] [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> daily-rollup --from <boundary> --to <boundary> [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> rollup --from <boundary> --to <boundary> --window <duration> [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
 	}
 	// stdlib's flag package calls fs.Usage on BOTH `-h` and a parse
 	// error. Suppress that auto-call entirely and emit the bespoke
@@ -135,6 +139,7 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		pageSize:     *rawPageSize,
 		pageToken:    *rawPageToken,
 		sourceFamily: *rawSourceFamily,
+		window:       *rawWindow,
 		id:           *rawID,
 		target:       target,
 		plan:         *rawPlan,
@@ -156,6 +161,8 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		PageTokenProvided:    flagWasProvided(flags, "page-token"),
 		SourceFamily:         options.sourceFamily,
 		SourceFamilyProvided: flagWasProvided(flags, "source-family"),
+		Window:               options.window,
+		WindowProvided:       flagWasProvided(flags, "window"),
 	}
 	if err := googlehealth.ValidateRawRequestOptions(requestOptions); err != nil {
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)

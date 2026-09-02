@@ -408,11 +408,15 @@ gohealthcli raw endpoint getIdentity --plan --json
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --plan --json
 gohealthcli raw data-type steps reconcile --source-family wearable --from yesterday --to today --timezone Europe/Brussels --plan --json
 gohealthcli raw data-type weight get --id '<provider-id>' --plan --json
+gohealthcli raw data-type steps daily-rollup --from yesterday --to today --timezone Europe/Brussels --plan --json
+gohealthcli raw data-type total-calories rollup --from yesterday --to today --timezone Europe/Brussels --window 1h --plan --json
 gohealthcli raw endpoint getIdentity
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels
 gohealthcli raw data-type weight get --id '<provider-id>' --output ./weight-response.json
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --output ./steps-response.json
 gohealthcli raw data-type steps reconcile --source-family wearable --from yesterday --to today --timezone Europe/Brussels --output ./reconcile-response.json
+gohealthcli raw data-type steps daily-rollup --from yesterday --to today --timezone Europe/Brussels --output ./daily-rollup-response.json
+gohealthcli raw data-type total-calories rollup --from yesterday --to today --timezone Europe/Brussels --window 1h --output ./rollup-response.json
 ```
 
 Raw Data Type lists share `sync`'s exact range grammar and timezone precedence.
@@ -432,9 +436,16 @@ record a Sync Run, advance a Sync Cursor, or create a sidecar. Use
 `catalog describe <data-type> --json` to confirm that the compiled endpoint
 families include `reconcile`. Missing or unsupported source families and
 incompatible range or paging inputs fail before credential or Provider access.
+`daily-rollup` and physical-window `rollup` expose one Provider Rollup response
+for Data Types whose canonical catalog row supports that endpoint family. The
+physical `--window` must match a catalog granularity. Both paths share sync's
+range normalization, scopes, paging fields, Provider limits, and request
+builders, but they never split a range. If sync would need several Provider
+requests, raw asks you to narrow `--from` and `--to`.
 Add `--plan` before a raw read to inspect its exact method, sanitized production
-URL, non-secret headers, scopes, resolved range, and paging inputs. Every plan
-reports Provider, credential, token, Health Archive, migration, Sync Cursor,
+URL and POST body, non-secret headers, scopes, resolved range, and paging
+inputs. Every plan reports Provider, credential, token, Health Archive,
+Rollup, Sync Run, migration, Sync Cursor,
 and sidecar effects as false. It never opens the Health Archive or contacts the
 Provider. `--json` and `--plain` apply to plans only. A normal raw read keeps
 the Provider's exact response bytes on stdout. Pass `--output PATH` to put

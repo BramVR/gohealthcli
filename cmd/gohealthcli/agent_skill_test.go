@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -117,16 +118,35 @@ func TestAgentSkillDataTypesMatchGoogleHealthCatalog(t *testing.T) {
 			references[name] = true
 		}
 	}
-	rawTarget := regexp.MustCompile(`gohealthcli raw data-type ([a-z0-9-]+)`)
+	rawTarget := regexp.MustCompile(`gohealthcli raw data-type ([a-z0-9-]+)([^\n]*)`)
 	for _, match := range rawTarget.FindAllStringSubmatch(content, -1) {
 		name := match[1]
 		references[name] = true
-		if _, err := googlehealth.BuildRawRequest(googlehealth.RawRequestOptions{
+		options := googlehealth.RawRequestOptions{
 			Target:     []string{"data-type", name},
 			From:       "2026-01-01",
 			To:         "2026-01-02",
 			ResolvedAt: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
-		}); err != nil {
+		}
+		switch {
+		case strings.Contains(match[2], " daily-rollup"):
+			options.Target = append(options.Target, "daily-rollup")
+		case strings.Contains(match[2], " rollup"):
+			options.Target = append(options.Target, "rollup")
+			options.Window = "1h"
+			options.WindowProvided = true
+		case strings.Contains(match[2], " reconcile"):
+			options.Target = append(options.Target, "reconcile")
+			options.SourceFamily = "wearable"
+			options.SourceFamilyProvided = true
+		case strings.Contains(match[2], " get"):
+			options.Target = append(options.Target, "get")
+			options.ID = "synthetic-id"
+			options.IDProvided = true
+			options.From = ""
+			options.To = ""
+		}
+		if _, err := googlehealth.BuildRawRequest(options); err != nil {
 			t.Errorf("SKILL.md raw Data Type %q is absent from the canonical raw request catalog: %v", name, err)
 		}
 	}
@@ -141,8 +161,8 @@ func TestAgentSkillDataTypesMatchGoogleHealthCatalog(t *testing.T) {
 		t.Fatalf("SKILL.md contains %d concrete Data Types; keep examples concise instead of embedding a static catalog", len(references))
 	}
 	for name := range references {
-		if !googlehealth.SupportsSyncDataPoints(name) {
-			t.Errorf("SKILL.md references Data Type %q, which is not syncable in the canonical Google Health catalog", name)
+		if !slices.Contains(googlehealth.RawDataTypes(), name) {
+			t.Errorf("SKILL.md references Data Type %q, which has no raw operation in the canonical Google Health catalog", name)
 		}
 	}
 }

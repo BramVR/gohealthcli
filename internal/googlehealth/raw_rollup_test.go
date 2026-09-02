@@ -20,6 +20,9 @@ func TestRawRollupCatalogOperations(t *testing.T) {
 	if got, want := RawDataTypeOperations("total-calories"), []string{"daily-rollup", "rollup"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("RawDataTypeOperations(total-calories) = %v, want %v", got, want)
 	}
+	if got, want := RawRollupWindowGranularities("steps"), []string{"1h", "1d", "7d"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("RawRollupWindowGranularities(steps) = %v, want %v", got, want)
+	}
 }
 
 func TestRawRollupUsesSyncFirstRequest(t *testing.T) {
@@ -32,6 +35,8 @@ func TestRawRollupUsesSyncFirstRequest(t *testing.T) {
 		dataType   string
 		from       string
 		to         string
+		syncFrom   string
+		syncTo     string
 		syncRollup string
 	}{
 		{
@@ -40,6 +45,8 @@ func TestRawRollupUsesSyncFirstRequest(t *testing.T) {
 			dataType:   "heart-rate",
 			from:       "2026-01-01",
 			to:         "2026-01-10",
+			syncFrom:   "2026-01-01",
+			syncTo:     "2026-01-10",
 			syncRollup: "daily",
 		},
 		{
@@ -49,6 +56,29 @@ func TestRawRollupUsesSyncFirstRequest(t *testing.T) {
 			dataType:   "total-calories",
 			from:       "2026-01-01T00:00:00Z",
 			to:         "2026-01-10T00:00:00Z",
+			syncFrom:   "2026-01-01T00:00:00Z",
+			syncTo:     "2026-01-10T00:00:00Z",
+			syncRollup: "window=1h",
+		},
+		{
+			name:       "daily RFC3339 input",
+			target:     []string{"data-type", "steps", "daily-rollup"},
+			dataType:   "steps",
+			from:       "2026-01-01T23:00:00-05:00",
+			to:         "2026-01-04T01:00:00+02:00",
+			syncFrom:   "2026-01-02",
+			syncTo:     "2026-01-03",
+			syncRollup: "daily",
+		},
+		{
+			name:       "physical civil input and equivalent duration",
+			target:     []string{"data-type", "steps", "rollup"},
+			window:     "60m",
+			dataType:   "steps",
+			from:       "2026-01-01",
+			to:         "2026-01-02",
+			syncFrom:   "2026-01-01T00:00:00Z",
+			syncTo:     "2026-01-02T00:00:00Z",
 			syncRollup: "window=1h",
 		},
 	}
@@ -69,8 +99,8 @@ func TestRawRollupUsesSyncFirstRequest(t *testing.T) {
 			}
 			sync, err := (Ingestion{}).DescribePlan(IngestionRequest{
 				DataType: test.dataType,
-				From:     test.from,
-				To:       test.to,
+				From:     test.syncFrom,
+				To:       test.syncTo,
 				Rollup:   test.syncRollup,
 			})
 			if err != nil {
@@ -108,6 +138,34 @@ func TestRawRollupPagingAndSanitization(t *testing.T) {
 	if strings.Contains(string(description.SanitizedBody), "synthetic-page-token") ||
 		!strings.Contains(string(description.SanitizedBody), `"pageToken":"REDACTED"`) {
 		t.Fatalf("sanitized body = %s", description.SanitizedBody)
+	}
+}
+
+func TestRawRollupAcceptsEveryCatalogWindowGranularity(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		window string
+		want   string
+	}{
+		{window: "1h", want: `"windowSize":"3600s"`},
+		{window: "1d", want: `"windowSize":"86400s"`},
+		{window: "7d", want: `"windowSize":"604800s"`},
+	} {
+		description, err := DescribeRawRequest(RawRequestOptions{
+			Target:         []string{"data-type", "steps", "rollup"},
+			From:           "2026-01-01",
+			To:             "2026-01-08",
+			Window:         test.window,
+			WindowProvided: true,
+			ResolvedAt:     time.Date(2026, 1, 9, 0, 0, 0, 0, time.UTC),
+		})
+		if err != nil {
+			t.Fatalf("DescribeRawRequest(%s): %v", test.window, err)
+		}
+		if !strings.Contains(string(description.Request.Body), test.want) {
+			t.Fatalf("window %s body = %s, want %s", test.window, description.Request.Body, test.want)
+		}
 	}
 }
 

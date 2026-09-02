@@ -191,13 +191,15 @@ the question. Plan the request first:
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --plan --json
 gohealthcli raw data-type steps reconcile --source-family wearable --from yesterday --to today --timezone Europe/Brussels --plan --json
 gohealthcli raw data-type weight get --id '<provider-id>' --plan --json
+gohealthcli raw data-type steps daily-rollup --from yesterday --to today --timezone Europe/Brussels --plan --json
+gohealthcli raw data-type total-calories rollup --from yesterday --to today --timezone Europe/Brussels --window 1h --plan --json
 ```
 
-The plan reports the exact method, sanitized production URL, non-secret
-headers, required scopes, resolved range, and paging inputs. Every reported
+The plan reports the exact method, sanitized production URL and POST body,
+non-secret headers, required scopes, resolved range, and paging inputs. Every reported
 effect is false. Planning does not contact the Provider, read credentials,
-load or refresh a token, open the Health Archive, change a Sync Cursor, or
-create a sidecar.
+load or refresh a token, open the Health Archive, write a Rollup, change a
+Sync Run or Sync Cursor, or create a sidecar.
 
 Use `catalog describe <data-type> --json` to confirm that
 `compiled.endpoint_families` includes `reconcile` before a source-family read.
@@ -206,6 +208,11 @@ page, and does not follow the returned page token automatically. Its request
 builder, range shape, scopes, source-family mapping, default page size, and
 page-token handling match sync. It does not parse or archive Data Points,
 record a Sync Run, change a Sync Cursor, or create a sidecar.
+
+Use `daily-rollup` or physical-window `rollup` only when the canonical catalog
+lists that endpoint family. Physical `--window` values must match the catalog's
+granularities. Raw returns one exact Provider response and never follows page
+tokens or splits a range; narrow the range when sync would need chunking.
 
 Use `catalog describe <data-type> --json` to confirm that
 `compiled.endpoint_families` includes `get` before fetching one Data Point by
@@ -220,6 +227,7 @@ built-in exact-byte output path instead of shell redirection. On a POSIX shell:
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --output ./raw-health-response.json
 gohealthcli raw data-type steps reconcile --source-family wearable --from yesterday --to today --timezone Europe/Brussels --output ./raw-reconcile-page.json
 gohealthcli raw data-type weight get --id '<provider-id>' --output ./raw-data-point.json
+gohealthcli raw data-type steps daily-rollup --from yesterday --to today --timezone Europe/Brussels --output ./raw-daily-rollup.json
 ```
 
 The command requires a new path, refuses symbolic links and every overwrite,

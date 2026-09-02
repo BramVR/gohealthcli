@@ -19,6 +19,7 @@ type rawPlanRequest struct {
 	Method  string            `json:"method"`
 	URL     string            `json:"url"`
 	Headers map[string]string `json:"headers"`
+	Body    json.RawMessage   `json:"body,omitempty"`
 }
 
 type rawPlanRange struct {
@@ -40,6 +41,8 @@ type rawPlanEffects struct {
 	TokenRefresh        bool `json:"token_refresh"`
 	HealthArchiveOpen   bool `json:"health_archive_open"`
 	HealthArchiveWrite  bool `json:"health_archive_write"`
+	RollupWrite         bool `json:"rollup_write"`
+	SyncRunChange       bool `json:"sync_run_change"`
 	Migration           bool `json:"migration"`
 	CursorChange        bool `json:"cursor_change"`
 	SidecarCreation     bool `json:"sidecar_creation"`
@@ -92,6 +95,7 @@ func newRawPlanResult(description googlehealth.RawRequestDescription, options go
 			Method:  request.Method,
 			URL:     description.SanitizedURL,
 			Headers: description.Headers,
+			Body:    append(json.RawMessage(nil), description.SanitizedBody...),
 		},
 		RequiredScopes: append([]string(nil), request.RequiredScopes...),
 		Paging: rawPlanPaging{
@@ -129,6 +133,9 @@ func writeRawPlanPlain(writer *stickyWriter, result rawPlanResult) {
 			writer.Printf("request.headers.%s: %s\n", name, value)
 		}
 	}
+	if len(result.Request.Body) != 0 {
+		writer.Printf("request.body: %s\n", result.Request.Body)
+	}
 	for index, scope := range result.RequiredScopes {
 		writer.Printf("required_scopes.%d: %s\n", index, scope)
 	}
@@ -153,7 +160,14 @@ func writeRawPlanHuman(writer *stickyWriter, result rawPlanResult) {
 		writer.Printf("Source family: %s\n", result.Target.SourceFamily)
 	}
 	writer.Printf("Request: %s %s\n", result.Request.Method, result.Request.URL)
-	writer.Printf("Headers: Accept=%s\n", result.Request.Headers["Accept"])
+	if contentType := result.Request.Headers["Content-Type"]; contentType != "" {
+		writer.Printf("Headers: Accept=%s, Content-Type=%s\n", result.Request.Headers["Accept"], contentType)
+	} else {
+		writer.Printf("Headers: Accept=%s\n", result.Request.Headers["Accept"])
+	}
+	if len(result.Request.Body) != 0 {
+		writer.Printf("Body: %s\n", result.Request.Body)
+	}
 	writer.Printf("Required scopes: %s\n", joinPlanValues(result.RequiredScopes))
 	if result.Range != nil {
 		if result.Range.To == "" {
@@ -175,6 +189,8 @@ func writeRawPlanEffects(writer *stickyWriter, prefix string, effects rawPlanEff
 	writer.Printf("%stoken_refresh: %t\n", prefix, effects.TokenRefresh)
 	writer.Printf("%shealth_archive_open: %t\n", prefix, effects.HealthArchiveOpen)
 	writer.Printf("%shealth_archive_write: %t\n", prefix, effects.HealthArchiveWrite)
+	writer.Printf("%srollup_write: %t\n", prefix, effects.RollupWrite)
+	writer.Printf("%ssync_run_change: %t\n", prefix, effects.SyncRunChange)
 	writer.Printf("%smigration: %t\n", prefix, effects.Migration)
 	writer.Printf("%scursor_change: %t\n", prefix, effects.CursorChange)
 	writer.Printf("%ssidecar_creation: %t\n", prefix, effects.SidecarCreation)

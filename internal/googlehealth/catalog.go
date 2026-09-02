@@ -772,6 +772,20 @@ func RawDataTypeOperations(dataType string) []string {
 	return operations
 }
 
+// RawRollupWindowGranularities returns the canonical physical Rollup windows
+// accepted for one Data Type. The returned slice does not share catalog state.
+func RawRollupWindowGranularities(dataType string) []string {
+	entry, ok := googleHealthDataTypes.Lookup(dataType)
+	if !ok {
+		return nil
+	}
+	support, ok := entry.SupportedEndpoints[endpointFamilyRollUp]
+	if !ok {
+		return nil
+	}
+	return append([]string(nil), support.WindowGranularities...)
+}
+
 // SupportedSourceFamilies returns the sorted source-family keywords accepted
 // by SourceFamilyFilterName.
 func SupportedSourceFamilies() []string {

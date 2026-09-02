@@ -326,14 +326,19 @@ func TestCompletionProtocolSuggestsRawTargetsAndValues(t *testing.T) {
 			want: []string{"get", "reconcile"},
 		},
 		{
-			name: "reconcile operation",
+			name: "reconcile and Rollup operations",
 			args: []string{"__completeNoDesc", "raw", "data-type", "steps", ""},
-			want: []string{"reconcile"},
+			want: []string{"daily-rollup", "reconcile", "rollup"},
 		},
 		{
-			name: "reconcile-only Data Type operation",
+			name: "reconcile and Rollup-only Data Type operations",
 			args: []string{"__completeNoDesc", "raw", "data-type", "floors", ""},
-			want: []string{"reconcile"},
+			want: []string{"daily-rollup", "reconcile", "rollup"},
+		},
+		{
+			name: "Rollup-only Data Type operations",
+			args: []string{"__completeNoDesc", "raw", "data-type", "total-calories", ""},
+			want: []string{"daily-rollup", "rollup"},
 		},
 		{
 			name: "list-only Data Type operation",
@@ -364,6 +369,20 @@ func TestCompletionProtocolSuggestsRawTargetsAndValues(t *testing.T) {
 				t.Fatalf("directive = %d, want ShellCompDirectiveNoFileComp", got)
 			}
 		})
+	}
+}
+
+func TestCompletionProtocolSuggestsRawRollupWindowGranularities(t *testing.T) {
+	t.Parallel()
+
+	code, stdout, stderr := runCommand(t,
+		"__completeNoDesc", "raw", "data-type", "steps", "rollup", "--window", "",
+	)
+	if code != 0 {
+		t.Fatalf("completion exit code = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	if got, want := completionCandidates(stdout.String()), []string{"1d", "1h", "7d"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("window candidates = %v, want %v", got, want)
 	}
 }
 

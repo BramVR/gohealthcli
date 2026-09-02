@@ -187,15 +187,18 @@ precedence as `sync`; identity endpoints reject range and timezone flags.
 ```bash
 gohealthcli raw endpoint getIdentity --plan --json
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --plan --json
+gohealthcli raw data-type steps daily-rollup --from yesterday --to today --timezone Europe/Brussels --plan --json
+gohealthcli raw data-type total-calories rollup --from yesterday --to today --timezone Europe/Brussels --window 1h --plan --json
 gohealthcli raw endpoint getIdentity
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --output ./steps-response.json
+gohealthcli raw data-type steps daily-rollup --from yesterday --to today --timezone Europe/Brussels --output ./daily-rollup-response.json
 ```
 
-Run the plan first. It prints the exact method, sanitized production URL,
-non-secret headers, required scopes, resolved Data Type range and timezone,
-and paging inputs. Its Provider, credential, token, Health Archive, migration,
-Sync Cursor, and sidecar effects are all false. `--json` and `--plain` shape
+Run the plan first. It prints the exact method, sanitized production URL and
+POST body, non-secret headers, required scopes, resolved Data Type range and
+timezone, and paging inputs. Its Provider, credential, token, Health Archive,
+Rollup, Sync Run, migration, Sync Cursor, and sidecar effects are all false. `--json` and `--plain` shape
 plan output only. A normal raw read keeps the Provider's response bytes
 unchanged on stdout. Add `--output PATH` to write those exact bytes to a new
 file instead. The command refuses existing files, symbolic links, directories,
@@ -209,6 +212,11 @@ replacement but inherit the parent directory ACL, so use an ACL-private
 directory. UNC paths and mapped network drives are rejected before the Provider
 read, including parent links that resolve to them. Other build targets reject
 file output if atomic no-replace rename is unavailable.
+
+Raw Rollup reads issue one request and return its bytes unchanged. The catalog
+controls which Data Types support `daily-rollup` and `rollup`, plus accepted
+physical `--window` granularities. A range that exceeds one Provider request
+fails locally instead of being split like a Sync Run.
 
 ## Where next
 

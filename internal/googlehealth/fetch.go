@@ -249,6 +249,20 @@ func DescribeRawRequest(options RawRequestOptions) (RawRequestDescription, error
 		if target.family == endpointFamilyReconcile && pageSize == 0 {
 			pageSize = dataPointReadPageSize(target.dataType)
 		}
+		if target.family == endpointFamilyDailyRollUp || target.family == endpointFamilyRollUp {
+			spec := RollupSpec{cursorKind: "daily", endpointFamily: endpointFamilyDailyRollUp, windowSize: 24 * time.Hour}
+			if target.family == endpointFamilyRollUp {
+				windowSize, windowErr := rawRollupWindowSize(target.dataType, options.Window)
+				if windowErr != nil {
+					return RawRequestDescription{}, windowErr
+				}
+				spec = RollupSpec{cursorKind: "window=" + options.Window, endpointFamily: endpointFamilyRollUp, windowSize: windowSize}
+			}
+			resolved.From, resolved.To, err = normalizeRawRollupRange(spec, resolved.From, resolved.To, options.ResolvedAt)
+			if err != nil {
+				return RawRequestDescription{}, err
+			}
+		}
 		switch target.family {
 		case endpointFamilyDailyRollUp:
 			windows, windowErr := googleHealthDailyRollupDateWindows(target.dataType, resolved.From, resolved.To)
@@ -311,12 +325,12 @@ func sanitizeRawRequestBody(body []byte) ([]byte, error) {
 	if len(body) == 0 {
 		return nil, nil
 	}
-	var fields map[string]any
+	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(body, &fields); err != nil {
 		return nil, fmt.Errorf("sanitize raw request body: %w", err)
 	}
 	if _, ok := fields["pageToken"]; ok {
-		fields["pageToken"] = "REDACTED"
+		fields["pageToken"] = json.RawMessage(`"REDACTED"`)
 	}
 	sanitized, err := json.Marshal(fields)
 	if err != nil {
@@ -465,17 +479,28 @@ func rawRollupWindowSize(dataType, value string) (time.Duration, error) {
 	if err != nil {
 		return 0, err
 	}
-	windowSize, err := time.ParseDuration(value)
+	windowSize, err := parseRawRollupWindowDuration(value)
 	if err != nil || windowSize < time.Second {
 		return 0, fmt.Errorf("raw --window %q: expected a duration of at least 1s", value)
 	}
 	for _, granularity := range support.WindowGranularities {
-		supported, parseErr := time.ParseDuration(granularity)
+		supported, parseErr := parseRawRollupWindowDuration(granularity)
 		if parseErr == nil && supported == windowSize {
 			return windowSize, nil
 		}
 	}
 	return 0, fmt.Errorf("raw Data Type %q supported window granularities: %s", dataType, strings.Join(support.WindowGranularities, ", "))
+}
+
+func parseRawRollupWindowDuration(value string) (time.Duration, error) {
+	if strings.HasSuffix(value, "d") {
+		days, err := strconv.ParseInt(strings.TrimSuffix(value, "d"), 10, 64)
+		if err != nil || days <= 0 || days > int64((1<<63-1)/(24*time.Hour)) {
+			return 0, fmt.Errorf("invalid day duration %q", value)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(value)
 }
 
 func buildGoogleHealthDataPointGetRawRequest(dataType, providerID string) (RawRequest, error) {
