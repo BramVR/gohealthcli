@@ -201,6 +201,12 @@ func TestCompletionProtocolSuggestsCatalogFlagValues(t *testing.T) {
 			want:          googlehealth.SupportedSourceFamilies(),
 			wantDirective: 4,
 		},
+		{
+			name:          "raw source family",
+			args:          []string{"__completeNoDesc", "raw", "--source-family", ""},
+			want:          googlehealth.SupportedSourceFamilies(),
+			wantDirective: 4,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -307,7 +313,7 @@ func TestCompletionProtocolSuggestsRawTargetsAndValues(t *testing.T) {
 		{
 			name: "Data Types",
 			args: []string{"__completeNoDesc", "raw", "data-type", ""},
-			want: googlehealth.ListableDataTypes(),
+			want: googlehealth.RawDataTypes(),
 		},
 		{
 			name: "endpoints",
@@ -315,13 +321,23 @@ func TestCompletionProtocolSuggestsRawTargetsAndValues(t *testing.T) {
 			want: googlehealth.RawEndpointNames(),
 		},
 		{
-			name: "supported Data Type operation",
+			name: "get and reconcile operations",
 			args: []string{"__completeNoDesc", "raw", "data-type", "weight", ""},
-			want: []string{"get"},
+			want: []string{"get", "reconcile"},
 		},
 		{
-			name: "unsupported Data Type operation",
+			name: "reconcile operation",
 			args: []string{"__completeNoDesc", "raw", "data-type", "steps", ""},
+			want: []string{"reconcile"},
+		},
+		{
+			name: "reconcile-only Data Type operation",
+			args: []string{"__completeNoDesc", "raw", "data-type", "floors", ""},
+			want: []string{"reconcile"},
+		},
+		{
+			name: "list-only Data Type operation",
+			args: []string{"__completeNoDesc", "raw", "data-type", "electrocardiogram", ""},
 			want: nil,
 		},
 		{

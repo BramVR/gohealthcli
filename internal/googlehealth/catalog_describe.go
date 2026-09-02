@@ -135,7 +135,7 @@ func catalogEndpointDescription(dataType string, family endpointFamily, support 
 			return CatalogEndpointFamily{}, fmt.Errorf("describe %s %s range: %w", dataType, family, err)
 		}
 		endpoint.RangeShape = string(target)
-		endpoint.PagePolicy.PageSize = syncDataPointPageSize(dataType)
+		endpoint.PagePolicy.PageSize = dataPointReadPageSize(dataType)
 		endpoint.PagePolicy.PageSizePolicy = "explicit"
 	case endpointFamilyGet:
 		endpoint.RangeShape = "none"

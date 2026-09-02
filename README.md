@@ -406,11 +406,13 @@ Explore raw provider JSON:
 ```bash
 gohealthcli raw endpoint getIdentity --plan --json
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --plan --json
+gohealthcli raw data-type steps reconcile --source-family wearable --from yesterday --to today --timezone Europe/Brussels --plan --json
 gohealthcli raw data-type weight get --id '<provider-id>' --plan --json
 gohealthcli raw endpoint getIdentity
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels
 gohealthcli raw data-type weight get --id '<provider-id>' --output ./weight-response.json
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --output ./steps-response.json
+gohealthcli raw data-type steps reconcile --source-family wearable --from yesterday --to today --timezone Europe/Brussels --output ./reconcile-response.json
 ```
 
 Raw Data Type lists share `sync`'s exact range grammar and timezone precedence.
@@ -422,6 +424,14 @@ catalog rows whose current official operation table includes `get`. The ID is
 opaque and escaped as one URL path component. Get performs one request without
 pagination and rejects range, timezone, paging, and source-filter inputs before
 setup. Plans redact the Provider ID from the reported URL.
+`raw data-type <data-type> reconcile --source-family wearable --from <boundary>`
+uses the canonical catalog and the same request builder, range shape, scopes,
+source-family mapping, page-size policy, and page-token handling as sync. It
+returns exactly one Provider response page and does not parse or archive it,
+record a Sync Run, advance a Sync Cursor, or create a sidecar. Use
+`catalog describe <data-type> --json` to confirm that the compiled endpoint
+families include `reconcile`. Missing or unsupported source families and
+incompatible range or paging inputs fail before credential or Provider access.
 Add `--plan` before a raw read to inspect its exact method, sanitized production
 URL, non-secret headers, scopes, resolved range, and paging inputs. Every plan
 reports Provider, credential, token, Health Archive, migration, Sync Cursor,

@@ -48,7 +48,7 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	})
 	rawFrom := flags.String("from", "", "inclusive time-range start (where supported by the endpoint)")
 	rawTo := flags.String("to", "", "exclusive time-range end (where supported by the endpoint)")
-	rawTimezone := flags.String("timezone", "", "IANA timezone for now, today, and yesterday (Data Type lists only; default config, then UTC)")
+	rawTimezone := flags.String("timezone", "", "IANA timezone for now, today, and yesterday (Data Type range reads only; default config, then UTC)")
 	rawPageSize := flags.Int64("page-size", 0, "pagination page size (positive integer; where supported by the endpoint)")
 	rawPageToken := flags.String("page-token", "", "pagination page token from a prior response")
 	rawSourceFamily := flags.String("source-family", "", syncSourceFamilyUsage())

@@ -145,10 +145,13 @@ func ValidateRawRequestOptions(options RawRequestOptions) error {
 		return errors.New("--id is supported only by raw data-type <data-type> get")
 	}
 	if target.family == endpointFamilyReconcile {
-		if !options.SourceFamilyProvided {
-			return fmt.Errorf("raw data-type %s reconcile requires --source-family", target.dataType)
+		if options.From == "" {
+			return fmt.Errorf("raw data-type %s reconcile requires --from", target.dataType)
 		}
 		if options.SourceFamily == "" {
+			if !options.SourceFamilyProvided {
+				return fmt.Errorf("raw data-type %s reconcile requires --source-family", target.dataType)
+			}
 			return errors.New("--source-family requires a non-empty source family")
 		}
 		if _, ok := sourceFamilyCatalog[options.SourceFamily]; !ok {
@@ -190,6 +193,7 @@ func DescribeRawRequest(options RawRequestOptions) (RawRequestDescription, error
 	}
 	var request RawRequest
 	var resolvedRange *ResolvedRange
+	pageSize := options.PageSize
 	switch target.family {
 	case "":
 		request = RawRequest{
@@ -218,11 +222,10 @@ func DescribeRawRequest(options RawRequestOptions) (RawRequestDescription, error
 		if resolveErr != nil {
 			return RawRequestDescription{}, resolveErr
 		}
-		pageSize := options.PageSize
 		if target.family == endpointFamilyReconcile && pageSize == 0 {
-			pageSize = syncDataPointPageSize(target.dataType)
+			pageSize = dataPointReadPageSize(target.dataType)
 		}
-		request, err = buildGoogleHealthSyncDataPointRawRequest(target.dataType, resolved.From, resolved.To, options.SourceFamily, pageSize, options.PageToken)
+		request, err = buildGoogleHealthDataPointReadRawRequest(target.dataType, resolved.From, resolved.To, options.SourceFamily, pageSize, options.PageToken)
 		if err != nil {
 			return RawRequestDescription{}, err
 		}
@@ -243,7 +246,7 @@ func DescribeRawRequest(options RawRequestOptions) (RawRequestDescription, error
 	return RawRequestDescription{
 		Request:           request,
 		Range:             resolvedRange,
-		PageSize:          requestPageSize(options, target),
+		PageSize:          pageSize,
 		PageTokenProvided: options.PageTokenProvided,
 		Headers:           rawRequestHeaders(request),
 		SanitizedURL:      sanitizedURL,
@@ -360,13 +363,6 @@ func parseRawDataTypeTarget(dataType string, family endpointFamily) (rawRequestT
 		return rawRequestTarget{}, err
 	}
 	return rawRequestTarget{dataType: dataType, rangeTarget: rangeTarget, lowerBoundOnly: support.LowerBoundOnly, family: family}, nil
-}
-
-func requestPageSize(options RawRequestOptions, target rawRequestTarget) int64 {
-	if target.family == endpointFamilyReconcile && options.PageSize == 0 {
-		return syncDataPointPageSize(target.dataType)
-	}
-	return options.PageSize
 }
 
 func buildGoogleHealthDataPointGetRawRequest(dataType, providerID string) (RawRequest, error) {
