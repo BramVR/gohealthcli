@@ -231,12 +231,25 @@ func DescribeRawRequest(options RawRequestOptions) (RawRequestDescription, error
 	}, nil
 }
 
-// sanitizeRawRequestURL removes paging token material from a production-built
-// request URL while preserving its method, path, and other query inputs.
+// sanitizeRawRequestURL removes sensitive opaque inputs from a
+// production-built request URL while preserving its non-sensitive shape.
 func sanitizeRawRequestURL(request RawRequest) (string, error) {
 	parsed, err := url.Parse(request.URL)
 	if err != nil {
 		return "", fmt.Errorf("sanitize raw request URL: %w", err)
+	}
+	if request.DataType != "" && strings.HasSuffix(request.EndpointName, ".get") {
+		escapedPath := parsed.EscapedPath()
+		lastSlash := strings.LastIndex(escapedPath, "/")
+		if lastSlash < 0 {
+			return "", errors.New("sanitize raw request URL: get request path has no Data Point ID segment")
+		}
+		escapedPath = escapedPath[:lastSlash+1] + "REDACTED"
+		parsed.Path, err = url.PathUnescape(escapedPath)
+		if err != nil {
+			return "", fmt.Errorf("sanitize raw request URL path: %w", err)
+		}
+		parsed.RawPath = escapedPath
 	}
 	query := parsed.Query()
 	if query.Has("pageToken") {

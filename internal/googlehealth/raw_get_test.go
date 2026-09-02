@@ -54,6 +54,21 @@ func TestBuildRawDataPointGetRequestForEveryCatalogSupportedDataType(t *testing.
 			if !slices.Equal(request.RequiredScopes, ScopesForDataType(dataType)) {
 				t.Fatalf("RequiredScopes = %v, want catalog scopes %v", request.RequiredScopes, ScopesForDataType(dataType))
 			}
+			description, err := DescribeRawRequest(RawRequestOptions{
+				Target:     []string{"data-type", dataType, "get"},
+				ID:         providerID,
+				IDProvided: true,
+			})
+			if err != nil {
+				t.Fatalf("DescribeRawRequest: %v", err)
+			}
+			wantSanitizedURL := googleHealthBaseURL + "/users/me/dataTypes/" + dataType + "/dataPoints/REDACTED"
+			if description.SanitizedURL != wantSanitizedURL {
+				t.Fatalf("SanitizedURL = %q, want %q", description.SanitizedURL, wantSanitizedURL)
+			}
+			if strings.Contains(description.SanitizedURL, "synthetic") {
+				t.Fatalf("SanitizedURL exposes Provider ID: %q", description.SanitizedURL)
+			}
 		})
 	}
 }

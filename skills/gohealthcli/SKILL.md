@@ -200,8 +200,9 @@ create a sidecar.
 
 Use `catalog describe <data-type> --json` to confirm that
 `compiled.endpoint_families` includes `get` before fetching one Data Point by
-ID. Treat the Provider ID as sensitive opaque input. Get accepts no range,
-source filter, or paging input and makes one Provider request.
+ID. Treat the Provider ID as sensitive opaque input. Plans redact it from the
+reported URL. Get accepts no range, source filter, or paging input and makes
+one Provider request.
 
 For the actual read, choose a fresh, user-approved private destination. Use the
 built-in exact-byte output path instead of shell redirection. On a POSIX shell:

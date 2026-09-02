@@ -168,8 +168,11 @@ func TestRawDataPointGetPlanHasNoEffects(t *testing.T) {
 	if result.Target.EndpointName != "dataTypes.sleep.get" || result.Target.DataType != "sleep" {
 		t.Fatalf("target = %+v", result.Target)
 	}
-	if result.Request.Method != "GET" || result.Request.URL != "https://health.googleapis.com/v4/users/me/dataTypes/sleep/dataPoints/synthetic%2Fid" {
+	if result.Request.Method != "GET" || result.Request.URL != "https://health.googleapis.com/v4/users/me/dataTypes/sleep/dataPoints/REDACTED" {
 		t.Fatalf("request = %+v", result.Request)
+	}
+	if strings.Contains(stdout.String(), "synthetic") {
+		t.Fatalf("plan exposes Provider ID: %s", stdout.String())
 	}
 	if result.Range != nil || result.Paging.PageSize != 0 || result.Paging.PageTokenProvided {
 		t.Fatalf("range/paging = %+v %+v", result.Range, result.Paging)

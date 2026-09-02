@@ -421,7 +421,7 @@ Identity endpoints reject range and timezone flags instead of ignoring them.
 catalog rows whose current official operation table includes `get`. The ID is
 opaque and escaped as one URL path component. Get performs one request without
 pagination and rejects range, timezone, paging, and source-filter inputs before
-setup.
+setup. Plans redact the Provider ID from the reported URL.
 Add `--plan` before a raw read to inspect its exact method, sanitized production
 URL, non-secret headers, scopes, resolved range, and paging inputs. Every plan
 reports Provider, credential, token, Health Archive, migration, Sync Cursor,
