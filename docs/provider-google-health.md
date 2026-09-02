@@ -125,6 +125,9 @@ stable JSON, plain, and human output.
   `users/me/dataSourceFamilies/google-wearables`.
 - Use when source-family filtering is requested, or if provider behavior proves
   it has better correction semantics than `list`.
+- `raw data-type <data-type> reconcile` exposes exactly one response page for
+  catalog-supported Data Types. It uses the same request builder and default
+  page size as sync but never enters ingestion or archive code.
 - Important for "watch data" questions.
 - `basal-energy-burned` uses the same
   `basal_energy_burned.interval.start_time` filter as `list`; Google exposes

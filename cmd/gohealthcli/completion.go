@@ -334,17 +334,13 @@ func completeRawPositionals(args []string, toComplete string) []string {
 	case 1:
 		switch args[0] {
 		case string(googlehealth.RawTargetDataType):
-			return completeCatalog(googlehealth.ListableDataTypes(), toComplete)
+			return completeCatalog(googlehealth.RawDataTypes(), toComplete)
 		case string(googlehealth.RawTargetEndpoint):
 			return completeCatalog(googlehealth.RawEndpointNames(), toComplete)
 		}
 	case 2:
 		if args[0] == string(googlehealth.RawTargetDataType) {
-			for _, dataType := range googlehealth.GettableDataTypes() {
-				if args[1] == dataType {
-					return completeCatalog([]string{"get"}, toComplete)
-				}
-			}
+			return completeCatalog(googlehealth.RawDataTypeOperations(args[1]), toComplete)
 		}
 	}
 	return nil

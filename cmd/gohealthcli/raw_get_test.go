@@ -197,7 +197,7 @@ func TestRawDataPointGetRejectsIncompatibleInputsBeforeEffects(t *testing.T) {
 		{name: "timezone", args: []string{"data-type", "weight", "get", "--id", "synthetic-id", "--timezone", "UTC"}, want: "does not support --timezone"},
 		{name: "page size", args: []string{"data-type", "weight", "get", "--id", "synthetic-id", "--page-size", "1"}, want: "does not support --page-size"},
 		{name: "page token", args: []string{"data-type", "weight", "get", "--id", "synthetic-id", "--page-token", "synthetic-page"}, want: "does not support --page-token"},
-		{name: "source family", args: []string{"data-type", "weight", "get", "--id", "synthetic-id", "--source-family", "wearable"}, want: "flag provided but not defined: -source-family"},
+		{name: "source family", args: []string{"data-type", "weight", "get", "--id", "synthetic-id", "--source-family", "wearable"}, want: "--source-family is supported only by raw data-type <data-type> reconcile"},
 		{name: "ID on list", args: []string{"data-type", "weight", "--id", "synthetic-id", "--from", "2026-01-01"}, want: "--id is supported only by raw data-type <data-type> get"},
 	}
 	for _, test := range tests {

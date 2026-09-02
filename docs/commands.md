@@ -21,7 +21,7 @@ Every user-facing subcommand exposed by `gohealthcli`. Pages are regenerated fro
 - [`gohealthcli status`](commands/status.html) — Summarise archive counts and newest synced timestamps.
 - [`gohealthcli query`](commands/query.html) — Run guarded read-only SQL over the Health Archive.
 - [`gohealthcli export`](commands/export.html) — Write a normalised dataset to CSV or JSONL.
-- [`gohealthcli raw`](commands/raw.html) — Print raw provider JSON or plan a Provider request.
+- [`gohealthcli raw`](commands/raw.html) — Print one raw Provider page or plan its request.
 - [`gohealthcli describe-schema`](commands/describe-schema.html) — Self-describe the Health Archive for LLM consumption.
 - [`gohealthcli completion`](commands/completion.html) — Generate a shell completion script.
 

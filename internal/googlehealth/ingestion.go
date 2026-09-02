@@ -315,9 +315,9 @@ func (ingestion Ingestion) DescribePlan(request IngestionRequest) (IngestionPlan
 			return IngestionPlanDescription{}, err
 		}
 	default:
-		description.PagePolicy.PageSize = syncDataPointPageSize(request.DataType)
+		description.PagePolicy.PageSize = dataPointReadPageSize(request.DataType)
 		description.PagePolicy.PageSizePolicy = "explicit"
-		description.Request, err = buildGoogleHealthSyncDataPointRawRequest(
+		description.Request, err = buildGoogleHealthDataPointReadRawRequest(
 			request.DataType,
 			request.From,
 			request.To,
@@ -511,7 +511,7 @@ func (ingestion Ingestion) executeDataPointPages(ctx context.Context, archive Ar
 			return ErrSyncCanceled
 		}
 		reportIngestionProgress(request, result)
-		rawRequest, err := buildGoogleHealthSyncDataPointRawRequest(request.DataType, request.From, request.To, request.SourceFamily, syncDataPointPageSize(request.DataType), pageToken)
+		rawRequest, err := buildGoogleHealthDataPointReadRawRequest(request.DataType, request.From, request.To, request.SourceFamily, dataPointReadPageSize(request.DataType), pageToken)
 		if err != nil {
 			return err
 		}
@@ -949,14 +949,14 @@ func parseGoogleHealthRollupList(body []byte) (googleHealthRollupList, error) {
 	return googleHealthRollupList{rollups: raw.Rollups, nextPageToken: raw.NextPageToken}, nil
 }
 
-func buildGoogleHealthSyncDataPointRawRequest(dataType, from, to, sourceFamily string, pageSize int64, pageToken string) (RawRequest, error) {
+func buildGoogleHealthDataPointReadRawRequest(dataType, from, to, sourceFamily string, pageSize int64, pageToken string) (RawRequest, error) {
 	if sourceFamily == "" {
 		return buildGoogleHealthDataTypeListRawRequest(dataType, from, to, pageSize, pageToken)
 	}
 	return buildGoogleHealthDataTypeReconcileRawRequest(dataType, from, to, sourceFamily, pageSize, pageToken)
 }
 
-func syncDataPointPageSize(dataType string) int64 {
+func dataPointReadPageSize(dataType string) int64 {
 	// Google Health documents the smaller raw Data Point cap for sleep
 	// and exercise specifically; other syncable Data Types use the
 	// maximum Data Point page size.

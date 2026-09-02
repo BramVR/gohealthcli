@@ -189,6 +189,7 @@ the question. Plan the request first:
 
 ```bash
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --plan --json
+gohealthcli raw data-type steps reconcile --source-family wearable --from yesterday --to today --timezone Europe/Brussels --plan --json
 gohealthcli raw data-type weight get --id '<provider-id>' --plan --json
 ```
 
@@ -197,6 +198,14 @@ headers, required scopes, resolved range, and paging inputs. Every reported
 effect is false. Planning does not contact the Provider, read credentials,
 load or refresh a token, open the Health Archive, change a Sync Cursor, or
 create a sidecar.
+
+Use `catalog describe <data-type> --json` to confirm that
+`compiled.endpoint_families` includes `reconcile` before a source-family read.
+Raw reconcile requires `--source-family`, returns one exact Provider response
+page, and does not follow the returned page token automatically. Its request
+builder, range shape, scopes, source-family mapping, default page size, and
+page-token handling match sync. It does not parse or archive Data Points,
+record a Sync Run, change a Sync Cursor, or create a sidecar.
 
 Use `catalog describe <data-type> --json` to confirm that
 `compiled.endpoint_families` includes `get` before fetching one Data Point by
@@ -209,6 +218,7 @@ built-in exact-byte output path instead of shell redirection. On a POSIX shell:
 
 ```bash
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --output ./raw-health-response.json
+gohealthcli raw data-type steps reconcile --source-family wearable --from yesterday --to today --timezone Europe/Brussels --output ./raw-reconcile-page.json
 gohealthcli raw data-type weight get --id '<provider-id>' --output ./raw-data-point.json
 ```
 
@@ -247,6 +257,11 @@ minimize the time range, and never paste the payload into chat or logs.
 The get example reads one catalog-supported Data Point and writes the exact
 Provider response through the same private output path. It does not archive or
 normalize the Data Point, record a Sync Run, or change a Sync Cursor.
+
+The reconcile example reads one wearable-filtered response page through the
+same private output path. If the Provider returns a page token, pass it to a
+later explicit raw reconcile invocation with `--page-token`; raw never follows
+it automatically.
 
 ## Report
 

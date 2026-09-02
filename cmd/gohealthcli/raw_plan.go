@@ -12,6 +12,7 @@ type rawPlanTarget struct {
 	Kind         string `json:"kind"`
 	EndpointName string `json:"endpoint_name"`
 	DataType     string `json:"data_type,omitempty"`
+	SourceFamily string `json:"source_family,omitempty"`
 }
 
 type rawPlanRequest struct {
@@ -85,6 +86,7 @@ func newRawPlanResult(description googlehealth.RawRequestDescription, options go
 			Kind:         options.Target[0],
 			EndpointName: request.EndpointName,
 			DataType:     request.DataType,
+			SourceFamily: request.SourceFamilyFilter,
 		},
 		Request: rawPlanRequest{
 			Method:  request.Method,
@@ -117,6 +119,9 @@ func writeRawPlanPlain(writer *stickyWriter, result rawPlanResult) {
 	if result.Target.DataType != "" {
 		writer.Printf("target.data_type: %s\n", result.Target.DataType)
 	}
+	if result.Target.SourceFamily != "" {
+		writer.Printf("target.source_family: %s\n", result.Target.SourceFamily)
+	}
 	writer.Printf("request.method: %s\n", result.Request.Method)
 	writer.Printf("request.url: %s\n", result.Request.URL)
 	for _, name := range []string{"Accept", "Content-Type"} {
@@ -144,6 +149,9 @@ func writeRawPlanPlain(writer *stickyWriter, result rawPlanResult) {
 func writeRawPlanHuman(writer *stickyWriter, result rawPlanResult) {
 	writer.Printf("Raw request plan: %s\n", result.Status)
 	writer.Printf("Target: %s (%s)\n", result.Target.EndpointName, result.Target.Kind)
+	if result.Target.SourceFamily != "" {
+		writer.Printf("Source family: %s\n", result.Target.SourceFamily)
+	}
 	writer.Printf("Request: %s %s\n", result.Request.Method, result.Request.URL)
 	writer.Printf("Headers: Accept=%s\n", result.Request.Headers["Accept"])
 	writer.Printf("Required scopes: %s\n", joinPlanValues(result.RequiredScopes))

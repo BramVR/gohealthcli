@@ -698,6 +698,66 @@ func GettableDataTypes() []string {
 	return dataTypes
 }
 
+// ReconcileDataTypes returns the sorted Data Types whose canonical catalog
+// entry supports reconciled Data Point reads with a source-family filter.
+func ReconcileDataTypes() []string {
+	var dataTypes []string
+	for _, dataType := range googleHealthDataTypes.order {
+		entry, ok := googleHealthDataTypes.Lookup(dataType)
+		if !ok {
+			continue
+		}
+		if _, ok := entry.SupportedEndpoints[endpointFamilyReconcile]; ok {
+			dataTypes = append(dataTypes, dataType)
+		}
+	}
+	sort.Strings(dataTypes)
+	return dataTypes
+}
+
+// RawDataTypes returns the sorted Data Types available through an implicit
+// list read or an explicit get or reconcile raw operation.
+func RawDataTypes() []string {
+	var dataTypes []string
+	for _, dataType := range googleHealthDataTypes.order {
+		entry, ok := googleHealthDataTypes.Lookup(dataType)
+		if !ok {
+			continue
+		}
+		if _, list := entry.SupportedEndpoints[endpointFamilyList]; list {
+			dataTypes = append(dataTypes, dataType)
+			continue
+		}
+		if _, get := entry.SupportedEndpoints[endpointFamilyGet]; get {
+			dataTypes = append(dataTypes, dataType)
+			continue
+		}
+		if _, reconcile := entry.SupportedEndpoints[endpointFamilyReconcile]; reconcile {
+			dataTypes = append(dataTypes, dataType)
+		}
+	}
+	sort.Strings(dataTypes)
+	return dataTypes
+}
+
+// RawDataTypeOperations returns the sorted explicit operations supported by
+// one catalog Data Type. List remains the implicit two-positional form.
+func RawDataTypeOperations(dataType string) []string {
+	entry, ok := googleHealthDataTypes.Lookup(dataType)
+	if !ok {
+		return nil
+	}
+	var operations []string
+	if _, ok := entry.SupportedEndpoints[endpointFamilyGet]; ok {
+		operations = append(operations, string(endpointFamilyGet))
+	}
+	if _, ok := entry.SupportedEndpoints[endpointFamilyReconcile]; ok {
+		operations = append(operations, string(endpointFamilyReconcile))
+	}
+	sort.Strings(operations)
+	return operations
+}
+
 // SupportedSourceFamilies returns the sorted source-family keywords accepted
 // by SourceFamilyFilterName.
 func SupportedSourceFamilies() []string {
