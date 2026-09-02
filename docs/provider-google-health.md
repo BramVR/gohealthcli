@@ -106,6 +106,17 @@ stable JSON, plain, and human output.
 - Detailed Data Points for one Data Type.
 - Default fetch path for raw Data Point sync.
 
+`get`
+
+- Fetch one identifiable Data Point by its opaque Provider ID.
+- Supported by the compiled catalog for `blood-glucose`, `body-fat`,
+  `core-body-temperature`, `exercise`, `height`, `hydration-log`,
+  `nutrition-log`, `sleep`, and `weight`.
+- Uses one request with no range, source filter, or pagination.
+- Google also documents `get` for Food and Food Measurement Unit, but those
+  non-temporal catalog entities remain outside the operational Data Point
+  catalog and this command.
+
 `reconcile`
 
 - Reconciled stream across sources.

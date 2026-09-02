@@ -7,6 +7,8 @@ Fetch a single upstream Google Health API response and print the raw body to std
 
 First positional argument is `endpoint <name>` (for example `endpoint getIdentity`) or `data-type <data-type>` (for example `data-type steps --from yesterday --to today`). Data Type list targets accept the same exact range grammar as `sync`: `now`, `today`, `yesterday`, `YYYY-MM-DD`, or RFC3339. Named boundaries use `--timezone`, then the configured timezone, then UTC; one captured clock and the provider Data Type's physical, civil, or daily filter shape determine the exact range. Identity endpoints reject `--from`, `--to`, and `--timezone` because those flags have no meaning there. Google's ECG list endpoint accepts only a physical `electrocardiogram.interval.start_time >= ...` lower bound, so `raw data-type electrocardiogram` rejects an explicit `--to` rather than claiming to narrow the provider-shaped response. `--page-size` and `--page-token` drive pagination. Identity endpoints reject those paging flags.
 
+`raw data-type <data-type> get --id <provider-id>` fetches one Data Point only when the compiled Provider catalog includes the `get` endpoint family. The Provider ID remains opaque and is escaped as one URL path component. This operation rejects range, timezone, paging, and source-filter inputs before setup, performs one request without pagination, and shares raw's exact-byte stdout, safe `--output`, Provider error, scope, and zero-effect `--plan` paths.
+
 `--plan` prints the exact secret-free request description without contacting the Provider, reading the Credential Store, loading or refreshing a token, opening or writing the Health Archive, migrating, changing a Sync Cursor, or creating an Attachment sidecar. The plan contains the method, sanitized production URL, non-secret headers, required scopes, resolved range and timezone for Data Type targets, paging inputs, and an all-false effect report. Page-token material is redacted. A lower-bound-only target omits `range.to` and the human mode labels the missing Provider upper bound. Use `--json` or `--plain` with `--plan` for structured output.
 
 Without `--plan`, `raw` is Provider-shaped on purpose. The JSON you see is what the Provider returns, not the normalized shape the archive stores. Normal reads preserve the Provider's exact response bytes on stdout and reject command-local `--json` or `--plain`; their only possible write remains persisting an existing OAuth token refresh.
@@ -31,6 +33,7 @@ gohealthcli raw <target> [<args>...]
 | `--db` | string | — | SQLite Health Archive path |
 | `--json` | bool | `false` | write stable JSON to stdout |
 | `--plain` | bool | `false` | write plain key/value output to stdout |
+| `--id` | string | — | opaque Provider Data Point ID (data-type get only) |
 | `--from` | string | — | inclusive time-range start (where supported by the endpoint) |
 | `--to` | string | — | exclusive time-range end (where supported by the endpoint) |
 | `--timezone` | string | — | IANA timezone for now, today, and yesterday (Data Type lists only; default config, then UTC) |

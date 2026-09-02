@@ -18,6 +18,17 @@ The catalog is authoritative in `internal/googlehealth/catalog.go`; this page is
 are separately sourced and cannot override endpoint, filter, scope, record, or
 Rollup behavior.
 
+## Get one Data Point by ID
+
+The compiled catalog exposes the `get` endpoint family for `blood-glucose`,
+`body-fat`, `core-body-temperature`, `exercise`, `height`, `hydration-log`,
+`nutrition-log`, `sleep`, and `weight`. Fetch one with
+`gohealthcli raw data-type <data-type> get --id <provider-id>`. The Provider ID
+is opaque, the request treats it as one URL path component, and the operation
+does not accept a range, source filter, or paging input. Run
+`catalog describe <data-type> --json` and inspect
+`compiled.endpoint_families` instead of copying this support list into scripts.
+
 ## How long does each type take to sync?
 
 Sync cost is proportional to Data Point count. Sustained throughput measures roughly 2,000–5,000 Data Points per minute on real runs; the table plans with the conservative ~2,000/min. Densities were measured 2026-06-10 from one real account backed by a Pixel Watch 4 (continuous heart-rate sampling) — your numbers scale with what your devices record. Cursor-resumed incremental syncs cover only the gap since the last run and finish in seconds regardless of type; Rollup syncs land one row per day or window and are always trivial.

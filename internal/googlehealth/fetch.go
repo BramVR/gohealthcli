@@ -175,19 +175,20 @@ func DescribeRawRequest(options RawRequestOptions) (RawRequestDescription, error
 	}
 	var request RawRequest
 	var resolvedRange *ResolvedRange
-	if target.family == "" {
+	switch target.family {
+	case "":
 		request = RawRequest{
 			EndpointName:   target.endpointName,
 			Method:         http.MethodGet,
 			URL:            target.endpointURL,
 			RequiredScopes: target.requiredScopes,
 		}
-	} else if target.family == endpointFamilyGet {
+	case endpointFamilyGet:
 		request, err = buildGoogleHealthDataPointGetRawRequest(target.dataType, options.ID)
 		if err != nil {
 			return RawRequestDescription{}, err
 		}
-	} else {
+	default:
 		if options.ResolvedAt.IsZero() {
 			return RawRequestDescription{}, errors.New("raw Data Type range resolution requires a captured clock")
 		}

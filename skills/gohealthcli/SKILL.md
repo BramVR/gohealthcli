@@ -189,6 +189,7 @@ the question. Plan the request first:
 
 ```bash
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --plan --json
+gohealthcli raw data-type weight get --id '<provider-id>' --plan --json
 ```
 
 The plan reports the exact method, sanitized production URL, non-secret
@@ -197,11 +198,17 @@ effect is false. Planning does not contact the Provider, read credentials,
 load or refresh a token, open the Health Archive, change a Sync Cursor, or
 create a sidecar.
 
+Use `catalog describe <data-type> --json` to confirm that
+`compiled.endpoint_families` includes `get` before fetching one Data Point by
+ID. Treat the Provider ID as sensitive opaque input. Get accepts no range,
+source filter, or paging input and makes one Provider request.
+
 For the actual read, choose a fresh, user-approved private destination. Use the
 built-in exact-byte output path instead of shell redirection. On a POSIX shell:
 
 ```bash
 gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --output ./raw-health-response.json
+gohealthcli raw data-type weight get --id '<provider-id>' --output ./raw-data-point.json
 ```
 
 The command requires a new path, refuses symbolic links and every overwrite,
@@ -235,6 +242,10 @@ range and timezone resolution as `sync`, then writes the exact response without
 archiving it. It may refresh Connection token metadata locally. If the
 destination already exists, choose another path. Keep the file private,
 minimize the time range, and never paste the payload into chat or logs.
+
+The get example reads one catalog-supported Data Point and writes the exact
+Provider response through the same private output path. It does not archive or
+normalize the Data Point, record a Sync Run, or change a Sync Cursor.
 
 ## Report
 

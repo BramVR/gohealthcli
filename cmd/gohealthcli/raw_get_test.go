@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -59,6 +63,79 @@ func TestRawDataPointGetPrintsExactProviderBytesWithoutArchiving(t *testing.T) {
 	assertArchiveTableCount(t, archivePath, "sync_cursors", 0)
 	if strings.Contains(stdout.String()+stderr.String(), "connect-access-secret") {
 		t.Fatal("raw get output leaked token material")
+	}
+}
+
+func TestRawDataPointGetWritesExactProviderBytesToSafeOutput(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	payload := []byte("{\"name\":\"synthetic-data-point\"}\n")
+	bindRawFetchFake(t, &testRuntime, "connect-access-secret", func(request googlehealth.RawRequest) []byte {
+		if request.EndpointName != "dataTypes.exercise.get" {
+			t.Fatalf("EndpointName = %q", request.EndpointName)
+		}
+		return payload
+	})
+	outputPath := filepath.Join(t.TempDir(), "raw-get.json")
+
+	var stdout, stderr bytes.Buffer
+	code := runWithRuntime([]string{
+		"raw", "data-type", "exercise", "get", "--id", "synthetic-id",
+		"--output", outputPath,
+		"--config", configPath,
+		"--db", archivePath,
+	}, &stdout, &stderr, testRuntime)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	got, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("output = %q, want exact Provider bytes %q", got, payload)
+	}
+	if !strings.Contains(stderr.String(), fmt.Sprintf("raw: wrote %d bytes", len(payload))) {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestRawDataPointGetUsesSharedProviderErrorPath(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	requestCount := 0
+	testRuntime.fetchRawProvider = func(context.Context, googlehealth.RawRequest, string) ([]byte, error) {
+		requestCount++
+		return nil, &googlehealth.HTTPError{StatusCode: http.StatusServiceUnavailable}
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runWithRuntime([]string{
+		"raw", "data-type", "weight", "get", "--id", "synthetic-id",
+		"--config", configPath,
+		"--db", archivePath,
+	}, &stdout, &stderr, testRuntime)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if stdout.Len() != 0 || !strings.Contains(stderr.String(), "HTTP 503") {
+		t.Fatalf("stdout/stderr = %q / %q", stdout.String(), stderr.String())
+	}
+	if requestCount != 1 {
+		t.Fatalf("Provider requests = %d, want 1", requestCount)
 	}
 }
 
