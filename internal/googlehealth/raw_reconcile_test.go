@@ -146,3 +146,17 @@ func TestValidateRawReconcileOptionsAcceptsProgrammaticValuesWithoutFlagProvenan
 		t.Fatalf("ValidateRawRequestOptions: %v", err)
 	}
 }
+
+func TestBuildRawListRejectsProgrammaticSourceFamilyWithoutFlagProvenance(t *testing.T) {
+	t.Parallel()
+
+	_, err := BuildRawRequest(RawRequestOptions{
+		Target:       []string{"data-type", "steps"},
+		From:         "2026-01-01",
+		SourceFamily: "wearable",
+		ResolvedAt:   time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
+	})
+	if err == nil || !strings.Contains(err.Error(), "supported only by raw data-type <data-type> reconcile") {
+		t.Fatalf("BuildRawRequest error = %v", err)
+	}
+}

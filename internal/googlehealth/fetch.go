@@ -157,7 +157,7 @@ func ValidateRawRequestOptions(options RawRequestOptions) error {
 		if _, ok := sourceFamilyCatalog[options.SourceFamily]; !ok {
 			return fmt.Errorf("raw --source-family currently supports only %s", supportedSourceFamilyList())
 		}
-	} else if options.SourceFamilyProvided {
+	} else if options.SourceFamilyProvided || options.SourceFamily != "" {
 		return errors.New("--source-family is supported only by raw data-type <data-type> reconcile")
 	}
 	if target.family == "" {
@@ -187,6 +187,9 @@ func BuildRawRequest(options RawRequestOptions) (RawRequest, error) {
 // DescribeRawRequest builds the same request returned by BuildRawRequest and
 // adds the resolved, non-secret facts needed by raw --plan.
 func DescribeRawRequest(options RawRequestOptions) (RawRequestDescription, error) {
+	if err := ValidateRawRequestOptions(options); err != nil {
+		return RawRequestDescription{}, err
+	}
 	target, err := parseRawRequestTarget(options)
 	if err != nil {
 		return RawRequestDescription{}, err
