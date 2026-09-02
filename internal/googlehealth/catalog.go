@@ -15,6 +15,7 @@ type endpointFamily string
 
 const (
 	endpointFamilyList        endpointFamily = "list"
+	endpointFamilyGet         endpointFamily = "get"
 	endpointFamilyReconcile   endpointFamily = "reconcile"
 	endpointFamilyRollUp      endpointFamily = "rollUp"
 	endpointFamilyDailyRollUp endpointFamily = "dailyRollUp"
@@ -129,6 +130,13 @@ func listEndpoint(filterField string) map[endpointFamily]endpointSupport {
 	}
 }
 
+func listGetEndpoint(filterField string) map[endpointFamily]endpointSupport {
+	return map[endpointFamily]endpointSupport{
+		endpointFamilyList: {FilterField: filterField},
+		endpointFamilyGet:  {},
+	}
+}
+
 func lowerBoundOnlyListEndpoint(filterField string) map[endpointFamily]endpointSupport {
 	return map[endpointFamily]endpointSupport{
 		endpointFamilyList: {FilterField: filterField, LowerBoundOnly: true},
@@ -138,6 +146,14 @@ func lowerBoundOnlyListEndpoint(filterField string) map[endpointFamily]endpointS
 func listReconcileEndpoints(filterField string) map[endpointFamily]endpointSupport {
 	return map[endpointFamily]endpointSupport{
 		endpointFamilyList:      {FilterField: filterField},
+		endpointFamilyReconcile: {FilterField: filterField},
+	}
+}
+
+func listGetReconcileEndpoints(filterField string) map[endpointFamily]endpointSupport {
+	return map[endpointFamily]endpointSupport{
+		endpointFamilyList:      {FilterField: filterField},
+		endpointFamilyGet:       {},
 		endpointFamilyReconcile: {FilterField: filterField},
 	}
 }
@@ -279,7 +295,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		RecordKind:           "session",
 		UsesDateRangeDefault: true,
 		DefaultConfigType:    true,
-		SupportedEndpoints:   listEndpoint("sleep.interval.civil_end_time"),
+		SupportedEndpoints:   listGetEndpoint("sleep.interval.civil_end_time"),
 	},
 	{
 		DataType:             "exercise",
@@ -289,7 +305,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		RecordKind:           "session",
 		UsesDateRangeDefault: true,
 		DefaultConfigType:    true,
-		SupportedEndpoints:   listEndpoint("exercise.interval.civil_start_time"),
+		SupportedEndpoints:   listGetEndpoint("exercise.interval.civil_start_time"),
 	},
 	{
 		DataType:           "distance",
@@ -317,7 +333,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		JSONField:          "weight",
 		RecordKind:         "sample",
 		DefaultConfigType:  true,
-		SupportedEndpoints: listReconcileEndpoints("weight.sample_time.physical_time"),
+		SupportedEndpoints: listGetReconcileEndpoints("weight.sample_time.physical_time"),
 	},
 	{
 		// floors is the first Tier 1 Data Type to land via the new
@@ -457,7 +473,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		Parser:             "sample",
 		JSONField:          "bodyFat",
 		RecordKind:         "sample",
-		SupportedEndpoints: listReconcileEndpoints("body_fat.sample_time.physical_time"),
+		SupportedEndpoints: listGetReconcileEndpoints("body_fat.sample_time.physical_time"),
 	},
 	{
 		DataType:           "blood-glucose",
@@ -465,7 +481,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		Parser:             "sample",
 		JSONField:          "bloodGlucose",
 		RecordKind:         "sample",
-		SupportedEndpoints: listReconcileEndpoints("blood_glucose.sample_time.physical_time"),
+		SupportedEndpoints: listGetReconcileEndpoints("blood_glucose.sample_time.physical_time"),
 	},
 	{
 		DataType:           "core-body-temperature",
@@ -473,7 +489,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		Parser:             "sample",
 		JSONField:          "coreBodyTemperature",
 		RecordKind:         "sample",
-		SupportedEndpoints: listReconcileEndpoints("core_body_temperature.sample_time.physical_time"),
+		SupportedEndpoints: listGetReconcileEndpoints("core_body_temperature.sample_time.physical_time"),
 	},
 	{
 		DataType:           "height",
@@ -481,7 +497,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		Parser:             "sample",
 		JSONField:          "height",
 		RecordKind:         "sample",
-		SupportedEndpoints: listReconcileEndpoints("height.sample_time.physical_time"),
+		SupportedEndpoints: listGetReconcileEndpoints("height.sample_time.physical_time"),
 	},
 	// Tier 1 Daily + hydration Data Types (#103). Four reuse the
 	// existing daily parser shape (one row per civil date); one is
@@ -533,7 +549,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		JSONField:            "hydrationLog",
 		RecordKind:           "session",
 		UsesDateRangeDefault: true,
-		SupportedEndpoints:   listEndpoint("hydration_log.interval.civil_start_time"),
+		SupportedEndpoints:   listGetEndpoint("hydration_log.interval.civil_start_time"),
 	},
 	{
 		DataType:             "nutrition-log",
@@ -542,7 +558,7 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		JSONField:            "nutritionLog",
 		RecordKind:           "session",
 		UsesDateRangeDefault: true,
-		SupportedEndpoints:   listReconcileEndpoints("nutrition_log.interval.civil_start_time"),
+		SupportedEndpoints:   listGetReconcileEndpoints("nutrition_log.interval.civil_start_time"),
 	},
 	// Tier 2 ECG + IRN Data Types (#104). Both are list-only session
 	// shapes, gated behind opt-in scopes the user grants via
@@ -665,6 +681,23 @@ func ListableDataTypes() []string {
 	return dataTypes
 }
 
+// GettableDataTypes returns the sorted Data Types whose canonical catalog
+// entry supports fetching one Data Point by Provider ID.
+func GettableDataTypes() []string {
+	var dataTypes []string
+	for _, dataType := range googleHealthDataTypes.order {
+		entry, ok := googleHealthDataTypes.Lookup(dataType)
+		if !ok {
+			continue
+		}
+		if _, ok := entry.SupportedEndpoints[endpointFamilyGet]; ok {
+			dataTypes = append(dataTypes, dataType)
+		}
+	}
+	sort.Strings(dataTypes)
+	return dataTypes
+}
+
 // SupportedSourceFamilies returns the sorted source-family keywords accepted
 // by SourceFamilyFilterName.
 func SupportedSourceFamilies() []string {
@@ -684,15 +717,26 @@ func ScopesForDataType(dataType string) []string {
 	return append([]string(nil), entry.RequiredScopes...)
 }
 
-func googleHealthDataTypeFilterSupport(dataType string, family endpointFamily) (endpointSupport, error) {
+func googleHealthDataTypeEndpointSupport(dataType string, family endpointFamily) (endpointSupport, error) {
 	entry, ok := googleHealthDataTypes.Lookup(dataType)
 	if !ok {
 		return endpointSupport{}, fmt.Errorf("raw Data Type %q is not in the catalog", dataType)
 	}
-	if support, ok := entry.SupportedEndpoints[family]; ok && support.FilterField != "" {
+	if support, ok := entry.SupportedEndpoints[family]; ok {
 		return support, nil
 	}
 	return endpointSupport{}, fmt.Errorf("raw Data Type %q is not supported by dataPoints.%s", dataType, family)
+}
+
+func googleHealthDataTypeFilterSupport(dataType string, family endpointFamily) (endpointSupport, error) {
+	support, err := googleHealthDataTypeEndpointSupport(dataType, family)
+	if err != nil {
+		return endpointSupport{}, err
+	}
+	if support.FilterField == "" {
+		return endpointSupport{}, fmt.Errorf("raw Data Type %q dataPoints.%s has no filter field", dataType, family)
+	}
+	return support, nil
 }
 
 func googleHealthDataTypeFilterField(dataType string, family endpointFamily) (string, error) {

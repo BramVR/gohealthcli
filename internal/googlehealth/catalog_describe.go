@@ -69,6 +69,7 @@ type CatalogDiscoveryField struct {
 
 var catalogEndpointOrder = []endpointFamily{
 	endpointFamilyList,
+	endpointFamilyGet,
 	endpointFamilyReconcile,
 	endpointFamilyRollUp,
 	endpointFamilyDailyRollUp,
@@ -136,6 +137,10 @@ func catalogEndpointDescription(dataType string, family endpointFamily, support 
 		endpoint.RangeShape = string(target)
 		endpoint.PagePolicy.PageSize = syncDataPointPageSize(dataType)
 		endpoint.PagePolicy.PageSizePolicy = "explicit"
+	case endpointFamilyGet:
+		endpoint.RangeShape = "none"
+		endpoint.PagePolicy.Pagination = "none"
+		endpoint.PagePolicy.PageSizePolicy = "not_applicable"
 	case endpointFamilyDailyRollUp:
 		endpoint.RangeShape = string(RangeTargetDaily)
 		endpoint.PagePolicy.RangeWindowMaxDays = googleHealthDailyRollupMaxRangeDays(dataType)

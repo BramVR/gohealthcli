@@ -479,6 +479,7 @@ var commands = []commandDef{
 		PositionalArgs:       "<target> [<args>...]",
 		PositionalCompletion: valueCompletionRawPositionals,
 		Flags: withCommonSubset(rawCommonFlagNames(),
+			flagSpec{Name: "id", Type: "string", Default: "", Usage: "opaque Provider Data Point ID (data-type get only)", ValueCompletion: valueCompletionNone},
 			flagSpec{Name: "from", Type: "string", Default: "", Usage: "inclusive time-range start (where supported by the endpoint)", ValueCompletion: valueCompletionNone},
 			flagSpec{Name: "to", Type: "string", Default: "", Usage: "exclusive time-range end (where supported by the endpoint)", ValueCompletion: valueCompletionNone},
 			flagSpec{Name: "timezone", Type: "string", Default: "", Usage: "IANA timezone for now, today, and yesterday (Data Type lists only; default config, then UTC)", ValueCompletion: valueCompletionNone},
