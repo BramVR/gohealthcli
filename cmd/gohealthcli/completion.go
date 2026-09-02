@@ -248,6 +248,11 @@ func completeValues(policy valueCompletionPolicy, args []string, toComplete stri
 		return completeCatalog(googlehealth.SupportedSourceFamilies(), toComplete), cobra.ShellCompDirectiveNoFileComp
 	case valueCompletionRawPositionals:
 		return completeRawPositionals(args, toComplete), cobra.ShellCompDirectiveNoFileComp
+	case valueCompletionRawRollupWindow:
+		if len(args) == 3 && args[0] == string(googlehealth.RawTargetDataType) && args[2] == "rollup" {
+			return completeCatalog(googlehealth.RawRollupWindowGranularities(args[1]), toComplete), cobra.ShellCompDirectiveNoFileComp
+		}
+		return nil, cobra.ShellCompDirectiveNoFileComp
 	case valueCompletionShell:
 		if len(args) != 0 {
 			return nil, cobra.ShellCompDirectiveNoFileComp

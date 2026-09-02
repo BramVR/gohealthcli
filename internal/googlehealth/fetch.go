@@ -3,6 +3,7 @@ package googlehealth
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -54,6 +55,8 @@ type RawRequestOptions struct {
 	PageTokenProvided    bool
 	SourceFamily         string
 	SourceFamilyProvided bool
+	Window               string
+	WindowProvided       bool
 	// TimezoneFallback resolves the command's non-secret configured timezone.
 	// The Provider calls it only for a Data Type target with no explicit
 	// timezone. Identity targets and explicit timezones never invoke it.
@@ -70,6 +73,7 @@ type RawRequestDescription struct {
 	PageTokenProvided bool
 	Headers           map[string]string
 	SanitizedURL      string
+	SanitizedBody     []byte
 }
 
 // RawTargetKind is the first positional discriminator accepted by
@@ -143,6 +147,23 @@ func ValidateRawRequestOptions(options RawRequestOptions) error {
 		}
 	} else if options.IDProvided {
 		return errors.New("--id is supported only by raw data-type <data-type> get")
+	}
+	if target.family == endpointFamilyDailyRollUp || target.family == endpointFamilyRollUp {
+		if options.From == "" || options.To == "" {
+			return fmt.Errorf("raw data-type %s %s requires --from and --to", target.dataType, rawRollupOperation(target.family))
+		}
+		if target.family == endpointFamilyRollUp {
+			if options.Window == "" {
+				return fmt.Errorf("raw data-type %s rollup requires --window", target.dataType)
+			}
+			if _, err := rawRollupWindowSize(target.dataType, options.Window); err != nil {
+				return err
+			}
+		} else if options.WindowProvided || options.Window != "" {
+			return errors.New("--window is supported only by raw data-type <data-type> rollup")
+		}
+	} else if options.WindowProvided || options.Window != "" {
+		return errors.New("--window is supported only by raw data-type <data-type> rollup")
 	}
 	if target.family == endpointFamilyReconcile {
 		if options.From == "" {
@@ -228,7 +249,46 @@ func DescribeRawRequest(options RawRequestOptions) (RawRequestDescription, error
 		if target.family == endpointFamilyReconcile && pageSize == 0 {
 			pageSize = dataPointReadPageSize(target.dataType)
 		}
-		request, err = buildGoogleHealthDataPointReadRawRequest(target.dataType, resolved.From, resolved.To, options.SourceFamily, pageSize, options.PageToken)
+		if target.family == endpointFamilyDailyRollUp || target.family == endpointFamilyRollUp {
+			spec := RollupSpec{cursorKind: "daily", endpointFamily: endpointFamilyDailyRollUp, windowSize: 24 * time.Hour}
+			if target.family == endpointFamilyRollUp {
+				windowSize, windowErr := rawRollupWindowSize(target.dataType, options.Window)
+				if windowErr != nil {
+					return RawRequestDescription{}, windowErr
+				}
+				spec = RollupSpec{cursorKind: "window=" + options.Window, endpointFamily: endpointFamilyRollUp, windowSize: windowSize}
+			}
+			resolved.From, resolved.To, err = normalizeRawRollupRange(spec, resolved.From, resolved.To, options.ResolvedAt)
+			if err != nil {
+				return RawRequestDescription{}, err
+			}
+		}
+		switch target.family {
+		case endpointFamilyDailyRollUp:
+			windows, windowErr := googleHealthDailyRollupDateWindows(target.dataType, resolved.From, resolved.To)
+			if windowErr != nil {
+				return RawRequestDescription{}, windowErr
+			}
+			if len(windows) != 1 {
+				return RawRequestDescription{}, fmt.Errorf("raw data-type %s daily-rollup range needs %d Provider requests; narrow --from/--to to one Provider request", target.dataType, len(windows))
+			}
+			request, err = buildGoogleHealthDailyRollupRawRequest(target.dataType, windows[0].from, windows[0].to, pageSize, options.PageToken)
+		case endpointFamilyRollUp:
+			windowSize, windowErr := rawRollupWindowSize(target.dataType, options.Window)
+			if windowErr != nil {
+				return RawRequestDescription{}, windowErr
+			}
+			windows, windowErr := googleHealthWindowRollupRanges(target.dataType, resolved.From, resolved.To, windowSize)
+			if windowErr != nil {
+				return RawRequestDescription{}, windowErr
+			}
+			if len(windows) != 1 {
+				return RawRequestDescription{}, fmt.Errorf("raw data-type %s rollup range needs %d Provider requests; narrow --from/--to to one Provider request", target.dataType, len(windows))
+			}
+			request, err = buildGoogleHealthRollupRawRequest(target.dataType, windows[0].from, windows[0].to, fmt.Sprintf("%ds", int64(windowSize.Seconds())), pageSize, options.PageToken)
+		default:
+			request, err = buildGoogleHealthDataPointReadRawRequest(target.dataType, resolved.From, resolved.To, options.SourceFamily, pageSize, options.PageToken)
+		}
 		if err != nil {
 			return RawRequestDescription{}, err
 		}
@@ -246,6 +306,10 @@ func DescribeRawRequest(options RawRequestOptions) (RawRequestDescription, error
 	if err != nil {
 		return RawRequestDescription{}, err
 	}
+	sanitizedBody, err := sanitizeRawRequestBody(request.Body)
+	if err != nil {
+		return RawRequestDescription{}, err
+	}
 	return RawRequestDescription{
 		Request:           request,
 		Range:             resolvedRange,
@@ -253,7 +317,26 @@ func DescribeRawRequest(options RawRequestOptions) (RawRequestDescription, error
 		PageTokenProvided: options.PageTokenProvided,
 		Headers:           rawRequestHeaders(request),
 		SanitizedURL:      sanitizedURL,
+		SanitizedBody:     sanitizedBody,
 	}, nil
+}
+
+func sanitizeRawRequestBody(body []byte) ([]byte, error) {
+	if len(body) == 0 {
+		return nil, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return nil, fmt.Errorf("sanitize raw request body: %w", err)
+	}
+	if _, ok := fields["pageToken"]; ok {
+		fields["pageToken"] = json.RawMessage(`"REDACTED"`)
+	}
+	sanitized, err := json.Marshal(fields)
+	if err != nil {
+		return nil, fmt.Errorf("sanitize raw request body: %w", err)
+	}
+	return sanitized, nil
 }
 
 // sanitizeRawRequestURL removes sensitive opaque inputs from a
@@ -343,7 +426,13 @@ func parseRawRequestTarget(options RawRequestOptions) (rawRequestTarget, error) 
 		if len(target) == 3 && target[2] == "reconcile" {
 			return parseRawDataTypeTarget(target[1], endpointFamilyReconcile)
 		}
-		return rawRequestTarget{}, errors.New("data-type mode requires a Data Type and optional get or reconcile operation")
+		if len(target) == 3 && target[2] == "daily-rollup" {
+			return parseRawDataTypeTarget(target[1], endpointFamilyDailyRollUp)
+		}
+		if len(target) == 3 && target[2] == "rollup" {
+			return parseRawDataTypeTarget(target[1], endpointFamilyRollUp)
+		}
+		return rawRequestTarget{}, errors.New("data-type mode requires a Data Type and optional get, reconcile, daily-rollup, or rollup operation")
 	default:
 		return rawRequestTarget{}, fmt.Errorf("unsupported raw target %q", target[0])
 	}
@@ -356,6 +445,16 @@ func parseRawDataTypeTarget(dataType string, family endpointFamily) (rawRequestT
 		}
 		return rawRequestTarget{dataType: dataType, family: endpointFamilyGet}, nil
 	}
+	if family == endpointFamilyDailyRollUp || family == endpointFamilyRollUp {
+		if _, err := googleHealthDataTypeEndpointSupport(dataType, family); err != nil {
+			return rawRequestTarget{}, err
+		}
+		rangeTarget := RangeTargetPhysical
+		if family == endpointFamilyDailyRollUp {
+			rangeTarget = RangeTargetDaily
+		}
+		return rawRequestTarget{dataType: dataType, rangeTarget: rangeTarget, family: family}, nil
+	}
 	reconcile := family == endpointFamilyReconcile
 	rangeTarget, err := SyncRangeTarget(dataType, nil, reconcile)
 	if err != nil {
@@ -366,6 +465,42 @@ func parseRawDataTypeTarget(dataType string, family endpointFamily) (rawRequestT
 		return rawRequestTarget{}, err
 	}
 	return rawRequestTarget{dataType: dataType, rangeTarget: rangeTarget, lowerBoundOnly: support.LowerBoundOnly, family: family}, nil
+}
+
+func rawRollupOperation(family endpointFamily) string {
+	if family == endpointFamilyDailyRollUp {
+		return "daily-rollup"
+	}
+	return "rollup"
+}
+
+func rawRollupWindowSize(dataType, value string) (time.Duration, error) {
+	support, err := googleHealthDataTypeEndpointSupport(dataType, endpointFamilyRollUp)
+	if err != nil {
+		return 0, err
+	}
+	windowSize, err := parseRawRollupWindowDuration(value)
+	if err != nil || windowSize < time.Second {
+		return 0, fmt.Errorf("raw --window %q: expected a duration of at least 1s", value)
+	}
+	for _, granularity := range support.WindowGranularities {
+		supported, parseErr := parseRawRollupWindowDuration(granularity)
+		if parseErr == nil && supported == windowSize {
+			return windowSize, nil
+		}
+	}
+	return 0, fmt.Errorf("raw Data Type %q supported window granularities: %s", dataType, strings.Join(support.WindowGranularities, ", "))
+}
+
+func parseRawRollupWindowDuration(value string) (time.Duration, error) {
+	if strings.HasSuffix(value, "d") {
+		days, err := strconv.ParseInt(strings.TrimSuffix(value, "d"), 10, 64)
+		if err != nil || days <= 0 || days > int64((1<<63-1)/(24*time.Hour)) {
+			return 0, fmt.Errorf("invalid day duration %q", value)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(value)
 }
 
 func buildGoogleHealthDataPointGetRawRequest(dataType, providerID string) (RawRequest, error) {

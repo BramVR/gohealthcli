@@ -716,7 +716,7 @@ func ReconcileDataTypes() []string {
 }
 
 // RawDataTypes returns the sorted Data Types available through an implicit
-// list read or an explicit get or reconcile raw operation.
+// list read or an explicit get, reconcile, or Rollup raw operation.
 func RawDataTypes() []string {
 	var dataTypes []string
 	for _, dataType := range googleHealthDataTypes.order {
@@ -733,6 +733,14 @@ func RawDataTypes() []string {
 			continue
 		}
 		if _, reconcile := entry.SupportedEndpoints[endpointFamilyReconcile]; reconcile {
+			dataTypes = append(dataTypes, dataType)
+			continue
+		}
+		if _, dailyRollup := entry.SupportedEndpoints[endpointFamilyDailyRollUp]; dailyRollup {
+			dataTypes = append(dataTypes, dataType)
+			continue
+		}
+		if _, rollup := entry.SupportedEndpoints[endpointFamilyRollUp]; rollup {
 			dataTypes = append(dataTypes, dataType)
 		}
 	}
@@ -754,8 +762,28 @@ func RawDataTypeOperations(dataType string) []string {
 	if _, ok := entry.SupportedEndpoints[endpointFamilyReconcile]; ok {
 		operations = append(operations, string(endpointFamilyReconcile))
 	}
+	if _, ok := entry.SupportedEndpoints[endpointFamilyDailyRollUp]; ok {
+		operations = append(operations, "daily-rollup")
+	}
+	if _, ok := entry.SupportedEndpoints[endpointFamilyRollUp]; ok {
+		operations = append(operations, "rollup")
+	}
 	sort.Strings(operations)
 	return operations
+}
+
+// RawRollupWindowGranularities returns the canonical physical Rollup windows
+// accepted for one Data Type. The returned slice does not share catalog state.
+func RawRollupWindowGranularities(dataType string) []string {
+	entry, ok := googleHealthDataTypes.Lookup(dataType)
+	if !ok {
+		return nil
+	}
+	support, ok := entry.SupportedEndpoints[endpointFamilyRollUp]
+	if !ok {
+		return nil
+	}
+	return append([]string(nil), support.WindowGranularities...)
 }
 
 // SupportedSourceFamilies returns the sorted source-family keywords accepted

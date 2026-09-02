@@ -102,17 +102,21 @@ func ParseRollupSpec(value string) (RollupSpec, error) {
 // shapes for this rollup kind so the operator no longer sees an
 // opaque upstream HTTP 400 for civil-on-hourly etc.
 func (spec RollupSpec) NormalizeRange(from, to string, now time.Time) (normFrom string, normTo string, err error) {
+	return spec.normalizeRange("sync", from, to, now)
+}
+
+func (spec RollupSpec) normalizeRange(command, from, to string, now time.Time) (normFrom string, normTo string, err error) {
 	_ = now // now is reserved for future relative-input ergonomics (e.g. "yesterday").
 	// Local names use the generic "norm" prefix because the emitted shape
 	// is per-rollup-kind: daily emits civil dates (YYYY-MM-DD), the
 	// windowed family emits RFC3339. Naming the locals rfcFrom/rfcTo
 	// (an earlier draft) misleadingly implied RFC3339 was always the
 	// output, hiding the daily-civil branch from readers.
-	normFrom, err = spec.normalizeBoundary(from, "--from")
+	normFrom, err = spec.normalizeBoundary(command, from, "--from")
 	if err != nil {
 		return "", "", err
 	}
-	normTo, err = spec.normalizeBoundary(to, "--to")
+	normTo, err = spec.normalizeBoundary(command, to, "--to")
 	if err != nil {
 		return "", "", err
 	}
@@ -122,7 +126,7 @@ func (spec RollupSpec) NormalizeRange(from, to string, now time.Time) (normFrom 
 // normalizeBoundary handles one end of the range. The shape it accepts
 // is the same for both ends; the per-rollup choice is what it EMITS
 // (civil for daily, RFC3339 for the windowed family).
-func (spec RollupSpec) normalizeBoundary(value, flag string) (string, error) {
+func (spec RollupSpec) normalizeBoundary(command, value, flag string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
@@ -134,14 +138,18 @@ func (spec RollupSpec) normalizeBoundary(value, flag string) (string, error) {
 	parsed, ok := ParseRangeBoundary(value)
 	if !ok {
 		return "", fmt.Errorf(
-			"sync %s %q for --rollup %s: expected YYYY-MM-DD or RFC3339 (e.g. 2026-01-02T00:00:00Z)",
-			flag, value, spec.cursorKind,
+			"%s %s %q for Rollup %s: expected YYYY-MM-DD or RFC3339 (e.g. 2026-01-02T00:00:00Z)",
+			command, flag, value, spec.cursorKind,
 		)
 	}
 	if spec.endpointFamily == endpointFamilyDailyRollUp {
 		return parsed.UTC().Format("2006-01-02"), nil
 	}
 	return parsed.UTC().Format(time.RFC3339Nano), nil
+}
+
+func normalizeRawRollupRange(spec RollupSpec, from, to string, now time.Time) (string, string, error) {
+	return spec.normalizeRange("raw", from, to, now)
 }
 
 // ParseRangeBoundary accepts either civil-date (YYYY-MM-DD,
