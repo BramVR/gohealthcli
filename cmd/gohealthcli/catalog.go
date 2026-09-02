@@ -321,6 +321,9 @@ func writeCatalogDiscoveryDescriptionPlain(writer *stickyWriter, discovery *goog
 }
 
 func catalogPageSizeLabel(policy googlehealth.CatalogPagePolicy) string {
+	if policy.PageSizePolicy == "not_applicable" {
+		return "not applicable"
+	}
 	if policy.PageSizePolicy == "provider_default" {
 		return policy.PageSizePolicy
 	}

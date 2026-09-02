@@ -39,6 +39,8 @@ type RawRequest struct {
 // flag provenance needed to reject range options on identity endpoints.
 type RawRequestOptions struct {
 	Target            []string
+	ID                string
+	IDProvided        bool
 	From              string
 	To                string
 	Timezone          string
@@ -97,7 +99,7 @@ type rawRequestTarget struct {
 	dataType       string
 	rangeTarget    RangeTarget
 	lowerBoundOnly bool
-	list           bool
+	family         endpointFamily
 }
 
 // ValidateRawRequestOptions performs target/flag validation that must happen
@@ -107,7 +109,7 @@ func ValidateRawRequestOptions(options RawRequestOptions) error {
 	if err != nil {
 		return err
 	}
-	if target.list && options.ToProvided {
+	if target.family == endpointFamilyList && options.ToProvided {
 		support, supportErr := googleHealthDataTypeFilterSupport(target.dataType, endpointFamilyList)
 		if supportErr != nil {
 			return supportErr
@@ -116,7 +118,31 @@ func ValidateRawRequestOptions(options RawRequestOptions) error {
 			return fmt.Errorf("raw %s supports only --from because the Provider exposes no ECG upper-bound filter", target.dataType)
 		}
 	}
-	if !target.list {
+	if target.family == endpointFamilyGet {
+		if !options.IDProvided {
+			return fmt.Errorf("raw data-type %s get requires --id", target.dataType)
+		}
+		if options.ID == "" {
+			return errors.New("--id requires a non-empty Provider ID")
+		}
+		for _, provided := range []struct {
+			name string
+			set  bool
+		}{
+			{name: "--from", set: options.FromProvided},
+			{name: "--to", set: options.ToProvided},
+			{name: "--timezone", set: options.TimezoneProvided},
+			{name: "--page-size", set: options.PageSizeProvided},
+			{name: "--page-token", set: options.PageTokenProvided},
+		} {
+			if provided.set {
+				return fmt.Errorf("raw data-type %s get does not support %s", target.dataType, provided.name)
+			}
+		}
+	} else if options.IDProvided {
+		return errors.New("--id is supported only by raw data-type <data-type> get")
+	}
+	if target.family == "" {
 		for _, provided := range []struct {
 			name string
 			set  bool
@@ -149,14 +175,20 @@ func DescribeRawRequest(options RawRequestOptions) (RawRequestDescription, error
 	}
 	var request RawRequest
 	var resolvedRange *ResolvedRange
-	if !target.list {
+	switch target.family {
+	case "":
 		request = RawRequest{
 			EndpointName:   target.endpointName,
 			Method:         http.MethodGet,
 			URL:            target.endpointURL,
 			RequiredScopes: target.requiredScopes,
 		}
-	} else {
+	case endpointFamilyGet:
+		request, err = buildGoogleHealthDataPointGetRawRequest(target.dataType, options.ID)
+		if err != nil {
+			return RawRequestDescription{}, err
+		}
+	default:
 		if options.ResolvedAt.IsZero() {
 			return RawRequestDescription{}, errors.New("raw Data Type range resolution requires a captured clock")
 		}
@@ -199,12 +231,25 @@ func DescribeRawRequest(options RawRequestOptions) (RawRequestDescription, error
 	}, nil
 }
 
-// sanitizeRawRequestURL removes paging token material from a production-built
-// request URL while preserving its method, path, and other query inputs.
+// sanitizeRawRequestURL removes sensitive opaque inputs from a
+// production-built request URL while preserving its non-sensitive shape.
 func sanitizeRawRequestURL(request RawRequest) (string, error) {
 	parsed, err := url.Parse(request.URL)
 	if err != nil {
 		return "", fmt.Errorf("sanitize raw request URL: %w", err)
+	}
+	if request.DataType != "" && strings.HasSuffix(request.EndpointName, ".get") {
+		escapedPath := parsed.EscapedPath()
+		lastSlash := strings.LastIndex(escapedPath, "/")
+		if lastSlash < 0 {
+			return "", errors.New("sanitize raw request URL: get request path has no Data Point ID segment")
+		}
+		escapedPath = escapedPath[:lastSlash+1] + "REDACTED"
+		parsed.Path, err = url.PathUnescape(escapedPath)
+		if err != nil {
+			return "", fmt.Errorf("sanitize raw request URL path: %w", err)
+		}
+		parsed.RawPath = escapedPath
 	}
 	query := parsed.Query()
 	if query.Has("pageToken") {
@@ -260,20 +305,29 @@ func parseRawRequestTarget(options RawRequestOptions) (rawRequestTarget, error) 
 		}
 		if strings.HasPrefix(target[1], "dataTypes.") && strings.HasSuffix(target[1], ".list") {
 			dataType := strings.TrimSuffix(strings.TrimPrefix(target[1], "dataTypes."), ".list")
-			return parseRawDataTypeTarget(dataType)
+			return parseRawDataTypeTarget(dataType, endpointFamilyList)
 		}
 		return rawRequestTarget{}, fmt.Errorf("unsupported raw endpoint %q", target[1])
 	case RawTargetDataType:
-		if len(target) != 2 {
-			return rawRequestTarget{}, errors.New("data-type mode requires exactly one Data Type")
+		if len(target) == 2 {
+			return parseRawDataTypeTarget(target[1], endpointFamilyList)
 		}
-		return parseRawDataTypeTarget(target[1])
+		if len(target) == 3 && target[2] == "get" {
+			return parseRawDataTypeTarget(target[1], endpointFamilyGet)
+		}
+		return rawRequestTarget{}, errors.New("data-type mode requires a Data Type and optional get operation")
 	default:
 		return rawRequestTarget{}, fmt.Errorf("unsupported raw target %q", target[0])
 	}
 }
 
-func parseRawDataTypeTarget(dataType string) (rawRequestTarget, error) {
+func parseRawDataTypeTarget(dataType string, family endpointFamily) (rawRequestTarget, error) {
+	if family == endpointFamilyGet {
+		if _, err := googleHealthDataTypeEndpointSupport(dataType, endpointFamilyGet); err != nil {
+			return rawRequestTarget{}, err
+		}
+		return rawRequestTarget{dataType: dataType, family: endpointFamilyGet}, nil
+	}
 	rangeTarget, err := SyncRangeTarget(dataType, nil, false)
 	if err != nil {
 		return rawRequestTarget{}, err
@@ -282,7 +336,26 @@ func parseRawDataTypeTarget(dataType string) (rawRequestTarget, error) {
 	if err != nil {
 		return rawRequestTarget{}, err
 	}
-	return rawRequestTarget{dataType: dataType, rangeTarget: rangeTarget, lowerBoundOnly: support.LowerBoundOnly, list: true}, nil
+	return rawRequestTarget{dataType: dataType, rangeTarget: rangeTarget, lowerBoundOnly: support.LowerBoundOnly, family: endpointFamilyList}, nil
+}
+
+func buildGoogleHealthDataPointGetRawRequest(dataType, providerID string) (RawRequest, error) {
+	if err := validateRawGoogleHealthDataType(dataType); err != nil {
+		return RawRequest{}, err
+	}
+	if providerID == "" {
+		return RawRequest{}, errors.New("Provider ID must not be empty")
+	}
+	if _, err := googleHealthDataTypeEndpointSupport(dataType, endpointFamilyGet); err != nil {
+		return RawRequest{}, err
+	}
+	return RawRequest{
+		EndpointName:   "dataTypes." + dataType + ".get",
+		DataType:       dataType,
+		Method:         http.MethodGet,
+		URL:            googleHealthBaseURL + "/users/me/dataTypes/" + url.PathEscape(dataType) + "/dataPoints/" + url.PathEscape(providerID),
+		RequiredScopes: ScopesForDataType(dataType),
+	}, nil
 }
 
 func buildGoogleHealthDataTypeListRawRequest(dataType, from, to string, pageSize int64, pageToken string) (RawRequest, error) {

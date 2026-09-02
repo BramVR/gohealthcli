@@ -19,6 +19,7 @@ type rawCommandOptions struct {
 	timezone    string
 	pageSize    int64
 	pageToken   string
+	id          string
 	target      []string
 	plan        bool
 	outputPath  string
@@ -49,6 +50,7 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	rawTimezone := flags.String("timezone", "", "IANA timezone for now, today, and yesterday (Data Type lists only; default config, then UTC)")
 	rawPageSize := flags.Int64("page-size", 0, "pagination page size (positive integer; where supported by the endpoint)")
 	rawPageToken := flags.String("page-token", "", "pagination page token from a prior response")
+	rawID := flags.String("id", "", "opaque Provider Data Point ID (data-type get only)")
 	rawPlan := flags.Bool("plan", false, "print the exact secret-free Provider request plan without external access")
 	rawOutput := flags.String("output", "", "write exact Provider response bytes to a new private file")
 
@@ -64,6 +66,7 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		fmt.Fprintln(w, "usage: gohealthcli raw endpoint getIdentity [--output <path> | --plan [--json|--plain]]")
 		fmt.Fprintln(w, "usage: gohealthcli raw endpoint dataTypes.<data-type>.list --from <boundary> [--to <boundary>] [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
 		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> --from <boundary> [--to <boundary>] [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> get --id <provider-id> [--output <path> | --plan [--json|--plain]]")
 	}
 	// stdlib's flag package calls fs.Usage on BOTH `-h` and a parse
 	// error. Suppress that auto-call entirely and emit the bespoke
@@ -128,12 +131,15 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		timezone:    *rawTimezone,
 		pageSize:    *rawPageSize,
 		pageToken:   *rawPageToken,
+		id:          *rawID,
 		target:      target,
 		plan:        *rawPlan,
 		outputPath:  *rawOutput,
 	}
 	requestOptions := googlehealth.RawRequestOptions{
 		Target:            options.target,
+		ID:                options.id,
+		IDProvided:        flagWasProvided(flags, "id"),
 		From:              options.from,
 		To:                options.to,
 		Timezone:          options.timezone,

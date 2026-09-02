@@ -204,7 +204,7 @@ func TestSyncRollupSpecValidateAgainstDataTypeRejectsSleepDailyWithSupportedEndp
 	if !strings.Contains(msg, "sleep") || !strings.Contains(msg, "daily") {
 		t.Errorf("err = %q, want sleep and daily mentions", msg)
 	}
-	if !strings.Contains(msg, "SupportedEndpoints=[list]") {
+	if !strings.Contains(msg, "SupportedEndpoints=[get, list]") {
 		t.Errorf("err = %q, want sleep's supported endpoint families", msg)
 	}
 }

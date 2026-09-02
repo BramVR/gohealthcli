@@ -7,7 +7,7 @@ read_when:
 ---
 # Research
 
-Last checked: 2026-08-20.
+Last checked: 2026-09-02.
 
 ## Findings
 
@@ -88,6 +88,27 @@ contract for `menstrual-period`, `moods`, `ovulation-test`, and `symptoms`:
 No credential, Connection identifier, Provider payload, or Health Archive data
 was read or published for this evidence.
 
+## Data Point get contract evidence (C6)
+
+Non-sensitive public evidence checked on 2026-09-02 records the current
+single-Data-Point read contract:
+
+- The REST reference defines one bodyless `GET` request at
+  `https://health.googleapis.com/v4/{name=users/*/dataTypes/*/dataPoints/*}`.
+  The final segment is the Data Point ID and the response is one `DataPoint`.
+- Google's current Data Types operation table includes `get` for the compiled
+  catalog rows `blood-glucose`, `body-fat`, `core-body-temperature`,
+  `exercise`, `height`, `hydration-log`, `nutrition-log`, `sleep`, and
+  `weight`.
+- The same table includes `get` for `food` and `food-measurement-unit`. Those
+  are non-temporal catalog entities outside gohealthcli's operational Data
+  Point catalog, so this slice does not expose them through `raw data-type`.
+- The REST method's read scopes match the existing activity, health metrics,
+  nutrition, and sleep scopes already carried by those compiled catalog rows.
+
+No credential, Connection identifier, Provider payload, real Data Point ID, or
+Health Archive data was read or published for this evidence.
+
 ## Total calories Rollup contract evidence (C3)
 
 Non-sensitive public evidence checked on 2026-08-03 records the current
@@ -157,6 +178,7 @@ was read or published for this evidence.
 - Google Health API calories and energy data types (localized current catalog): https://developers.google.com/health/data-types/calories?hl=pt-br
 - Google Health API scopes: https://developers.google.com/health/scopes
 - Google Health API list method: https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/list
+- Google Health API get method: https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/get
 - Google Health API Rollup method: https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/rollUp
 - Google Health API daily Rollup method: https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/dailyRollUp
 - Google Health API total-calories Rollup value: https://developers.google.com/health/reference/rest/v4/TotalCaloriesRollupValue

@@ -315,6 +315,16 @@ func TestCompletionProtocolSuggestsRawTargetsAndValues(t *testing.T) {
 			want: googlehealth.RawEndpointNames(),
 		},
 		{
+			name: "supported Data Type operation",
+			args: []string{"__completeNoDesc", "raw", "data-type", "weight", ""},
+			want: []string{"get"},
+		},
+		{
+			name: "unsupported Data Type operation",
+			args: []string{"__completeNoDesc", "raw", "data-type", "steps", ""},
+			want: nil,
+		},
+		{
 			name: "endpoint prefix",
 			args: []string{"__completeNoDesc", "raw", "endpoint", "dataTypes.he"},
 			want: []string{
