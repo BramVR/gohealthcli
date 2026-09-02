@@ -131,6 +131,52 @@ func TestRawRollupPlanSanitizesPostBodyWithoutEffects(t *testing.T) {
 	}
 }
 
+func TestRawDailyRollupPlanPreservesNamedCivilDates(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	code := runWithRuntime([]string{
+		"raw", "data-type", "steps", "daily-rollup",
+		"--from", "yesterday", "--to", "today", "--timezone", "Europe/Brussels",
+		"--plan", "--json", "--config", "/synthetic/missing-config", "--db", "/synthetic/missing-archive",
+	}, &stdout, &stderr, forbiddenRawPlanRuntime(t))
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("exit/stderr = %d / %q", code, stderr.String())
+	}
+	var result rawPlanResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode plan: %v", err)
+	}
+	if result.Range == nil || result.Range.From != "2026-03-29" || result.Range.To != "2026-03-30" {
+		t.Fatalf("range = %+v, want Brussels civil dates", result.Range)
+	}
+	var body struct {
+		Range struct {
+			Start struct {
+				Date struct {
+					Year  int `json:"year"`
+					Month int `json:"month"`
+					Day   int `json:"day"`
+				} `json:"date"`
+			} `json:"start"`
+			End struct {
+				Date struct {
+					Year  int `json:"year"`
+					Month int `json:"month"`
+					Day   int `json:"day"`
+				} `json:"date"`
+			} `json:"end"`
+		} `json:"range"`
+	}
+	if err := json.Unmarshal(result.Request.Body, &body); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	if body.Range.Start.Date.Year != 2026 || body.Range.Start.Date.Month != 3 || body.Range.Start.Date.Day != 29 ||
+		body.Range.End.Date.Year != 2026 || body.Range.End.Date.Month != 3 || body.Range.End.Date.Day != 30 {
+		t.Fatalf("request range body = %+v", body.Range)
+	}
+}
+
 func TestRawRollupPlanHumanAndPlainDescribePostRequest(t *testing.T) {
 	t.Parallel()
 
