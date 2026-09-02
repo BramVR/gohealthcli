@@ -1,0 +1,4 @@
+interface:
+  display_name: "Verify gohealthcli"
+  short_description: "Drive the real CLI with isolated evidence"
+  default_prompt: "Use $verify-gohealthcli to exercise gohealthcli through its compiled CLI, capture terminal evidence, confirm side effects through a second read, and clean up only task-owned state."

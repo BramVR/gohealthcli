@@ -1,0 +1,1230 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+  printf 'verify-gohealthcli: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  printf 'usage:\n' >&2
+  printf '  verify-gohealthcli self-check\n' >&2
+  printf '  verify-gohealthcli suite <run-prefix> [smoke]\n' >&2
+  printf '  verify-gohealthcli <launch|doctor|cleanup> <run-id>\n' >&2
+  printf '  verify-gohealthcli drive <run-id> <initialize|local|inspect|plan|sync|backup|connected|discover|catalog>\n' >&2
+  exit 2
+}
+
+[[ $# -ge 1 ]] || usage
+action=$1
+run_id=${2:-}
+route=${3:-}
+
+if [[ "$action" != self-check ]]; then
+  [[ -n "$run_id" ]] || usage
+  [[ "$run_id" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || fail 'run-id must match [a-z0-9][a-z0-9._-]*'
+fi
+
+helper_dir=$(CDPATH= cd -- "$(dirname -- "$0")" >/dev/null && pwd -P)
+repo_root=$(cd "$helper_dir/../../../.." && pwd -P)
+run_root="/tmp/gohealthcli-verify-$run_id"
+source_snapshot="$run_root/source"
+evidence_parent="/tmp/gohealthcli-verify-evidence"
+evidence_root="$evidence_parent/$run_id"
+owner_file="$run_root/.gohealthcli-verify-owner"
+binary="$run_root/bin/gohealthcli"
+oauth_file="$run_root/synthetic-oauth-client.json"
+config_path="$run_root/config/config.toml"
+archive_path="$run_root/data/gohealthcli.sqlite"
+sidecar_path="$archive_path.attachments"
+home_path="$run_root/home"
+default_config_path="$home_path/.config/gohealthcli/config.toml"
+default_archive_path="$home_path/.local/share/gohealthcli/gohealthcli.sqlite"
+default_sidecar_path="$default_archive_path.attachments"
+discovery_file="$run_root/google-health-discovery-v4.json"
+discovery_source="$repo_root/internal/googlehealth/testdata/google-health-discovery-v4.json"
+readme_file="$run_root/README.md"
+gitconfig_file="$home_path/.gitconfig"
+shim_path="$run_root/shims"
+credential_probe="$run_root/credential-store-accessed"
+backup_root="$run_root/backup"
+backup_config="$backup_root/backup.json"
+backup_repo="$backup_root/checkout"
+backup_remote="$backup_root/remote.git"
+backup_identity="$backup_root/age-identity.txt"
+restored_archive="$backup_root/restored.sqlite"
+synthetic_oauth_json='{"installed":{"client_id":"synthetic-verification-client","client_secret":"synthetic-verification-secret","redirect_uris":["http://localhost"]}}'
+go_executable=${GOHEALTHCLI_VERIFY_GO:-$(command -v go || true)}
+export GOHEALTHCLI_VERIFY_GO="$go_executable"
+system_path='/usr/bin:/bin:/usr/sbin:/sbin'
+PATH=$system_path
+export PATH
+git_env_prefix=(
+  /usr/bin/env
+  -u GIT_DIR
+  -u GIT_WORK_TREE
+  -u GIT_COMMON_DIR
+  -u GIT_INDEX_FILE
+  -u GIT_OBJECT_DIRECTORY
+  -u GIT_ALTERNATE_OBJECT_DIRECTORIES
+  -u GIT_CONFIG
+  -u GIT_CONFIG_COUNT
+  -u GIT_CONFIG_PARAMETERS
+  -u GIT_CONFIG_GLOBAL
+  -u GIT_CONFIG_SYSTEM
+  -u GIT_EXEC_PATH
+  -u GIT_TEMPLATE_DIR
+  -u GIT_CEILING_DIRECTORIES
+  -u GIT_DISCOVERY_ACROSS_FILESYSTEM
+  -u GIT_SSH
+  -u GIT_SSH_COMMAND
+  -u GIT_PROXY_COMMAND
+  "PATH=$system_path"
+)
+task_env_prefix=(
+  "${git_env_prefix[@]}"
+  "HOME=$home_path"
+  "XDG_CONFIG_HOME=$home_path/.config"
+  "XDG_DATA_HOME=$home_path/.local/share"
+  "PATH=$shim_path:$system_path"
+  "GIT_CONFIG_NOSYSTEM=1"
+  "GIT_ATTR_NOSYSTEM=1"
+  "GIT_CONFIG_GLOBAL=$gitconfig_file"
+  "GIT_TERMINAL_PROMPT=0"
+  "HTTP_PROXY=http://127.0.0.1:1"
+  "HTTPS_PROXY=http://127.0.0.1:1"
+  "ALL_PROXY=http://127.0.0.1:1"
+  "NO_PROXY="
+  "http_proxy=http://127.0.0.1:1"
+  "https_proxy=http://127.0.0.1:1"
+  "all_proxy=http://127.0.0.1:1"
+  "no_proxy="
+)
+pty_env_prefix=(
+  /usr/bin/env
+  -i
+  "HOME=$home_path"
+  "PATH=$system_path"
+  "SHELL=/bin/sh"
+  "TERM=dumb"
+  "LC_ALL=C"
+  "LANG=C"
+)
+
+repo_git() {
+  "${git_env_prefix[@]}" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git "$@"
+}
+
+task_git() {
+  "${task_env_prefix[@]}" git "$@"
+}
+
+isolated_go_build() {
+  local build_root=$1 output=$2 ldflags=${3:-} target=${4:-./cmd/gohealthcli} build_source=${5:-$repo_root}
+  local go_bin ambient_module_cache
+  go_bin=$go_executable
+  [[ "$go_bin" == /* && -x "$go_bin" ]] || fail 'go must resolve to an absolute executable path'
+  ambient_module_cache=$(/usr/bin/env -u GOMODCACHE -u GOFLAGS -u GOWORK GOENV=off "$go_bin" env GOMODCACHE)
+  [[ "$ambient_module_cache" == /* && -d "$ambient_module_cache/cache/download" ]] || fail 'local Go module download cache is unavailable'
+  path_is_absent "$build_root" || fail "isolated Go build root already exists: $build_root"
+  mkdir -m 700 "$build_root"
+  mkdir "$build_root/home" "$build_root/cache" "$build_root/modcache" "$build_root/gopath" "$build_root/tmp"
+  chmod 700 "$build_root/home" "$build_root/cache" "$build_root/modcache" "$build_root/gopath" "$build_root/tmp"
+  local -a build_command
+  build_command=("$go_bin" build -mod=readonly -modcacherw)
+  if [[ -n "$ldflags" ]]; then
+    build_command+=(-ldflags "$ldflags")
+  fi
+  build_command+=(-o "$output" "$target")
+  (
+    cd "$build_source"
+    /usr/bin/env -i \
+      "HOME=$build_root/home" \
+      "PATH=$system_path" \
+      "TMPDIR=$build_root/tmp" \
+      "GOCACHE=$build_root/cache" \
+      "GOMODCACHE=$build_root/modcache" \
+      "GOPATH=$build_root/gopath" \
+      "GOENV=off" \
+      "GOFLAGS=" \
+      "GOWORK=off" \
+      "GOTOOLCHAIN=local" \
+      "GOPROXY=file://$ambient_module_cache/cache/download" \
+      "GOSUMDB=off" \
+      "GOVCS=off" \
+      "LC_ALL=C" \
+      "LANG=C" \
+      "${build_command[@]}"
+  )
+}
+
+stage_source_snapshot() {
+  path_is_absent "$source_snapshot" || fail 'source snapshot already exists'
+  mkdir -m 700 "$source_snapshot"
+  local relative source destination
+  while IFS= read -r -d '' relative; do
+    source="$repo_root/$relative"
+    destination="$source_snapshot/$relative"
+    [[ -f "$source" && ! -L "$source" ]] || fail "source snapshot input is not a regular file: $relative"
+    mkdir -p "$(dirname "$destination")"
+    cp -p "$source" "$destination"
+  done < <(repo_git -C "$repo_root" ls-files --cached --others --exclude-standard -z)
+  [[ -f "$source_snapshot/go.mod" && -f "$source_snapshot/cmd/gohealthcli/main.go" ]] || fail 'source snapshot is incomplete'
+}
+
+require_tools() {
+  [[ "$go_executable" == /* && -x "$go_executable" ]] || fail 'go is required'
+  command -v git >/dev/null || fail 'git is required'
+  [[ -x /usr/bin/script ]] || fail '/usr/bin/script is required'
+  case "$(uname -s)" in
+    Darwin|Linux) ;;
+    *) fail 'verification helper supports macOS and Linux only' ;;
+  esac
+  local pty_probe pty_rc=0
+  pty_probe=$(mktemp /tmp/gohealthcli-verify-pty-exit.XXXXXX)
+  set +e
+  if [[ "$(uname -s)" == Darwin ]]; then
+    "${pty_env_prefix[@]}" /usr/bin/script -q "$pty_probe" /bin/sh -c 'exit 7' >/dev/null 2>&1
+    pty_rc=$?
+  else
+    "${pty_env_prefix[@]}" /usr/bin/script -q -e -c 'exit 7' "$pty_probe" >/dev/null 2>&1
+    pty_rc=$?
+  fi
+  set -e
+  rm -f "$pty_probe"
+  [[ "$pty_rc" == 7 ]] || fail '/usr/bin/script does not propagate child exit status on this host'
+}
+
+mode_of() {
+  if [[ "$(uname -s)" == Darwin ]]; then
+    stat -f '%Lp' "$1"
+  else
+    stat -c '%a' "$1"
+  fi
+}
+
+uid_of() {
+  if [[ "$(uname -s)" == Darwin ]]; then
+    stat -f '%u' "$1"
+  else
+    stat -c '%u' "$1"
+  fi
+}
+
+require_evidence_parent() {
+  if [[ ! -e "$evidence_parent" && ! -L "$evidence_parent" ]]; then
+    mkdir -m 700 "$evidence_parent" 2>/dev/null || true
+  fi
+  [[ -d "$evidence_parent" && ! -L "$evidence_parent" ]] || fail "evidence parent is missing or unsafe: $evidence_parent"
+  [[ "$(uid_of "$evidence_parent")" == "$(id -u)" ]] || fail 'evidence parent is not owned by the current user'
+  if [[ "$(mode_of "$evidence_parent")" != 700 ]]; then
+    chmod 700 "$evidence_parent"
+  fi
+  [[ "$(mode_of "$evidence_parent")" == 700 ]] || fail 'evidence parent must be mode 700'
+}
+
+require_evidence_root() {
+  require_evidence_parent
+  [[ -d "$evidence_root" && ! -L "$evidence_root" ]] || fail "evidence directory is missing or unsafe: $evidence_root"
+  [[ "$(uid_of "$evidence_root")" == "$(id -u)" ]] || fail 'evidence directory is not owned by the current user'
+  if [[ "$(mode_of "$evidence_root")" != 700 ]]; then
+    chmod 700 "$evidence_root"
+  fi
+  [[ "$(mode_of "$evidence_root")" == 700 ]] || fail 'evidence directory must be mode 700'
+}
+
+sha256_file() {
+  if command -v shasum >/dev/null; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    fail 'shasum or sha256sum is required'
+  fi
+}
+
+sha256_stream() {
+  if command -v shasum >/dev/null; then
+    shasum -a 256 | awk '{print $1}'
+  elif command -v sha256sum >/dev/null; then
+    sha256sum | awk '{print $1}'
+  else
+    fail 'shasum or sha256sum is required'
+  fi
+}
+
+repo_content_fingerprint() {
+  local entry path
+  {
+    printf 'head\0'
+    repo_git -C "$repo_root" rev-parse HEAD
+    printf '\0diff\0'
+    repo_git -C "$repo_root" diff --binary --no-ext-diff HEAD --
+    printf '\0untracked\0'
+    while IFS= read -r -d '' entry; do
+      printf '%s\0' "$entry"
+      path="$repo_root/$entry"
+      if [[ -L "$path" ]]; then
+        printf 'symlink\0%s\0' "$(readlink "$path")"
+      elif [[ -f "$path" ]]; then
+        printf 'file\0%s\0' "$(sha256_file "$path")"
+      else
+        printf 'other\0'
+      fi
+    done < <(repo_git -C "$repo_root" ls-files --others --exclude-standard -z)
+  } | sha256_stream
+}
+
+require_owned_run() {
+  [[ -d "$run_root" ]] || fail "run root missing: $run_root"
+  [[ ! -L "$run_root" ]] || fail "run root is a symlink: $run_root"
+  [[ "$(uid_of "$run_root")" == "$(id -u)" ]] || fail 'run root has the wrong owner'
+  [[ "$(mode_of "$run_root")" == 700 ]] || fail 'run root must be mode 700'
+  [[ -f "$owner_file" && ! -L "$owner_file" ]] || fail 'owner marker missing or unsafe'
+  [[ "$(uid_of "$owner_file")" == "$(id -u)" ]] || fail 'owner marker has the wrong owner'
+  [[ "$(mode_of "$owner_file")" == 600 ]] || fail 'owner marker must be mode 600'
+  [[ "$(<"$owner_file")" == "$run_id" ]] || fail 'owner marker does not match run-id'
+}
+
+path_is_absent() {
+  [[ ! -e "$1" && ! -L "$1" ]]
+}
+
+tree_fingerprint() {
+  local root=$1 path relative
+  [[ -d "$root" && ! -L "$root" ]] || fail "tree fingerprint root is missing or unsafe: $root"
+  {
+    printf 'root-mode\t%s\n' "$(mode_of "$root")"
+    while IFS= read -r path; do
+      relative=${path#"$root/"}
+      if [[ -L "$path" ]]; then
+        printf 'symlink\t%s\t%s\n' "$relative" "$(readlink "$path")"
+      elif [[ -f "$path" ]]; then
+        printf 'file\t%s\t%s\n' "$relative" "$(sha256_file "$path")"
+      elif [[ -d "$path" ]]; then
+        printf 'directory\t%s\t%s\n' "$relative" "$(mode_of "$path")"
+      else
+        printf 'other\t%s\n' "$relative"
+      fi
+    done < <(find -P "$root" -mindepth 1 -print | LC_ALL=C sort)
+  } | sha256_stream
+}
+
+sqlite_file_set_fingerprint() {
+  local database=$1 candidate
+  [[ -f "$database" && ! -L "$database" ]] || fail "SQLite database is missing or unsafe: $database"
+  {
+    for candidate in "$database" "$database-wal" "$database-shm" "$database-journal"; do
+      if path_is_absent "$candidate"; then
+        printf 'absent\t%s\n' "${candidate#"$database"}"
+      else
+        [[ -f "$candidate" && ! -L "$candidate" ]] || fail "SQLite file-set member is unsafe: $candidate"
+        printf 'file\t%s\t%s\t%s\n' "${candidate#"$database"}" "$(mode_of "$candidate")" "$(sha256_file "$candidate")"
+      fi
+    done
+  } | sha256_stream
+}
+
+backup_git() {
+  local repository=$1
+  shift
+  if [[ -d "$repository/.git" && ! -L "$repository/.git" ]]; then
+    task_git -C "$repository" "$@"
+  elif [[ -d "$repository" && ! -L "$repository" && -f "$repository/HEAD" ]]; then
+    task_git --git-dir="$repository" "$@"
+  else
+    fail "backup Git repository is missing or unsafe: $repository"
+  fi
+}
+
+verify_backup_history() {
+  local repository=$1 expected_readme_hash=$2 expected_manifest_hash=$3
+  local commit path blob_hash commit_count=0 path_count
+  while IFS= read -r commit; do
+    [[ -n "$commit" ]] || continue
+    commit_count=$((commit_count + 1))
+    path_count=0
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      path_count=$((path_count + 1))
+      case "$path" in
+        README.md)
+          blob_hash=$(backup_git "$repository" show "$commit:$path" | sha256_stream)
+          [[ "$blob_hash" == "$expected_readme_hash" ]] || fail "backup history contains an unexpected recovery README at $commit"
+          ;;
+        manifest.json)
+          blob_hash=$(backup_git "$repository" show "$commit:$path" | sha256_stream)
+          [[ "$blob_hash" == "$expected_manifest_hash" ]] || fail "backup history contains an unexpected cleartext manifest at $commit"
+          ;;
+        data/connections.jsonl.gz.age|data/data_points.jsonl.gz.age|data/data_point_revisions.jsonl.gz.age|data/data_point_attachments.jsonl.gz.age|data/attachment_payloads.jsonl.gz.age|data/rollups.jsonl.gz.age|data/identity_snapshots.jsonl.gz.age|data/sync_runs.jsonl.gz.age|data/sync_cursors.jsonl.gz.age)
+          backup_git "$repository" show "$commit:$path" | grep -aF 'age-encryption.org/v1' >/dev/null || fail "backup history contains non-age payload data at $commit:$path"
+          ;;
+        *) fail "backup history contains a non-allowlisted path at $commit:$path" ;;
+      esac
+    done < <(backup_git "$repository" ls-tree -r --name-only "$commit")
+    [[ "$path_count" -gt 0 ]] || fail "backup history contains an empty commit tree: $commit"
+  done < <(backup_git "$repository" rev-list --all)
+  [[ "$commit_count" -gt 0 ]] || fail "backup repository has no reachable commits: $repository"
+}
+
+utc_now() {
+  date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+append_event() {
+  local event=$1
+  local label=$2
+  local result=$3
+  local exit_code=${4:-null}
+  require_evidence_root
+  printf '{"timestamp":"%s","event":"%s","label":"%s","result":"%s","exit_code":%s}\n' \
+    "$(utc_now)" "$event" "$label" "$result" "$exit_code" >> "$evidence_root/events.jsonl"
+}
+
+write_manifest() {
+  require_evidence_root
+  local lifecycle=$1
+  local result=$2
+  local commit binary_hash started_at finished_at routes_json separator item
+  commit=$(repo_git -C "$repo_root" rev-parse HEAD 2>/dev/null || printf dev)
+  binary_hash=null
+  if [[ -f "$binary" && ! -L "$binary" ]]; then
+    binary_hash="\"$(sha256_file "$binary")\""
+  elif [[ -f "$evidence_root/launch.txt" ]]; then
+    binary_hash="\"$(sed -n 's/^binary_sha256: //p' "$evidence_root/launch.txt")\""
+  fi
+  started_at=$(sed -n '1p' "$evidence_root/started-at.txt" 2>/dev/null || utc_now)
+  finished_at=null
+  if [[ "$lifecycle" == cleaned ]]; then
+    finished_at="\"$(utc_now)\""
+  fi
+  routes_json='['
+  separator=''
+  if [[ -f "$evidence_root/routes.txt" ]]; then
+    while IFS= read -r item; do
+      [[ -n "$item" ]] || continue
+      routes_json+="$separator\"$item\""
+      separator=','
+    done < "$evidence_root/routes.txt"
+  fi
+  routes_json+=']'
+  {
+    printf '{\n'
+    printf '  "evidence_schema": 1,\n'
+    printf '  "run_id": "%s",\n' "$run_id"
+    printf '  "source_commit": "%s",\n' "$commit"
+    printf '  "binary_sha256": %s,\n' "$binary_hash"
+    printf '  "platform": "%s",\n' "$(uname -s)"
+    printf '  "started_at": "%s",\n' "$started_at"
+    printf '  "finished_at": %s,\n' "$finished_at"
+    printf '  "lifecycle": "%s",\n' "$lifecycle"
+    printf '  "result": "%s",\n' "$result"
+    printf '  "routes": %s\n' "$routes_json"
+    printf '}\n'
+  } > "$evidence_root/manifest.json"
+}
+
+record_command() {
+  local target=$1
+  shift
+  : > "$target"
+  local arg quoted
+  for arg in "$@"; do
+    printf -v quoted '%q' "$arg"
+    printf '%s ' "$quoted" >> "$target"
+  done
+  printf '\n' >> "$target"
+}
+
+run_pty() {
+  local label=$1
+  shift
+  run_pty_expected "$label" 0 "$@"
+}
+
+run_pty_expected() {
+  local label=$1
+  local expected=$2
+  shift 2
+  local transcript="$evidence_root/$label.typescript"
+  local command_file="$evidence_root/$label.command.txt"
+  local exit_file="$evidence_root/$label.exit.txt"
+  local rc=0 command_line='' arg quoted
+  local -a command_args
+  command_args=("$@")
+
+  if [[ "${command_args[0]:-}" == "$binary" ]]; then
+    command_args=("${task_env_prefix[@]}" "${command_args[@]}")
+  fi
+
+  require_evidence_root
+  record_command "$command_file" "${command_args[@]}"
+
+  set +e
+  if [[ "$(uname -s)" == Darwin ]]; then
+    "${pty_env_prefix[@]}" /usr/bin/script -q "$transcript" "${command_args[@]}"
+    rc=$?
+  else
+    for arg in "${command_args[@]}"; do
+      printf -v quoted '%q' "$arg"
+      command_line+=" $quoted"
+    done
+    "${pty_env_prefix[@]}" /usr/bin/script -q -e -c "$command_line" "$transcript"
+    rc=$?
+  fi
+  set -e
+  printf '%s\n' "$rc" > "$exit_file"
+  append_event cli "$label" "$([[ $rc -eq $expected ]] && printf passed || printf failed)" "$rc"
+  [[ $rc -eq $expected ]] || fail "$label exited $rc, expected $expected; see $transcript"
+}
+
+run_streams_expected() {
+  local label=$1 expected=$2
+  shift 2
+  local stdout_file="$evidence_root/$label.stdout.txt"
+  local stderr_file="$evidence_root/$label.stderr.txt"
+  local command_file="$evidence_root/$label.command.txt"
+  local exit_file="$evidence_root/$label.exit.txt"
+  local rc=0
+  local -a command_args
+  command_args=("$@")
+  if [[ "${command_args[0]:-}" == "$binary" ]]; then
+    command_args=("${task_env_prefix[@]}" "${command_args[@]}")
+  fi
+  require_evidence_root
+  record_command "$command_file" "${command_args[@]}"
+  set +e
+  "${pty_env_prefix[@]}" "${command_args[@]}" > "$stdout_file" 2> "$stderr_file"
+  rc=$?
+  set -e
+  printf '%s\n' "$rc" > "$exit_file"
+  append_event cli-streams "$label" "$([[ $rc -eq $expected ]] && printf passed || printf failed)" "$rc"
+  [[ $rc -eq $expected ]] || fail "$label exited $rc, expected $expected; see stream evidence"
+}
+
+doctor_snapshot() {
+  local phase=$1
+  [[ "$phase" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || fail 'doctor phase is unsafe'
+  require_tools
+  require_evidence_root
+  require_owned_run
+  [[ "$(mode_of "$run_root")" == 700 ]] || fail 'run root must be mode 700'
+  [[ -d "$home_path" && ! -L "$home_path" && "$(mode_of "$home_path")" == 700 ]] || fail 'task HOME missing or unsafe'
+  [[ -x "$binary" && ! -L "$binary" ]] || fail 'task-owned binary missing or unsafe'
+  [[ -f "$oauth_file" && ! -L "$oauth_file" ]] || fail 'synthetic OAuth file missing or unsafe'
+  [[ "$(mode_of "$oauth_file")" == 600 ]] || fail 'synthetic OAuth file must be mode 600'
+  [[ "$(<"$oauth_file")" == "$synthetic_oauth_json" ]] || fail 'OAuth fixture is not the expected synthetic value'
+  [[ -f "$discovery_file" && ! -L "$discovery_file" && "$(mode_of "$discovery_file")" == 600 ]] || fail 'public discovery fixture missing or unsafe'
+  [[ "$(sha256_file "$discovery_file")" == "$(sha256_file "$discovery_source")" ]] || fail 'public discovery fixture differs from source snapshot'
+
+  local path parent
+  for parent in "$(dirname "$config_path")" "$(dirname "$archive_path")"; do
+    if ! path_is_absent "$parent"; then
+      [[ -d "$parent" && ! -L "$parent" ]] || fail "unsafe task-owned state directory: $parent"
+      [[ "$(uid_of "$parent")" == "$(id -u)" ]] || fail "task-owned state directory has the wrong owner: $parent"
+      [[ "$(mode_of "$parent")" == 700 ]] || fail "task-owned state directory must be mode 700: $parent"
+    fi
+  done
+  for path in "$config_path" "$archive_path"; do
+    if ! path_is_absent "$path"; then
+      [[ -f "$path" && ! -L "$path" ]] || fail "unsafe task-owned path: $path"
+      [[ "$(mode_of "$path")" == 600 ]] || fail "task-owned file must be mode 600: $path"
+    fi
+  done
+  if ! path_is_absent "$sidecar_path"; then
+    [[ -d "$sidecar_path" && ! -L "$sidecar_path" ]] || fail "unsafe sidecar path: $sidecar_path"
+    [[ "$(mode_of "$sidecar_path")" == 700 ]] || fail 'sidecar must be mode 700'
+  fi
+
+  local expected_commit expected_binary_hash expected_source_fingerprint
+  expected_commit=$(repo_git -C "$repo_root" rev-parse HEAD)
+  expected_binary_hash=$(sed -n 's/^binary_sha256: //p' "$evidence_root/launch.txt")
+  expected_source_fingerprint=$(sed -n 's/^source_fingerprint: //p' "$evidence_root/launch.txt")
+  [[ -n "$expected_binary_hash" && -n "$expected_source_fingerprint" ]] || fail 'launch identity evidence is incomplete'
+  [[ "$(sha256_file "$binary")" == "$expected_binary_hash" ]] || fail 'task-owned binary changed after launch'
+  [[ "$(repo_content_fingerprint)" == "$expected_source_fingerprint" ]] || fail 'repository contents changed after launch'
+  path_is_absent "$evidence_root/doctor-$phase.txt" || fail "doctor snapshot already exists for phase: $phase"
+  run_pty "doctor-$phase-version" "$binary" --json --version
+  grep -Fq "\"commit\":\"$expected_commit\"" "$evidence_root/doctor-$phase-version.typescript" || fail 'binary commit does not match checkout'
+  printf 'doctor: passed\nphase: %s\nrun_id: %s\nowner_marker: exact\nrun_root_mode: %s\ntask_home_mode: %s\nsynthetic_oauth_mode: %s\nbinary_sha256: %s\nbinary_commit: %s\nsource_fingerprint: %s\nconfig_state: %s\narchive_state: %s\nsidecar_state: %s\n' \
+    "$phase" "$run_id" "$(mode_of "$run_root")" "$(mode_of "$home_path")" "$(mode_of "$oauth_file")" "$expected_binary_hash" "$expected_commit" "$expected_source_fingerprint" \
+    "$(! path_is_absent "$config_path" && printf present || printf absent)" \
+    "$(! path_is_absent "$archive_path" && printf present || printf absent)" \
+    "$(! path_is_absent "$sidecar_path" && printf present || printf absent)" \
+    > "$evidence_root/doctor-$phase.txt"
+  append_event doctor "$phase" passed 0
+  printf 'doctor passed: %s (%s)\n' "$run_id" "$phase"
+}
+
+launch() {
+  require_tools
+  require_evidence_parent
+  path_is_absent "$run_root" || fail "refusing existing run root: $run_root"
+  path_is_absent "$evidence_root" || fail "refusing existing evidence root: $evidence_root"
+  mkdir -m 700 "$run_root"
+  [[ -d "$run_root" && ! -L "$run_root" && "$(uid_of "$run_root")" == "$(id -u)" ]] || fail 'new run root is unsafe'
+  mkdir "$run_root/bin" "$home_path" "$shim_path"
+  mkdir -m 700 "$evidence_root"
+  chmod 700 "$run_root" "$run_root/bin" "$home_path" "$shim_path"
+  printf '%s\n' "$run_id" > "$owner_file"
+  chmod 600 "$owner_file"
+  printf '%s\n' "$synthetic_oauth_json" > "$oauth_file"
+  chmod 600 "$oauth_file"
+  cp "$discovery_source" "$discovery_file"
+  chmod 600 "$discovery_file"
+  cp "$repo_root/README.md" "$readme_file"
+  chmod 600 "$readme_file"
+  printf '[user]\n\tname = gohealthcli verification\n\temail = verification@example.invalid\n' > "$gitconfig_file"
+  chmod 600 "$gitconfig_file"
+  printf '#!/usr/bin/env bash\nprintf "credential store access attempted\\n" > %q\nexit 97\n' "$credential_probe" > "$shim_path/security"
+  chmod 700 "$shim_path/security"
+  cp "$shim_path/security" "$shim_path/secret-tool"
+  chmod 700 "$shim_path/secret-tool"
+  utc_now > "$evidence_root/started-at.txt"
+  repo_git -C "$repo_root" status --porcelain=v1 > "$evidence_root/git-status-before.txt"
+  append_event lifecycle launch started null
+
+  local version commit built ldflags source_fingerprint
+  source_fingerprint=$(repo_content_fingerprint)
+  printf '%s\n' "$source_fingerprint" > "$evidence_root/repo-fingerprint-before.txt"
+  stage_source_snapshot
+  version=$(repo_git -C "$repo_root" describe --tags --always --dirty 2>/dev/null || printf dev)
+  commit=$(repo_git -C "$repo_root" rev-parse HEAD 2>/dev/null || printf dev)
+  built=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  ldflags="-X main.version=$version -X main.commit=$commit -X main.built=$built"
+  record_command "$evidence_root/build.command.txt" go build -ldflags "$ldflags" -o "$binary" ./cmd/gohealthcli
+  isolated_go_build "$run_root/go-build-state" "$binary" "$ldflags" ./cmd/gohealthcli "$source_snapshot"
+  printf '0\n' > "$evidence_root/build.exit.txt"
+  printf 'commit: %s\nbinary: %s\nbinary_sha256: %s\nsource_fingerprint: %s\n' "$commit" "$binary" "$(sha256_file "$binary")" "$source_fingerprint" > "$evidence_root/launch.txt"
+  run_pty launch-version "$binary" --json --version
+  grep -Fq "\"commit\":\"$commit\"" "$evidence_root/launch-version.typescript" || fail 'readiness version output missing expected commit'
+  doctor_snapshot launch
+  write_manifest launched passed
+}
+
+drive_initialize() {
+  path_is_absent "$config_path" && path_is_absent "$archive_path" && path_is_absent "$sidecar_path" || fail 'initialize route requires fresh state'
+  local expected_migration expected_version expected_name
+  expected_migration=$(sed -n 's/.*{version: \([0-9][0-9]*\), name: "\([^"]*\)".*/\1|\2/p' "$repo_root/cmd/gohealthcli/health_archive_migrations.go" | tail -n 1)
+  [[ "$expected_migration" == *'|'* ]] || fail 'could not determine the current latest migration'
+  expected_version=${expected_migration%%|*}
+  expected_name=${expected_migration#*|}
+  run_pty initialize "$binary" --config "$config_path" --db "$archive_path" --json --no-input init --oauth-client-file "$oauth_file"
+  grep -Fq '"status": "initialized"' "$evidence_root/initialize.typescript" || fail 'init result missing initialized status'
+  grep -Fq "\"schema_version\": $expected_version" "$evidence_root/initialize.typescript" || fail 'init did not report the repository latest migration version'
+  [[ -f "$config_path" && ! -L "$config_path" ]] || fail 'config was not created safely'
+  [[ -f "$archive_path" && ! -L "$archive_path" ]] || fail 'archive was not created safely'
+  [[ -d "$sidecar_path" && ! -L "$sidecar_path" ]] || fail 'sidecar was not created safely'
+  [[ "$(mode_of "$config_path")" == 600 ]] || fail 'config must be mode 600'
+  [[ "$(mode_of "$archive_path")" == 600 ]] || fail 'archive must be mode 600'
+  [[ "$(mode_of "$sidecar_path")" == 700 ]] || fail 'sidecar must be mode 700'
+
+  run_pty initialize-confirm "$binary" --db "$archive_path" --json query 'SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1'
+  grep -Fq '"status": "query_completed"' "$evidence_root/initialize-confirm.typescript" || fail 'second read did not complete'
+  grep -Fq '"row_count": 1' "$evidence_root/initialize-confirm.typescript" || fail 'second read did not find latest migration'
+  grep -Eq "^[[:space:]]+$expected_version," "$evidence_root/initialize-confirm.typescript" || fail 'second read did not return the repository latest migration version'
+  grep -Fq "\"$expected_name\"" "$evidence_root/initialize-confirm.typescript" || fail 'second read did not return the repository latest migration name'
+
+  run_pty initialize-existing "$binary" --config "$config_path" --db "$archive_path" --json --no-input init --oauth-client-file "$oauth_file"
+  grep -Fq '"status": "already_initialized"' "$evidence_root/initialize-existing.typescript" || fail 'existing setup did not report already_initialized'
+  printf 'route: initialize\nresult: passed\nsecond_read: initialize-confirm.typescript\nexisting_setup: already_initialized\nconfig_mode: %s\narchive_mode: %s\nsidecar_mode: %s\n' \
+    "$(mode_of "$config_path")" "$(mode_of "$archive_path")" "$(mode_of "$sidecar_path")" > "$evidence_root/initialize-proof.txt"
+}
+
+drive_inspect() {
+  [[ -f "$archive_path" && ! -L "$archive_path" ]] || fail 'inspect route requires an initialized archive'
+  local archive_files_before
+  run_pty inspect-status "$binary" --db "$archive_path" --json status
+  grep -Fq '"schema_version":' "$evidence_root/inspect-status.typescript" || fail 'status missing schema version'
+  grep -Fq '"data_point_count": 0' "$evidence_root/inspect-status.typescript" || fail 'empty archive status changed unexpectedly'
+
+  run_pty inspect-status-plain "$binary" --db "$archive_path" --plain status
+  grep -Fq 'data_point_count: 0' "$evidence_root/inspect-status-plain.typescript" || fail 'plain status missing empty Data Point count'
+
+  run_pty inspect-query "$binary" --db "$archive_path" --json query 'SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1'
+  grep -Fq '"status": "query_completed"' "$evidence_root/inspect-query.typescript" || fail 'query did not complete'
+
+  archive_files_before=$(sqlite_file_set_fingerprint "$archive_path")
+  run_pty_expected inspect-query-rejected 1 "$binary" --db "$archive_path" --json query 'DELETE FROM data_points'
+  grep -Fq 'query accepts SELECT statements only' "$evidence_root/inspect-query-rejected.typescript" || fail 'write query did not hit the SELECT-only guard'
+  [[ "$(sqlite_file_set_fingerprint "$archive_path")" == "$archive_files_before" ]] || fail 'rejected query changed the SQLite file set'
+
+  run_pty inspect-schema "$binary" --db "$archive_path" --json describe-schema
+  grep -Fq '"version": 1' "$evidence_root/inspect-schema.typescript" || fail 'schema description missing contract version'
+  grep -Fq '"tables"' "$evidence_root/inspect-schema.typescript" || fail 'schema description missing tables'
+
+  run_pty inspect-schema-sql "$binary" --db "$archive_path" --json describe-schema --sql
+  grep -Fq 'CREATE TABLE' "$evidence_root/inspect-schema-sql.typescript" || fail 'schema SQL missing table DDL'
+
+  local export_path="$run_root/data/daily-steps.csv"
+  local jsonl_path="$run_root/data/daily-steps.jsonl"
+  local expected_header='provider_name,connection_id,civil_date,step_count,source_kind,source_family_filter,source_record_count,latest_source_timestamp'
+  local actual_header
+  run_pty inspect-export "$binary" --db "$archive_path" export daily-steps --format csv --output "$export_path"
+  [[ -f "$export_path" && ! -L "$export_path" ]] || fail 'export output was not created safely'
+  IFS= read -r actual_header < "$export_path"
+  [[ "$actual_header" == "$expected_header" ]] || fail 'empty daily-steps export header drifted'
+  cp "$export_path" "$evidence_root/inspect-export.csv"
+  run_pty inspect-export-jsonl "$binary" --db "$archive_path" export daily-steps --format jsonl --output "$jsonl_path"
+  [[ -f "$jsonl_path" && ! -L "$jsonl_path" && ! -s "$jsonl_path" ]] || fail 'empty JSONL export was not an empty regular file'
+  cp "$jsonl_path" "$evidence_root/inspect-export.jsonl"
+  printf 'route: inspect\nresult: passed\nentries: status-json,status-plain,query,query-write-rejection,describe-schema,describe-schema-sql,export-csv,export-jsonl\narchive_after_rejected_write: unchanged\ncsv_sha256: %s\njsonl_sha256: %s\n' \
+    "$(sha256_file "$export_path")" "$(sha256_file "$jsonl_path")" > "$evidence_root/inspect-proof.txt"
+}
+
+drive_plan() {
+  path_is_absent "$config_path" && path_is_absent "$archive_path" && path_is_absent "$sidecar_path" || fail 'plan route requires fresh state'
+  path_is_absent "$default_config_path" && path_is_absent "$default_archive_path" && path_is_absent "$default_sidecar_path" || fail 'plan route requires absent isolated default state'
+  run_pty plan-identity "$binary" raw endpoint getIdentity --plan --json
+  grep -Fq '"status": "plan_ready"' "$evidence_root/plan-identity.typescript" || fail 'raw plan did not become ready'
+  grep -Fq '"endpoint_name": "getIdentity"' "$evidence_root/plan-identity.typescript" || fail 'raw plan target drifted from getIdentity'
+  grep -Fq '"method": "GET"' "$evidence_root/plan-identity.typescript" || fail 'raw plan method drifted from GET'
+  grep -Fq '"url": "https://health.googleapis.com/v4/users/me/identity"' "$evidence_root/plan-identity.typescript" || fail 'raw plan URL drifted from the sanitized identity endpoint'
+  local sensitive
+  for sensitive in access_token client_secret Authorization pageToken; do
+    if grep -Fq "$sensitive" "$evidence_root/plan-identity.typescript"; then
+      fail "raw plan leaked sensitive request material: $sensitive"
+    fi
+  done
+  local effect
+  for effect in provider_request credential_store_read token_load token_refresh health_archive_open health_archive_write migration cursor_change sidecar_creation; do
+    grep -Fq "\"$effect\": false" "$evidence_root/plan-identity.typescript" || fail "planning effect $effect was not false"
+  done
+
+  run_pty plan-data-type "$binary" raw data-type steps --from 2026-01-01T00:00:00Z --to 2026-01-02T00:00:00Z --timezone Europe/Brussels --plan --json
+  grep -Fq '"data_type": "steps"' "$evidence_root/plan-data-type.typescript" || fail 'Data Type plan missing steps target'
+  grep -Fq '"from": "2026-01-01T00:00:00Z"' "$evidence_root/plan-data-type.typescript" || fail 'Data Type plan missing fixed from bound'
+  grep -Fq '"to": "2026-01-02T00:00:00Z"' "$evidence_root/plan-data-type.typescript" || fail 'Data Type plan missing fixed to bound'
+  grep -Fq '"timezone": "Europe/Brussels"' "$evidence_root/plan-data-type.typescript" || fail 'Data Type plan did not preserve the requested timezone'
+  for effect in provider_request credential_store_read token_load token_refresh health_archive_open health_archive_write migration cursor_change sidecar_creation; do
+    grep -Fq "\"$effect\": false" "$evidence_root/plan-data-type.typescript" || fail "Data Type planning effect $effect was not false"
+  done
+  path_is_absent "$config_path" && path_is_absent "$archive_path" && path_is_absent "$sidecar_path" || fail 'raw plan created explicit local setup state'
+  path_is_absent "$default_config_path" && path_is_absent "$default_archive_path" && path_is_absent "$default_sidecar_path" || fail 'raw plan created default local setup state'
+
+  run_pty_expected plan-live-unreachable 1 "$binary" --config "$config_path" --db "$archive_path" --json raw endpoint getIdentity
+  grep -Fq '"status":"operation_failed"' "$evidence_root/plan-live-unreachable.typescript" || fail 'live read did not use the operation failure contract'
+  grep -Fq '"message":"config check failed:' "$evidence_root/plan-live-unreachable.typescript" || fail 'live read did not stop at the missing local setup gate'
+  [[ ! -e "$credential_probe" ]] || fail 'live-read setup failure attempted Credential Store access'
+  path_is_absent "$config_path" && path_is_absent "$archive_path" && path_is_absent "$sidecar_path" || fail 'unreachable live read created local setup state'
+  printf 'route: plan\nresult: passed\nplanning_effects: all false\nexplicit_config_after: absent\nexplicit_archive_after: absent\nexplicit_sidecar_after: absent\ndefault_config_after: absent\ndefault_archive_after: absent\ndefault_sidecar_after: absent\nlive_read: verified-unreachable (missing isolated setup and authorized Connection)\n' > "$evidence_root/plan-proof.txt"
+}
+
+drive_discover() {
+  run_pty discover-version-plain "$binary" --plain --version
+  grep -Fq 'gohealthcli ' "$evidence_root/discover-version-plain.typescript" || fail 'plain version output missing binary name'
+  grep -Fq ' built ' "$evidence_root/discover-version-plain.typescript" || fail 'plain version output missing build stamp'
+
+  run_pty discover-bare "$binary"
+  grep -Fq 'Subcommands:' "$evidence_root/discover-bare.typescript" || fail 'bare help missing Subcommands'
+  grep -Fq 'Global flags:' "$evidence_root/discover-bare.typescript" || fail 'bare help missing Global flags'
+  run_streams_expected discover-bare-streams 0 "$binary"
+  grep -Fq 'Subcommands:' "$evidence_root/discover-bare-streams.stdout.txt" || fail 'bare help did not write its help text to stdout'
+  [[ ! -s "$evidence_root/discover-bare-streams.stderr.txt" ]] || fail 'bare help unexpectedly wrote to stderr'
+
+  run_pty discover-help "$binary" help
+  grep -Fq 'Subcommands:' "$evidence_root/discover-help.typescript" || fail 'explicit help missing Subcommands'
+  grep -Fq 'Global flags:' "$evidence_root/discover-help.typescript" || fail 'explicit help missing Global flags'
+  run_streams_expected discover-help-streams 0 "$binary" help
+  grep -Fq 'Subcommands:' "$evidence_root/discover-help-streams.stderr.txt" || fail 'explicit help did not write its help text to stderr'
+  [[ ! -s "$evidence_root/discover-help-streams.stdout.txt" ]] || fail 'explicit help unexpectedly wrote to stdout'
+
+  run_pty discover-sync-help "$binary" help sync
+  grep -Fq -- '--types' "$evidence_root/discover-sync-help.typescript" || fail 'sync help missing --types'
+
+  run_pty discover-sync-flag "$binary" sync --help
+  grep -Fq -- '--types' "$evidence_root/discover-sync-flag.typescript" || fail 'sync --help missing --types'
+
+  run_pty discover-schema "$binary" schema --json
+  grep -Fq '"version":' "$evidence_root/discover-schema.typescript" || fail 'registry schema missing version'
+  grep -Fq '"name": "sync"' "$evidence_root/discover-schema.typescript" || fail 'registry schema missing sync command'
+
+  run_pty discover-completion-bash "$binary" completion bash
+  grep -Fq '_gohealthcli' "$evidence_root/discover-completion-bash.typescript" || fail 'Bash completion missing gohealthcli function'
+  run_pty discover-completion-zsh "$binary" completion zsh
+  grep -Fq '#compdef gohealthcli' "$evidence_root/discover-completion-zsh.typescript" || fail 'Zsh completion missing compdef'
+  run_pty discover-completion-fish "$binary" completion fish
+  grep -Fq 'complete -c gohealthcli' "$evidence_root/discover-completion-fish.typescript" || fail 'Fish completion missing command'
+  run_pty discover-completion-powershell "$binary" completion powershell
+  grep -Fq 'Register-ArgumentCompleter' "$evidence_root/discover-completion-powershell.typescript" || fail 'PowerShell completion missing argument completer'
+
+  run_pty discover-docs-datasets "$binary" docs-export-datasets --readme "$readme_file"
+  cmp -s "$repo_root/README.md" "$readme_file" || fail 'generated export dataset block drifted from README'
+
+  run_pty_expected discover-suggestion 1 "$binary" stauts
+  grep -Fq 'Did you mean: status?' "$evidence_root/discover-suggestion.typescript" || fail 'typo path missing status suggestion'
+  printf 'route: discover\nresult: passed\nentries: version-plain,bare,help,help-sync,sync-help,schema-json,completion-bash,completion-zsh,completion-fish,completion-powershell,docs-export-datasets,suggestion\n' > "$evidence_root/discover-proof.txt"
+}
+
+drive_catalog() {
+  run_pty catalog-list "$binary" catalog list --json
+  grep -Fq '"data_types"' "$evidence_root/catalog-list.typescript" || fail 'catalog list missing data_types'
+  grep -Fq '"data_type":"steps"' "$evidence_root/catalog-list.typescript" || fail 'catalog list missing steps'
+
+  run_pty catalog-scopes "$binary" catalog scopes --json
+  grep -Fq '"scopes"' "$evidence_root/catalog-scopes.typescript" || fail 'catalog scopes missing scopes array'
+  grep -Fq 'googlehealth.activity_and_fitness.readonly' "$evidence_root/catalog-scopes.typescript" || fail 'catalog scopes missing activity-and-fitness scope'
+
+  run_pty catalog-describe "$binary" catalog describe steps --json
+  grep -Fq '"data_type":"steps"' "$evidence_root/catalog-describe.typescript" || fail 'catalog describe missing steps'
+  grep -Fq '"source":"compiled_catalog"' "$evidence_root/catalog-describe.typescript" || fail 'catalog describe missing compiled source'
+  grep -Fq '"source":"committed_snapshot"' "$evidence_root/catalog-describe.typescript" || fail 'catalog describe missing committed discovery source'
+
+  run_pty catalog-verify "$binary" catalog verify --discovery "$discovery_file" --json
+  grep -Fq '"status":"verified_with_known_gaps"' "$evidence_root/catalog-verify.typescript" || fail 'offline catalog verification status drifted'
+  printf 'route: catalog\nresult: passed\nentries: list,scopes,describe,verify-offline\nlive_discovery: unreachable (network intent not authorized)\n' > "$evidence_root/catalog-proof.txt"
+}
+
+drive_local() {
+  [[ -f "$config_path" && -f "$archive_path" ]] || fail 'local route requires initialized config and archive'
+  run_pty local-doctor-json "$binary" --config "$config_path" --db "$archive_path" --json doctor
+  grep -Fq '"status": "ok"' "$evidence_root/local-doctor-json.typescript" || fail 'local doctor did not report ok'
+  grep -Fq '"connection_count": 0' "$evidence_root/local-doctor-json.typescript" || fail 'local doctor did not report zero Connections'
+  grep -Fq "\"attachment_root_path\": \"$sidecar_path\"" "$evidence_root/local-doctor-json.typescript" || fail 'local doctor reported the wrong Attachment root'
+  if grep -Fq '"attachments":' "$evidence_root/local-doctor-json.typescript"; then
+    fail 'local doctor unexpectedly reported Attachment orphans'
+  fi
+
+  run_pty local-doctor-plain "$binary" --config "$config_path" --db "$archive_path" --plain doctor
+  grep -Fq 'connection_count: 0' "$evidence_root/local-doctor-plain.typescript" || fail 'plain doctor did not report zero Connections'
+  grep -Fq "attachment_root_path: $sidecar_path" "$evidence_root/local-doctor-plain.typescript" || fail 'plain doctor reported the wrong Attachment root'
+
+  run_pty_expected local-doctor-online-unreachable 1 "$binary" --config "$config_path" --db "$archive_path" --json doctor --online
+  grep -Fq '"status": "connection_unhealthy"' "$evidence_root/local-doctor-online-unreachable.typescript" || fail 'online doctor did not stop at the missing Connection'
+  [[ ! -e "$credential_probe" ]] || fail 'online doctor attempted Credential Store access before its local blocker'
+  printf 'route: local\nresult: passed\nentries: doctor-json,doctor-plain,doctor-online\nonline: verified-unreachable (no Connection; no Credential Store or Provider access)\n' > "$evidence_root/local-proof.txt"
+}
+
+drive_sync() {
+  [[ -f "$config_path" && -f "$archive_path" ]] || fail 'sync route requires initialized config and archive'
+  local archive_files_before archive_files_after sidecar_fingerprint_before sidecar_fingerprint_after_plan sidecar_fingerprint_after_live
+  sidecar_fingerprint_before=$(tree_fingerprint "$sidecar_path")
+  printf '%s\n' "$sidecar_fingerprint_before" > "$evidence_root/sync-sidecar-before.txt"
+
+  run_pty sync-status-before "$binary" --db "$archive_path" --json sync --status
+  grep -Fq '"status": "ok"' "$evidence_root/sync-status-before.typescript" || fail 'sync status did not report ok'
+  grep -Fq 'no Sync Runs' "$evidence_root/sync-status-before.typescript" || fail 'fresh archive unexpectedly contains Sync Runs'
+  archive_files_before=$(sqlite_file_set_fingerprint "$archive_path")
+
+  run_pty_expected sync-plan-blocked 1 "$binary" --config "$config_path" --db "$archive_path" --json sync --types steps --from 2026-01-01T00:00:00Z --to 2026-01-02T00:00:00Z --plan
+  grep -Fq '"status": "plan_blocked"' "$evidence_root/sync-plan-blocked.typescript" || fail 'sync plan did not report its local blocker'
+  local effect
+  for effect in provider_request credential_read token_refresh archive_write migration cursor_advance attachment_sidecar_write; do
+    grep -Fq "\"$effect\": false" "$evidence_root/sync-plan-blocked.typescript" || fail "sync planning effect $effect was not false"
+  done
+  sidecar_fingerprint_after_plan=$(tree_fingerprint "$sidecar_path")
+  printf '%s\n' "$sidecar_fingerprint_after_plan" > "$evidence_root/sync-sidecar-after-plan.txt"
+  [[ "$sidecar_fingerprint_after_plan" == "$sidecar_fingerprint_before" ]] || fail 'blocked sync plan changed the Attachment sidecar tree'
+
+  run_pty_expected sync-live-unreachable 1 "$binary" --config "$config_path" --db "$archive_path" --json --no-input sync --types steps --from 2026-01-01T00:00:00Z --to 2026-01-02T00:00:00Z
+  grep -Fq '"status": "sync_failed"' "$evidence_root/sync-live-unreachable.typescript" || fail 'live sync did not fail at local preflight'
+  grep -Fq 'Connection' "$evidence_root/sync-live-unreachable.typescript" || fail 'live sync failure did not name the missing Connection'
+  [[ ! -e "$credential_probe" ]] || fail 'blocked sync attempted Credential Store access'
+  sidecar_fingerprint_after_live=$(tree_fingerprint "$sidecar_path")
+  printf '%s\n' "$sidecar_fingerprint_after_live" > "$evidence_root/sync-sidecar-after-live.txt"
+  [[ "$sidecar_fingerprint_after_live" == "$sidecar_fingerprint_before" ]] || fail 'blocked live sync changed the Attachment sidecar tree'
+
+  run_pty sync-status-after "$binary" --db "$archive_path" --json sync --status
+  grep -Fq 'no Sync Runs' "$evidence_root/sync-status-after.typescript" || fail 'blocked sync created a Sync Run'
+  archive_files_after=$(sqlite_file_set_fingerprint "$archive_path")
+  [[ "$archive_files_after" == "$archive_files_before" ]] || fail 'blocked sync or planning changed the SQLite file set'
+  printf 'route: sync\nresult: passed\nentries: status-empty,plan-blocked,live-preflight,status-still-empty\nplanning_effects: all false\narchive_after: unchanged\nlive_sync: verified-unreachable (no authorized Connection)\n' > "$evidence_root/sync-proof.txt"
+}
+
+drive_connected() {
+  path_is_absent "$config_path" && path_is_absent "$archive_path" && path_is_absent "$sidecar_path" || fail 'connected route requires missing local setup'
+  run_pty_expected connected-doctor-missing 2 "$binary" --config "$config_path" --db "$archive_path" --json doctor
+  grep -Fq '"status": "setup_missing"' "$evidence_root/connected-doctor-missing.typescript" || fail 'doctor did not report missing setup'
+
+  local command label expected_status
+  for command in connect identity profile settings devices irn-profile sync; do
+    label=${command//-/_}
+    expected_status=${command//-/_}_failed
+    run_pty_expected "connected-$label" 1 "$binary" --config "$config_path" --db "$archive_path" --json --no-input "$command"
+    grep -Fq "\"status\": \"$expected_status\"" "$evidence_root/connected-$label.typescript" || fail "$command did not fail through its local setup gate"
+    grep -Fq '"message": "config check failed:' "$evidence_root/connected-$label.typescript" || fail "$command did not stop at the missing local setup gate"
+  done
+  [[ ! -e "$credential_probe" ]] || fail 'blocked connected command attempted Credential Store access'
+  path_is_absent "$config_path" && path_is_absent "$archive_path" && path_is_absent "$sidecar_path" || fail 'blocked connected commands created local setup'
+  printf 'route: connected\nresult: passed\nentries: doctor-missing,connect,identity,profile,settings,devices,irn-profile,sync\nprovider_commands: verified-unreachable (missing isolated setup and authorized Connection)\nconfig_after: absent\narchive_after: absent\nsidecar_after: absent\n' > "$evidence_root/connected-proof.txt"
+}
+
+drive_backup() {
+  [[ -f "$archive_path" && ! -L "$archive_path" ]] || fail 'backup route requires an initialized archive'
+  path_is_absent "$backup_root" || fail 'backup route requires fresh backup state'
+  mkdir -p "$backup_root"
+  chmod 700 "$backup_root"
+
+  local seed_source="$backup_root/seed-archive.go"
+  local seed_binary="$backup_root/seed-archive"
+  local metadata_source="$backup_root/validate-metadata.go"
+  local metadata_binary="$backup_root/validate-metadata"
+  local sentinel_query expected_sentinel_hex source_sentinel_hex restored_sentinel_hex snapshot_counts_query expected_snapshot_counts
+  local expected_readme_hash='006990c16247cb4a375ad983d73c7b159c3dea7909645a9e5897ac9a6f4242ac'
+  sentinel_query="SELECT hex(id || char(0) || provider_name || char(0) || google_health_user_id || char(0) || COALESCE(legacy_fitbit_user_id, '<NULL>') || char(0) || token_metadata_json || char(0) || google_identity_json || char(0) || created_at || char(0) || updated_at) AS sentinel_hex FROM connections ORDER BY id"
+  snapshot_counts_query="SELECT (SELECT COUNT(*) FROM connections) || ':' || (SELECT COUNT(*) FROM data_points) || ':' || (SELECT COUNT(*) FROM data_point_revisions) || ':' || (SELECT COUNT(*) FROM data_point_attachments) || ':' || (SELECT COUNT(*) FROM rollups) || ':' || (SELECT COUNT(*) FROM identity_snapshots) || ':' || (SELECT COUNT(*) FROM sync_runs) || ':' || (SELECT COUNT(*) FROM sync_cursors) AS snapshot_counts"
+  expected_snapshot_counts='1:0:0:0:0:0:0:0'
+  expected_sentinel_hex='676F6F676C656865616C74683A73796E7468657469632D766572696669636174696F6E00676F6F676C656865616C74680073796E7468657469632D766572696669636174696F6E2D75736572003C4E554C4C3E007B2263726564656E7469616C5F73746F72655F6B6579223A2273796E7468657469632D766572696669636174696F6E2D6B6579227D007B226865616C7468557365724964223A2273796E7468657469632D766572696669636174696F6E2D75736572227D00323032362D30312D30315430303A30303A30305A00323032362D30312D30315430303A30303A30305A'
+  printf '%s\n' \
+    'package main' \
+    'import (' \
+    '  "database/sql"' \
+    '  "os"' \
+    '  _ "modernc.org/sqlite"' \
+    ')' \
+    'func main() {' \
+    '  if len(os.Args) != 2 { panic("archive path required") }' \
+    '  db, err := sql.Open("sqlite", os.Args[1])' \
+    '  if err != nil { panic(err) }' \
+    '  defer db.Close()' \
+    '  _, err = db.Exec(`INSERT INTO connections (id, provider_name, google_health_user_id, legacy_fitbit_user_id, token_metadata_json, google_identity_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, "googlehealth:synthetic-verification", "googlehealth", "synthetic-verification-user", nil, `{"credential_store_key":"synthetic-verification-key"}`, `{"healthUserId":"synthetic-verification-user"}`, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z")' \
+    '  if err != nil { panic(err) }' \
+    '}' > "$seed_source"
+  chmod 600 "$seed_source"
+  isolated_go_build "$backup_root/seed-build-state" "$seed_binary" '' "$seed_source"
+  printf '%s\n' \
+    'package main' \
+    'import (' \
+    '  "bufio"' \
+    '  "bytes"' \
+    '  "compress/gzip"' \
+    '  "crypto/sha256"' \
+    '  "encoding/hex"' \
+    '  "encoding/json"' \
+    '  "fmt"' \
+    '  "io"' \
+    '  "os"' \
+    '  "path/filepath"' \
+    '  "strings"' \
+    '  "time"' \
+    '  "filippo.io/age"' \
+    ')' \
+    'type counts struct { Connections int `json:"connections"`; DataPoints int `json:"data_points"`; DataPointRevisions int `json:"data_point_revisions"`; DataPointAttachments int `json:"data_point_attachments"`; AttachmentPayloads int `json:"attachment_payloads"`; Rollups int `json:"rollups"`; IdentitySnapshots int `json:"identity_snapshots"`; SyncRuns int `json:"sync_runs"`; SyncCursors int `json:"sync_cursors"` }' \
+    'type shard struct { Table string `json:"table"`; Path string `json:"path"`; Rows int `json:"rows"`; SHA256 string `json:"sha256"`; Bytes int64 `json:"bytes"` }' \
+    'type manifest struct { Format int `json:"format"`; SchemaVersion int `json:"health_archive_schema_version"`; Encrypted bool `json:"encrypted"`; ExportedAt string `json:"exported_at"`; Recipients []string `json:"recipients"`; Counts counts `json:"counts"`; Shards []shard `json:"shards"` }' \
+    'func check(ok bool, message string) { if !ok { panic(message) } }' \
+    'func main() {' \
+    '  check(len(os.Args) == 4, "manifest, repository, and identity paths required")' \
+    '  identityData, err := os.ReadFile(os.Args[3]); if err != nil { panic(err) }' \
+    '  identities, err := age.ParseIdentities(strings.NewReader(string(identityData))); if err != nil { panic(err) }; check(len(identities) == 1, "identity file must contain exactly one key")' \
+    '  xIdentity, ok := identities[0].(*age.X25519Identity); check(ok, "identity file must contain one X25519 key"); expectedRecipient := xIdentity.Recipient().String()' \
+    '  file, err := os.Open(os.Args[1]); if err != nil { panic(err) }; defer file.Close()' \
+    '  decoder := json.NewDecoder(file); decoder.DisallowUnknownFields()' \
+    '  var value manifest; if err := decoder.Decode(&value); err != nil { panic(err) }' \
+    '  var trailing any; check(decoder.Decode(&trailing) == io.EOF, "manifest has trailing data")' \
+    '  check(value.Format == 1 && value.SchemaVersion > 0 && value.Encrypted, "manifest header is invalid")' \
+    '  _, err = time.Parse(time.RFC3339Nano, value.ExportedAt); if err != nil { panic(err) }' \
+    '  check(len(value.Recipients) == 1 && value.Recipients[0] == expectedRecipient, "manifest recipients do not equal the generated singleton")' \
+    '  check(value.Counts.Connections == 1 && value.Counts.DataPoints == 0 && value.Counts.DataPointRevisions == 0 && value.Counts.DataPointAttachments == 0 && value.Counts.AttachmentPayloads == 0 && value.Counts.Rollups == 0 && value.Counts.IdentitySnapshots == 0 && value.Counts.SyncRuns == 0 && value.Counts.SyncCursors == 0, "manifest counts do not match the synthetic archive")' \
+    '  allowed := map[string]string{"connections":"data/connections.jsonl.gz.age", "data_points":"data/data_points.jsonl.gz.age", "data_point_revisions":"data/data_point_revisions.jsonl.gz.age", "data_point_attachments":"data/data_point_attachments.jsonl.gz.age", "attachment_payloads":"data/attachment_payloads.jsonl.gz.age", "rollups":"data/rollups.jsonl.gz.age", "identity_snapshots":"data/identity_snapshots.jsonl.gz.age", "sync_runs":"data/sync_runs.jsonl.gz.age", "sync_cursors":"data/sync_cursors.jsonl.gz.age"}' \
+    '  check(len(value.Shards) == len(allowed), "manifest shard count is invalid")' \
+    '  seen := map[string]bool{}' \
+    '  for _, entry := range value.Shards {' \
+    '    expected, ok := allowed[entry.Table]; check(ok && entry.Path == expected && !seen[entry.Table], "manifest shard identity is invalid"); seen[entry.Table] = true' \
+    '    expectedRows := 0; if entry.Table == "connections" { expectedRows = 1 }; check(entry.Rows == expectedRows && entry.Bytes > 0, "manifest shard metadata is invalid")' \
+    '    digest, err := hex.DecodeString(entry.SHA256); check(err == nil && len(digest) == 32 && hex.EncodeToString(digest) == entry.SHA256, "manifest shard digest is invalid")' \
+    '    shardPath := filepath.Join(os.Args[2], filepath.FromSlash(entry.Path)); info, err := os.Stat(shardPath); if err != nil { panic(err) }; check(info.Mode().IsRegular() && info.Size() == entry.Bytes, "manifest shard size does not match ciphertext")' \
+    '    ciphertext, err := os.ReadFile(shardPath); if err != nil { panic(err) }; check(int64(len(ciphertext)) == entry.Bytes, "ciphertext read size does not match manifest")' \
+    '    header := bufio.NewScanner(bytes.NewReader(ciphertext)); stanzas := 0; for header.Scan() { line := header.Text(); if strings.HasPrefix(line, "-> ") { stanzas++ }; if strings.HasPrefix(line, "--- ") { break } }; if err := header.Err(); err != nil { panic(err) }; check(stanzas == 1, "age header does not contain exactly one recipient stanza")' \
+    '    decrypted, err := age.Decrypt(bytes.NewReader(ciphertext), identities...); if err != nil { panic(err) }; compressed, err := gzip.NewReader(decrypted); if err != nil { panic(err) }' \
+    '    plaintext, err := io.ReadAll(io.LimitReader(compressed, (16<<20)+1)); if err != nil { panic(err) }; check(len(plaintext) <= 16<<20, "decrypted JSONL exceeds verification limit"); if err := compressed.Close(); err != nil { panic(err) }' \
+    '    hash := sha256.Sum256(plaintext); check(hex.EncodeToString(hash[:]) == entry.SHA256, "manifest shard digest does not match decrypted JSONL")' \
+    '    records := bufio.NewScanner(bytes.NewReader(plaintext)); records.Buffer(make([]byte, 64<<10), 16<<20); actualRows := 0; for records.Scan() { check(json.Valid(records.Bytes()), "decrypted shard contains invalid JSONL"); actualRows++ }; if err := records.Err(); err != nil { panic(err) }; check(actualRows == entry.Rows, "manifest row count does not match decrypted JSONL")' \
+    '  }' \
+    '  fmt.Println("metadata-valid")' \
+    '}' > "$metadata_source"
+  chmod 600 "$metadata_source"
+  isolated_go_build "$backup_root/metadata-build-state" "$metadata_binary" '' "$metadata_source"
+  "${pty_env_prefix[@]}" "$seed_binary" "$archive_path"
+  run_pty backup-source-counts "$binary" --db "$archive_path" --json query "$snapshot_counts_query"
+  grep -Fq "\"$expected_snapshot_counts\"" "$evidence_root/backup-source-counts.typescript" || fail 'source Snapshot table counts do not match the exact synthetic archive'
+  run_pty backup-source-sentinel "$binary" --db "$archive_path" --json query "$sentinel_query"
+  source_sentinel_hex=$(tr -d '\r' < "$evidence_root/backup-source-sentinel.typescript" | awk '/^[[:space:]]*"[0-9A-F]+",?[[:space:]]*$/ {gsub(/[ ",]/, ""); print; exit}')
+  [[ "$source_sentinel_hex" == "$expected_sentinel_hex" ]] || fail 'synthetic backup Connection fields do not match the exact sentinel'
+  printf '%s\n' "$source_sentinel_hex" > "$evidence_root/backup-source-sentinel.hex"
+
+  run_pty backup-remote "${task_env_prefix[@]}" git init --bare "$backup_remote"
+  run_pty backup-init "$binary" backup init --config "$backup_config" --repo "$backup_repo" --remote "$backup_remote" --identity "$backup_identity" --json
+  grep -Fq '"status": "backup_initialized"' "$evidence_root/backup-init.typescript" || fail 'backup init did not complete'
+  grep -Fq '"pushed": true' "$evidence_root/backup-init.typescript" || fail 'backup setup was not pushed to the task-owned remote'
+
+  run_pty backup-status-empty "$binary" backup status --config "$backup_config" --json
+  grep -Fq '"status": "backup_empty"' "$evidence_root/backup-status-empty.typescript" || fail 'new backup did not report empty state'
+
+  run_pty backup-push "$binary" backup push --config "$backup_config" --db "$archive_path" --json
+  grep -Fq '"status": "backup_pushed"' "$evidence_root/backup-push.typescript" || fail 'backup push did not complete'
+  grep -Fq '"encrypted": true' "$evidence_root/backup-push.typescript" || fail 'backup push did not report encryption'
+  grep -Fq '"shard_count": 9' "$evidence_root/backup-push.typescript" || fail 'backup push did not report the complete Snapshot shard set'
+  grep -Fq '"connections": 1' "$evidence_root/backup-push.typescript" || fail 'backup push did not include the synthetic Connection'
+
+  [[ -f "$backup_repo/manifest.json" && ! -L "$backup_repo/manifest.json" ]] || fail 'backup manifest is missing or unsafe'
+  [[ -d "$backup_repo/data" && ! -L "$backup_repo/data" ]] || fail 'encrypted backup data tree is missing or unsafe'
+  [[ "$(sha256_file "$backup_repo/README.md")" == "$expected_readme_hash" ]] || fail 'backup recovery README drifted from the fixed safe content'
+  local cleartext_file forbidden_cleartext
+  for cleartext_file in "$backup_repo/README.md" "$backup_repo/manifest.json"; do
+    for forbidden_cleartext in 'googlehealth:synthetic-verification' 'synthetic-verification-user' 'synthetic-verification-key' 'credential_store_key' 'healthUserId' 'raw_json' 'access_token' 'refresh_token'; do
+      if grep -Fq "$forbidden_cleartext" "$cleartext_file"; then
+        fail "backup cleartext metadata leaked forbidden content: $forbidden_cleartext"
+      fi
+    done
+  done
+  "${pty_env_prefix[@]}" "$metadata_binary" "$backup_repo/manifest.json" "$backup_repo" "$backup_identity" > "$evidence_root/backup-metadata-validation.txt"
+  grep -Fxq 'metadata-valid' "$evidence_root/backup-metadata-validation.txt" || fail 'backup manifest failed its fixed schema and content allowlist'
+  local shard_count=0 shard_path shard_relative
+  while IFS= read -r shard_path; do
+    [[ -f "$shard_path" && ! -L "$shard_path" && -s "$shard_path" ]] || fail "backup shard is missing, unsafe, or empty: $shard_path"
+    grep -aFq 'age-encryption.org/v1' "$shard_path" || fail "backup shard is not age ciphertext: $shard_path"
+    shard_relative=${shard_path#"$backup_repo/"}
+    task_git -C "$backup_repo" ls-files --error-unmatch -- "$shard_relative" >/dev/null || fail "backup shard is not tracked by Git: $shard_relative"
+    shard_count=$((shard_count + 1))
+  done < <(find "$backup_repo/data" -type f -name '*.age' -print)
+  [[ "$shard_count" == 9 ]] || fail "backup data tree contains $shard_count encrypted shards, want 9"
+  if find "$backup_repo/data" -type f ! -name '*.age' -print -quit | grep -q .; then
+    fail 'backup data tree contains a non-age payload'
+  fi
+
+  local backup_branch
+  backup_branch=$(task_git -C "$backup_repo" symbolic-ref --short HEAD)
+  task_git -C "$backup_repo" rev-parse HEAD > "$evidence_root/backup-local-head-before-repeat.txt"
+  task_git --git-dir="$backup_remote" rev-parse "refs/heads/$backup_branch" > "$evidence_root/backup-remote-head-before-repeat.txt"
+  task_git -C "$backup_repo" status --porcelain=v1 > "$evidence_root/backup-git-status-before-repeat.txt"
+  [[ ! -s "$evidence_root/backup-git-status-before-repeat.txt" ]] || fail 'backup checkout was dirty before the repeated push'
+  cmp -s "$evidence_root/backup-local-head-before-repeat.txt" "$evidence_root/backup-remote-head-before-repeat.txt" || fail 'initial encrypted backup commit did not reach the task-owned remote'
+
+  run_pty backup-push-repeat "$binary" backup push --config "$backup_config" --db "$archive_path" --json
+  grep -Fq '"changed": false' "$evidence_root/backup-push-repeat.typescript" || fail 'unchanged backup push was not idempotent'
+  task_git -C "$backup_repo" rev-parse HEAD > "$evidence_root/backup-local-head-after-repeat.txt"
+  task_git --git-dir="$backup_remote" rev-parse "refs/heads/$backup_branch" > "$evidence_root/backup-remote-head-after-repeat.txt"
+  task_git -C "$backup_repo" status --porcelain=v1 > "$evidence_root/backup-git-status-after-repeat.txt"
+  cmp -s "$evidence_root/backup-local-head-before-repeat.txt" "$evidence_root/backup-local-head-after-repeat.txt" || fail 'repeated backup push changed local HEAD'
+  cmp -s "$evidence_root/backup-remote-head-before-repeat.txt" "$evidence_root/backup-remote-head-after-repeat.txt" || fail 'repeated backup push changed the remote ref'
+  cmp -s "$evidence_root/backup-local-head-after-repeat.txt" "$evidence_root/backup-remote-head-after-repeat.txt" || fail 'local and remote backup refs differ after the repeated push'
+  cmp -s "$evidence_root/backup-git-status-before-repeat.txt" "$evidence_root/backup-git-status-after-repeat.txt" || fail 'repeated backup push changed checkout status'
+
+  local recovery_readme_hash manifest_hash
+  recovery_readme_hash=$(sha256_file "$backup_repo/README.md")
+  manifest_hash=$(sha256_file "$backup_repo/manifest.json")
+  verify_backup_history "$backup_repo" "$recovery_readme_hash" "$manifest_hash"
+  verify_backup_history "$backup_remote" "$recovery_readme_hash" "$manifest_hash"
+  printf 'local_and_remote_reachable_history: ciphertext-and-metadata allowlist passed\n' > "$evidence_root/backup-history-proof.txt"
+
+  run_pty backup-status "$binary" backup status --config "$backup_config" --json
+  grep -Fq '"encrypted": true' "$evidence_root/backup-status.typescript" || fail 'backup status did not report encrypted data'
+
+  run_pty backup-pull "$binary" backup pull --config "$backup_config" --db "$restored_archive" --json
+  grep -Fq '"status": "backup_pulled"' "$evidence_root/backup-pull.typescript" || fail 'backup pull did not complete'
+  [[ -f "$restored_archive" && ! -L "$restored_archive" ]] || fail 'backup pull did not create a regular restored archive'
+  run_pty backup-restored-status "$binary" --db "$restored_archive" --json status
+  grep -Fq '"data_point_count": 0' "$evidence_root/backup-restored-status.typescript" || fail 'restored empty archive status drifted'
+  run_pty backup-restored-counts "$binary" --db "$restored_archive" --json query "$snapshot_counts_query"
+  grep -Fq "\"$expected_snapshot_counts\"" "$evidence_root/backup-restored-counts.typescript" || fail 'restored Snapshot table counts differ from the exact source counts'
+  run_pty backup-restored-sentinel "$binary" --db "$restored_archive" --json query "$sentinel_query"
+  grep -Fq '"row_count": 1' "$evidence_root/backup-restored-sentinel.typescript" || fail 'restored archive did not contain exactly one synthetic Connection'
+  restored_sentinel_hex=$(tr -d '\r' < "$evidence_root/backup-restored-sentinel.typescript" | awk '/^[[:space:]]*"[0-9A-F]+",?[[:space:]]*$/ {gsub(/[ ",]/, ""); print; exit}')
+  [[ "$restored_sentinel_hex" == "$expected_sentinel_hex" ]] || fail 'restored archive changed one or more synthetic Connection fields'
+  [[ "$restored_sentinel_hex" == "$source_sentinel_hex" ]] || fail 'restored Connection fingerprint differs from the source archive'
+  printf '%s\n' "$restored_sentinel_hex" > "$evidence_root/backup-restored-sentinel.hex"
+  [[ ! -e "$credential_probe" ]] || fail 'local backup route attempted Credential Store access'
+
+  printf 'route: backup\nresult: passed\nentries: synthetic-source-counts,synthetic-source-sentinel,local-remote,init,status-empty,push,idempotent-push,history-audit,status,pull,restored-status,restored-counts,restored-sentinel\nremote: task-owned bare Git repository\nencrypted_shards: %s tracked age ciphertext files\nprovider_access: none\ncredential_store_read: none\nrestore_consumption: all eight SQLite Snapshot table counts, the Attachment payload shard row count, and every synthetic Connection field restored exactly\nrestored_archive: verified through compiled CLI\n' "$shard_count" > "$evidence_root/backup-proof.txt"
+}
+
+drive() {
+  [[ -n "$route" ]] || usage
+  case "$route" in
+    initialize|local|inspect|plan|sync|backup|connected|discover|catalog) ;;
+    *) usage ;;
+  esac
+  local attempt_marker="$evidence_root/$route-attempted.txt"
+  path_is_absent "$attempt_marker" && path_is_absent "$evidence_root/$route-proof.txt" || fail "route already attempted in this run: $route"
+  (set -o noclobber; printf 'route: %s\nstarted_at: %s\n' "$route" "$(utc_now)" > "$attempt_marker") || fail "could not claim route attempt: $route"
+  doctor_snapshot "before-$route"
+  append_event route "$route" started null
+  case "$route" in
+    initialize) drive_initialize ;;
+    local) drive_local ;;
+    inspect) drive_inspect ;;
+    plan) drive_plan ;;
+    sync) drive_sync ;;
+    backup) drive_backup ;;
+    connected) drive_connected ;;
+    discover) drive_discover ;;
+    catalog) drive_catalog ;;
+  esac
+  printf '%s\n' "$route" >> "$evidence_root/routes.txt"
+  doctor_snapshot "after-$route"
+  append_event route "$route" passed 0
+  write_manifest driven passed
+}
+
+cleanup() {
+  require_evidence_root
+  require_owned_run
+  [[ "$run_root" == "/tmp/gohealthcli-verify-$run_id" ]] || fail 'refusing unexpected cleanup path'
+  [[ -f "$evidence_root/git-status-before.txt" && ! -L "$evidence_root/git-status-before.txt" ]] || fail 'pre-run Git status evidence missing or unsafe'
+  [[ -f "$evidence_root/repo-fingerprint-before.txt" && ! -L "$evidence_root/repo-fingerprint-before.txt" ]] || fail 'pre-run repository fingerprint missing or unsafe'
+  repo_git -C "$repo_root" status --porcelain=v1 > "$evidence_root/git-status-after.txt"
+  repo_content_fingerprint > "$evidence_root/repo-fingerprint-after.txt"
+  local cleanup_target binary_hash
+  cleanup_target=$run_root
+  binary_hash=unavailable
+  if [[ -f "$binary" && ! -L "$binary" ]]; then
+    binary_hash=$(sha256_file "$binary")
+  fi
+  require_owned_run
+  [[ "$run_root" == "/tmp/gohealthcli-verify-$run_id" ]] || fail 'refusing changed cleanup path'
+  rm -rf -- "$run_root"
+  path_is_absent "$run_root" || fail 'scratch cleanup failed'
+  [[ -d "$evidence_root" ]] || fail 'cleanup removed evidence'
+  if ! cmp -s "$evidence_root/repo-fingerprint-before.txt" "$evidence_root/repo-fingerprint-after.txt"; then
+    append_event lifecycle cleanup failed 1
+    write_manifest cleaned failed
+    fail 'repository contents changed during verification; compare repository state with the recorded fingerprints'
+  fi
+  if ! cmp -s "$evidence_root/git-status-before.txt" "$evidence_root/git-status-after.txt"; then
+    diff -u "$evidence_root/git-status-before.txt" "$evidence_root/git-status-after.txt" > "$evidence_root/git-status.diff" || true
+    append_event lifecycle cleanup failed 1
+    write_manifest cleaned failed
+    fail 'repository Git status changed during verification; see git-status.diff'
+  fi
+  printf 'cleanup: passed\nrun_id: %s\ntarget: %s\nowner_marker: exact\nmethod: exact task-owned run root removed after ownership and symlink checks\nbinary_sha256_before: %s\nscratch_after: absent\nevidence_after: present\nrepo_fingerprint_before: repo-fingerprint-before.txt\nrepo_fingerprint_after: repo-fingerprint-after.txt\ngit_status_before: git-status-before.txt\ngit_status_after: git-status-after.txt\n' \
+    "$run_id" "$cleanup_target" "$binary_hash" > "$evidence_root/cleanup.txt"
+  append_event lifecycle cleanup passed 0
+  write_manifest cleaned passed
+  printf 'cleanup passed: %s\nevidence: %s\n' "$run_id" "$evidence_root"
+}
+
+manual_doctor() {
+  local index=1 phase
+  while :; do
+    phase="manual-$index"
+    if path_is_absent "$evidence_root/doctor-$phase.txt"; then
+      doctor_snapshot "$phase"
+      return
+    fi
+    index=$((index + 1))
+  done
+}
+
+self_check() {
+  [[ $# -eq 1 ]] || usage
+  require_tools
+  local schema_tmp expected_tmp actual_tmp self_root self_binary feature_file section_count feature_name command
+  schema_tmp=$(mktemp /tmp/gohealthcli-verify-schema.XXXXXX)
+  expected_tmp=$(mktemp /tmp/gohealthcli-verify-expected.XXXXXX)
+  actual_tmp=$(mktemp /tmp/gohealthcli-verify-actual.XXXXXX)
+  self_root=$(mktemp -d /tmp/gohealthcli-verify-self-check.XXXXXX)
+  chmod 700 "$self_root"
+  self_binary="$self_root/gohealthcli"
+  trap 'rm -f "$schema_tmp" "$expected_tmp" "$actual_tmp"; rm -rf -- "$self_root"' EXIT
+
+  bash -n "$helper_dir/verify-gohealthcli"
+  [[ -x "$helper_dir/verify-gohealthcli" ]] || fail 'helper is not executable'
+
+  local -a expected_commands=(
+    init doctor catalog connect identity profile settings devices irn-profile sync
+    backup status query export raw describe-schema completion schema docs-export-datasets
+  )
+  printf '%s\n' "${expected_commands[@]}" | sort > "$expected_tmp"
+  isolated_go_build "$self_root/build-state" "$self_binary"
+  "$self_binary" schema --json > "$schema_tmp"
+  sed -n 's/^      "name": "\([^"]*\)",/\1/p' "$schema_tmp" | sort > "$actual_tmp"
+  diff -u "$expected_tmp" "$actual_tmp" >/dev/null || fail 'Command Registry coverage changed; update the verification feature map and self-check list'
+
+  for command in "${expected_commands[@]}"; do
+    grep -Fq "\`$command\`" "$helper_dir/../features/README.md" || fail "feature index does not map Command Registry entry: $command"
+  done
+  for feature_file in "$helper_dir"/../features/*.md; do
+    [[ "$(basename "$feature_file")" != README.md ]] || continue
+    section_count=$(grep -c '^## ' "$feature_file")
+    [[ "$section_count" == 4 ]] || fail "feature file must contain exactly four H2 sections: $feature_file"
+    feature_name=$(basename "$feature_file")
+    grep -Fq "($feature_name)" "$helper_dir/../features/README.md" || fail "feature file is not indexed: $feature_name"
+  done
+
+  rm -f "$schema_tmp" "$expected_tmp" "$actual_tmp"
+  rm -rf -- "$self_root"
+  trap - EXIT
+  printf 'self-check: passed\n'
+}
+
+suite_cleanup() {
+  local child owner
+  for child in ${suite_owned_runs:-}; do
+    owner="/tmp/gohealthcli-verify-$child/.gohealthcli-verify-owner"
+    if [[ -f "$owner" && ! -L "$owner" && "$(<"$owner")" == "$child" ]]; then
+      "$helper_dir/verify-gohealthcli" cleanup "$child" >/dev/null || true
+    fi
+  done
+}
+
+suite() {
+  [[ -z "$route" || "$route" == smoke ]] || usage
+  local suite_kind=${route:-smoke}
+  [[ "$suite_kind" == smoke ]] || usage
+  require_evidence_parent
+  path_is_absent "$evidence_root" || fail "refusing existing suite evidence root: $evidence_root"
+  local state_run="$run_id-state"
+  local plan_run="$run_id-plan"
+  local discover_run="$run_id-discover"
+  local catalog_run="$run_id-catalog"
+  local connected_run="$run_id-connected"
+  local child
+  for child in "$state_run" "$plan_run" "$discover_run" "$catalog_run" "$connected_run"; do
+    path_is_absent "/tmp/gohealthcli-verify-$child" || fail "refusing existing child run root: /tmp/gohealthcli-verify-$child"
+    path_is_absent "$evidence_parent/$child" || fail "refusing existing child evidence root: $evidence_parent/$child"
+  done
+
+  self_check self-check
+  mkdir -m 700 "$evidence_root"
+  printf '{"timestamp":"%s","event":"suite","label":"smoke","result":"started","exit_code":null}\n' "$(utc_now)" > "$evidence_root/events.jsonl"
+
+  suite_owned_runs=''
+  trap suite_cleanup EXIT
+
+  suite_owned_runs=$state_run
+  "$helper_dir/verify-gohealthcli" launch "$state_run"
+  "$helper_dir/verify-gohealthcli" drive "$state_run" initialize
+  "$helper_dir/verify-gohealthcli" drive "$state_run" local
+  "$helper_dir/verify-gohealthcli" drive "$state_run" inspect
+  "$helper_dir/verify-gohealthcli" drive "$state_run" sync
+  "$helper_dir/verify-gohealthcli" drive "$state_run" backup
+  "$helper_dir/verify-gohealthcli" cleanup "$state_run"
+
+  local child_route
+  for child_route in plan discover catalog connected; do
+    case "$child_route" in
+      plan) child=$plan_run ;;
+      discover) child=$discover_run ;;
+      catalog) child=$catalog_run ;;
+      connected) child=$connected_run ;;
+    esac
+    suite_owned_runs+=" $child"
+    "$helper_dir/verify-gohealthcli" launch "$child"
+    "$helper_dir/verify-gohealthcli" drive "$child" "$child_route"
+    "$helper_dir/verify-gohealthcli" cleanup "$child"
+  done
+
+  {
+    printf '{\n'
+    printf '  "evidence_schema": 1,\n'
+    printf '  "suite": "smoke",\n'
+    printf '  "run_prefix": "%s",\n' "$run_id"
+    printf '  "result": "passed",\n'
+    printf '  "runs": ["%s","%s","%s","%s","%s"]\n' "$state_run" "$plan_run" "$discover_run" "$catalog_run" "$connected_run"
+    printf '}\n'
+  } > "$evidence_root/summary.json"
+  printf '{"timestamp":"%s","event":"suite","label":"smoke","result":"passed","exit_code":0}\n' "$(utc_now)" >> "$evidence_root/events.jsonl"
+  trap - EXIT
+  printf 'suite passed: %s\nevidence: %s\n' "$run_id" "$evidence_root"
+}
+
+case "$action" in
+  self-check) self_check "$@" ;;
+  suite) [[ $# -le 3 ]] || usage; suite ;;
+  launch) [[ $# -eq 2 ]] || usage; launch ;;
+  doctor) [[ $# -eq 2 ]] || usage; manual_doctor ;;
+  drive) [[ $# -eq 3 ]] || usage; drive ;;
+  cleanup) [[ $# -eq 2 ]] || usage; cleanup ;;
+  *) usage ;;
+esac
