@@ -38,20 +38,22 @@ type RawRequest struct {
 // RawRequestOptions carries the complete raw request contract, including the
 // flag provenance needed to reject range options on identity endpoints.
 type RawRequestOptions struct {
-	Target            []string
-	ID                string
-	IDProvided        bool
-	From              string
-	To                string
-	Timezone          string
-	FromProvided      bool
-	ToProvided        bool
-	TimezoneProvided  bool
-	ResolvedAt        time.Time
-	PageSize          int64
-	PageToken         string
-	PageSizeProvided  bool
-	PageTokenProvided bool
+	Target               []string
+	ID                   string
+	IDProvided           bool
+	From                 string
+	To                   string
+	Timezone             string
+	FromProvided         bool
+	ToProvided           bool
+	TimezoneProvided     bool
+	ResolvedAt           time.Time
+	PageSize             int64
+	PageToken            string
+	PageSizeProvided     bool
+	PageTokenProvided    bool
+	SourceFamily         string
+	SourceFamilyProvided bool
 	// TimezoneFallback resolves the command's non-secret configured timezone.
 	// The Provider calls it only for a Data Type target with no explicit
 	// timezone. Identity targets and explicit timezones never invoke it.
@@ -142,6 +144,19 @@ func ValidateRawRequestOptions(options RawRequestOptions) error {
 	} else if options.IDProvided {
 		return errors.New("--id is supported only by raw data-type <data-type> get")
 	}
+	if target.family == endpointFamilyReconcile {
+		if !options.SourceFamilyProvided {
+			return fmt.Errorf("raw data-type %s reconcile requires --source-family", target.dataType)
+		}
+		if options.SourceFamily == "" {
+			return errors.New("--source-family requires a non-empty source family")
+		}
+		if _, ok := sourceFamilyCatalog[options.SourceFamily]; !ok {
+			return fmt.Errorf("raw --source-family currently supports only %s", supportedSourceFamilyList())
+		}
+	} else if options.SourceFamilyProvided {
+		return errors.New("--source-family is supported only by raw data-type <data-type> reconcile")
+	}
 	if target.family == "" {
 		for _, provided := range []struct {
 			name string
@@ -203,7 +218,11 @@ func DescribeRawRequest(options RawRequestOptions) (RawRequestDescription, error
 		if resolveErr != nil {
 			return RawRequestDescription{}, resolveErr
 		}
-		request, err = buildGoogleHealthDataTypeListRawRequest(target.dataType, resolved.From, resolved.To, options.PageSize, options.PageToken)
+		pageSize := options.PageSize
+		if target.family == endpointFamilyReconcile && pageSize == 0 {
+			pageSize = syncDataPointPageSize(target.dataType)
+		}
+		request, err = buildGoogleHealthSyncDataPointRawRequest(target.dataType, resolved.From, resolved.To, options.SourceFamily, pageSize, options.PageToken)
 		if err != nil {
 			return RawRequestDescription{}, err
 		}
@@ -224,7 +243,7 @@ func DescribeRawRequest(options RawRequestOptions) (RawRequestDescription, error
 	return RawRequestDescription{
 		Request:           request,
 		Range:             resolvedRange,
-		PageSize:          options.PageSize,
+		PageSize:          requestPageSize(options, target),
 		PageTokenProvided: options.PageTokenProvided,
 		Headers:           rawRequestHeaders(request),
 		SanitizedURL:      sanitizedURL,
@@ -315,7 +334,10 @@ func parseRawRequestTarget(options RawRequestOptions) (rawRequestTarget, error) 
 		if len(target) == 3 && target[2] == "get" {
 			return parseRawDataTypeTarget(target[1], endpointFamilyGet)
 		}
-		return rawRequestTarget{}, errors.New("data-type mode requires a Data Type and optional get operation")
+		if len(target) == 3 && target[2] == "reconcile" {
+			return parseRawDataTypeTarget(target[1], endpointFamilyReconcile)
+		}
+		return rawRequestTarget{}, errors.New("data-type mode requires a Data Type and optional get or reconcile operation")
 	default:
 		return rawRequestTarget{}, fmt.Errorf("unsupported raw target %q", target[0])
 	}
@@ -328,15 +350,23 @@ func parseRawDataTypeTarget(dataType string, family endpointFamily) (rawRequestT
 		}
 		return rawRequestTarget{dataType: dataType, family: endpointFamilyGet}, nil
 	}
-	rangeTarget, err := SyncRangeTarget(dataType, nil, false)
+	reconcile := family == endpointFamilyReconcile
+	rangeTarget, err := SyncRangeTarget(dataType, nil, reconcile)
 	if err != nil {
 		return rawRequestTarget{}, err
 	}
-	support, err := googleHealthDataTypeFilterSupport(dataType, endpointFamilyList)
+	support, err := googleHealthDataTypeFilterSupport(dataType, family)
 	if err != nil {
 		return rawRequestTarget{}, err
 	}
-	return rawRequestTarget{dataType: dataType, rangeTarget: rangeTarget, lowerBoundOnly: support.LowerBoundOnly, family: endpointFamilyList}, nil
+	return rawRequestTarget{dataType: dataType, rangeTarget: rangeTarget, lowerBoundOnly: support.LowerBoundOnly, family: family}, nil
+}
+
+func requestPageSize(options RawRequestOptions, target rawRequestTarget) int64 {
+	if target.family == endpointFamilyReconcile && options.PageSize == 0 {
+		return syncDataPointPageSize(target.dataType)
+	}
+	return options.PageSize
 }
 
 func buildGoogleHealthDataPointGetRawRequest(dataType, providerID string) (RawRequest, error) {

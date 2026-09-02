@@ -12,17 +12,18 @@ import (
 )
 
 type rawCommandOptions struct {
-	configPath  string
-	archivePath string
-	from        string
-	to          string
-	timezone    string
-	pageSize    int64
-	pageToken   string
-	id          string
-	target      []string
-	plan        bool
-	outputPath  string
+	configPath   string
+	archivePath  string
+	from         string
+	to           string
+	timezone     string
+	pageSize     int64
+	pageToken    string
+	sourceFamily string
+	id           string
+	target       []string
+	plan         bool
+	outputPath   string
 }
 
 type rawPlanningConfigError struct {
@@ -50,6 +51,7 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	rawTimezone := flags.String("timezone", "", "IANA timezone for now, today, and yesterday (Data Type lists only; default config, then UTC)")
 	rawPageSize := flags.Int64("page-size", 0, "pagination page size (positive integer; where supported by the endpoint)")
 	rawPageToken := flags.String("page-token", "", "pagination page token from a prior response")
+	rawSourceFamily := flags.String("source-family", "", syncSourceFamilyUsage())
 	rawID := flags.String("id", "", "opaque Provider Data Point ID (data-type get only)")
 	rawPlan := flags.Bool("plan", false, "print the exact secret-free Provider request plan without external access")
 	rawOutput := flags.String("output", "", "write exact Provider response bytes to a new private file")
@@ -67,6 +69,7 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		fmt.Fprintln(w, "usage: gohealthcli raw endpoint dataTypes.<data-type>.list --from <boundary> [--to <boundary>] [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
 		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> --from <boundary> [--to <boundary>] [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
 		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> get --id <provider-id> [--output <path> | --plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> reconcile --source-family <family> --from <boundary> [--to <boundary>] [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
 	}
 	// stdlib's flag package calls fs.Usage on BOTH `-h` and a parse
 	// error. Suppress that auto-call entirely and emit the bespoke
@@ -124,32 +127,35 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: "--timezone requires a non-empty IANA timezone", Mode: mode}, stdout, stderr)
 	}
 	options := rawCommandOptions{
-		configPath:  common.ConfigPath,
-		archivePath: common.ArchivePath,
-		from:        *rawFrom,
-		to:          *rawTo,
-		timezone:    *rawTimezone,
-		pageSize:    *rawPageSize,
-		pageToken:   *rawPageToken,
-		id:          *rawID,
-		target:      target,
-		plan:        *rawPlan,
-		outputPath:  *rawOutput,
+		configPath:   common.ConfigPath,
+		archivePath:  common.ArchivePath,
+		from:         *rawFrom,
+		to:           *rawTo,
+		timezone:     *rawTimezone,
+		pageSize:     *rawPageSize,
+		pageToken:    *rawPageToken,
+		sourceFamily: *rawSourceFamily,
+		id:           *rawID,
+		target:       target,
+		plan:         *rawPlan,
+		outputPath:   *rawOutput,
 	}
 	requestOptions := googlehealth.RawRequestOptions{
-		Target:            options.target,
-		ID:                options.id,
-		IDProvided:        flagWasProvided(flags, "id"),
-		From:              options.from,
-		To:                options.to,
-		Timezone:          options.timezone,
-		FromProvided:      flagWasProvided(flags, "from"),
-		ToProvided:        flagWasProvided(flags, "to"),
-		TimezoneProvided:  flagWasProvided(flags, "timezone"),
-		PageSize:          options.pageSize,
-		PageToken:         options.pageToken,
-		PageSizeProvided:  flagWasProvided(flags, "page-size"),
-		PageTokenProvided: flagWasProvided(flags, "page-token"),
+		Target:               options.target,
+		ID:                   options.id,
+		IDProvided:           flagWasProvided(flags, "id"),
+		From:                 options.from,
+		To:                   options.to,
+		Timezone:             options.timezone,
+		FromProvided:         flagWasProvided(flags, "from"),
+		ToProvided:           flagWasProvided(flags, "to"),
+		TimezoneProvided:     flagWasProvided(flags, "timezone"),
+		PageSize:             options.pageSize,
+		PageToken:            options.pageToken,
+		PageSizeProvided:     flagWasProvided(flags, "page-size"),
+		PageTokenProvided:    flagWasProvided(flags, "page-token"),
+		SourceFamily:         options.sourceFamily,
+		SourceFamilyProvided: flagWasProvided(flags, "source-family"),
 	}
 	if err := googlehealth.ValidateRawRequestOptions(requestOptions); err != nil {
 		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)

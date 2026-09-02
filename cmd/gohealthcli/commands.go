@@ -485,6 +485,7 @@ var commands = []commandDef{
 			flagSpec{Name: "timezone", Type: "string", Default: "", Usage: "IANA timezone for now, today, and yesterday (Data Type lists only; default config, then UTC)", ValueCompletion: valueCompletionNone},
 			flagSpec{Name: "page-size", Type: "int", Default: "", Usage: "pagination page size (positive integer; where supported by the endpoint)", ValueCompletion: valueCompletionNone},
 			flagSpec{Name: "page-token", Type: "string", Default: "", Usage: "pagination page token from a prior response", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "source-family", Type: "string", Default: "", Usage: syncSourceFamilyUsage(), ValueCompletion: valueCompletionSourceFamily},
 			flagSpec{Name: "plan", Type: "bool", Default: "false", Usage: "print the exact secret-free Provider request plan without external access"},
 			flagSpec{Name: "output", Type: "string", Default: "", Usage: "write exact Provider response bytes to a new private file", ValueCompletion: valueCompletionFile},
 		),
