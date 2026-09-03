@@ -29,6 +29,6 @@ Preconditions:
 ## Gotchas
 
 - Helper doctor checks the verification run. Product `gohealthcli doctor` checks user-facing local setup. Keep both.
-- Default doctor may inspect and migrate the task-owned archive. It does not read credentials or contact Google.
+- Default doctor may inspect and migrate the task-owned archive. It may read the configured OAuth client file, but it does not load Credential Store token material or contact Google.
 - `doctor --online` is a different external-access contract. Do not claim it from the offline result.
 - A zero-Connection archive proves the local diagnostic boundary, not token health.

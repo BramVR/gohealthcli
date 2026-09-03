@@ -54,7 +54,7 @@ Use one mapped route. Each route records the literal command, PTY transcript, an
 - `initialize`: requires a fresh run. Executes `init --json`, confirms the newest migration through `query --json`, then proves the same setup returns `already_initialized`.
 - `local`: requires an initialized run. Executes product `doctor` in JSON and plain modes, then proves `doctor --online` stops at the missing Connection.
 - `inspect`: requires an initialized run. Exercises status modes, accepted and rejected query paths, schema JSON and SQL, and empty CSV/JSONL exports.
-- `plan`: requires a fresh run. Executes identity and fixed-range Data Type plans, checks every reported planning effect is false, confirms local paths remain absent, then records the live-read path as unreachable at missing isolated setup before any external access.
+- `plan`: requires a fresh run. Executes identity and fixed-range Data Type plans, checks every reported planning effect is false, exercises raw output validation and cleanup without Provider access, confirms local paths remain absent, then records the live-read path as unreachable at missing isolated setup.
 - `sync`: requires an initialized run without a Connection. Reads empty Sync Run history, records a blocked plan with all execution effects false, and proves normal sync fails before creating a Sync Run.
 - `backup`: requires an initialized run. Creates a task-owned bare Git remote, encrypts and pushes the empty archive locally, proves unchanged-push idempotence, restores to a new archive, and reads it through the compiled CLI.
 - `connected`: requires a fresh run. Exercises the local setup gate for connect, identity snapshots, and sync without touching a Credential Store or Provider.

@@ -16,7 +16,7 @@ The read surface lets users summarize an archive, run guarded SELECT statements,
 - Run `gohealthcli --db <archive> --json status`.
 - Run `gohealthcli --db <archive> --json query 'SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1'`.
 - Run `gohealthcli --db <archive> --json describe-schema`.
-- Add `--sql` to include live DDL.
+- Use `--sql` instead to emit live DDL.
 - Run `gohealthcli --db <archive> export <dataset> --format csv --output <path>` or use `--stdout`.
 
 ## Driving it with verify-gohealthcli
@@ -35,6 +35,7 @@ Preconditions:
 
 - `query` accepts one SELECT only. Keep both the successful read and rejected write proof.
 - `status` may fence abandoned Sync Runs. The isolated empty archive has none; do not aim it at shared state.
+- These read surfaces can run archive lifecycle work before reading: pending migrations may be applied, and `status` can fence stale Sync Runs. This recipe uses a current isolated archive where neither changes state.
 - `describe-schema --plain` still emits JSON and a note on stderr. Use `--json` for this recipe.
 - An empty archive proves command contracts and schema, not normalized values from health records.
 - Do not claim human, config-resolved, real-data, or Windows paths from these JSON/plain `--db` routes.

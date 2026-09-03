@@ -24,10 +24,10 @@ Preconditions:
 
 - Run `.agents/skills/verify-gohealthcli/helpers/verify-gohealthcli drive "$RUN_ID" sync`.
 - `sync-status-before.typescript` reports no recent Sync Runs.
-- `sync-plan-blocked.typescript` reports `plan_blocked` and every planning effect false for a fixed `steps` window.
+- `sync-plan-blocked.typescript` reports `plan_blocked`, blocker code `connection_lookup`, the missing Connection message, and every planning effect false for a fixed `steps` window.
 - `sync-live-unreachable.typescript` exercises normal sync and fails at the missing Connection preflight.
 - `sync-sidecar-before.txt`, `sync-sidecar-after-plan.txt`, and `sync-sidecar-after-live.txt` must contain the same complete Attachment-sidecar tree fingerprint.
-- `sync-status-after.typescript` and the complete SQLite file-set fingerprint prove that neither blocked path created a Sync Run or changed the archive, journal, WAL, or shared-memory sibling.
+- `sync-status-after.typescript`, `sync-sqlite-before.txt`, and `sync-sqlite-after.txt` prove that neither blocked path created a Sync Run or changed the archive, journal, WAL, or shared-memory sibling.
 
 ## Gotchas
 

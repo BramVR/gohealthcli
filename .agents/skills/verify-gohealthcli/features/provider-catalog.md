@@ -16,7 +16,7 @@ The catalog lets users inspect compiled Google Health Data Types and OAuth scope
 - Run `gohealthcli catalog scopes --json`.
 - Run `gohealthcli catalog describe steps --json`.
 - Run `gohealthcli catalog verify --discovery <path> --json` for a bounded offline document.
-- Use `catalog describe --live` or omit `--discovery` from `catalog verify` for the live public discovery endpoint.
+- Use `catalog describe steps --live` or omit `--discovery` from `catalog verify` for the live public discovery endpoint.
 
 ## Driving it with verify-gohealthcli
 
