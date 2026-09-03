@@ -30,12 +30,12 @@ Preconditions:
 
 - **Bare entry.** Run `.agents/skills/verify-gohealthcli/helpers/verify-gohealthcli drive "$RUN_ID" discover`. `discover-bare.typescript` contains the `Subcommands` and `Global flags` blocks; separate stream evidence proves the help text is on stdout and stderr is empty.
 - **Top-level help entry.** The drive runs `help`. `discover-help.typescript` contains the same help blocks; separate stream evidence proves the explicit-help text is on stderr and stdout is empty.
-- **Command-help entries.** The drive runs both `help sync` and `sync --help`. Their transcripts contain sync's long prose or flag block and `--types`; both exit `0`.
+- **Command-help entries.** The drive runs both `help sync` and `sync --help`. The first contains sync's long planning prose and flags; the second contains the flag-package usage block. Both include `--types` and exit `0`.
 - **Registry entry.** The drive runs `schema --json`. `discover-schema.typescript` contains registry schema version and the sync command definition; exit is `0`.
 - **Version entry.** `discover-version-plain.typescript` contains the stamped single-line form. Launch separately captured JSON version and matching commit.
 - **Completion entries.** Four transcripts retain native completion scripts for Bash, Zsh, Fish, and PowerShell.
 - **Dataset generator.** The drive rewrites only the staged task-owned README and requires it to remain byte-identical to the committed README.
-- **Suggestion entry.** The drive runs `stauts` through an expected-failure PTY. `discover-suggestion.typescript` contains `Did you mean: status?`, and its recorded exit is `1`.
+- **Suggestion entry.** The drive runs `stauts` through an expected-failure PTY. `discover-suggestion.typescript` contains the unknown-command failure, `Did you mean: status?`, and the help remediation; its recorded exit is `1`.
 
 ## Gotchas
 

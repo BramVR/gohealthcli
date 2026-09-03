@@ -5,7 +5,7 @@ Initialization creates an owner-controlled config, empty SQLite Health Archive, 
 ## Sub-features
 
 - `init-json` creates fresh local setup and returns the stable JSON result.
-- `init-permissions` creates owner-only config, archive, OAuth reference, and sidecar paths.
+- `init-permissions` creates owner-only config, archive, and sidecar paths after validating the owner-only OAuth reference.
 - `init-persistence` exposes the applied schema through a separate guarded query.
 - `init-existing` reports `already_initialized` when the same setup is initialized again.
 
@@ -35,3 +35,4 @@ Preconditions:
 - Never reroute `--config` or `--db` outside `/tmp/gohealthcli-verify-$RUN_ID`.
 - File existence is insufficient persistence proof; require the separate `query` result.
 - Initialization proof does not prove OAuth, Connection, sync, Provider reads, real-data normalization, or Windows permissions.
+- Reinitializing existing setup may apply pending migrations and recreate a missing Attachment sidecar before reporting `already_initialized`; it is not an unconditional no-op.

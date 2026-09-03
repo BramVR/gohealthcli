@@ -40,7 +40,7 @@ Each feature uses exactly four H2 sections: `Sub-features`, `How to get to it (u
 - [Initialize a Health Archive](initialize.md): isolated config/archive creation, permissions, idempotence boundary, and second-read migration proof.
 - [Diagnose local setup](local-diagnostics.md): offline setup health, archive integrity, output modes, and the online authorization boundary.
 - [Inspect a Health Archive](inspect-archive.md): status, guarded SQL, and schema description against local state.
-- [Plan a Provider request](plan-provider-request.md): secret-free offline request planning with observed zero local effects.
+- [Explore Provider requests safely](plan-provider-request.md): secret-free list/get/reconcile/Rollup planning, output-path safety, and observed zero local effects.
 - [Plan and inspect sync](sync-planning-and-history.md): empty Sync Run history, blocked local planning, and preflight behavior without a Connection.
 - [Back up and restore an archive](encrypted-backup.md): task-local Git, age-encrypted shards, idempotence, restore, and second-read proof.
 - [Reach connected Provider commands](connected-provider-commands.md): local failure gates and the explicit live-authorization boundary.
@@ -56,7 +56,7 @@ Each feature uses exactly four H2 sections: `Sub-features`, `How to get to it (u
 - `sync`: Plan and inspect sync.
 - `backup`: Back up and restore an archive.
 - `status`, `query`, `export`, `describe-schema`: Inspect a Health Archive.
-- `raw`: Plan a Provider request.
+- `raw`: Explore Provider requests safely.
 - `completion`, `schema`, `docs-export-datasets`: Discover commands.
 
 Global version output and the `help` verb also live under Discover commands. `self-check` compares this inventory with the binary's current registry.

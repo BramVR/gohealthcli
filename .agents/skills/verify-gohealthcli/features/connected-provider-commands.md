@@ -4,7 +4,7 @@ Connection setup and Provider reads require a real OAuth client, Credential Stor
 
 ## Sub-features
 
-- `connect` starts or completes OAuth and writes runtime tokens to the configured Credential Store.
+- `connect` starts or completes OAuth. Headless start writes only pending PKCE authorization state; interactive completion or `connect --complete` writes runtime tokens to the configured Credential Store.
 - `identity`, `profile`, `settings`, `devices`, and `irn-profile` read Provider identity metadata and may append snapshots.
 - `sync-live` reads Provider records and writes archive state.
 - `provider-gates` reject every command before credentials or network when isolated setup is absent.

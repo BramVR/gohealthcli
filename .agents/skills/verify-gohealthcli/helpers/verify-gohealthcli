@@ -627,8 +627,8 @@ drive_initialize() {
 
   run_pty initialize-existing "$binary" --config "$config_path" --db "$archive_path" --json --no-input init --oauth-client-file "$oauth_file"
   grep -Fq '"status": "already_initialized"' "$evidence_root/initialize-existing.typescript" || fail 'existing setup did not report already_initialized'
-  printf 'route: initialize\nresult: passed\nsecond_read: initialize-confirm.typescript\nexisting_setup: already_initialized\nconfig_mode: %s\narchive_mode: %s\nsidecar_mode: %s\n' \
-    "$(mode_of "$config_path")" "$(mode_of "$archive_path")" "$(mode_of "$sidecar_path")" > "$evidence_root/initialize-proof.txt"
+  printf 'route: initialize\nresult: passed\nsecond_read: initialize-confirm.typescript\nexisting_setup: already_initialized\nconfig_mode: %s\narchive_mode: %s\noauth_reference_mode: %s\nsidecar_mode: %s\n' \
+    "$(mode_of "$config_path")" "$(mode_of "$archive_path")" "$(mode_of "$oauth_file")" "$(mode_of "$sidecar_path")" > "$evidence_root/initialize-proof.txt"
 }
 
 drive_inspect() {
@@ -672,6 +672,13 @@ drive_inspect() {
     "$(sha256_file "$export_path")" "$(sha256_file "$jsonl_path")" > "$evidence_root/inspect-proof.txt"
 }
 
+assert_raw_plan_no_effects() {
+  local transcript=$1 effect
+  for effect in provider_request credential_store_read token_load token_refresh health_archive_open health_archive_write rollup_write sync_run_change migration cursor_change sidecar_creation; do
+    grep -Fq "\"$effect\": false" "$transcript" || fail "raw planning effect $effect was not false in $(basename "$transcript")"
+  done
+}
+
 drive_plan() {
   path_is_absent "$config_path" && path_is_absent "$archive_path" && path_is_absent "$sidecar_path" || fail 'plan route requires fresh state'
   path_is_absent "$default_config_path" && path_is_absent "$default_archive_path" && path_is_absent "$default_sidecar_path" || fail 'plan route requires absent isolated default state'
@@ -686,28 +693,149 @@ drive_plan() {
       fail "raw plan leaked sensitive request material: $sensitive"
     fi
   done
-  local effect
-  for effect in provider_request credential_store_read token_load token_refresh health_archive_open health_archive_write migration cursor_change sidecar_creation; do
-    grep -Fq "\"$effect\": false" "$evidence_root/plan-identity.typescript" || fail "planning effect $effect was not false"
-  done
+  assert_raw_plan_no_effects "$evidence_root/plan-identity.typescript"
 
   run_pty plan-data-type "$binary" raw data-type steps --from 2026-01-01T00:00:00Z --to 2026-01-02T00:00:00Z --timezone Europe/Brussels --plan --json
   grep -Fq '"data_type": "steps"' "$evidence_root/plan-data-type.typescript" || fail 'Data Type plan missing steps target'
   grep -Fq '"from": "2026-01-01T00:00:00Z"' "$evidence_root/plan-data-type.typescript" || fail 'Data Type plan missing fixed from bound'
   grep -Fq '"to": "2026-01-02T00:00:00Z"' "$evidence_root/plan-data-type.typescript" || fail 'Data Type plan missing fixed to bound'
   grep -Fq '"timezone": "Europe/Brussels"' "$evidence_root/plan-data-type.typescript" || fail 'Data Type plan did not preserve the requested timezone'
-  for effect in provider_request credential_store_read token_load token_refresh health_archive_open health_archive_write migration cursor_change sidecar_creation; do
-    grep -Fq "\"$effect\": false" "$evidence_root/plan-data-type.typescript" || fail "Data Type planning effect $effect was not false"
-  done
+  assert_raw_plan_no_effects "$evidence_root/plan-data-type.typescript"
+
+  run_pty plan-data-point-get "$binary" raw data-type sleep get --id synthetic/provider-id --plan --json
+  grep -Fq '"endpoint_name": "dataTypes.sleep.get"' "$evidence_root/plan-data-point-get.typescript" || fail 'Data Point get plan endpoint drifted'
+  grep -Fq '/dataPoints/REDACTED' "$evidence_root/plan-data-point-get.typescript" || fail 'Data Point get plan did not redact its Provider ID'
+  if grep -Fq 'synthetic/provider-id' "$evidence_root/plan-data-point-get.typescript"; then
+    fail 'Data Point get plan exposed its Provider ID'
+  fi
+  assert_raw_plan_no_effects "$evidence_root/plan-data-point-get.typescript"
+
+  run_pty plan-reconcile "$binary" raw data-type daily-resting-heart-rate reconcile --source-family wearable --from 2026-01-01 --to 2026-01-02 --timezone Europe/Brussels --plan --json
+  grep -Fq '"endpoint_name": "dataTypes.daily-resting-heart-rate.reconcile"' "$evidence_root/plan-reconcile.typescript" || fail 'reconcile plan endpoint drifted'
+  grep -Fq '"source_family": "wearable"' "$evidence_root/plan-reconcile.typescript" || fail 'reconcile plan lost its source family'
+  assert_raw_plan_no_effects "$evidence_root/plan-reconcile.typescript"
+
+  run_pty plan-daily-rollup "$binary" raw data-type steps daily-rollup --from 2026-01-01 --to 2026-01-02 --timezone Europe/Brussels --plan --json
+  grep -Fq '"endpoint_name": "dataTypes.steps.dailyRollUp"' "$evidence_root/plan-daily-rollup.typescript" || fail 'daily Rollup plan endpoint drifted'
+  grep -Fq '"method": "POST"' "$evidence_root/plan-daily-rollup.typescript" || fail 'daily Rollup plan method drifted'
+  assert_raw_plan_no_effects "$evidence_root/plan-daily-rollup.typescript"
+
+  run_pty plan-rollup "$binary" raw data-type steps rollup --from 2026-01-01T00:00:00Z --to 2026-01-02T00:00:00Z --timezone UTC --window 1h --plan --json
+  grep -Fq '"endpoint_name": "dataTypes.steps.rollUp"' "$evidence_root/plan-rollup.typescript" || fail 'physical Rollup plan endpoint drifted'
+  grep -Fq '"windowSize": "3600s"' "$evidence_root/plan-rollup.typescript" || fail 'physical Rollup plan window drifted'
+  assert_raw_plan_no_effects "$evidence_root/plan-rollup.typescript"
   path_is_absent "$config_path" && path_is_absent "$archive_path" && path_is_absent "$sidecar_path" || fail 'raw plan created explicit local setup state'
   path_is_absent "$default_config_path" && path_is_absent "$default_archive_path" && path_is_absent "$default_sidecar_path" || fail 'raw plan created default local setup state'
+
+  local output_root="$run_root/raw-output-safety"
+  local safe_parent="$output_root/private" insecure_parent="$output_root/insecure"
+  local existing_output="$safe_parent/existing.json" output_hash_before output_hash_after output_mode_before output_mode_after
+  local output_directory="$safe_parent/directory" symlink_target="$safe_parent/symlink-target.json" symlink_output="$safe_parent/symlink.json"
+  local symlink_hash_before symlink_hash_after symlink_leaf_before symlink_leaf_after
+  local parent_file="$output_root/not-a-directory" parent_file_hash_before parent_file_hash_after
+  local missing_parent_output="$output_root/missing/response.json" insecure_parent_output="$insecure_parent/response.json"
+  local setup_failure_output="$safe_parent/setup-failure.json" staging_after
+  mkdir -p "$safe_parent" "$insecure_parent" "$output_directory"
+  chmod 700 "$output_root" "$safe_parent" "$output_directory"
+  chmod 777 "$insecure_parent"
+
+  run_pty_expected plan-output-conflict 1 "$binary" raw endpoint getIdentity --plan --json --output "$safe_parent/conflict.json"
+  grep -Fq -- '--output is not supported with --plan' "$evidence_root/plan-output-conflict.typescript" || fail 'raw output did not reject its plan conflict'
+  path_is_absent "$safe_parent/conflict.json" || fail 'raw plan/output conflict created a destination'
+
+  run_pty_expected plan-output-empty 1 "$binary" raw endpoint getIdentity --output ''
+  grep -Fq -- '--output requires a non-empty path' "$evidence_root/plan-output-empty.typescript" || fail 'raw output did not reject its empty path'
+
+  printf '{"synthetic":"sentinel"}\n' > "$existing_output"
+  chmod 600 "$existing_output"
+  output_hash_before=$(sha256_file "$existing_output")
+  output_mode_before=$(mode_of "$existing_output")
+  printf '%s\n' "$output_hash_before" > "$evidence_root/plan-output-existing-before.txt"
+  printf '%s\n' "$output_mode_before" > "$evidence_root/plan-output-existing-mode-before.txt"
+  run_pty_expected plan-output-existing 1 "$binary" --config "$config_path" --db "$archive_path" raw endpoint getIdentity --output "$existing_output"
+  grep -Fq 'already exists; refusing to overwrite' "$evidence_root/plan-output-existing.typescript" || fail 'raw output did not refuse the existing destination'
+  output_hash_after=$(sha256_file "$existing_output")
+  output_mode_after=$(mode_of "$existing_output")
+  printf '%s\n' "$output_hash_after" > "$evidence_root/plan-output-existing-after.txt"
+  printf '%s\n' "$output_mode_after" > "$evidence_root/plan-output-existing-mode-after.txt"
+  [[ "$output_hash_after" == "$output_hash_before" ]] || fail 'raw output changed an existing destination'
+  [[ "$output_mode_after" == "$output_mode_before" ]] || fail 'raw output changed an existing destination mode'
+
+  run_streams_expected plan-output-existing-streams 1 "$binary" --config "$config_path" --db "$archive_path" raw endpoint getIdentity --output "$existing_output"
+  [[ ! -s "$evidence_root/plan-output-existing-streams.stdout.txt" ]] || fail 'raw existing-output refusal wrote to stdout'
+  grep -Fq 'already exists; refusing to overwrite' "$evidence_root/plan-output-existing-streams.stderr.txt" || fail 'raw existing-output refusal did not write remediation to stderr'
+
+  run_pty_expected plan-output-directory 1 "$binary" --config "$config_path" --db "$archive_path" raw endpoint getIdentity --output "$output_directory"
+  grep -Fq 'is a directory' "$evidence_root/plan-output-directory.typescript" || fail 'raw output did not reject a directory destination'
+  [[ -d "$output_directory" && ! -L "$output_directory" ]] || fail 'raw output changed its directory destination'
+
+  printf '{"synthetic":"symlink-target"}\n' > "$symlink_target"
+  chmod 600 "$symlink_target"
+  symlink_hash_before=$(sha256_file "$symlink_target")
+  ln -s "$symlink_target" "$symlink_output"
+  symlink_leaf_before=$(readlink "$symlink_output")
+  printf '%s\n' "$symlink_hash_before" > "$evidence_root/plan-output-symlink-target-before.txt"
+  printf '%s\n' "$symlink_leaf_before" > "$evidence_root/plan-output-symlink-leaf-before.txt"
+  run_pty_expected plan-output-symlink 1 "$binary" --config "$config_path" --db "$archive_path" raw endpoint getIdentity --output "$symlink_output"
+  grep -Fq 'names a symbolic link' "$evidence_root/plan-output-symlink.typescript" || fail 'raw output did not reject a symlink destination'
+  [[ -L "$symlink_output" ]] || fail 'raw output replaced its symlink destination'
+  symlink_leaf_after=$(readlink "$symlink_output")
+  symlink_hash_after=$(sha256_file "$symlink_target")
+  printf '%s\n' "$symlink_hash_after" > "$evidence_root/plan-output-symlink-target-after.txt"
+  printf '%s\n' "$symlink_leaf_after" > "$evidence_root/plan-output-symlink-leaf-after.txt"
+  [[ "$symlink_leaf_after" == "$symlink_leaf_before" ]] || fail 'raw output changed its symlink destination'
+  [[ "$symlink_hash_after" == "$symlink_hash_before" ]] || fail 'raw output changed its symlink target'
+
+  printf 'synthetic-parent-sentinel\n' > "$parent_file"
+  chmod 600 "$parent_file"
+  parent_file_hash_before=$(sha256_file "$parent_file")
+  printf '%s\n' "$parent_file_hash_before" > "$evidence_root/plan-output-parent-file-before.txt"
+  run_pty_expected plan-output-parent-file 1 "$binary" --config "$config_path" --db "$archive_path" raw endpoint getIdentity --output "$parent_file/response.json"
+  grep -Fq 'is not a directory' "$evidence_root/plan-output-parent-file.typescript" || fail 'raw output did not reject a file parent'
+  parent_file_hash_after=$(sha256_file "$parent_file")
+  printf '%s\n' "$parent_file_hash_after" > "$evidence_root/plan-output-parent-file-after.txt"
+  [[ "$parent_file_hash_after" == "$parent_file_hash_before" ]] || fail 'raw output changed its file parent'
+
+  run_pty_expected plan-output-parent-missing 1 "$binary" --config "$config_path" --db "$archive_path" raw endpoint getIdentity --output "$missing_parent_output"
+  grep -Fq 'inspect --output parent' "$evidence_root/plan-output-parent-missing.typescript" || fail 'raw output did not reject a missing parent'
+  path_is_absent "$missing_parent_output" || fail 'raw output created a destination below a missing parent'
+
+  run_pty_expected plan-output-parent-insecure 1 "$binary" --config "$config_path" --db "$archive_path" raw endpoint getIdentity --output "$insecure_parent_output"
+  grep -Fq 'not writable by group or other users' "$evidence_root/plan-output-parent-insecure.typescript" || fail 'raw output did not reject an insecure parent'
+  path_is_absent "$insecure_parent_output" || fail 'raw output created a destination below an insecure parent'
+
+  run_pty_expected plan-output-setup-failure 1 "$binary" --config "$config_path" --db "$archive_path" raw endpoint getIdentity --output "$setup_failure_output"
+  grep -Fq 'config check failed:' "$evidence_root/plan-output-setup-failure.typescript" || fail 'raw output did not stop at missing local setup'
+  if path_is_absent "$setup_failure_output"; then
+    printf 'absent\n' > "$evidence_root/plan-output-setup-failure-destination-after.txt"
+  else
+    fail 'raw setup failure created a final destination'
+  fi
+  staging_after=$(find -P "$safe_parent" -type f -name '.gohealthcli-raw-*' -print | wc -l | tr -d ' ')
+  printf '%s\n' "$staging_after" > "$evidence_root/plan-output-staging-after.txt"
+  [[ "$staging_after" == 0 ]] || fail 'raw setup failure left a staging file'
+
+  run_streams_expected plan-output-setup-failure-streams 1 "$binary" --config "$config_path" --db "$archive_path" raw endpoint getIdentity --output "$setup_failure_output"
+  [[ ! -s "$evidence_root/plan-output-setup-failure-streams.stdout.txt" ]] || fail 'raw setup failure wrote to stdout'
+  grep -Fq 'config check failed:' "$evidence_root/plan-output-setup-failure-streams.stderr.txt" || fail 'raw setup failure did not write remediation to stderr'
+  if path_is_absent "$setup_failure_output"; then
+    printf 'absent\n' > "$evidence_root/plan-output-setup-failure-streams-destination-after.txt"
+  else
+    fail 'raw setup-failure stream replay created a final destination'
+  fi
+  staging_after=$(find -P "$safe_parent" -type f -name '.gohealthcli-raw-*' -print | wc -l | tr -d ' ')
+  printf '%s\n' "$staging_after" > "$evidence_root/plan-output-staging-after-streams.txt"
+  [[ "$staging_after" == 0 ]] || fail 'raw setup-failure stream replay left a staging file'
+  [[ ! -e "$credential_probe" ]] || fail 'raw output safety checks attempted Credential Store access'
+
+  printf 'result: passed\nrefusals: plan-conflict,empty-path,existing-file,directory,symlink,parent-file,parent-missing,parent-insecure\nexisting_file_after: bytes-and-mode unchanged\nsymlink_after: link-and-target unchanged\nsetup_failure_destination_after: plan-output-setup-failure-destination-after.txt\nsetup_failure_staging_after: plan-output-staging-after.txt\nstream_replay_destination_after: plan-output-setup-failure-streams-destination-after.txt\nstream_replay_staging_after: plan-output-staging-after-streams.txt\nstream_placement: stdout empty, remediation on stderr\ncredential_store_probe: absent\n' > "$evidence_root/plan-output-safety-proof.txt"
 
   run_pty_expected plan-live-unreachable 1 "$binary" --config "$config_path" --db "$archive_path" --json raw endpoint getIdentity
   grep -Fq '"status":"operation_failed"' "$evidence_root/plan-live-unreachable.typescript" || fail 'live read did not use the operation failure contract'
   grep -Fq '"message":"config check failed:' "$evidence_root/plan-live-unreachable.typescript" || fail 'live read did not stop at the missing local setup gate'
   [[ ! -e "$credential_probe" ]] || fail 'live-read setup failure attempted Credential Store access'
   path_is_absent "$config_path" && path_is_absent "$archive_path" && path_is_absent "$sidecar_path" || fail 'unreachable live read created local setup state'
-  printf 'route: plan\nresult: passed\nplanning_effects: all false\nexplicit_config_after: absent\nexplicit_archive_after: absent\nexplicit_sidecar_after: absent\ndefault_config_after: absent\ndefault_archive_after: absent\ndefault_sidecar_after: absent\nlive_read: verified-unreachable (missing isolated setup and authorized Connection)\n' > "$evidence_root/plan-proof.txt"
+  printf 'route: plan\nresult: passed\nentries: identity,list,get,reconcile,daily-rollup,rollup,output-safety,live-read-gate\nplanning_effects: all false\nexplicit_config_after: absent\nexplicit_archive_after: absent\nexplicit_sidecar_after: absent\ndefault_config_after: absent\ndefault_archive_after: absent\ndefault_sidecar_after: absent\noutput_safety: plan-output-safety-proof.txt\nlive_read_and_output: verified-unreachable (missing isolated setup and authorized Connection)\n' > "$evidence_root/plan-proof.txt"
 }
 
 drive_discover() {
@@ -731,6 +859,7 @@ drive_discover() {
 
   run_pty discover-sync-help "$binary" help sync
   grep -Fq -- '--types' "$evidence_root/discover-sync-help.typescript" || fail 'sync help missing --types'
+  grep -Fq 'resolves one operation per requested Data Type' "$evidence_root/discover-sync-help.typescript" || fail 'sync help missing its long planning prose'
 
   run_pty discover-sync-flag "$binary" sync --help
   grep -Fq -- '--types' "$evidence_root/discover-sync-flag.typescript" || fail 'sync --help missing --types'
@@ -752,7 +881,9 @@ drive_discover() {
   cmp -s "$repo_root/README.md" "$readme_file" || fail 'generated export dataset block drifted from README'
 
   run_pty_expected discover-suggestion 1 "$binary" stauts
+  grep -Fq 'gohealthcli: unknown command: stauts' "$evidence_root/discover-suggestion.typescript" || fail 'typo path missing the unknown-command failure'
   grep -Fq 'Did you mean: status?' "$evidence_root/discover-suggestion.typescript" || fail 'typo path missing status suggestion'
+  grep -Fq "Run 'gohealthcli --help' for a list of commands." "$evidence_root/discover-suggestion.typescript" || fail 'typo path missing help remediation'
   printf 'route: discover\nresult: passed\nentries: version-plain,bare,help,help-sync,sync-help,schema-json,completion-bash,completion-zsh,completion-fish,completion-powershell,docs-export-datasets,suggestion\n' > "$evidence_root/discover-proof.txt"
 }
 
@@ -805,9 +936,12 @@ drive_sync() {
   grep -Fq '"status": "ok"' "$evidence_root/sync-status-before.typescript" || fail 'sync status did not report ok'
   grep -Fq 'no Sync Runs' "$evidence_root/sync-status-before.typescript" || fail 'fresh archive unexpectedly contains Sync Runs'
   archive_files_before=$(sqlite_file_set_fingerprint "$archive_path")
+  printf '%s\n' "$archive_files_before" > "$evidence_root/sync-sqlite-before.txt"
 
   run_pty_expected sync-plan-blocked 1 "$binary" --config "$config_path" --db "$archive_path" --json sync --types steps --from 2026-01-01T00:00:00Z --to 2026-01-02T00:00:00Z --plan
   grep -Fq '"status": "plan_blocked"' "$evidence_root/sync-plan-blocked.typescript" || fail 'sync plan did not report its local blocker'
+  grep -Fq '"code": "connection_lookup"' "$evidence_root/sync-plan-blocked.typescript" || fail 'sync plan did not identify its Connection lookup blocker'
+  grep -Fq 'no Connection found' "$evidence_root/sync-plan-blocked.typescript" || fail 'sync plan blocker did not explain the missing Connection'
   local effect
   for effect in provider_request credential_read token_refresh archive_write migration cursor_advance attachment_sidecar_write; do
     grep -Fq "\"$effect\": false" "$evidence_root/sync-plan-blocked.typescript" || fail "sync planning effect $effect was not false"
@@ -827,6 +961,7 @@ drive_sync() {
   run_pty sync-status-after "$binary" --db "$archive_path" --json sync --status
   grep -Fq 'no Sync Runs' "$evidence_root/sync-status-after.typescript" || fail 'blocked sync created a Sync Run'
   archive_files_after=$(sqlite_file_set_fingerprint "$archive_path")
+  printf '%s\n' "$archive_files_after" > "$evidence_root/sync-sqlite-after.txt"
   [[ "$archive_files_after" == "$archive_files_before" ]] || fail 'blocked sync or planning changed the SQLite file set'
   printf 'route: sync\nresult: passed\nentries: status-empty,plan-blocked,live-preflight,status-still-empty\nplanning_effects: all false\narchive_after: unchanged\nlive_sync: verified-unreachable (no authorized Connection)\n' > "$evidence_root/sync-proof.txt"
 }
