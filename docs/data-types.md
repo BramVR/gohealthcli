@@ -166,23 +166,9 @@ Continuous spans of low movement the provider flagged as sedentary.
 - **Rollups:** `daily`, `hourly`, `weekly`, `window=<duration>` (1h / 1d / 7d granularities)
 - **Stored as:** `rollups`; normalized export `calories-in-heart-rate-zone-rollups`
 
-Calories burned in each heart-rate zone per Rollup bucket. Google exposes this
-type only through `dailyRollUp` and physical-window `rollUp`, so raw Data Point
-sync remains rejected. Each bucket is archived as one `rollups` row with its raw
-JSON. The export has one row per bucket and zone entry, with a zero-based
-`zone_index` that follows the Provider's array order. Zone labels pass through
-as Google sends them, including `HEART_RATE_ZONE_TYPE_UNSPECIFIED` and values
-gohealthcli does not know yet. Duplicate labels in one bucket stay separate rows.
+Calories burned in each heart-rate zone per Rollup bucket. Google exposes this type only through `dailyRollUp` and physical-window `rollUp`, so raw Data Point sync remains rejected. Each bucket is archived as one `rollups` row with its raw JSON. The export has one row per bucket and zone entry, with a zero-based `zone_index` that follows the Provider's array order. Zone labels pass through as Google sends them, including `HEART_RATE_ZONE_TYPE_UNSPECIFIED` and values gohealthcli does not know yet. Duplicate labels in one bucket stay separate rows.
 
-When the `caloriesInHeartRateZone` union member is absent, the bucket has no
-data and is skipped. When the member is present but its
-`caloriesInHeartRateZones` array is missing, null, or empty, the bucket is
-archived and exports no rows. A zone with `kcal: 0` exports `0`, and `kcal: 0.0`
-exports `0.0`. A zone with no `kcal` still exports a row, with an empty amount in
-CSV and plain output and `null` in JSONL. Whether Google omits zero amounts is
-not yet observed, so gohealthcli does not invent a zero. Google limits both
-endpoint modes to 14-day request spans; gohealthcli chunks longer ranges without
-gaps and keeps daily and physical Rollup cursors independent.
+When the `caloriesInHeartRateZone` union member is absent, the bucket has no data and is skipped. When the member is present but its `caloriesInHeartRateZones` array is missing, null, or empty, the bucket is archived and exports no rows. A zone with `kcal: 0` exports `0`, and `kcal: 0.0` exports `0.0`. A zone with no `kcal` still exports a row, with an empty amount in CSV and plain output and `null` in JSONL. Whether Google omits zero amounts is not yet observed, so gohealthcli does not invent a zero. Google limits both endpoint modes to 14-day request spans; gohealthcli chunks longer ranges without gaps and keeps daily and physical Rollup cursors independent.
 
 ### Time in heart-rate zone
 
