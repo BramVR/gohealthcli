@@ -54,11 +54,11 @@ Use one mapped route. Each route records the literal command, PTY transcript, an
 - `initialize`: requires a fresh run. Executes `init --json`, confirms the newest migration through `query --json`, then proves the same setup returns `already_initialized`.
 - `local`: requires an initialized run. Executes product `doctor` in JSON and plain modes, then proves `doctor --online` stops at the missing Connection.
 - `inspect`: requires an initialized run. Exercises status modes, accepted and rejected query paths, schema JSON and SQL, and empty CSV/JSONL exports.
-- `plan`: requires a fresh run. Executes identity, Data Type list, Data Point get, reconcile, daily Rollup, and physical Rollup plans; checks every reported planning effect is false; exercises raw output validation and cleanup without Provider access; confirms local paths remain absent; then records the live-read path as unreachable at missing isolated setup.
+- `plan`: requires a fresh run. Executes identity, Data Type list, Data Point get, reconcile, daily Rollup, physical Rollup, and paged list-endpoint plans; checks every reported planning effect is false and the page token is redacted; proves a range plan without `--timezone` stops at the configured-timezone lookup; exercises raw output validation and cleanup without Provider access; confirms local paths remain absent; then records the live-read path as unreachable at missing isolated setup.
 - `sync`: requires an initialized run without a Connection. Reads empty Sync Run history, records a blocked plan with all execution effects false, and proves normal sync fails before creating a Sync Run.
-- `backup`: requires an initialized run. Creates a task-owned bare Git remote, encrypts and pushes the empty archive locally, proves unchanged-push idempotence, restores to a new archive, and reads it through the compiled CLI.
+- `backup`: requires an initialized run. Creates a task-owned bare Git remote, encrypts and pushes the synthetic archive locally, proves unchanged-push idempotence, restores to a new archive, and reads it through the compiled CLI. It then rotates in a second task-owned recipient, restores with that identity alone, and removes it again.
 - `connected`: requires a fresh run. Exercises the local setup gate for connect, identity snapshots, and sync without touching a Credential Store or Provider.
-- `discover`: executes bare help, top-level `help`, both command-help forms, `schema --json`, and the expected-failure typo-suggestion path.
+- `discover`: executes plain version, bare help, top-level `help`, both command-help forms, `schema --json`, all four shell completions, the staged dataset generator, and the expected-failure typo-suggestion path.
 - `catalog`: executes offline `list`, `scopes`, `describe steps`, and `verify` against the committed public discovery snapshot.
 
 Do not infer that one route proves another. Exact entry points and invalidating traps live in the feature map.

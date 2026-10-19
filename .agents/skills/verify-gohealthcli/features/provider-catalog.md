@@ -33,6 +33,7 @@ Preconditions:
 ## Gotchas
 
 - Bare `catalog verify` is live by default. Always pass the committed fixture in this verification route.
-- `catalog describe` uses the committed snapshot by default; `--live` changes the external-access contract.
+- `catalog describe` uses the committed snapshot by default; `--live` changes the external-access contract. `--discovery <path>` reads a local document instead and reports source `file`, not `committed_snapshot`.
+- `catalog verify --live` exits `1` with `flag_invalid` before any network access; verify is already live whenever `--discovery` is omitted.
 - `verified_with_known_gaps` is expected for the committed discovery revision and is not product drift.
 - Catalog facts do not prove the current Connection has matching granted scopes.

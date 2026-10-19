@@ -338,8 +338,11 @@ backup_git() {
 }
 
 verify_backup_history() {
-  local repository=$1 expected_readme_hash=$2 expected_manifest_hash=$3
-  local commit path blob_hash commit_count=0 path_count
+  local repository=$1 expected_readme_hash=$2
+  shift 2
+  local -a expected_manifest_hashes=("$@")
+  [[ ${#expected_manifest_hashes[@]} -gt 0 ]] || fail 'backup history audit requires at least one allowed manifest hash'
+  local commit path blob_hash allowed manifest_allowed commit_count=0 path_count
   while IFS= read -r commit; do
     [[ -n "$commit" ]] || continue
     commit_count=$((commit_count + 1))
@@ -354,7 +357,11 @@ verify_backup_history() {
           ;;
         manifest.json)
           blob_hash=$(backup_git "$repository" show "$commit:$path" | sha256_stream)
-          [[ "$blob_hash" == "$expected_manifest_hash" ]] || fail "backup history contains an unexpected cleartext manifest at $commit"
+          manifest_allowed=0
+          for allowed in "${expected_manifest_hashes[@]}"; do
+            [[ "$blob_hash" != "$allowed" ]] || manifest_allowed=1
+          done
+          [[ "$manifest_allowed" == 1 ]] || fail "backup history contains an unexpected cleartext manifest at $commit"
           ;;
         data/connections.jsonl.gz.age|data/data_points.jsonl.gz.age|data/data_point_revisions.jsonl.gz.age|data/data_point_attachments.jsonl.gz.age|data/attachment_payloads.jsonl.gz.age|data/rollups.jsonl.gz.age|data/identity_snapshots.jsonl.gz.age|data/sync_runs.jsonl.gz.age|data/sync_cursors.jsonl.gz.age)
           backup_git "$repository" show "$commit:$path" | grep -aF 'age-encryption.org/v1' >/dev/null || fail "backup history contains non-age payload data at $commit:$path"
@@ -365,6 +372,22 @@ verify_backup_history() {
     [[ "$path_count" -gt 0 ]] || fail "backup history contains an empty commit tree: $commit"
   done < <(backup_git "$repository" rev-list --all)
   [[ "$commit_count" -gt 0 ]] || fail "backup repository has no reachable commits: $repository"
+}
+
+assert_backup_cleartext_safe() {
+  local repository=$1 cleartext_file forbidden_cleartext
+  for cleartext_file in "$repository/README.md" "$repository/manifest.json"; do
+    for forbidden_cleartext in 'googlehealth:synthetic-verification' 'synthetic-verification-user' 'synthetic-verification-key' 'credential_store_key' 'healthUserId' 'raw_json' 'access_token' 'refresh_token' 'AGE-SECRET-KEY-'; do
+      if grep -Fq "$forbidden_cleartext" "$cleartext_file"; then
+        fail "backup cleartext metadata leaked forbidden content: $forbidden_cleartext"
+      fi
+    done
+  done
+}
+
+# Counts "-> " recipient stanzas in an age header; stops at the "--- " MAC line before binary payload.
+age_stanza_count() {
+  awk '/^-> / { count++ } /^--- / { print count + 0; exit }' "$1"
 }
 
 utc_now() {
@@ -700,6 +723,7 @@ drive_plan() {
   grep -Fq '"from": "2026-01-01T00:00:00Z"' "$evidence_root/plan-data-type.typescript" || fail 'Data Type plan missing fixed from bound'
   grep -Fq '"to": "2026-01-02T00:00:00Z"' "$evidence_root/plan-data-type.typescript" || fail 'Data Type plan missing fixed to bound'
   grep -Fq '"timezone": "Europe/Brussels"' "$evidence_root/plan-data-type.typescript" || fail 'Data Type plan did not preserve the requested timezone'
+  grep -Fq '"endpoint_name": "dataTypes.steps.list"' "$evidence_root/plan-data-type.typescript" || fail 'Data Type list plan endpoint drifted'
   assert_raw_plan_no_effects "$evidence_root/plan-data-type.typescript"
 
   run_pty plan-data-point-get "$binary" raw data-type sleep get --id synthetic/provider-id --plan --json
@@ -724,6 +748,22 @@ drive_plan() {
   grep -Fq '"endpoint_name": "dataTypes.steps.rollUp"' "$evidence_root/plan-rollup.typescript" || fail 'physical Rollup plan endpoint drifted'
   grep -Fq '"windowSize": "3600s"' "$evidence_root/plan-rollup.typescript" || fail 'physical Rollup plan window drifted'
   assert_raw_plan_no_effects "$evidence_root/plan-rollup.typescript"
+
+  run_pty plan-endpoint-paging "$binary" raw endpoint dataTypes.steps.list --from 2026-01-01T00:00:00Z --to 2026-01-02T00:00:00Z --timezone UTC --page-size 5 --page-token synthetic-page-token --plan --json
+  grep -Fq '"endpoint_name": "dataTypes.steps.list"' "$evidence_root/plan-endpoint-paging.typescript" || fail 'endpoint list plan target drifted'
+  grep -Fq 'pageSize=5' "$evidence_root/plan-endpoint-paging.typescript" || fail 'paged plan URL lost its page size'
+  grep -Fq 'pageToken=REDACTED' "$evidence_root/plan-endpoint-paging.typescript" || fail 'paged plan did not redact its page token'
+  grep -Fq '"page_token_provided": true' "$evidence_root/plan-endpoint-paging.typescript" || fail 'paged plan did not report its page token input'
+  if grep -Fq 'synthetic-page-token' "$evidence_root/plan-endpoint-paging.typescript"; then
+    fail 'paged plan exposed its page token'
+  fi
+  assert_raw_plan_no_effects "$evidence_root/plan-endpoint-paging.typescript"
+
+  # Without --timezone a range plan reads the configured timezone, so missing setup is a local failure.
+  run_pty_expected plan-config-timezone 1 "$binary" raw data-type steps --from 2026-01-01T00:00:00Z --to 2026-01-02T00:00:00Z --plan --json
+  grep -Fq '"status":"operation_failed"' "$evidence_root/plan-config-timezone.typescript" || fail 'range plan without --timezone did not use the operation failure contract'
+  grep -Fq '"message":"config check failed:' "$evidence_root/plan-config-timezone.typescript" || fail 'range plan without --timezone did not stop at the configured-timezone lookup'
+  [[ ! -e "$credential_probe" ]] || fail 'range plan without --timezone attempted Credential Store access'
   path_is_absent "$config_path" && path_is_absent "$archive_path" && path_is_absent "$sidecar_path" || fail 'raw plan created explicit local setup state'
   path_is_absent "$default_config_path" && path_is_absent "$default_archive_path" && path_is_absent "$default_sidecar_path" || fail 'raw plan created default local setup state'
 
@@ -835,7 +875,7 @@ drive_plan() {
   grep -Fq '"message":"config check failed:' "$evidence_root/plan-live-unreachable.typescript" || fail 'live read did not stop at the missing local setup gate'
   [[ ! -e "$credential_probe" ]] || fail 'live-read setup failure attempted Credential Store access'
   path_is_absent "$config_path" && path_is_absent "$archive_path" && path_is_absent "$sidecar_path" || fail 'unreachable live read created local setup state'
-  printf 'route: plan\nresult: passed\nentries: identity,list,get,reconcile,daily-rollup,rollup,output-safety,live-read-gate\nplanning_effects: all false\nexplicit_config_after: absent\nexplicit_archive_after: absent\nexplicit_sidecar_after: absent\ndefault_config_after: absent\ndefault_archive_after: absent\ndefault_sidecar_after: absent\noutput_safety: plan-output-safety-proof.txt\nlive_read_and_output: verified-unreachable (missing isolated setup and authorized Connection)\n' > "$evidence_root/plan-proof.txt"
+  printf 'route: plan\nresult: passed\nentries: identity,list,get,reconcile,daily-rollup,rollup,endpoint-paging,config-timezone-gate,output-safety,live-read-gate\nplanning_effects: all false\nexplicit_config_after: absent\nexplicit_archive_after: absent\nexplicit_sidecar_after: absent\ndefault_config_after: absent\ndefault_archive_after: absent\ndefault_sidecar_after: absent\noutput_safety: plan-output-safety-proof.txt\nlive_read_and_output: verified-unreachable (missing isolated setup and authorized Connection)\n' > "$evidence_root/plan-proof.txt"
 }
 
 drive_discover() {
@@ -1095,14 +1135,7 @@ drive_backup() {
   [[ -f "$backup_repo/manifest.json" && ! -L "$backup_repo/manifest.json" ]] || fail 'backup manifest is missing or unsafe'
   [[ -d "$backup_repo/data" && ! -L "$backup_repo/data" ]] || fail 'encrypted backup data tree is missing or unsafe'
   [[ "$(sha256_file "$backup_repo/README.md")" == "$expected_readme_hash" ]] || fail 'backup recovery README drifted from the fixed safe content'
-  local cleartext_file forbidden_cleartext
-  for cleartext_file in "$backup_repo/README.md" "$backup_repo/manifest.json"; do
-    for forbidden_cleartext in 'googlehealth:synthetic-verification' 'synthetic-verification-user' 'synthetic-verification-key' 'credential_store_key' 'healthUserId' 'raw_json' 'access_token' 'refresh_token'; do
-      if grep -Fq "$forbidden_cleartext" "$cleartext_file"; then
-        fail "backup cleartext metadata leaked forbidden content: $forbidden_cleartext"
-      fi
-    done
-  done
+  assert_backup_cleartext_safe "$backup_repo"
   "${pty_env_prefix[@]}" "$metadata_binary" "$backup_repo/manifest.json" "$backup_repo" "$backup_identity" > "$evidence_root/backup-metadata-validation.txt"
   grep -Fxq 'metadata-valid' "$evidence_root/backup-metadata-validation.txt" || fail 'backup manifest failed its fixed schema and content allowlist'
   local shard_count=0 shard_path shard_relative
@@ -1159,9 +1192,66 @@ drive_backup() {
   [[ "$restored_sentinel_hex" == "$expected_sentinel_hex" ]] || fail 'restored archive changed one or more synthetic Connection fields'
   [[ "$restored_sentinel_hex" == "$source_sentinel_hex" ]] || fail 'restored Connection fingerprint differs from the source archive'
   printf '%s\n' "$restored_sentinel_hex" > "$evidence_root/backup-restored-sentinel.hex"
+
+  # Recipient rotation: a second task-owned identity is added, proven able to restore alone, then removed.
+  local second_root="$backup_root/second" second_restore_root="$backup_root/second-restore" ciphertext_before_rotation="$backup_root/ciphertext-before-rotation"
+  local second_identity="$second_root/age-identity.txt" second_restore_config="$second_restore_root/backup.json" second_restored_archive="$backup_root/restored-second.sqlite"
+  local local_recipient second_recipient rotated_manifest_hash removed_manifest_hash shard_file rotated_shards=0 second_sentinel_hex
+  local_recipient=$(tr -d '\r' < "$evidence_root/backup-init.typescript" | sed -n 's/^[[:space:]]*"recipient": "\(age1[0-9a-z]*\)",*$/\1/p' | head -n 1)
+  [[ -n "$local_recipient" ]] || fail 'backup init did not report its local age recipient'
+  run_pty backup-second-identity "$binary" backup init --config "$second_root/backup.json" --repo "$second_root/checkout" --identity "$second_identity" --no-push --json
+  grep -Fq '"status": "backup_initialized"' "$evidence_root/backup-second-identity.typescript" || fail 'second synthetic backup identity was not created'
+  second_recipient=$(tr -d '\r' < "$evidence_root/backup-second-identity.typescript" | sed -n 's/^[[:space:]]*"recipient": "\(age1[0-9a-z]*\)",*$/\1/p' | head -n 1)
+  [[ -n "$second_recipient" && "$second_recipient" != "$local_recipient" ]] || fail 'second synthetic age recipient is missing or reuses the local identity'
+  mkdir -m 700 "$ciphertext_before_rotation"
+  cp -p "$backup_repo"/data/*.age "$ciphertext_before_rotation/"
+
+  run_pty backup-rotate-add "$binary" backup init --config "$backup_config" --repo "$backup_repo" --remote "$backup_remote" --identity "$backup_identity" --recipient "$second_recipient" --json
+  grep -Fq '"status": "backup_initialized"' "$evidence_root/backup-rotate-add.typescript" || fail 'recipient rotation init did not complete'
+  run_pty backup-rotate-add-push "$binary" backup push --config "$backup_config" --db "$archive_path" --json
+  grep -Fq '"changed": true' "$evidence_root/backup-rotate-add-push.typescript" || fail 'added recipient did not re-encrypt the backup'
+  grep -Fq '"shard_count": 9' "$evidence_root/backup-rotate-add-push.typescript" || fail 'rotated backup push did not report the complete Snapshot shard set'
+  [[ "$(grep -c '"age1' "$backup_repo/manifest.json")" == 2 ]] || fail 'rotated manifest does not list exactly two recipients'
+  grep -Fq "\"$local_recipient\"" "$backup_repo/manifest.json" && grep -Fq "\"$second_recipient\"" "$backup_repo/manifest.json" || fail 'rotated manifest does not list the local and added recipients'
+  for shard_file in "$backup_repo"/data/*.age; do
+    [[ "$(age_stanza_count "$shard_file")" == 2 ]] || fail "rotated shard does not carry exactly two recipient stanzas: ${shard_file#"$backup_repo/"}"
+    cmp -s "$shard_file" "$ciphertext_before_rotation/$(basename "$shard_file")" || rotated_shards=$((rotated_shards + 1))
+  done
+  [[ "$rotated_shards" == 9 ]] || fail "added recipient re-encrypted $rotated_shards of 9 shards"
+  assert_backup_cleartext_safe "$backup_repo"
+  rotated_manifest_hash=$(sha256_file "$backup_repo/manifest.json")
+  run_pty backup-rotate-add-push-repeat "$binary" backup push --config "$backup_config" --db "$archive_path" --json
+  grep -Fq '"changed": false' "$evidence_root/backup-rotate-add-push-repeat.typescript" || fail 'unchanged push after rotation was not idempotent'
+  task_git -C "$backup_repo" status --porcelain=v1 > "$evidence_root/backup-git-status-after-rotation.txt"
+  [[ ! -s "$evidence_root/backup-git-status-after-rotation.txt" ]] || fail 'backup checkout was dirty after recipient rotation'
+  [[ "$(task_git -C "$backup_repo" rev-parse HEAD)" == "$(task_git --git-dir="$backup_remote" rev-parse "refs/heads/$backup_branch")" ]] || fail 'rotated backup commit did not reach the task-owned remote'
+
+  run_pty backup-second-restore-init "$binary" backup init --config "$second_restore_config" --repo "$second_restore_root/checkout" --remote "$backup_remote" --identity "$second_identity" --no-push --json
+  grep -Fq '"status": "backup_initialized"' "$evidence_root/backup-second-restore-init.typescript" || fail 'added-recipient restore checkout was not prepared'
+  run_pty backup-second-pull "$binary" backup pull --config "$second_restore_config" --db "$second_restored_archive" --json
+  grep -Fq '"status": "backup_pulled"' "$evidence_root/backup-second-pull.typescript" || fail 'added recipient could not restore the rotated backup'
+  run_pty backup-second-restored-sentinel "$binary" --db "$second_restored_archive" --json query "$sentinel_query"
+  second_sentinel_hex=$(tr -d '\r' < "$evidence_root/backup-second-restored-sentinel.typescript" | awk '/^[[:space:]]*"[0-9A-F]+",?[[:space:]]*$/ {gsub(/[ ",]/, ""); print; exit}')
+  [[ "$second_sentinel_hex" == "$expected_sentinel_hex" ]] || fail 'added-recipient restore changed one or more synthetic Connection fields'
+
+  # Omitting --recipient keeps the saved set; passing only the local recipient is the removal path.
+  run_pty backup-rotate-remove "$binary" backup init --config "$backup_config" --repo "$backup_repo" --remote "$backup_remote" --identity "$backup_identity" --recipient "$local_recipient" --json
+  grep -Fq '"status": "backup_initialized"' "$evidence_root/backup-rotate-remove.typescript" || fail 'recipient removal init did not complete'
+  run_pty backup-rotate-remove-push "$binary" backup push --config "$backup_config" --db "$archive_path" --json
+  grep -Fq '"changed": true' "$evidence_root/backup-rotate-remove-push.typescript" || fail 'removed recipient did not re-encrypt the backup'
+  for shard_file in "$backup_repo"/data/*.age; do
+    [[ "$(age_stanza_count "$shard_file")" == 1 ]] || fail "shard still carries a removed recipient stanza: ${shard_file#"$backup_repo/"}"
+  done
+  "${pty_env_prefix[@]}" "$metadata_binary" "$backup_repo/manifest.json" "$backup_repo" "$backup_identity" > "$evidence_root/backup-metadata-validation-after-removal.txt"
+  grep -Fxq 'metadata-valid' "$evidence_root/backup-metadata-validation-after-removal.txt" || fail 'backup manifest after recipient removal failed its fixed schema and content allowlist'
+  assert_backup_cleartext_safe "$backup_repo"
+  removed_manifest_hash=$(sha256_file "$backup_repo/manifest.json")
+  verify_backup_history "$backup_repo" "$recovery_readme_hash" "$manifest_hash" "$rotated_manifest_hash" "$removed_manifest_hash"
+  verify_backup_history "$backup_remote" "$recovery_readme_hash" "$manifest_hash" "$rotated_manifest_hash" "$removed_manifest_hash"
+  printf 'local_and_remote_reachable_history_after_rotation: ciphertext-and-metadata allowlist passed\n' >> "$evidence_root/backup-history-proof.txt"
   [[ ! -e "$credential_probe" ]] || fail 'local backup route attempted Credential Store access'
 
-  printf 'route: backup\nresult: passed\nentries: synthetic-source-counts,synthetic-source-sentinel,local-remote,init,status-empty,push,idempotent-push,history-audit,status,pull,restored-status,restored-counts,restored-sentinel\nremote: task-owned bare Git repository\nencrypted_shards: %s tracked age ciphertext files\nprovider_access: none\ncredential_store_read: none\nrestore_consumption: all eight SQLite Snapshot table counts, the Attachment payload shard row count, and every synthetic Connection field restored exactly\nrestored_archive: verified through compiled CLI\n' "$shard_count" > "$evidence_root/backup-proof.txt"
+  printf 'route: backup\nresult: passed\nentries: synthetic-source-counts,synthetic-source-sentinel,local-remote,init,status-empty,push,idempotent-push,history-audit,status,pull,restored-status,restored-counts,restored-sentinel,rotate-add,rotate-idempotent-push,added-recipient-restore,rotate-remove,history-audit-after-rotation\nremote: task-owned bare Git repository\nencrypted_shards: %s tracked age ciphertext files\nprovider_access: none\ncredential_store_read: none\nrestore_consumption: all eight SQLite Snapshot table counts, the Attachment payload shard row count, and every synthetic Connection field restored exactly\nrestored_archive: verified through compiled CLI\nrecipient_rotation: added recipient re-encrypted %s/9 shards with two stanzas and restored alone; removal returned every shard to one stanza\n' "$shard_count" "$rotated_shards" > "$evidence_root/backup-proof.txt"
 }
 
 drive() {
