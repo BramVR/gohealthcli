@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 )
 
 func TestCaloriesInHeartRateZoneDailySyncAndExport(t *testing.T) {
@@ -180,4 +182,114 @@ func TestCaloriesInHeartRateZoneSparseBucketsAndAmounts(t *testing.T) {
 			t.Fatalf("%s export =\n%s\nwant:\n%s", test.name, stdout.String(), test.want)
 		}
 	}
+}
+
+func TestCaloriesInHeartRateZonePhysicalSyncAndPlan(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	syncArgs := []string{
+		"sync", "--config", configPath, "--db", archivePath,
+		"--types", "calories-in-heart-rate-zone", "--rollup", "hourly",
+		"--from", "2026-01-01T00:00:00Z", "--to", "2026-02-01T00:00:00Z", "--json",
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	if code := runWithRuntime(append(append([]string{}, syncArgs...), "--plan"), stdout, stderr, testRuntime); code != 0 {
+		t.Fatalf("plan exit code = %d\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	var plan struct {
+		EndpointFamily string `json:"endpoint_family"`
+		PagePolicy     struct {
+			RangeWindowMaxDays int `json:"range_window_max_days"`
+			RangeWindowCount   int `json:"range_window_count"`
+		} `json:"page_policy"`
+		Request struct {
+			Body struct {
+				Range struct {
+					StartTime string `json:"startTime"`
+					EndTime   string `json:"endTime"`
+				} `json:"range"`
+				WindowSize string `json:"windowSize"`
+			} `json:"body"`
+		} `json:"request"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &plan); err != nil {
+		t.Fatalf("decode plan: %v\n%s", err, stdout.String())
+	}
+	if plan.EndpointFamily != "rollUp" || plan.PagePolicy.RangeWindowMaxDays != 14 || plan.PagePolicy.RangeWindowCount != 3 {
+		t.Fatalf("plan = %+v, want rollUp with three 14-day windows", plan)
+	}
+	if plan.Request.Body.Range.StartTime != "2026-01-01T00:00:00Z" || plan.Request.Body.Range.EndTime != "2026-01-15T00:00:00Z" || plan.Request.Body.WindowSize != "3600s" {
+		t.Fatalf("planned first request = %+v, want [2026-01-01, 2026-01-15) 3600s", plan.Request.Body)
+	}
+	assertArchiveTableCount(t, archivePath, "sync_runs", 0)
+
+	window := string(readTestFixture(t, "googlehealth_calories_in_heart_rate_zone_window_rollup.json"))
+	testRuntime, requests := withWindowRollupFetchFake(t, testRuntime, "connect-access-secret", "calories-in-heart-rate-zone", map[string]string{
+		"2026-01-01T00:00:00Z/2026-01-15T00:00:00Z/3600s/":           `{"rollupDataPoints":[],"nextPageToken":"same-token"}`,
+		"2026-01-01T00:00:00Z/2026-01-15T00:00:00Z/3600s/same-token": window,
+		"2026-01-15T00:00:00Z/2026-01-29T00:00:00Z/3600s/":           `{"rollupDataPoints":[],"nextPageToken":"same-token"}`,
+		"2026-01-15T00:00:00Z/2026-01-29T00:00:00Z/3600s/same-token": `{"rollupDataPoints":[]}`,
+		"2026-01-29T00:00:00Z/2026-02-01T00:00:00Z/3600s/":           `{"rollupDataPoints":[]}`,
+	})
+	stdout.Reset()
+	stderr.Reset()
+	if code := runWithRuntime(syncArgs, stdout, stderr, testRuntime); code != 0 {
+		t.Fatalf("sync exit code = %d\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if len(*requests) != 5 {
+		t.Fatalf("Provider request count = %d, want 5", len(*requests))
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runWithRuntime([]string{
+		"export", "--config", configPath, "--db", archivePath,
+		"calories-in-heart-rate-zone-rollups", "--stdout", "--format", "csv",
+	}, stdout, stderr, testRuntime); code != 0 {
+		t.Fatalf("export exit code = %d\nstderr: %s", code, stderr.String())
+	}
+	want := "provider_name,connection_id,rollup_kind,window_start_utc,window_end_utc,civil_date,zone_index,heart_rate_zone,kcal\n" +
+		"googlehealth,googlehealth:111111256096816351,hourly,2026-01-05T00:00:00Z,2026-01-05T01:00:00Z,,0,LIGHT,1.5\n"
+	if stdout.String() != want {
+		t.Fatalf("export output =\n%s\nwant:\n%s", stdout.String(), want)
+	}
+}
+
+func TestCaloriesInHeartRateZonePhysicalWindowLargerThanProviderMaximumFailsBeforeIO(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	providerRequests := 0
+	testRuntime.fetchRawProvider = func(context.Context, googlehealth.RawRequest, string) ([]byte, error) {
+		providerRequests++
+		return nil, nil
+	}
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runWithRuntime([]string{
+		"sync", "--config", configPath, "--db", archivePath,
+		"--types", "calories-in-heart-rate-zone", "--rollup", "window=360h",
+		"--from", "2026-01-01", "--to", "2026-02-01", "--json",
+	}, stdout, stderr, testRuntime)
+	if code == 0 {
+		t.Fatalf("sync exit code = 0, want preflight failure\nstdout: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "exceeds Google Health's 14-day maximum") {
+		t.Fatalf("stdout = %s, want 14-day maximum error", stdout.String())
+	}
+	if providerRequests != 0 {
+		t.Fatalf("Provider requests = %d, want 0", providerRequests)
+	}
+	assertArchiveTableCount(t, archivePath, "sync_runs", 0)
 }
