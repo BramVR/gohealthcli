@@ -293,3 +293,94 @@ func TestCaloriesInHeartRateZonePhysicalWindowLargerThanProviderMaximumFailsBefo
 	}
 	assertArchiveTableCount(t, archivePath, "sync_runs", 0)
 }
+
+func TestCaloriesInHeartRateZoneExportsDeterministic(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, _ := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	exportAll := func(t *testing.T, args ...string) string {
+		t.Helper()
+		stdout := new(bytes.Buffer)
+		stderr := new(bytes.Buffer)
+		args = append([]string{"export", "--config", configPath, "--db", archivePath, "calories-in-heart-rate-zone-rollups", "--stdout"}, args...)
+		if code := run(args, stdout, stderr); code != 0 {
+			t.Fatalf("export exit code = %d\nstderr: %s", code, stderr.String())
+		}
+		return stdout.String()
+	}
+	header := "provider_name,connection_id,rollup_kind,window_start_utc,window_end_utc,civil_date,zone_index,heart_rate_zone,kcal\n"
+	if got := exportAll(t, "--format", "csv"); got != header {
+		t.Fatalf("empty CSV export = %q, want header only", got)
+	}
+	if got := exportAll(t, "--format", "jsonl"); got != "" {
+		t.Fatalf("empty JSONL export = %q, want no rows", got)
+	}
+
+	rows := []struct {
+		kind, start, end, civil, zones string
+	}{
+		{kind: "dailyRollUp", civil: "2026-01-01", zones: `[{"heartRateZone":"LIGHT","kcal":10},{"heartRateZone":"LIGHT","kcal":20.0},{"heartRateZone":"FUTURE_ZONE"}]`},
+		{kind: "hourly", start: "2026-01-01T00:00:00Z", end: "2026-01-01T01:00:00Z", zones: `[{"heartRateZone":"PEAK","kcal":0}]`},
+		{kind: "window=6h", start: "2026-01-01T00:00:00Z", end: "2026-01-01T03:00:00Z", zones: `[{"heartRateZone":"MODERATE","kcal":0.0}]`},
+		{kind: "window=6h", start: "2026-01-01T00:00:00Z", end: "2026-01-01T06:00:00Z", zones: `[{"heartRateZone":"LIGHT","kcal":1e2}]`},
+		{kind: "dailyRollUp", civil: "2026-01-02", zones: `[{"heartRateZone":"VIGOROUS","kcal":5},{"heartRateZone":"LIGHT","kcal":6}]`},
+		{kind: "weekly", start: "2026-01-05T00:00:00Z", end: "2026-01-12T00:00:00Z", zones: `[{"heartRateZone":"VIGOROUS","kcal":0.12345678901234567}]`},
+	}
+	db := openArchiveForTest(t, archivePath)
+	for index := len(rows) - 1; index >= 0; index-- {
+		row := rows[index]
+		if _, err := db.ExecContext(context.Background(), `INSERT INTO rollups (
+			provider_name, connection_id, data_type, rollup_kind,
+			window_start_utc, window_end_utc, civil_date, raw_json, inserted_at, updated_at
+		) VALUES ('googlehealth', 'googlehealth:111111256096816351', 'calories-in-heart-rate-zone', ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, '2026-01-13T00:00:00Z', '2026-01-13T00:00:00Z')`,
+			row.kind, row.start, row.end, row.civil, `{"caloriesInHeartRateZone":{"caloriesInHeartRateZones":`+row.zones+`}}`); err != nil {
+			t.Fatalf("insert Rollup: %v", err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close archive: %v", err)
+	}
+
+	wantCSV := header +
+		"googlehealth,googlehealth:111111256096816351,dailyRollUp,,,2026-01-01,0,LIGHT,10\n" +
+		"googlehealth,googlehealth:111111256096816351,dailyRollUp,,,2026-01-01,1,LIGHT,20.0\n" +
+		"googlehealth,googlehealth:111111256096816351,dailyRollUp,,,2026-01-01,2,FUTURE_ZONE,\n" +
+		"googlehealth,googlehealth:111111256096816351,hourly,2026-01-01T00:00:00Z,2026-01-01T01:00:00Z,,0,PEAK,0\n" +
+		"googlehealth,googlehealth:111111256096816351,window=6h,2026-01-01T00:00:00Z,2026-01-01T03:00:00Z,,0,MODERATE,0.0\n" +
+		"googlehealth,googlehealth:111111256096816351,window=6h,2026-01-01T00:00:00Z,2026-01-01T06:00:00Z,,0,LIGHT,100.0\n" +
+		"googlehealth,googlehealth:111111256096816351,dailyRollUp,,,2026-01-02,0,VIGOROUS,5\n" +
+		"googlehealth,googlehealth:111111256096816351,dailyRollUp,,,2026-01-02,1,LIGHT,6\n" +
+		"googlehealth,googlehealth:111111256096816351,weekly,2026-01-05T00:00:00Z,2026-01-12T00:00:00Z,,0,VIGOROUS,0.123456789012346\n"
+	daily := `{"provider_name":"googlehealth","connection_id":"googlehealth:111111256096816351","rollup_kind":"dailyRollUp","window_start_utc":"","window_end_utc":"",`
+	window := func(kind, start, end string) string {
+		return `{"provider_name":"googlehealth","connection_id":"googlehealth:111111256096816351","rollup_kind":"` + kind + `","window_start_utc":"` + start + `","window_end_utc":"` + end + `","civil_date":"",`
+	}
+	wantJSONL := daily + `"civil_date":"2026-01-01","zone_index":0,"heart_rate_zone":"LIGHT","kcal":"10"}` + "\n" +
+		daily + `"civil_date":"2026-01-01","zone_index":1,"heart_rate_zone":"LIGHT","kcal":"20.0"}` + "\n" +
+		daily + `"civil_date":"2026-01-01","zone_index":2,"heart_rate_zone":"FUTURE_ZONE","kcal":null}` + "\n" +
+		window("hourly", "2026-01-01T00:00:00Z", "2026-01-01T01:00:00Z") + `"zone_index":0,"heart_rate_zone":"PEAK","kcal":"0"}` + "\n" +
+		window("window=6h", "2026-01-01T00:00:00Z", "2026-01-01T03:00:00Z") + `"zone_index":0,"heart_rate_zone":"MODERATE","kcal":"0.0"}` + "\n" +
+		window("window=6h", "2026-01-01T00:00:00Z", "2026-01-01T06:00:00Z") + `"zone_index":0,"heart_rate_zone":"LIGHT","kcal":"100.0"}` + "\n" +
+		daily + `"civil_date":"2026-01-02","zone_index":0,"heart_rate_zone":"VIGOROUS","kcal":"5"}` + "\n" +
+		daily + `"civil_date":"2026-01-02","zone_index":1,"heart_rate_zone":"LIGHT","kcal":"6"}` + "\n" +
+		window("weekly", "2026-01-05T00:00:00Z", "2026-01-12T00:00:00Z") + `"zone_index":0,"heart_rate_zone":"VIGOROUS","kcal":"0.123456789012346"}` + "\n"
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "csv", args: []string{"--format", "csv"}, want: wantCSV},
+		{name: "plain", args: []string{"--plain"}, want: wantCSV},
+		{name: "jsonl", args: []string{"--format", "jsonl"}, want: wantJSONL},
+	} {
+		for attempt := 1; attempt <= 2; attempt++ {
+			if got := exportAll(t, test.args...); got != test.want {
+				t.Fatalf("%s export attempt %d =\n%s\nwant:\n%s", test.name, attempt, got, test.want)
+			}
+		}
+	}
+}
