@@ -276,10 +276,6 @@ var totalCaloriesRollupsViewSpec = exportDatasetSpec{
 	},
 }
 
-// caloriesInHeartRateZoneRollupsViewSpec fans each archived Rollup bucket
-// out into one row per caloriesInHeartRateZones entry. zone_index keeps
-// duplicate or unknown zone labels distinct, and a missing kcal stays
-// NULL because Google's zero-omission behavior is unobserved.
 var caloriesInHeartRateZoneRollupsViewSpec = exportDatasetSpec{
 	name:             "calories-in-heart-rate-zone-rollups",
 	view:             "calories_in_heart_rate_zone_rollups",

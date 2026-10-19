@@ -17,12 +17,6 @@ var errRollupValueAbsent = errors.New("union member is absent")
 // shape stays byte-identical to the legacy parser's — the #106 AC
 // regression guard in google_health_rollup_test.go pins it.
 //
-// The parser looks up the Data Type's endpointSupport.RollupValueType
-// for the active rollup family. RollupValueType selects the value
-// contract (rollupValueContractForType); the endpoint family selects
-// the time shape: civilStartTime/civilEndTime for dailyRollUp, RFC3339
-// startTime/endTime for hourly / weekly / custom-window rollUp.
-//
 // Errors include the Data Type's actual SupportedEndpoints when the
 // rollup kind is unsupported — the #106 AC requires this quote.
 func parseGoogleHealthRollup(connection archived.Connection, dataType, rollupKind string, rawRollup json.RawMessage) (archived.Rollup, error) {
@@ -91,8 +85,6 @@ func formatSupportedEndpoints(endpoints map[endpointFamily]endpointSupport) stri
 	return "[" + strings.Join(keys, ", ") + "]"
 }
 
-// parseGoogleHealthDailyRollupCivilShape parses the civilStartTime /
-// civilEndTime shape used by dailyRollUp responses.
 func parseGoogleHealthDailyRollupCivilShape(rawRollup json.RawMessage, rollup *archived.Rollup) error {
 	var raw struct {
 		CivilStartTime json.RawMessage `json:"civilStartTime"`
@@ -153,10 +145,6 @@ func parseGoogleHealthWindowRollupShape(rawRollup json.RawMessage, rollup *archi
 	return nil
 }
 
-// rollupValueContract binds a catalog RollupValueType to the JSON union
-// member carrying its aggregate and the one validator that owns both its
-// absence rule and its shape. validate receives nil when the member is
-// missing or JSON null.
 type rollupValueContract struct {
 	jsonField string
 	validate  func(value json.RawMessage) error
@@ -178,9 +166,6 @@ func rollupValueContractForType(valueType string) (rollupValueContract, error) {
 	return rollupValueContract{}, fmt.Errorf("Google Health Rollup value type %q has no parser shape", valueType)
 }
 
-// validateRollupValue checks the Rollup's value union member against its
-// contract. A wrapped errRollupValueAbsent means the bucket carries no
-// data and the caller skips it.
 func validateRollupValue(valueType string, rawRollup json.RawMessage, rollup archived.Rollup) error {
 	contract, err := rollupValueContractForType(valueType)
 	if err != nil {
@@ -222,9 +207,6 @@ func validateTotalCaloriesRollupValue(value json.RawMessage) error {
 	return nil
 }
 
-// validateCaloriesInHeartRateZoneRollupValue accepts a missing, null, or
-// empty zone array and zone entries without kcal or heartRateZone, since
-// Google may omit zero or unset values. Errors never echo Provider values.
 func validateCaloriesInHeartRateZoneRollupValue(value json.RawMessage) error {
 	if value == nil {
 		return errRollupValueAbsent
