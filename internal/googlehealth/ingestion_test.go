@@ -510,6 +510,65 @@ func TestTotalCaloriesRollupSkipsAbsentUnionAndArchivesExplicitZero(t *testing.T
 	}
 }
 
+func TestCaloriesInHeartRateZoneIngestionShapes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		union        string
+		wantArchived bool
+	}{
+		{name: "absent_union", union: ``, wantArchived: false},
+		{name: "null_union", union: `"caloriesInHeartRateZone": null,`, wantArchived: false},
+		{name: "empty_union_object", union: `"caloriesInHeartRateZone": {},`, wantArchived: true},
+		{name: "missing_array", union: `"caloriesInHeartRateZone": {"futureField": true},`, wantArchived: true},
+		{name: "null_array", union: `"caloriesInHeartRateZone": {"caloriesInHeartRateZones": null},`, wantArchived: true},
+		{name: "empty_array", union: `"caloriesInHeartRateZone": {"caloriesInHeartRateZones": []},`, wantArchived: true},
+		{name: "missing_kcal", union: `"caloriesInHeartRateZone": {"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT"}, {"heartRateZone": "PEAK", "kcal": 3}]},`, wantArchived: true},
+		{name: "null_kcal", union: `"caloriesInHeartRateZone": {"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": null}, {"heartRateZone": "PEAK", "kcal": 3}]},`, wantArchived: true},
+		{name: "missing_and_null_zone_label", union: `"caloriesInHeartRateZone": {"caloriesInHeartRateZones": [{"kcal": 1}, {"heartRateZone": null, "kcal": 2}]},`, wantArchived: true},
+		{name: "unknown_and_unspecified_zone", union: `"caloriesInHeartRateZone": {"caloriesInHeartRateZones": [{"heartRateZone": "FUTURE_ZONE", "kcal": 1}, {"heartRateZone": "HEART_RATE_ZONE_TYPE_UNSPECIFIED", "kcal": 2}]},`, wantArchived: true},
+	}
+	families := []struct {
+		rollup, from, to, pageKey, times string
+	}{
+		{
+			rollup: "daily", from: "2026-01-01", to: "2026-01-02", pageKey: "2026-01-01/2026-01-02/",
+			times: `"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}}, "civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}`,
+		},
+		{
+			rollup: "hourly", from: "2026-01-01T00:00:00Z", to: "2026-01-02T00:00:00Z", pageKey: "2026-01-01T00:00:00Z/2026-01-02T00:00:00Z/3600s/",
+			times: `"startTime": "2026-01-01T00:00:00Z", "endTime": "2026-01-01T01:00:00Z"`,
+		},
+	}
+	for _, test := range tests {
+		for _, family := range families {
+			t.Run(test.name+"/"+family.rollup, func(t *testing.T) {
+				t.Parallel()
+				archive := &fakeGoogleHealthIngestionArchive{}
+				provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+					family.pageKey: `{"rollupDataPoints": [{` + test.union + family.times + `}]}`,
+				})
+				result, err := fakeGoogleHealthIngestion(provider).Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+					DataType: "calories-in-heart-rate-zone",
+					Rollup:   family.rollup,
+					From:     family.from,
+					To:       family.to,
+				}))
+				if err != nil {
+					t.Fatalf("ingest calories-in-heart-rate-zone %s Rollups: %v", family.rollup, err)
+				}
+				wantCount := 0
+				if test.wantArchived {
+					wantCount = 1
+				}
+				if result.RollupsSeen != wantCount || result.RollupsNew != wantCount || len(archive.rollups) != wantCount {
+					t.Fatalf("Rollup counts = (%d seen, %d new, %d archived), want %d", result.RollupsSeen, result.RollupsNew, len(archive.rollups), wantCount)
+				}
+			})
+		}
+	}
+}
+
 func TestGoogleHealthIngestionHeartRateDailyRollupUsesFourteenDayWindows(t *testing.T) {
 	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}
