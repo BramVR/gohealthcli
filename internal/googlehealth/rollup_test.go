@@ -209,3 +209,18 @@ func TestStepsDailyRollupParserStillProducesByteIdenticalRow(t *testing.T) {
 		t.Errorf("generic parser drift:\n   want=%#v\ngeneric=%#v", want, generic)
 	}
 }
+
+func TestEveryCatalogRollupValueTypeHasParserContract(t *testing.T) {
+	t.Parallel()
+	for _, dataType := range googleHealthDataTypes.order {
+		entry, _ := googleHealthDataTypes.Lookup(dataType)
+		for family, support := range entry.SupportedEndpoints {
+			if support.RollupValueType == "" {
+				continue
+			}
+			if _, err := rollupValueContractForType(support.RollupValueType); err != nil {
+				t.Errorf("%s %s RollupValueType %q: %v", dataType, family, support.RollupValueType, err)
+			}
+		}
+	}
+}

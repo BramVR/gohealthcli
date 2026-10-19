@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-var errRollupValueAbsent = errors.New("Google Health Rollup value union member is absent")
+var errRollupValueAbsent = errors.New("union member is absent")
 
 // parseGoogleHealthRollup is the generic Rollup parser introduced in
 // #106, which replaced the steps-daily-only parser (deleted with the
@@ -18,13 +18,10 @@ var errRollupValueAbsent = errors.New("Google Health Rollup value union member i
 // regression guard in google_health_rollup_test.go pins it.
 //
 // The parser looks up the Data Type's endpointSupport.RollupValueType
-// for the active rollup family. RollupValueType drives the JSON-field
-// dispatch and the time-shape dispatch:
-//
-//   - "stepsCount", "floorsCount", … carry the Google
-//     civilStartTime/civilEndTime shape used by dailyRollUp.
-//   - "heartRate", … carry the RFC3339 startTime/endTime shape used by
-//     hourly / weekly / custom-window rollUp.
+// for the active rollup family. RollupValueType selects the value
+// contract (rollupValueContractForType); the endpoint family selects
+// the time shape: civilStartTime/civilEndTime for dailyRollUp, RFC3339
+// startTime/endTime for hourly / weekly / custom-window rollUp.
 //
 // Errors include the Data Type's actual SupportedEndpoints when the
 // rollup kind is unsupported — the #106 AC requires this quote.
@@ -48,7 +45,15 @@ func parseGoogleHealthRollup(connection archived.Connection, dataType, rollupKin
 		RollupKind:   rollupKind,
 		RawJSON:      canonicalRaw,
 	}
-	if err := rollupValueTypeDispatch(valueType, family, rawRollup, &rollup); err != nil {
+	if err := validateRollupValue(valueType, rawRollup, rollup); err != nil {
+		return archived.Rollup{}, err
+	}
+	if family == endpointFamilyDailyRollUp {
+		err = parseGoogleHealthDailyRollupCivilShape(rawRollup, &rollup)
+	} else {
+		err = parseGoogleHealthWindowRollupShape(rawRollup, &rollup)
+	}
+	if err != nil {
 		return archived.Rollup{}, err
 	}
 	return rollup, nil
@@ -86,46 +91,15 @@ func formatSupportedEndpoints(endpoints map[endpointFamily]endpointSupport) stri
 	return "[" + strings.Join(keys, ", ") + "]"
 }
 
-// rollupValueTypeDispatch unmarshals the rollup payload into the
-// scalar shape named by valueType. The civil-time shape (dailyRollUp,
-// "*Count" / *Sum / Daily…) populates civilDate + timezone metadata;
-// the RFC3339 shape (rollUp hourly/weekly/window) populates
-// windowStartUTC / windowEndUTC.
-func rollupValueTypeDispatch(valueType string, family endpointFamily, rawRollup json.RawMessage, rollup *archived.Rollup) error {
-	if family == endpointFamilyDailyRollUp {
-		return parseGoogleHealthDailyRollupCivilShape(valueType, rawRollup, rollup)
-	}
-	return parseGoogleHealthWindowRollupShape(valueType, rawRollup, rollup)
-}
-
 // parseGoogleHealthDailyRollupCivilShape parses the civilStartTime /
-// civilEndTime shape used by dailyRollUp responses. Today's catalog
-// names the value-type by the JSON field it carries ("stepsCount" →
-// "steps", "floorsCount" → "floors") so the dispatch is mechanical.
-func parseGoogleHealthDailyRollupCivilShape(valueType string, rawRollup json.RawMessage, rollup *archived.Rollup) error {
-	jsonField, err := rollupJSONFieldForValueType(valueType)
-	if err != nil {
-		return err
-	}
+// civilEndTime shape used by dailyRollUp responses.
+func parseGoogleHealthDailyRollupCivilShape(rawRollup json.RawMessage, rollup *archived.Rollup) error {
 	var raw struct {
 		CivilStartTime json.RawMessage `json:"civilStartTime"`
 		CivilEndTime   json.RawMessage `json:"civilEndTime"`
 	}
 	if err := json.Unmarshal(rawRollup, &raw); err != nil {
 		return fmt.Errorf("Google Health %s daily Rollup is not valid JSON", rollup.DataType)
-	}
-	value, err := rollupFieldRawValue(rawRollup, jsonField)
-	if err != nil {
-		return err
-	}
-	if value == nil {
-		if valueType == "totalCalories" {
-			return fmt.Errorf("%w: %s", errRollupValueAbsent, jsonField)
-		}
-		return fmt.Errorf("Google Health %s daily Rollup missing %s value", rollup.DataType, jsonField)
-	}
-	if err := validateRollupValueShape(valueType, value, rollup.DataType); err != nil {
-		return err
 	}
 	_, civilDate, err := googleCivilDateTimeText(raw.CivilStartTime)
 	if err != nil {
@@ -152,30 +126,13 @@ func parseGoogleHealthDailyRollupCivilShape(valueType string, rawRollup json.Raw
 // shape used by rollUp responses (hourly, weekly, custom-window).
 // Times arrive as RFC3339 strings rather than the
 // civilStartTime/civilEndTime objects dailyRollUp returns.
-func parseGoogleHealthWindowRollupShape(valueType string, rawRollup json.RawMessage, rollup *archived.Rollup) error {
-	jsonField, err := rollupJSONFieldForValueType(valueType)
-	if err != nil {
-		return err
-	}
+func parseGoogleHealthWindowRollupShape(rawRollup json.RawMessage, rollup *archived.Rollup) error {
 	var raw struct {
 		StartTime string `json:"startTime"`
 		EndTime   string `json:"endTime"`
 	}
 	if err := json.Unmarshal(rawRollup, &raw); err != nil {
 		return fmt.Errorf("Google Health %s %s Rollup is not valid JSON", rollup.DataType, rollup.RollupKind)
-	}
-	value, err := rollupFieldRawValue(rawRollup, jsonField)
-	if err != nil {
-		return err
-	}
-	if value == nil {
-		if valueType == "totalCalories" {
-			return fmt.Errorf("%w: %s", errRollupValueAbsent, jsonField)
-		}
-		return fmt.Errorf("Google Health %s %s Rollup missing %s value", rollup.DataType, rollup.RollupKind, jsonField)
-	}
-	if err := validateRollupValueShape(valueType, value, rollup.DataType); err != nil {
-		return err
 	}
 	if raw.StartTime == "" {
 		return fmt.Errorf("Google Health %s %s Rollup missing startTime", rollup.DataType, rollup.RollupKind)
@@ -196,40 +153,69 @@ func parseGoogleHealthWindowRollupShape(valueType string, rawRollup json.RawMess
 	return nil
 }
 
-// rollupJSONFieldForValueType maps the catalog's RollupValueType
-// scalar name to the JSON field key carrying the aggregate payload.
-// "stepsCount" → "steps", "floorsCount" → "floors", "heartRate" →
-// "heartRate". The dispatch table here is explicit so adding a new
-// shape is one case, not a regex.
-func rollupJSONFieldForValueType(valueType string) (string, error) {
-	switch valueType {
-	case "stepsCount":
-		return "steps", nil
-	case "floorsCount":
-		return "floors", nil
-	case "heartRate":
-		return "heartRate", nil
-	case "totalCalories":
-		return "totalCalories", nil
-	}
-	return "", fmt.Errorf("Google Health Rollup value type %q has no parser shape", valueType)
+// rollupValueContract binds a catalog RollupValueType to the JSON union
+// member carrying its aggregate and the one validator that owns both its
+// absence rule and its shape. validate receives nil when the member is
+// missing or JSON null.
+type rollupValueContract struct {
+	jsonField string
+	validate  func(value json.RawMessage) error
 }
 
-func validateRollupValueShape(valueType string, value json.RawMessage, dataType string) error {
-	if valueType != "totalCalories" {
-		return nil
+func rollupValueContractForType(valueType string) (rollupValueContract, error) {
+	switch valueType {
+	case "stepsCount":
+		return rollupValueContract{jsonField: "steps", validate: validateRequiredRollupValue}, nil
+	case "floorsCount":
+		return rollupValueContract{jsonField: "floors", validate: validateRequiredRollupValue}, nil
+	case "heartRate":
+		return rollupValueContract{jsonField: "heartRate", validate: validateRequiredRollupValue}, nil
+	case "totalCalories":
+		return rollupValueContract{jsonField: "totalCalories", validate: validateTotalCaloriesRollupValue}, nil
+	}
+	return rollupValueContract{}, fmt.Errorf("Google Health Rollup value type %q has no parser shape", valueType)
+}
+
+// validateRollupValue checks the Rollup's value union member against its
+// contract. A wrapped errRollupValueAbsent means the bucket carries no
+// data and the caller skips it.
+func validateRollupValue(valueType string, rawRollup json.RawMessage, rollup archived.Rollup) error {
+	contract, err := rollupValueContractForType(valueType)
+	if err != nil {
+		return err
+	}
+	value, err := rollupFieldRawValue(rawRollup, contract.jsonField)
+	if err != nil {
+		return err
+	}
+	if err := contract.validate(value); err != nil {
+		return fmt.Errorf("Google Health %s %s Rollup %s %w", rollup.DataType, rollup.RollupKind, contract.jsonField, err)
+	}
+	return nil
+}
+
+func validateRequiredRollupValue(value json.RawMessage) error {
+	if value == nil {
+		return errors.New("is missing")
+	}
+	return nil
+}
+
+func validateTotalCaloriesRollupValue(value json.RawMessage) error {
+	if value == nil {
+		return errRollupValueAbsent
 	}
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(value, &object); err != nil || object == nil {
-		return fmt.Errorf("Google Health %s Rollup totalCalories is not an object", dataType)
+		return errors.New("is not an object")
 	}
 	rawKcal, ok := object["kcalSum"]
 	if !ok || len(rawKcal) == 0 || string(rawKcal) == "null" {
-		return fmt.Errorf("Google Health %s Rollup missing kcalSum", dataType)
+		return errors.New("missing kcalSum")
 	}
 	var kcal float64
 	if err := json.Unmarshal(rawKcal, &kcal); err != nil {
-		return fmt.Errorf("Google Health %s Rollup kcalSum is not a number", dataType)
+		return errors.New("kcalSum is not a number")
 	}
 	return nil
 }
