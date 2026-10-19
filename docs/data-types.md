@@ -161,11 +161,28 @@ Continuous spans of low movement the provider flagged as sedentary.
 ### Calories in heart-rate zone
 
 - **Sync key:** `calories-in-heart-rate-zone`
-- **Shape:** interval
+- **Shape:** Rollup-only
 - **Scope:** `activity_and_fitness.readonly`
-- **Status:** catalog-known, but raw Data Point sync is not implemented because Google exposes this type only through Rollup operations.
+- **Rollups:** `daily`, `hourly`, `weekly`, `window=<duration>` (1h / 1d / 7d granularities)
+- **Stored as:** `rollups`; normalized export `calories-in-heart-rate-zone-rollups`
 
-Calories burned while in each heart-rate zone over an interval. The catalog row is kept for future debugging until gohealthcli pins and parses the Rollup payload shape.
+Calories burned in each heart-rate zone per Rollup bucket. Google exposes this
+type only through `dailyRollUp` and physical-window `rollUp`, so raw Data Point
+sync remains rejected. Each bucket is archived as one `rollups` row with its raw
+JSON. The export has one row per bucket and zone entry, with a zero-based
+`zone_index` that follows the Provider's array order. Zone labels pass through
+as Google sends them, including `HEART_RATE_ZONE_TYPE_UNSPECIFIED` and values
+gohealthcli does not know yet. Duplicate labels in one bucket stay separate rows.
+
+When the `caloriesInHeartRateZone` union member is absent, the bucket has no
+data and is skipped. When the member is present but its
+`caloriesInHeartRateZones` array is missing, null, or empty, the bucket is
+archived and exports no rows. A zone with `kcal: 0` exports `0`, and `kcal: 0.0`
+exports `0.0`. A zone with no `kcal` still exports a row, with an empty amount in
+CSV and plain output and `null` in JSONL. Whether Google omits zero amounts is
+not yet observed, so gohealthcli does not invent a zero. Google limits both
+endpoint modes to 14-day request spans; gohealthcli chunks longer ranges without
+gaps and keeps daily and physical Rollup cursors independent.
 
 ### Time in heart-rate zone
 
@@ -476,4 +493,4 @@ These ride alongside the Data Point catalog and capture per-Connection metadata.
 
 ## Rollups
 
-`steps`, `heart-rate`, `floors`, and Rollup-only `total-calories` support `--rollup daily`, which calls the upstream `dailyRollUp` endpoint and writes to the `rollups` table instead of `data_points`. The same catalog rows support the windowed `rollUp` endpoint (`--rollup hourly`, `--rollup weekly`, or `--rollup window=<duration>`) at 1h / 1d / 7d granularities. Heart-rate daily Rollups are a fast daily summary-history path, not a replacement for raw heart-rate samples. Total-calories requests are capped at 14 days per Provider call, with physical chunk boundaries aligned to whole requested windows. Each rollup kind carries its own Sync Cursor — syncing daily aggregates does not disturb raw or hourly cursors for the same Data Type. See [`sync`](commands/sync.html) for the full flag matrix.
+`steps`, `heart-rate`, `floors`, and Rollup-only `total-calories` and `calories-in-heart-rate-zone` support `--rollup daily`, which calls the upstream `dailyRollUp` endpoint and writes to the `rollups` table instead of `data_points`. The same catalog rows support the windowed `rollUp` endpoint (`--rollup hourly`, `--rollup weekly`, or `--rollup window=<duration>`) at 1h / 1d / 7d granularities. Heart-rate daily Rollups are a fast daily summary-history path, not a replacement for raw heart-rate samples. Total-calories and calories-in-heart-rate-zone requests are capped at 14 days per Provider call, with physical chunk boundaries aligned to whole requested windows. Each rollup kind carries its own Sync Cursor — syncing daily aggregates does not disturb raw or hourly cursors for the same Data Type. See [`sync`](commands/sync.html) for the full flag matrix.

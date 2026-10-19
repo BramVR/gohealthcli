@@ -102,7 +102,10 @@ steps daily Rollups, and `sync --types heart-rate --rollup daily` archives
 daily heart-rate summary Rollups without replacing raw heart-rate samples.
 `sync --types total-calories --rollup daily` and physical modes such as
 `--rollup hourly` archive provider-computed calorie totals; export them through
-`total-calories-rollups`.
+`total-calories-rollups`. `sync --types calories-in-heart-rate-zone` with the
+same Rollup modes archives calories burned per heart-rate zone; export them
+through `calories-in-heart-rate-zone-rollups`, one row per Rollup bucket and
+zone.
 Use `sync --plan` to inspect one operation per requested Data Type. In planning
 mode, `--types` may be repeated and preserves requested order; `--all` uses
 catalog order.
@@ -114,12 +117,9 @@ it performs no Provider request, Credential Store read, token refresh, archive
 write or migration, Sync Cursor advance, or Attachment sidecar creation. A
 ready plan explicitly leaves credential availability, Google Identity
 matching, and Provider reachability unverified.
-`total-calories` is known to the catalog and supports daily and physical-window
-Rollup sync, but raw Data Point sync remains rejected because Google exposes it
-only as Rollup data;
-`calories-in-heart-rate-zone` is also catalog-known but not yet implemented
-because Google exposes it only through Rollup operations whose payload shape
-is not pinned in gohealthcli yet.
+`total-calories` and `calories-in-heart-rate-zone` are known to the catalog and
+support daily and physical-window Rollup sync, but raw Data Point sync remains
+rejected because Google exposes them only as Rollup data.
 
 With the Tier 2 `tcx` scope granted (`gohealthcli connect --add-scopes
 tcx`), `exercise` sync also archives each session's TCX route file as a
@@ -391,6 +391,7 @@ Archive daily Rollups or wearable-filtered Data Points when needed:
 gohealthcli sync --types steps --rollup daily --from 2026-01-01 --to 2026-01-31 --plain
 gohealthcli sync --types heart-rate --rollup daily --from 2026-01-01 --to 2026-01-31 --plain
 gohealthcli sync --types total-calories --rollup hourly --from 2026-01-01 --to 2026-01-15 --plain
+gohealthcli sync --types calories-in-heart-rate-zone --rollup daily --from 2026-01-01 --to 2026-01-15 --plain
 gohealthcli sync --types heart-rate --source-family wearable --from 2026-01-01 --to 2026-01-02 --plain
 ```
 
@@ -400,6 +401,7 @@ Export normalized daily steps:
 gohealthcli export daily-steps --format jsonl --stdout
 gohealthcli export daily-steps --format csv --output steps.csv
 gohealthcli export total-calories-rollups --format csv --output calories.csv
+gohealthcli export calories-in-heart-rate-zone-rollups --format csv --output calories-by-zone.csv
 ```
 
 Explore raw provider JSON:
