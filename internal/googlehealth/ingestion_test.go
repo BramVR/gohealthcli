@@ -569,6 +569,75 @@ func TestCaloriesInHeartRateZoneIngestionShapes(t *testing.T) {
 	}
 }
 
+func TestCaloriesInHeartRateZoneIngestionRejectsMalformedValues(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		union   string
+		wantErr string
+	}{
+		{name: "union_scalar", union: `"SECRET_PAYLOAD"`, wantErr: "caloriesInHeartRateZone is not an object"},
+		{name: "union_array", union: `["SECRET_PAYLOAD"]`, wantErr: "caloriesInHeartRateZone is not an object"},
+		{name: "array_object", union: `{"caloriesInHeartRateZones": {"heartRateZone": "SECRET_PAYLOAD"}}`, wantErr: "caloriesInHeartRateZones is not an array"},
+		{name: "array_string", union: `{"caloriesInHeartRateZones": "SECRET_PAYLOAD"}`, wantErr: "caloriesInHeartRateZones is not an array"},
+		{name: "element_null", union: `{"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": 1}, null]}`, wantErr: "caloriesInHeartRateZones[1] is not an object"},
+		{name: "element_scalar", union: `{"caloriesInHeartRateZones": ["SECRET_PAYLOAD"]}`, wantErr: "caloriesInHeartRateZones[0] is not an object"},
+		{name: "zone_number", union: `{"caloriesInHeartRateZones": [{"heartRateZone": 4, "kcal": 1}]}`, wantErr: "caloriesInHeartRateZones[0].heartRateZone is not a string"},
+		{name: "kcal_string", union: `{"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": "SECRET_PAYLOAD"}]}`, wantErr: "caloriesInHeartRateZones[0].kcal is not a number"},
+		{name: "kcal_boolean", union: `{"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": true}]}`, wantErr: "caloriesInHeartRateZones[0].kcal is not a number"},
+		{name: "kcal_object", union: `{"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": {"value": "SECRET_PAYLOAD"}}]}`, wantErr: "caloriesInHeartRateZones[0].kcal is not a number"},
+		{name: "kcal_array", union: `{"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": ["SECRET_PAYLOAD"]}]}`, wantErr: "caloriesInHeartRateZones[0].kcal is not a number"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			archive := &fakeGoogleHealthIngestionArchive{}
+			provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+				"2026-01-01/2026-01-02/": `{"rollupDataPoints": [{"caloriesInHeartRateZone": ` + test.union + `,
+					"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+					"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}}]}`,
+			})
+			_, err := fakeGoogleHealthIngestion(provider).Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+				DataType: "calories-in-heart-rate-zone",
+				Rollup:   "daily",
+				From:     "2026-01-01",
+				To:       "2026-01-02",
+			}))
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("error = %v, want %q", err, test.wantErr)
+			}
+			if strings.Contains(err.Error(), "SECRET_PAYLOAD") {
+				t.Fatalf("error = %v, want no Provider payload echo", err)
+			}
+			if len(archive.rollups) != 0 {
+				t.Fatalf("archived Rollups = %d, want 0", len(archive.rollups))
+			}
+		})
+	}
+}
+
+func TestRequiredRollupValueAbsenceFailsSyncRun(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"2026-01-01/2026-01-02/": `{"rollupDataPoints": [{
+			"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+			"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}}]}`,
+	})
+	_, err := fakeGoogleHealthIngestion(provider).Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		Rollup:   "daily",
+		From:     "2026-01-01",
+		To:       "2026-01-02",
+	}))
+	if err == nil || !strings.Contains(err.Error(), "steps is missing") {
+		t.Fatalf("error = %v, want missing steps value", err)
+	}
+	if len(archive.rollups) != 0 {
+		t.Fatalf("archived Rollups = %d, want 0", len(archive.rollups))
+	}
+}
+
 func TestGoogleHealthIngestionHeartRateDailyRollupUsesFourteenDayWindows(t *testing.T) {
 	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}
