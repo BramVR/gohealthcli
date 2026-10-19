@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -519,4 +520,157 @@ func runCaloriesInHeartRateZoneSync(configPath, archivePath string, runtime runt
 		"--types", "calories-in-heart-rate-zone", "--rollup", rollup,
 		"--from", from, "--to", to, "--json",
 	}, stdout, stderr, runtime)
+}
+
+func TestCaloriesInHeartRateZoneRawSyncRejectedBeforeIO(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"sync", "--types", "calories-in-heart-rate-zone", "--from", "2026-01-01", "--to", "2026-01-02", "--json"},
+		{"raw", "data-type", "calories-in-heart-rate-zone", "--from", "2026-01-01", "--to", "2026-01-02"},
+	} {
+		args := args
+		t.Run(strings.Join(args[:2], "-"), func(t *testing.T) {
+			t.Parallel()
+			providerRequests := 0
+			runtime := runtimeAdapters{fetchRawProvider: func(context.Context, googlehealth.RawRequest, string) ([]byte, error) {
+				providerRequests++
+				return nil, nil
+			}}
+			configPath := filepath.Join(t.TempDir(), "missing-config.toml")
+			archivePath := filepath.Join(t.TempDir(), "missing-archive.sqlite")
+			args = append(args, "--config", configPath, "--db", archivePath)
+			stdout := new(bytes.Buffer)
+			stderr := new(bytes.Buffer)
+			if code := runWithRuntime(args, stdout, stderr, runtime); code == 0 {
+				t.Fatalf("exit code = 0, want raw-path rejection\nstdout: %s", stdout.String())
+			}
+			if providerRequests != 0 {
+				t.Fatalf("Provider requests = %d, want 0", providerRequests)
+			}
+		})
+	}
+}
+
+func TestCaloriesInHeartRateZoneCatalogAndRawPlans(t *testing.T) {
+	t.Parallel()
+	code, describe, stderr := runCommand(t, "catalog", "describe", "calories-in-heart-rate-zone", "--json")
+	if code != 0 {
+		t.Fatalf("catalog describe exit code = %d\nstderr: %s", code, stderr)
+	}
+	var described struct {
+		Compiled struct {
+			RecordKind       string   `json:"record_kind"`
+			RollupModes      []string `json:"rollup_modes"`
+			EndpointFamilies []struct {
+				Name       string `json:"name"`
+				PagePolicy struct {
+					RangeWindowMaxDays int `json:"range_window_max_days"`
+				} `json:"page_policy"`
+			} `json:"endpoint_families"`
+		} `json:"compiled"`
+	}
+	if err := json.Unmarshal(describe.Bytes(), &described); err != nil {
+		t.Fatalf("decode catalog describe: %v\n%s", err, describe)
+	}
+	families := map[string]int{}
+	for _, family := range described.Compiled.EndpointFamilies {
+		families[family.Name] = family.PagePolicy.RangeWindowMaxDays
+	}
+	if described.Compiled.RecordKind != "none" || fmt.Sprint(families) != "map[dailyRollUp:14 rollUp:14]" || strings.Join(described.Compiled.RollupModes, ",") != "daily,hourly,weekly,window=<duration>" {
+		t.Fatalf("catalog describe = %+v, want Rollup-only record_kind none with 14-day caps", described.Compiled)
+	}
+
+	for _, test := range []struct {
+		name, endpoint string
+		args           []string
+	}{
+		{name: "daily", endpoint: "dataTypes.calories-in-heart-rate-zone.dailyRollUp", args: []string{"daily-rollup", "--from", "2026-01-01", "--to", "2026-01-15"}},
+		{name: "physical", endpoint: "dataTypes.calories-in-heart-rate-zone.rollUp", args: []string{"rollup", "--from", "2026-01-01", "--to", "2026-01-15", "--window", "1h"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			args := append([]string{"raw", "data-type", "calories-in-heart-rate-zone"}, test.args...)
+			args = append(args, "--timezone", "UTC", "--plan", "--json", "--config", "/synthetic/missing-config", "--db", "/synthetic/missing-archive")
+			var stdout, stderr bytes.Buffer
+			if code := runWithRuntime(args, &stdout, &stderr, forbiddenRawPlanRuntime(t)); code != 0 || stderr.Len() != 0 {
+				t.Fatalf("raw plan exit/stderr = %d / %q\nstdout: %s", code, stderr.String(), stdout.String())
+			}
+			var result rawPlanResult
+			if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+				t.Fatalf("decode raw plan: %v", err)
+			}
+			if result.Target.EndpointName != test.endpoint || result.PlanningEffects != (rawPlanEffects{}) {
+				t.Fatalf("raw plan target/effects = %+v / %+v", result.Target, result.PlanningEffects)
+			}
+		})
+	}
+
+	var stdout, stderr2 bytes.Buffer
+	code = runWithRuntime([]string{
+		"raw", "data-type", "calories-in-heart-rate-zone", "rollup", "--from", "2026-01-01", "--to", "2026-01-16", "--window", "1h",
+		"--timezone", "UTC", "--plan", "--json", "--config", "/synthetic/missing-config", "--db", "/synthetic/missing-archive",
+	}, &stdout, &stderr2, forbiddenRawPlanRuntime(t))
+	if code != 1 || !strings.Contains(stdout.String()+stderr2.String(), "narrow --from/--to to one Provider request") {
+		t.Fatalf("multi-request raw plan exit = %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr2.String())
+	}
+}
+
+func TestCaloriesInHeartRateZoneV29Upgrade(t *testing.T) {
+	t.Parallel()
+	archivePath := filepath.Join(t.TempDir(), "legacy", "archive.sqlite")
+	createLegacyArchive(t, archivePath, 29)
+	sentinel := `{"caloriesInHeartRateZone":{"caloriesInHeartRateZones":[{"heartRateZone":"LIGHT","kcal":7.5}]}}`
+	identity := `{"healthUserId":"synthetic","legacyUserId":"SYNTH"}`
+	db := openArchiveForTest(t, archivePath)
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO connections (
+		id, provider_name, google_health_user_id, legacy_fitbit_user_id, token_metadata_json, google_identity_json, created_at, updated_at
+	) VALUES ('googlehealth:synthetic', 'googlehealth', 'synthetic', 'SYNTH', '{}', ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`, identity); err != nil {
+		t.Fatalf("insert synthetic Connection: %v", err)
+	}
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO rollups (
+		provider_name, connection_id, data_type, rollup_kind, civil_date, raw_json, inserted_at, updated_at
+	) VALUES ('googlehealth', 'googlehealth:synthetic', 'calories-in-heart-rate-zone', 'dailyRollUp', '2026-01-01', ?, '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z')`, sentinel); err != nil {
+		t.Fatalf("insert sentinel Rollup: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close legacy archive: %v", err)
+	}
+
+	lifecycle := healthArchiveLifecycle{path: archivePath}
+	for attempt := 1; attempt <= 2; attempt++ {
+		if err := lifecycle.Migrate(context.Background()); err != nil {
+			t.Fatalf("migration attempt %d: %v", attempt, err)
+		}
+	}
+	assertArchiveUserVersion(t, archivePath, currentSchemaVersion)
+
+	db = openArchiveForTest(t, archivePath)
+	defer db.Close()
+	var migrationCount int
+	if err := db.QueryRowContext(context.Background(), `SELECT count(*) FROM schema_migrations WHERE version = 30 AND name = 'add_calories_in_heart_rate_zone_rollups_view'`).Scan(&migrationCount); err != nil {
+		t.Fatalf("query migration history: %v", err)
+	}
+	if migrationCount != 1 {
+		t.Fatalf("version 30 history rows = %d, want 1", migrationCount)
+	}
+	var storedIdentity string
+	if err := db.QueryRowContext(context.Background(), `SELECT google_identity_json FROM connections`).Scan(&storedIdentity); err != nil {
+		t.Fatalf("query Connection identity: %v", err)
+	}
+	if storedIdentity != identity {
+		t.Fatalf("google_identity_json = %s, want unchanged %s", storedIdentity, identity)
+	}
+	var rawJSON, zone, kcal string
+	var zoneIndex int
+	if err := db.QueryRowContext(context.Background(), `SELECT raw_json FROM rollups`).Scan(&rawJSON); err != nil {
+		t.Fatalf("query sentinel raw_json: %v", err)
+	}
+	if rawJSON != sentinel {
+		t.Fatalf("raw_json = %s, want unchanged sentinel", rawJSON)
+	}
+	if err := db.QueryRowContext(context.Background(), `SELECT zone_index, heart_rate_zone, kcal FROM calories_in_heart_rate_zone_rollups`).Scan(&zoneIndex, &zone, &kcal); err != nil {
+		t.Fatalf("query upgraded view: %v", err)
+	}
+	if zoneIndex != 0 || zone != "LIGHT" || kcal != "7.5" {
+		t.Fatalf("upgraded view row = (%d, %q, %q), want (0, LIGHT, 7.5)", zoneIndex, zone, kcal)
+	}
 }
