@@ -384,3 +384,139 @@ func TestCaloriesInHeartRateZoneExportsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+func TestCaloriesInHeartRateZoneCorrectionAndReplay(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	runSync := func(zones string) map[string]any {
+		t.Helper()
+		var requests *[]googlehealth.RawRequest
+		testRuntime, requests = withDailyRollupFetchFake(t, testRuntime, "connect-access-secret", "calories-in-heart-rate-zone", map[string]string{
+			"2026-01-01/2026-01-02/": `{"rollupDataPoints":[{"caloriesInHeartRateZone":{"caloriesInHeartRateZones":` + zones + `},"civilStartTime":{"date":{"year":2026,"month":1,"day":1}},"civilEndTime":{"date":{"year":2026,"month":1,"day":2}}}]}`,
+		})
+		stdout := new(bytes.Buffer)
+		stderr := new(bytes.Buffer)
+		if code := runCaloriesInHeartRateZoneSync(configPath, archivePath, testRuntime, stdout, stderr, "daily", "2026-01-01", "2026-01-02"); code != 0 {
+			t.Fatalf("sync exit code = %d\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+		}
+		if len(*requests) != 1 {
+			t.Fatalf("Provider request count = %d, want 1", len(*requests))
+		}
+		var result map[string]any
+		if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+			t.Fatalf("decode sync output: %v", err)
+		}
+		return result
+	}
+	exportRows := func() string {
+		t.Helper()
+		stdout := new(bytes.Buffer)
+		stderr := new(bytes.Buffer)
+		if code := runWithRuntime([]string{
+			"export", "--config", configPath, "--db", archivePath,
+			"calories-in-heart-rate-zone-rollups", "--stdout", "--format", "csv",
+		}, stdout, stderr, testRuntime); code != 0 {
+			t.Fatalf("export exit code = %d\nstderr: %s", code, stderr.String())
+		}
+		return strings.TrimPrefix(stdout.String(), "provider_name,connection_id,rollup_kind,window_start_utc,window_end_utc,civil_date,zone_index,heart_rate_zone,kcal\n")
+	}
+	prefix := "googlehealth,googlehealth:111111256096816351,dailyRollUp,,,2026-01-01,"
+
+	for _, step := range []struct {
+		name, zones          string
+		wantNew, wantUpdated float64
+		wantRows             string
+	}{
+		{name: "original", zones: `[{"heartRateZone":"LIGHT","kcal":10},{"heartRateZone":"PEAK","kcal":2}]`, wantNew: 1, wantRows: prefix + "0,LIGHT,10\n" + prefix + "1,PEAK,2\n"},
+		{name: "replay", zones: `[{"heartRateZone":"LIGHT","kcal":10},{"heartRateZone":"PEAK","kcal":2}]`, wantRows: prefix + "0,LIGHT,10\n" + prefix + "1,PEAK,2\n"},
+		{name: "corrected", zones: `[{"heartRateZone":"LIGHT","kcal":12.5},{"heartRateZone":"PEAK","kcal":2},{"heartRateZone":"VIGOROUS","kcal":1}]`, wantUpdated: 1, wantRows: prefix + "0,LIGHT,12.5\n" + prefix + "1,PEAK,2\n" + prefix + "2,VIGOROUS,1\n"},
+		{name: "corrected_replay", zones: `[{"heartRateZone":"LIGHT","kcal":12.5},{"heartRateZone":"PEAK","kcal":2},{"heartRateZone":"VIGOROUS","kcal":1}]`, wantRows: prefix + "0,LIGHT,12.5\n" + prefix + "1,PEAK,2\n" + prefix + "2,VIGOROUS,1\n"},
+		{name: "reordered", zones: `[{"heartRateZone":"VIGOROUS","kcal":1},{"heartRateZone":"LIGHT","kcal":12.5},{"heartRateZone":"PEAK","kcal":2}]`, wantUpdated: 1, wantRows: prefix + "0,VIGOROUS,1\n" + prefix + "1,LIGHT,12.5\n" + prefix + "2,PEAK,2\n"},
+		{name: "emptied", zones: `[]`, wantUpdated: 1, wantRows: ""},
+	} {
+		result := runSync(step.zones)
+		assertJSONNumber(t, result, "rollups_seen", 1)
+		assertJSONNumber(t, result, "rollups_new", step.wantNew)
+		assertJSONNumber(t, result, "rollups_updated", step.wantUpdated)
+		if got := exportRows(); got != step.wantRows {
+			t.Fatalf("%s export rows =\n%s\nwant:\n%s", step.name, got, step.wantRows)
+		}
+	}
+	assertArchiveTableCount(t, archivePath, "rollups", 1)
+	assertArchiveTableCount(t, archivePath, "data_point_revisions", 0)
+}
+
+func TestCaloriesInHeartRateZoneCursorIsolationAndFailure(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	testRuntime, _ = withDailyRollupFetchFake(t, testRuntime, "connect-access-secret", "calories-in-heart-rate-zone", map[string]string{
+		"2026-01-01/2026-01-02/": `{"rollupDataPoints":[]}`,
+	})
+	if code := runCaloriesInHeartRateZoneSync(configPath, archivePath, testRuntime, stdout, stderr, "daily", "2026-01-01", "2026-01-02"); code != 0 {
+		t.Fatalf("daily sync exit code = %d\nstdout: %s", code, stdout.String())
+	}
+	testRuntime, _ = withWindowRollupFetchFake(t, testRuntime, "connect-access-secret", "calories-in-heart-rate-zone", map[string]string{
+		"2026-01-01T00:00:00Z/2026-01-02T00:00:00Z/3600s/": `{"rollupDataPoints":[]}`,
+	})
+	stdout.Reset()
+	if code := runCaloriesInHeartRateZoneSync(configPath, archivePath, testRuntime, stdout, stderr, "hourly", "2026-01-01", "2026-01-02"); code != 0 {
+		t.Fatalf("hourly sync exit code = %d\nstdout: %s", code, stdout.String())
+	}
+
+	testRuntime, _ = withDailyRollupFetchFake(t, testRuntime, "connect-access-secret", "calories-in-heart-rate-zone", map[string]string{
+		"2026-01-02/2026-01-04/":       `{"rollupDataPoints":[{"caloriesInHeartRateZone":{"caloriesInHeartRateZones":[{"heartRateZone":"LIGHT","kcal":1}]},"civilStartTime":{"date":{"year":2026,"month":1,"day":2}},"civilEndTime":{"date":{"year":2026,"month":1,"day":3}}}],"nextPageToken":"page-2"}`,
+		"2026-01-02/2026-01-04/page-2": `{"rollupDataPoints":[{"caloriesInHeartRateZone":{"caloriesInHeartRateZones":[{"heartRateZone":"LIGHT","kcal":"SECRET_PAYLOAD"}]},"civilStartTime":{"date":{"year":2026,"month":1,"day":3}},"civilEndTime":{"date":{"year":2026,"month":1,"day":4}}}]}`,
+	})
+	stdout.Reset()
+	stderr.Reset()
+	if code := runCaloriesInHeartRateZoneSync(configPath, archivePath, testRuntime, stdout, stderr, "daily", "2026-01-02", "2026-01-04"); code == 0 {
+		t.Fatalf("malformed sync exit code = 0, want failure\nstdout: %s", stdout.String())
+	}
+	output := stdout.String() + stderr.String()
+	if !strings.Contains(output, "caloriesInHeartRateZones[0].kcal is not a number") || strings.Contains(output, "SECRET_PAYLOAD") {
+		t.Fatalf("failed sync output = %s, want field-naming error without payload echo", output)
+	}
+
+	db := openArchiveForTest(t, archivePath)
+	defer db.Close()
+	rows, err := db.QueryContext(context.Background(), `SELECT rollup_kind, cursor_time FROM sync_cursors WHERE data_type = 'calories-in-heart-rate-zone' ORDER BY rollup_kind`)
+	if err != nil {
+		t.Fatalf("query cursors: %v", err)
+	}
+	defer rows.Close()
+	got := map[string]string{}
+	for rows.Next() {
+		var kind, cursor string
+		if err := rows.Scan(&kind, &cursor); err != nil {
+			t.Fatalf("scan cursor: %v", err)
+		}
+		got[kind] = cursor
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("cursor rows: %v", err)
+	}
+	want := map[string]string{"daily": "2026-01-02", "hourly": "2026-01-02T00:00:00Z"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("cursors = %v, want %v", got, want)
+	}
+}
+
+func runCaloriesInHeartRateZoneSync(configPath, archivePath string, runtime runtimeAdapters, stdout, stderr *bytes.Buffer, rollup, from, to string) int {
+	return runWithRuntime([]string{
+		"sync", "--config", configPath, "--db", archivePath,
+		"--types", "calories-in-heart-rate-zone", "--rollup", rollup,
+		"--from", from, "--to", to, "--json",
+	}, stdout, stderr, runtime)
+}
