@@ -630,8 +630,8 @@ func TestRequiredRollupValueAbsenceFailsSyncRun(t *testing.T) {
 		From:     "2026-01-01",
 		To:       "2026-01-02",
 	}))
-	if err == nil || !strings.Contains(err.Error(), "steps is missing") {
-		t.Fatalf("error = %v, want missing steps value", err)
+	if want := "Google Health steps daily Rollup missing steps value"; err == nil || err.Error() != want {
+		t.Fatalf("error = %v, want %q", err, want)
 	}
 	if len(archive.rollups) != 0 {
 		t.Fatalf("archived Rollups = %d, want 0", len(archive.rollups))

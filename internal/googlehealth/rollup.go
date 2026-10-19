@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-var errRollupValueAbsent = errors.New("union member is absent")
+var errRollupValueAbsent = errors.New("Google Health Rollup value union member is absent")
 
 // parseGoogleHealthRollup is the generic Rollup parser introduced in
 // #106, which replaced the steps-daily-only parser (deleted with the
@@ -39,7 +39,7 @@ func parseGoogleHealthRollup(connection archived.Connection, dataType, rollupKin
 		RollupKind:   rollupKind,
 		RawJSON:      canonicalRaw,
 	}
-	if err := validateRollupValue(valueType, rawRollup, rollup); err != nil {
+	if err := validateRollupValue(valueType, family, rawRollup, rollup); err != nil {
 		return archived.Rollup{}, err
 	}
 	if family == endpointFamilyDailyRollUp {
@@ -146,96 +146,94 @@ func parseGoogleHealthWindowRollupShape(rawRollup json.RawMessage, rollup *archi
 }
 
 type rollupValueContract struct {
-	jsonField string
-	validate  func(value json.RawMessage) error
+	jsonField         string
+	absentMeansNoData bool
+	validate          func(value json.RawMessage, dataType string) error
 }
 
 func rollupValueContractForType(valueType string) (rollupValueContract, error) {
 	switch valueType {
 	case "stepsCount":
-		return rollupValueContract{jsonField: "steps", validate: validateRequiredRollupValue}, nil
+		return rollupValueContract{jsonField: "steps"}, nil
 	case "floorsCount":
-		return rollupValueContract{jsonField: "floors", validate: validateRequiredRollupValue}, nil
+		return rollupValueContract{jsonField: "floors"}, nil
 	case "heartRate":
-		return rollupValueContract{jsonField: "heartRate", validate: validateRequiredRollupValue}, nil
+		return rollupValueContract{jsonField: "heartRate"}, nil
 	case "totalCalories":
-		return rollupValueContract{jsonField: "totalCalories", validate: validateTotalCaloriesRollupValue}, nil
+		return rollupValueContract{jsonField: "totalCalories", absentMeansNoData: true, validate: validateTotalCaloriesRollupValue}, nil
 	case "caloriesInHeartRateZone":
-		return rollupValueContract{jsonField: "caloriesInHeartRateZone", validate: validateCaloriesInHeartRateZoneRollupValue}, nil
+		return rollupValueContract{jsonField: "caloriesInHeartRateZone", absentMeansNoData: true, validate: validateCaloriesInHeartRateZoneRollupValue}, nil
 	}
 	return rollupValueContract{}, fmt.Errorf("Google Health Rollup value type %q has no parser shape", valueType)
 }
 
-func validateRollupValue(valueType string, rawRollup json.RawMessage, rollup archived.Rollup) error {
+func validateRollupValue(valueType string, family endpointFamily, rawRollup json.RawMessage, rollup archived.Rollup) error {
 	contract, err := rollupValueContractForType(valueType)
 	if err != nil {
 		return err
 	}
+	rollupLabel := rollup.DataType + " " + rollup.RollupKind
+	if family == endpointFamilyDailyRollUp {
+		rollupLabel = rollup.DataType + " daily"
+	}
 	value, err := rollupFieldRawValue(rawRollup, contract.jsonField)
 	if err != nil {
-		return err
+		return fmt.Errorf("Google Health %s Rollup is not valid JSON", rollupLabel)
 	}
-	if err := contract.validate(value); err != nil {
-		return fmt.Errorf("Google Health %s %s Rollup %s %w", rollup.DataType, rollup.RollupKind, contract.jsonField, err)
+	if value == nil {
+		if contract.absentMeansNoData {
+			return fmt.Errorf("%w: %s", errRollupValueAbsent, contract.jsonField)
+		}
+		return fmt.Errorf("Google Health %s Rollup missing %s value", rollupLabel, contract.jsonField)
 	}
-	return nil
+	if contract.validate == nil {
+		return nil
+	}
+	return contract.validate(value, rollup.DataType)
 }
 
-func validateRequiredRollupValue(value json.RawMessage) error {
-	if value == nil {
-		return errors.New("is missing")
-	}
-	return nil
-}
-
-func validateTotalCaloriesRollupValue(value json.RawMessage) error {
-	if value == nil {
-		return errRollupValueAbsent
-	}
+func validateTotalCaloriesRollupValue(value json.RawMessage, dataType string) error {
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(value, &object); err != nil || object == nil {
-		return errors.New("is not an object")
+		return fmt.Errorf("Google Health %s Rollup totalCalories is not an object", dataType)
 	}
 	rawKcal, ok := object["kcalSum"]
 	if !ok || len(rawKcal) == 0 || string(rawKcal) == "null" {
-		return errors.New("missing kcalSum")
+		return fmt.Errorf("Google Health %s Rollup missing kcalSum", dataType)
 	}
 	var kcal float64
 	if err := json.Unmarshal(rawKcal, &kcal); err != nil {
-		return errors.New("kcalSum is not a number")
+		return fmt.Errorf("Google Health %s Rollup kcalSum is not a number", dataType)
 	}
 	return nil
 }
 
-func validateCaloriesInHeartRateZoneRollupValue(value json.RawMessage) error {
-	if value == nil {
-		return errRollupValueAbsent
-	}
+func validateCaloriesInHeartRateZoneRollupValue(value json.RawMessage, dataType string) error {
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(value, &object); err != nil || object == nil {
-		return errors.New("is not an object")
+		return fmt.Errorf("Google Health %s Rollup caloriesInHeartRateZone is not an object", dataType)
 	}
 	var zones []json.RawMessage
 	if rawZones, ok := object["caloriesInHeartRateZones"]; ok {
 		if err := json.Unmarshal(rawZones, &zones); err != nil {
-			return errors.New("caloriesInHeartRateZones is not an array")
+			return fmt.Errorf("Google Health %s Rollup caloriesInHeartRateZone.caloriesInHeartRateZones is not an array", dataType)
 		}
 	}
 	for index, rawZone := range zones {
 		var zone map[string]json.RawMessage
 		if err := json.Unmarshal(rawZone, &zone); err != nil || zone == nil {
-			return fmt.Errorf("caloriesInHeartRateZones[%d] is not an object", index)
+			return fmt.Errorf("Google Health %s Rollup caloriesInHeartRateZone.caloriesInHeartRateZones[%d] is not an object", dataType, index)
 		}
 		if label, ok := zone["heartRateZone"]; ok {
 			var text string
 			if err := json.Unmarshal(label, &text); err != nil {
-				return fmt.Errorf("caloriesInHeartRateZones[%d].heartRateZone is not a string", index)
+				return fmt.Errorf("Google Health %s Rollup caloriesInHeartRateZone.caloriesInHeartRateZones[%d].heartRateZone is not a string", dataType, index)
 			}
 		}
 		if kcal, ok := zone["kcal"]; ok {
 			var number float64
 			if err := json.Unmarshal(kcal, &number); err != nil {
-				return fmt.Errorf("caloriesInHeartRateZones[%d].kcal is not a number", index)
+				return fmt.Errorf("Google Health %s Rollup caloriesInHeartRateZone.caloriesInHeartRateZones[%d].kcal is not a number", dataType, index)
 			}
 		}
 	}
@@ -249,7 +247,7 @@ func validateCaloriesInHeartRateZoneRollupValue(value json.RawMessage) error {
 func rollupFieldRawValue(rawRollup json.RawMessage, fieldName string) (json.RawMessage, error) {
 	var lookup map[string]json.RawMessage
 	if err := json.Unmarshal(rawRollup, &lookup); err != nil {
-		return nil, errors.New("Google Health Rollup is not a JSON object")
+		return nil, err
 	}
 	value, ok := lookup[fieldName]
 	if !ok {
