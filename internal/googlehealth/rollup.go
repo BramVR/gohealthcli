@@ -222,11 +222,9 @@ func validateTotalCaloriesRollupValue(value json.RawMessage) error {
 	return nil
 }
 
-// validateCaloriesInHeartRateZoneRollupValue accepts a present union
-// member with a missing, null, or empty caloriesInHeartRateZones array
-// (an archived bucket with no zones), and zone entries without kcal or
-// heartRateZone, since Google may omit zero or unset values. Errors name
-// the field and index but never echo Provider values.
+// validateCaloriesInHeartRateZoneRollupValue accepts a missing, null, or
+// empty zone array and zone entries without kcal or heartRateZone, since
+// Google may omit zero or unset values. Errors never echo Provider values.
 func validateCaloriesInHeartRateZoneRollupValue(value json.RawMessage) error {
 	if value == nil {
 		return errRollupValueAbsent
@@ -246,13 +244,13 @@ func validateCaloriesInHeartRateZoneRollupValue(value json.RawMessage) error {
 		if err := json.Unmarshal(rawZone, &zone); err != nil || zone == nil {
 			return fmt.Errorf("caloriesInHeartRateZones[%d] is not an object", index)
 		}
-		if label, ok := zone["heartRateZone"]; ok && string(label) != "null" {
+		if label, ok := zone["heartRateZone"]; ok {
 			var text string
 			if err := json.Unmarshal(label, &text); err != nil {
 				return fmt.Errorf("caloriesInHeartRateZones[%d].heartRateZone is not a string", index)
 			}
 		}
-		if kcal, ok := zone["kcal"]; ok && string(kcal) != "null" {
+		if kcal, ok := zone["kcal"]; ok {
 			var number float64
 			if err := json.Unmarshal(kcal, &number); err != nil {
 				return fmt.Errorf("caloriesInHeartRateZones[%d].kcal is not a number", index)
