@@ -172,6 +172,8 @@ func rollupValueContractForType(valueType string) (rollupValueContract, error) {
 		return rollupValueContract{jsonField: "heartRate", validate: validateRequiredRollupValue}, nil
 	case "totalCalories":
 		return rollupValueContract{jsonField: "totalCalories", validate: validateTotalCaloriesRollupValue}, nil
+	case "caloriesInHeartRateZone":
+		return rollupValueContract{jsonField: "caloriesInHeartRateZone", validate: validateCaloriesInHeartRateZoneRollupValue}, nil
 	}
 	return rollupValueContract{}, fmt.Errorf("Google Health Rollup value type %q has no parser shape", valueType)
 }
@@ -216,6 +218,13 @@ func validateTotalCaloriesRollupValue(value json.RawMessage) error {
 	var kcal float64
 	if err := json.Unmarshal(rawKcal, &kcal); err != nil {
 		return errors.New("kcalSum is not a number")
+	}
+	return nil
+}
+
+func validateCaloriesInHeartRateZoneRollupValue(value json.RawMessage) error {
+	if value == nil {
+		return errRollupValueAbsent
 	}
 	return nil
 }

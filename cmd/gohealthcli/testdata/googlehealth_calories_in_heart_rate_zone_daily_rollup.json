@@ -1,0 +1,24 @@
+{
+  "rollupDataPoints": [
+    {
+      "caloriesInHeartRateZone": {
+        "caloriesInHeartRateZones": [
+          {"heartRateZone": "VIGOROUS", "kcal": 25.25},
+          {"heartRateZone": "LIGHT", "kcal": 120.5},
+          {"heartRateZone": "MODERATE", "kcal": 50}
+        ]
+      },
+      "civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+      "civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}
+    },
+    {
+      "caloriesInHeartRateZone": {
+        "caloriesInHeartRateZones": [
+          {"heartRateZone": "PEAK", "kcal": 0}
+        ]
+      },
+      "civilStartTime": {"date": {"year": 2026, "month": 1, "day": 2}},
+      "civilEndTime": {"date": {"year": 2026, "month": 1, "day": 3}}
+    }
+  ]
+}

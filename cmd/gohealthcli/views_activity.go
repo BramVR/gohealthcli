@@ -275,3 +275,46 @@ var totalCaloriesRollupsViewSpec = exportDatasetSpec{
 		{name: "kcal_sum"},
 	},
 }
+
+// caloriesInHeartRateZoneRollupsViewSpec fans each archived Rollup bucket
+// out into one row per caloriesInHeartRateZones entry. zone_index keeps
+// duplicate or unknown zone labels distinct, and a missing kcal stays
+// NULL because Google's zero-omission behavior is unobserved.
+var caloriesInHeartRateZoneRollupsViewSpec = exportDatasetSpec{
+	name:             "calories-in-heart-rate-zone-rollups",
+	view:             "calories_in_heart_rate_zone_rollups",
+	migrationVersion: 30,
+	orderBy:          "CASE WHEN civil_date = '' THEN window_start_utc ELSE civil_date END, rollup_kind, provider_name, connection_id, window_start_utc, window_end_utc, civil_date, zone_index",
+	viewSQL: `SELECT
+			rollups.provider_name,
+			rollups.connection_id,
+			rollups.rollup_kind,
+			IFNULL(rollups.window_start_utc, '') AS window_start_utc,
+			IFNULL(rollups.window_end_utc, '') AS window_end_utc,
+			IFNULL(rollups.civil_date, '') AS civil_date,
+			CAST(zone.key AS INTEGER) AS zone_index,
+			CASE WHEN json_type(zone.value, '$.heartRateZone') = 'text'
+				THEN json_extract(zone.value, '$.heartRateZone') ELSE '' END AS heart_rate_zone,
+			CASE
+				WHEN json_type(zone.value, '$.kcal') = 'real'
+					AND json_extract(zone.value, '$.kcal') = CAST(json_extract(zone.value, '$.kcal') AS INTEGER)
+				THEN printf('%.1f', json_extract(zone.value, '$.kcal'))
+				WHEN json_type(zone.value, '$.kcal') IN ('integer', 'real')
+				THEN printf('%.15g', json_extract(zone.value, '$.kcal'))
+			END AS kcal
+		FROM rollups, json_each(rollups.raw_json, '$.caloriesInHeartRateZone.caloriesInHeartRateZones') AS zone
+		WHERE rollups.data_type = 'calories-in-heart-rate-zone'
+			AND json_type(rollups.raw_json, '$.caloriesInHeartRateZone.caloriesInHeartRateZones') = 'array'
+			AND zone.type = 'object'`,
+	fields: []exportFieldSpec{
+		{name: "provider_name"},
+		{name: "connection_id"},
+		{name: "rollup_kind"},
+		{name: "window_start_utc"},
+		{name: "window_end_utc"},
+		{name: "civil_date"},
+		{name: "zone_index", kind: "int"},
+		{name: "heart_rate_zone"},
+		{name: "kcal", nullable: true},
+	},
+}

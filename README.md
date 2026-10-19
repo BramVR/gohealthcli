@@ -180,6 +180,7 @@ just the bullets without touching the surrounding prose.
 - `basal-energy-burned-intervals`
 - `blood-glucose-samples`
 - `body-fat-samples`
+- `calories-in-heart-rate-zone-rollups`
 - `core-body-temperature-samples`
 - `current-height`
 - `current-irn-profile`

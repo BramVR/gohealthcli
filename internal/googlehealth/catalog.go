@@ -412,15 +412,16 @@ var googleHealthDataTypes = newGoogleHealthDataTypeCatalog([]googleHealthDataTyp
 		SupportedEndpoints: listReconcileEndpoints("sedentary_period.interval.start_time"),
 	},
 	{
-		// calories-in-heart-rate-zone is rollup-only in current Google docs,
-		// but its rollup payload shape is not implemented yet. Keep the
-		// catalog row so callers get a local "not supported yet" error
-		// instead of a guessed dataPoints.list/reconcile request.
+		// calories-in-heart-rate-zone is Rollup-only in current Google
+		// docs: raw Data Point sync stays rejected because the row has no
+		// list or reconcile family.
 		DataType:       "calories-in-heart-rate-zone",
 		RequiredScopes: []string{ScopeActivityReadonly},
-		Parser:         "interval",
-		JSONField:      "caloriesInHeartRateZone",
-		RecordKind:     "interval",
+		SupportedEndpoints: allRollupEndpoints(
+			"caloriesInHeartRateZone",
+			"caloriesInHeartRateZone",
+			[]string{"1h", "1d", "7d"},
+		),
 	},
 	{
 		DataType:           "time-in-heart-rate-zone",
