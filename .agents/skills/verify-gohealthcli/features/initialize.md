@@ -36,3 +36,5 @@ Preconditions:
 - File existence is insufficient persistence proof; require the separate `query` result.
 - Initialization proof does not prove OAuth, Connection, sync, Provider reads, real-data normalization, or Windows permissions.
 - Reinitializing existing setup may apply pending migrations and recreate a missing Attachment sidecar before reporting `already_initialized`; it is not an unconditional no-op.
+- The existing-setup path never validates or applies OAuth flags. A valid new `--timezone` is accepted but ignored, so the saved config timezone stays unchanged. Do not claim timezone or OAuth-source changes from `already_initialized`.
+- When only one of config or archive exists, `init` exits `1` with `operation_failed` and refuses to overwrite partial setup. The initialize route does not drive this branch.
