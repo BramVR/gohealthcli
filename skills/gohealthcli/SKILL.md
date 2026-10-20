@@ -136,6 +136,9 @@ raw Data Points, do not replace them, and have separate Sync Cursors. Validate
 the requested combination through command output before starting a large
 backfill. `total-calories` is Rollup-only: use daily or physical-window modes
 and query/export `total-calories-rollups`; do not attempt raw sync.
+`calories-in-heart-rate-zone` is Rollup-only too: export
+`calories-in-heart-rate-zone-rollups`, one row per bucket and zone, where a
+missing `kcal` is null rather than zero.
 
 ### 6. Export deliberately
 

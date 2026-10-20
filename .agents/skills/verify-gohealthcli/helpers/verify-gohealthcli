@@ -691,8 +691,19 @@ drive_inspect() {
   run_pty inspect-export-jsonl "$binary" --db "$archive_path" export daily-steps --format jsonl --output "$jsonl_path"
   [[ -f "$jsonl_path" && ! -L "$jsonl_path" && ! -s "$jsonl_path" ]] || fail 'empty JSONL export was not an empty regular file'
   cp "$jsonl_path" "$evidence_root/inspect-export.jsonl"
-  printf 'route: inspect\nresult: passed\nentries: status-json,status-plain,query,query-write-rejection,describe-schema,describe-schema-sql,export-csv,export-jsonl\narchive_after_rejected_write: unchanged\ncsv_sha256: %s\njsonl_sha256: %s\n' \
-    "$(sha256_file "$export_path")" "$(sha256_file "$jsonl_path")" > "$evidence_root/inspect-proof.txt"
+
+  local zone_export_path="$run_root/data/calories-in-heart-rate-zone-rollups.csv"
+  local zone_jsonl_path="$run_root/data/calories-in-heart-rate-zone-rollups.jsonl"
+  run_pty inspect-export-zone-rollups "$binary" --db "$archive_path" export calories-in-heart-rate-zone-rollups --format csv --output "$zone_export_path"
+  [[ -f "$zone_export_path" && ! -L "$zone_export_path" ]] || fail 'zone Rollup export output was not created safely'
+  IFS= read -r actual_header < "$zone_export_path"
+  [[ "$actual_header" == 'provider_name,connection_id,rollup_kind,window_start_utc,window_end_utc,civil_date,zone_index,heart_rate_zone,kcal' ]] || fail 'empty calories-in-heart-rate-zone-rollups export header drifted'
+  cp "$zone_export_path" "$evidence_root/inspect-export-zone-rollups.csv"
+  run_pty inspect-export-zone-rollups-jsonl "$binary" --db "$archive_path" export calories-in-heart-rate-zone-rollups --format jsonl --output "$zone_jsonl_path"
+  [[ -f "$zone_jsonl_path" && ! -L "$zone_jsonl_path" && ! -s "$zone_jsonl_path" ]] || fail 'empty zone Rollup JSONL export was not an empty regular file'
+  cp "$zone_jsonl_path" "$evidence_root/inspect-export-zone-rollups.jsonl"
+  printf 'route: inspect\nresult: passed\nentries: status-json,status-plain,query,query-write-rejection,describe-schema,describe-schema-sql,export-csv,export-jsonl,export-zone-rollups-csv,export-zone-rollups-jsonl\narchive_after_rejected_write: unchanged\ncsv_sha256: %s\njsonl_sha256: %s\nzone_rollups_csv_sha256: %s\nzone_rollups_jsonl_sha256: %s\n' \
+    "$(sha256_file "$export_path")" "$(sha256_file "$jsonl_path")" "$(sha256_file "$zone_export_path")" "$(sha256_file "$zone_jsonl_path")" > "$evidence_root/inspect-proof.txt"
 }
 
 assert_raw_plan_no_effects() {
@@ -748,6 +759,15 @@ drive_plan() {
   grep -Fq '"endpoint_name": "dataTypes.steps.rollUp"' "$evidence_root/plan-rollup.typescript" || fail 'physical Rollup plan endpoint drifted'
   grep -Fq '"windowSize": "3600s"' "$evidence_root/plan-rollup.typescript" || fail 'physical Rollup plan window drifted'
   assert_raw_plan_no_effects "$evidence_root/plan-rollup.typescript"
+
+  run_pty plan-zone-daily-rollup "$binary" raw data-type calories-in-heart-rate-zone daily-rollup --from 2026-01-01 --to 2026-01-15 --timezone UTC --plan --json
+  grep -Fq '"endpoint_name": "dataTypes.calories-in-heart-rate-zone.dailyRollUp"' "$evidence_root/plan-zone-daily-rollup.typescript" || fail 'zone daily Rollup plan endpoint drifted'
+  assert_raw_plan_no_effects "$evidence_root/plan-zone-daily-rollup.typescript"
+
+  run_pty plan-zone-rollup "$binary" raw data-type calories-in-heart-rate-zone rollup --from 2026-01-01T00:00:00Z --to 2026-01-15T00:00:00Z --timezone UTC --window 1h --plan --json
+  grep -Fq '"endpoint_name": "dataTypes.calories-in-heart-rate-zone.rollUp"' "$evidence_root/plan-zone-rollup.typescript" || fail 'zone physical Rollup plan endpoint drifted'
+  grep -Fq '"windowSize": "3600s"' "$evidence_root/plan-zone-rollup.typescript" || fail 'zone physical Rollup plan window drifted'
+  assert_raw_plan_no_effects "$evidence_root/plan-zone-rollup.typescript"
 
   run_pty plan-endpoint-paging "$binary" raw endpoint dataTypes.steps.list --from 2026-01-01T00:00:00Z --to 2026-01-02T00:00:00Z --timezone UTC --page-size 5 --page-token synthetic-page-token --plan --json
   grep -Fq '"endpoint_name": "dataTypes.steps.list"' "$evidence_root/plan-endpoint-paging.typescript" || fail 'endpoint list plan target drifted'
@@ -875,7 +895,7 @@ drive_plan() {
   grep -Fq '"message":"config check failed:' "$evidence_root/plan-live-unreachable.typescript" || fail 'live read did not stop at the missing local setup gate'
   [[ ! -e "$credential_probe" ]] || fail 'live-read setup failure attempted Credential Store access'
   path_is_absent "$config_path" && path_is_absent "$archive_path" && path_is_absent "$sidecar_path" || fail 'unreachable live read created local setup state'
-  printf 'route: plan\nresult: passed\nentries: identity,list,get,reconcile,daily-rollup,rollup,endpoint-paging,config-timezone-gate,output-safety,live-read-gate\nplanning_effects: all false\nexplicit_config_after: absent\nexplicit_archive_after: absent\nexplicit_sidecar_after: absent\ndefault_config_after: absent\ndefault_archive_after: absent\ndefault_sidecar_after: absent\noutput_safety: plan-output-safety-proof.txt\nlive_read_and_output: verified-unreachable (missing isolated setup and authorized Connection)\n' > "$evidence_root/plan-proof.txt"
+  printf 'route: plan\nresult: passed\nentries: identity,list,get,reconcile,daily-rollup,rollup,zone-daily-rollup,zone-rollup,endpoint-paging,config-timezone-gate,output-safety,live-read-gate\nplanning_effects: all false\nexplicit_config_after: absent\nexplicit_archive_after: absent\nexplicit_sidecar_after: absent\ndefault_config_after: absent\ndefault_archive_after: absent\ndefault_sidecar_after: absent\noutput_safety: plan-output-safety-proof.txt\nlive_read_and_output: verified-unreachable (missing isolated setup and authorized Connection)\n' > "$evidence_root/plan-proof.txt"
 }
 
 drive_discover() {
