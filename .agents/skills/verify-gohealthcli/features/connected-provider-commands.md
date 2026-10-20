@@ -5,7 +5,8 @@ Connection setup and Provider reads require a real OAuth client, Credential Stor
 ## Sub-features
 
 - `connect` starts or completes OAuth. Headless start writes only pending PKCE authorization state; interactive completion or `connect --complete` writes runtime tokens to the configured Credential Store.
-- `identity`, `profile`, `settings`, `devices`, and `irn-profile` read Provider identity metadata and may append snapshots.
+- `identity` refreshes the Google Identity metadata stored on the Connection without creating a snapshot.
+- `profile`, `settings`, `devices`, and `irn-profile` read Provider account metadata and append a new dated Identity Snapshot on every successful run.
 - `sync-live` reads Provider records and writes archive state.
 - `provider-gates` reject every command before credentials or network when isolated setup is absent.
 
@@ -13,6 +14,7 @@ Connection setup and Provider reads require a real OAuth client, Credential Stor
 
 - Run `gohealthcli connect` after `init` for an interactive Connection.
 - Use `connect --headless-start` and pipe the complete redirected loopback URL to `connect --complete` on a headless host.
+- Add `connect --add-scopes <keywords>` to grant extra catalog scopes; a headless flow repeats the same value on both halves.
 - Run `identity`, `profile`, `settings`, `devices`, `irn-profile`, or `sync` after Connection setup and any required scope grants.
 
 ## Driving it with verify-gohealthcli
