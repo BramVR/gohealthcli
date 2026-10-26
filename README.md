@@ -419,6 +419,15 @@ gohealthcli raw data-type steps daily-rollup --from yesterday --to today --timez
 gohealthcli raw data-type total-calories rollup --from yesterday --to today --timezone Europe/Brussels --window 1h --output ./rollup-response.json
 ```
 
+Identity-level raw endpoints use these OAuth scopes:
+
+- `getIdentity` and `getProfile` require `profile.readonly`.
+- `getSettings` and `pairedDevices` require `settings.readonly`. Grant it with `gohealthcli connect --add-scopes settings`.
+- `getIrnProfile` requires `irn.readonly`. Grant it with `gohealthcli connect --add-scopes irn`.
+
+Run `gohealthcli raw --help` for the complete endpoint names, including the
+catalog-derived `dataTypes.<data-type>.list` aliases.
+
 Raw Data Type lists share `sync`'s exact range grammar and timezone precedence.
 Identity endpoints reject range and timezone flags instead of ignoring them.
 `raw data-type <data-type> get --id <provider-id>` fetches one Data Point for

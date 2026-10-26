@@ -138,6 +138,29 @@ func TestSuggestReturnsCloseCommand(t *testing.T) {
 	}
 }
 
+func TestSuggestNamesPreservesRankingContract(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		typo  string
+		names []string
+		want  []string
+	}{
+		{name: "distance before order", typo: "cat", names: []string{"cut", "cat", "cot", "cart"}, want: []string{"cat", "cut"}},
+		{name: "ties and cap", typo: "cat", names: []string{"cot", "cut", "bat"}, want: []string{"cot", "cut"}},
+		{name: "case sensitive cutoff", typo: "CAT", names: []string{"cat"}, want: []string{}},
+		{name: "distance two", typo: "stauts", names: []string{"status"}, want: []string{"status"}},
+		{name: "distant", typo: "xyz", names: []string{"status"}, want: []string{}},
+		{name: "empty names", typo: "raw", want: []string{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := suggestNames(test.typo, test.names); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("suggestNames(%q, %v)=%v, want %v", test.typo, test.names, got, test.want)
+			}
+		})
+	}
+}
+
 // TestSuggestReturnsNilForDistantTypo pins the upper-bound side of the
 // Levenshtein contract: a string with no close match must surface as the
 // empty result so the unknown-command path can suppress the "Did you mean"

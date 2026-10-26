@@ -34,6 +34,11 @@ type rawPlanningConfigError struct {
 func (err *rawPlanningConfigError) Error() string { return err.err.Error() }
 func (err *rawPlanningConfigError) Unwrap() error { return err.err }
 
+func rawEndpointHelp() string {
+	return "Supported endpoints:\n\n- " + strings.Join(googlehealth.RawEndpointNames(), "\n- ") +
+		"\n\nThe `dataTypes.<data-type>.list` aliases use the same range and paging flags as `raw data-type <data-type>`."
+}
+
 func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("raw", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -67,13 +72,15 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 	// stderr copy would surface twice otherwise, so we route only on
 	// genuine parse errors here.
 	rawUsage := func(w io.Writer) {
-		fmt.Fprintln(w, "usage: gohealthcli raw endpoint getIdentity [--output <path> | --plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw endpoint <name> [--output <path> | --plan [--json|--plain]]")
 		fmt.Fprintln(w, "usage: gohealthcli raw endpoint dataTypes.<data-type>.list --from <boundary> [--to <boundary>] [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
 		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> --from <boundary> [--to <boundary>] [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
 		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> get --id <provider-id> [--output <path> | --plan [--json|--plain]]")
 		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> reconcile --source-family <family> --from <boundary> [--to <boundary>] [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
 		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> daily-rollup --from <boundary> --to <boundary> [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
 		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> rollup --from <boundary> --to <boundary> --window <duration> [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, rawEndpointHelp())
 	}
 	// stdlib's flag package calls fs.Usage on BOTH `-h` and a parse
 	// error. Suppress that auto-call entirely and emit the bespoke
@@ -165,7 +172,19 @@ func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr i
 		WindowProvided:       flagWasProvided(flags, "window"),
 	}
 	if err := googlehealth.ValidateRawRequestOptions(requestOptions); err != nil {
-		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
+		var unsupported *googlehealth.UnsupportedRawEndpointError
+		if !errors.As(err, &unsupported) {
+			return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
+		}
+		names := googlehealth.RawEndpointNames()
+		exit := ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error() + "; supported: " + strings.Join(names, ", "), Mode: mode}, stdout, stderr)
+		if !mode.json {
+			if suggestions := suggestNames(unsupported.Name, names); len(suggestions) > 0 {
+				fmt.Fprintf(stderr, "Did you mean: %s?\n", strings.Join(suggestions, ", "))
+			}
+			fmt.Fprintln(stderr, "Run 'gohealthcli raw --help' for the full list of supported endpoints.")
+		}
+		return exit
 	}
 	runtime = runtime.withDefaults()
 	requestOptions.ResolvedAt = runtime.now()
