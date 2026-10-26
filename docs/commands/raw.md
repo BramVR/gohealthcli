@@ -21,6 +21,51 @@ Pass `--output PATH` to write those same exact bytes to a new file instead of st
 
 Failures route through the unified Failure Reporter: a Provider outage (network failure or non-auth upstream HTTP error) reports status `provider_unreachable`, while other operation errors, including an upstream HTTP 401 auth rejection with the `Google Health rejected stored Connection token` message, report `operation_failed`.
 
+Supported endpoints:
+
+- dataTypes.active-energy-burned.list
+- dataTypes.active-minutes.list
+- dataTypes.active-zone-minutes.list
+- dataTypes.activity-level.list
+- dataTypes.altitude.list
+- dataTypes.basal-energy-burned.list
+- dataTypes.blood-glucose.list
+- dataTypes.body-fat.list
+- dataTypes.core-body-temperature.list
+- dataTypes.daily-heart-rate-variability.list
+- dataTypes.daily-heart-rate-zones.list
+- dataTypes.daily-oxygen-saturation.list
+- dataTypes.daily-respiratory-rate.list
+- dataTypes.daily-resting-heart-rate.list
+- dataTypes.daily-sleep-temperature-derivations.list
+- dataTypes.daily-vo2-max.list
+- dataTypes.distance.list
+- dataTypes.electrocardiogram.list
+- dataTypes.exercise.list
+- dataTypes.heart-rate-variability.list
+- dataTypes.heart-rate.list
+- dataTypes.height.list
+- dataTypes.hydration-log.list
+- dataTypes.irregular-rhythm-notification.list
+- dataTypes.nutrition-log.list
+- dataTypes.oxygen-saturation.list
+- dataTypes.respiratory-rate-sleep-summary.list
+- dataTypes.run-vo2-max.list
+- dataTypes.sedentary-period.list
+- dataTypes.sleep.list
+- dataTypes.steps.list
+- dataTypes.swim-lengths-data.list
+- dataTypes.time-in-heart-rate-zone.list
+- dataTypes.vo2-max.list
+- dataTypes.weight.list
+- getIdentity
+- getIrnProfile
+- getProfile
+- getSettings
+- pairedDevices
+
+The `dataTypes.<data-type>.list` aliases use the same range and paging flags as `raw data-type <data-type>`.
+
 Setup and Connection failures may add `remediation` to JSON results and zero-based `remediation.N` fields to plain results; human output stays unchanged. Steps are Reporter-owned and diagnosis-first: `doctor` before `init` or `connect`, `doctor --online` before reconnecting or choosing a new archive, and missing-scope consent uses only sorted `--add-scopes` keywords from the public catalog. Building or rendering these steps never performs Provider I/O, starts OAuth, or interpolates error text.
 
 ## Usage
