@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -22,12 +21,13 @@ JAR_URL = "https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools
 GO_ENV = {**os.environ, "GOTOOLCHAIN": "auto"}
 
 
-def run(args, output, *, cwd=ROOT, env=None):
+def run(args, output, *, cwd=ROOT, env=None, echo=True):
     print("Running", " ".join(map(str, args)), flush=True)
     result = subprocess.run(args, cwd=cwd, env=env, text=True, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, timeout=180)
     output.write_text(result.stdout)
-    print(result.stdout, end="", flush=True)
+    if echo:
+        print(result.stdout, end="", flush=True)
     return result
 
 
@@ -48,17 +48,43 @@ def tlc_jar():
 
 def go_check(out, name, *, safety_only=False, overlay=None, modfile=None):
     pattern = "^TestFormalSyncCursor(Safety|CommitFailure)$" if safety_only else "^TestFormalSyncCursor"
-    command = ["go", "test", "-tags=formal", "-count=1", "-timeout=120s", "-v", "-run", pattern]
+    command = ["go", "test", "-json", "-tags=formal", "-count=1", "-timeout=120s", "-v", "-run", pattern]
     if overlay:
         command += ["-overlay", str(overlay)]
     if modfile:
         command += ["-modfile", str(modfile)]
-    result = run(command + ["./cmd/gohealthcli"], out / f"{name}.out", env=GO_ENV)
-    if result.returncode == 0:
-        names = ["Safety", "CommitFailure"] + ([] if safety_only else ["Highwater"])
-        for suffix in names:
-            if f"--- PASS: TestFormalSyncCursor{suffix} " not in result.stdout:
-                raise RuntimeError(f"{name}: missing named PASS for TestFormalSyncCursor{suffix}")
+    result = run(command + ["./cmd/gohealthcli"], out / f"{name}.jsonl", env=GO_ENV, echo=False)
+    try:
+        events = [json.loads(line) for line in result.stdout.splitlines()]
+    except json.JSONDecodeError as error:
+        print(result.stdout, end="", flush=True)
+        raise RuntimeError(f"{name}: invalid Go test events; read {name}.jsonl") from error
+    result.stdout = "".join(event.get("Output", "") for event in events)
+    (out / f"{name}.out").write_text(result.stdout)
+    print(result.stdout, end="", flush=True)
+    terminal = {event["Test"]: event["Action"] for event in events
+                if "Test" in event and event["Action"] in ("pass", "fail", "skip")}
+    names = ["TestFormalSyncCursor" + suffix for suffix in
+             ["Safety", "CommitFailure"] + ([] if safety_only else ["Highwater"])]
+    for test in names:
+        if terminal.get(test) not in ("pass", "fail"):
+            raise RuntimeError(f"{name}: missing named result for {test}")
+    failures = {test.split("/", 1)[0] for test, action in terminal.items() if action == "fail"}
+    if result.returncode:
+        if result.returncode != 1 or not failures:
+            raise RuntimeError(f"{name}: Go checks did not reach a verification assertion; read {name}.out")
+        markers = {
+            "TestFormalSyncCursorSafety": ("atomic run invariant", "completed-only/key-isolation invariant", "finalize outcome invariant"),
+            "TestFormalSyncCursorCommitFailure": ("TransactionReleased:",),
+            "TestFormalSyncCursorHighwater": ("CursorHighwater:",),
+        }
+        for test in failures:
+            output = "".join(event.get("Output", "") for event in events
+                             if event.get("Test", "").split("/", 1)[0] == test)
+            if not any(marker in output for marker in markers.get(test, ())):
+                raise RuntimeError(f"{test} failed outside a named invariant; read {name}.out")
+    elif any(terminal[test] != "pass" for test in names) or failures:
+        raise RuntimeError(f"{name}: missing named PASS result; read {name}.out")
     return result
 
 
@@ -152,16 +178,6 @@ def main():
             raise RuntimeError(f"TLC did not finish a valid invariant check; read {config}.out")
         results.append(result.returncode)
     sqlite = go_check(out, "sqlite")
-    if sqlite.returncode:
-        failures = re.findall(r"^--- FAIL: (TestFormalSyncCursor\w+)", sqlite.stdout, re.MULTILINE)
-        markers = ("atomic run invariant", "completed-only/key-isolation invariant",
-                   "finalize outcome invariant", "TransactionReleased:", "CursorHighwater:")
-        for name in failures:
-            block = sqlite.stdout.split(f"=== RUN   {name}\n", 1)[-1].split(f"--- FAIL: {name}", 1)[0]
-            if not any(marker in block for marker in markers):
-                raise RuntimeError(f"{name} failed outside a named invariant; read sqlite.out")
-        if not failures:
-            raise RuntimeError("Go checks did not reach a verification assertion; read sqlite.out")
     results.append(sqlite.returncode)
     print(f"Evidence {out}", flush=True)
     return int(any(results))
