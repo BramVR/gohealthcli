@@ -351,6 +351,13 @@ gohealthcli sync --types steps --from 2026-01-01 --to 2026-01-02 --plain
 gohealthcli status --plain
 ```
 
+Each Sync Cursor keeps the latest successfully archived `--to` for its
+Connection, Data Type, source-family filter, and rollup kind. Older historical
+syncs and runs that finish out of order cannot move it backward. Equal or older
+bounds preserve the cursor's stored boundary and advancement timestamp; both
+successful runs still finish as `sync_completed`. Failed and canceled runs
+leave the cursor unchanged.
+
 Watch a long sync from another terminal (or an agent) while it runs:
 
 ```bash
