@@ -117,6 +117,16 @@ The example reads Normalized View `daily_steps`. Query accepts one guarded
 `SELECT` statement only. Inspect `raw_json` only when normalized columns cannot
 answer the question, and do not reproduce the payload in the response.
 
+Daily and Rollup Normalized Views return no row for an absent day or window.
+A missing day means no qualifying record in the Health Archive. Non-wear,
+delayed device sync, or a day outside the synced range are possible causes;
+do not infer which cause applies or claim archive completeness. A stored `0`
+is an explicit zero. Keep absent days missing when calculating weekly or
+monthly averages, include stored zeros, and report the observed-day count
+and requested range. When averaging `daily_steps`, filter or group by
+`source_family_filter`. For `total_calories_rollups`, filter or group by
+`rollup_kind`. Count observed days with `COUNT(DISTINCT civil_date)`.
+
 ### 5. Sync only when requested
 
 Begin with a small explicit window:
@@ -148,6 +158,11 @@ gohealthcli export daily-steps --format jsonl --output ./daily-steps.jsonl --no-
 The example uses export dataset `daily-steps`. The output contains private
 health data even though it comes from a read-only Normalized View. Keep the
 file local and report its path and row count without quoting records.
+
+Exports preserve the same gaps and zeros as queries. Never fill absent days
+with zeros before averaging. Discover the full registry-backed dataset list
+through `describe-schema --json`; this applies to every daily and Rollup
+dataset in that list.
 
 ### 7. Back up only when explicitly requested
 
