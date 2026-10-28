@@ -4,6 +4,7 @@
 
 ## Sub-features
 
+- `raw-endpoint-discovery` lists supported names through both help forms and reports names and suggestions for unsupported endpoints before setup.
 - `raw-plan-identity-json` describes `getIdentity` without setup or network access.
 - `raw-plan-data-type` resolves fixed list, Data Point get, reconcile, daily Rollup, and physical Rollup requests without setup when range targets pass an explicit `--timezone`.
 - `raw-plan-paging` resolves the `endpoint dataTypes.<data-type>.list` form with one-page `--page-size`/`--page-token` inputs and a redacted page token.
@@ -14,6 +15,7 @@
 
 ## How to get to it (user POV)
 
+- Run `gohealthcli raw --help` or `gohealthcli help raw` for supported endpoint names. A typo such as `raw endpoint getIdentty` reports the supported names and a close-match suggestion. Add `--plan --json` for the structured failure without human hints.
 - Run `gohealthcli raw endpoint getIdentity --plan --json`.
 - Run `gohealthcli raw data-type steps --from <boundary> --to <boundary> --timezone <zone> --plan --json`.
 - Use `raw data-type <type> get --id <provider-id>`, `reconcile --source-family <family>`, `daily-rollup`, or `rollup --window <duration>` before the shared `--plan --json` flags for their request shapes.
@@ -27,6 +29,7 @@ Preconditions:
 - `launch` and `doctor` pass for a fresh run.
 - Explicit and isolated XDG-default config, archive, and Attachment sidecar paths are absent.
 
+- **Endpoint discovery.** The `plan` drive records both help forms and human and JSON endpoint-typo failures as `raw-help`, `raw-command-help`, `raw-unsupported`, and `raw-unsupported-json`. Require identity and list-alias names in every transcript. Stream replays prove `raw --help` uses stdout, human typo hints use stderr, and JSON failure uses stdout without stderr hints.
 - **Identity plan.** Run `.agents/skills/verify-gohealthcli/helpers/verify-gohealthcli drive "$RUN_ID" plan`. `plan-identity.command.txt` records the compiled-CLI action. The transcript must contain status `plan_ready`, target `getIdentity`, method `GET`, the exact sanitized production URL, no sensitive request fields, and exit `0`.
 - **Observe no effects.** The helper requires every boolean in `planning_effects` to be false, then independently checks that both the explicit task paths and the actual isolated XDG-default config, archive, and sidecar paths remain absent. `plan-proof.txt` records the observation.
 - **Data Type plans.** Separately labeled drives cover a `steps` list over a fixed RFC3339 range, a redacted `sleep` Data Point ID, a fixed civil `daily-resting-heart-rate` reconcile request, a `steps` daily Rollup, a `steps` one-hour physical Rollup, and Rollup-only `calories-in-heart-rate-zone` daily and one-hour physical Rollups over a 14-day range. Each transcript pins its endpoint name and all-false effects.

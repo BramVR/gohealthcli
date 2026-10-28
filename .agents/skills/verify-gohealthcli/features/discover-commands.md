@@ -44,4 +44,4 @@ Preconditions:
 - Hidden `docs-export-datasets` can rewrite its target. Never point verification at the repository README.
 - Completion generation proves emitted scripts, not installation into a user's shell profile.
 - A nonzero typo route is expected behavior only when the failure envelope and suggestion both match.
-- macOS/Linux proof does not establish PowerShell completion or Windows console behavior.
+- The route proves PowerShell script generation. Execution inside PowerShell and Windows console behavior remain unverified.

@@ -747,6 +747,36 @@ assert_raw_plan_no_effects() {
 drive_plan() {
   path_is_absent "$config_path" && path_is_absent "$archive_path" && path_is_absent "$sidecar_path" || fail 'plan route requires fresh state'
   path_is_absent "$default_config_path" && path_is_absent "$default_archive_path" && path_is_absent "$default_sidecar_path" || fail 'plan route requires absent isolated default state'
+  run_pty raw-help "$binary" raw --help
+  run_pty raw-command-help "$binary" help raw
+  run_streams_expected raw-help-streams 0 "$binary" raw --help
+  grep -Fq 'Supported endpoints:' "$evidence_root/raw-help-streams.stdout.txt" || fail 'raw help did not list endpoints on stdout'
+  [[ ! -s "$evidence_root/raw-help-streams.stderr.txt" ]] || fail 'raw help unexpectedly wrote to stderr'
+
+  run_pty_expected raw-unsupported 1 "$binary" raw endpoint getIdentty
+  grep -Fq 'unsupported raw endpoint "getIdentty"; supported:' "$evidence_root/raw-unsupported.typescript" || fail 'unsupported raw endpoint did not report supported names'
+  grep -Fq 'Did you mean: getIdentity?' "$evidence_root/raw-unsupported.typescript" || fail 'raw endpoint typo did not suggest getIdentity'
+  grep -Fq "Run 'gohealthcli raw --help'" "$evidence_root/raw-unsupported.typescript" || fail 'raw endpoint typo did not link endpoint help'
+  run_streams_expected raw-unsupported-streams 1 "$binary" raw endpoint getIdentty
+  [[ ! -s "$evidence_root/raw-unsupported-streams.stdout.txt" ]] || fail 'raw endpoint typo wrote human output to stdout'
+  grep -Fq 'Did you mean: getIdentity?' "$evidence_root/raw-unsupported-streams.stderr.txt" || fail 'raw endpoint suggestion did not write to stderr'
+
+  run_pty_expected raw-unsupported-json 1 "$binary" raw endpoint getIdentty --plan --json
+  grep -Fq '"status":"flag_invalid"' "$evidence_root/raw-unsupported-json.typescript" || fail 'unsupported raw endpoint lost its JSON failure status'
+  run_streams_expected raw-unsupported-json-streams 1 "$binary" raw endpoint getIdentty --plan --json
+  grep -Fq '"status":"flag_invalid"' "$evidence_root/raw-unsupported-json-streams.stdout.txt" || fail 'raw endpoint JSON failure did not write to stdout'
+  [[ ! -s "$evidence_root/raw-unsupported-json-streams.stderr.txt" ]] || fail 'raw endpoint JSON failure wrote human hints to stderr'
+  local label endpoint
+  for label in raw-help raw-command-help; do
+    grep -Fq 'Supported endpoints:' "$evidence_root/$label.typescript" || fail "$label omitted the endpoint list heading"
+    grep -Fq -- '- getIdentity' "$evidence_root/$label.typescript" || fail "$label omitted the identity endpoint list entry"
+  done
+  for label in raw-help raw-command-help raw-unsupported raw-unsupported-json; do
+    for endpoint in getIdentity getProfile dataTypes.steps.list; do
+      grep -Fq "$endpoint" "$evidence_root/$label.typescript" || fail "$label omitted supported endpoint $endpoint"
+    done
+  done
+
   run_pty plan-identity "$binary" raw endpoint getIdentity --plan --json
   grep -Fq '"status": "plan_ready"' "$evidence_root/plan-identity.typescript" || fail 'raw plan did not become ready'
   grep -Fq '"endpoint_name": "getIdentity"' "$evidence_root/plan-identity.typescript" || fail 'raw plan target drifted from getIdentity'
@@ -926,7 +956,7 @@ drive_plan() {
   grep -Fq '"message":"config check failed:' "$evidence_root/plan-live-unreachable.typescript" || fail 'live read did not stop at the missing local setup gate'
   [[ ! -e "$credential_probe" ]] || fail 'live-read setup failure attempted Credential Store access'
   path_is_absent "$config_path" && path_is_absent "$archive_path" && path_is_absent "$sidecar_path" || fail 'unreachable live read created local setup state'
-  printf 'route: plan\nresult: passed\nentries: identity,list,get,reconcile,daily-rollup,rollup,zone-daily-rollup,zone-rollup,endpoint-paging,config-timezone-gate,output-safety,live-read-gate\nplanning_effects: all false\nexplicit_config_after: absent\nexplicit_archive_after: absent\nexplicit_sidecar_after: absent\ndefault_config_after: absent\ndefault_archive_after: absent\ndefault_sidecar_after: absent\noutput_safety: plan-output-safety-proof.txt\nlive_read_and_output: verified-unreachable (missing isolated setup and authorized Connection)\n' > "$evidence_root/plan-proof.txt"
+  printf 'route: plan\nresult: passed\nentries: raw-help,raw-command-help,raw-unsupported,raw-unsupported-json,identity,list,get,reconcile,daily-rollup,rollup,zone-daily-rollup,zone-rollup,endpoint-paging,config-timezone-gate,output-safety,live-read-gate\nplanning_effects: all false\nexplicit_config_after: absent\nexplicit_archive_after: absent\nexplicit_sidecar_after: absent\ndefault_config_after: absent\ndefault_archive_after: absent\ndefault_sidecar_after: absent\noutput_safety: plan-output-safety-proof.txt\nlive_read_and_output: verified-unreachable (missing isolated setup and authorized Connection)\n' > "$evidence_root/plan-proof.txt"
 }
 
 drive_discover() {
@@ -999,17 +1029,24 @@ drive_catalog() {
 
 drive_local() {
   [[ -f "$config_path" && -f "$archive_path" ]] || fail 'local route requires initialized config and archive'
+  local expected_version
+  expected_version=$(sed -n 's/.*{version: \([0-9][0-9]*\), name: ".*/\1/p' "$repo_root/cmd/gohealthcli/health_archive_migrations.go" | tail -n 1)
+  [[ -n "$expected_version" ]] || fail 'could not determine the current latest migration version'
   run_pty local-doctor-json "$binary" --config "$config_path" --db "$archive_path" --json doctor
   grep -Fq '"status": "ok"' "$evidence_root/local-doctor-json.typescript" || fail 'local doctor did not report ok'
+  grep -Eq "\"schema_version\": $expected_version(,|$)" "$evidence_root/local-doctor-json.typescript" || fail 'local doctor did not report the repository latest migration version'
   grep -Fq '"connection_count": 0' "$evidence_root/local-doctor-json.typescript" || fail 'local doctor did not report zero Connections'
   grep -Fq "\"attachment_root_path\": \"$sidecar_path\"" "$evidence_root/local-doctor-json.typescript" || fail 'local doctor reported the wrong Attachment root'
+  grep -Fq '"attachment_root_mode": "0700"' "$evidence_root/local-doctor-json.typescript" || fail 'local doctor did not report owner-only Attachment permissions'
   if grep -Fq '"attachments":' "$evidence_root/local-doctor-json.typescript"; then
     fail 'local doctor unexpectedly reported Attachment orphans'
   fi
 
   run_pty local-doctor-plain "$binary" --config "$config_path" --db "$archive_path" --plain doctor
+  grep -Eq "^schema_version: $expected_version[[:space:]]*$" "$evidence_root/local-doctor-plain.typescript" || fail 'plain doctor did not report the repository latest migration version'
   grep -Fq 'connection_count: 0' "$evidence_root/local-doctor-plain.typescript" || fail 'plain doctor did not report zero Connections'
   grep -Fq "attachment_root_path: $sidecar_path" "$evidence_root/local-doctor-plain.typescript" || fail 'plain doctor reported the wrong Attachment root'
+  grep -Fq 'attachment_root_mode: 0700' "$evidence_root/local-doctor-plain.typescript" || fail 'plain doctor did not report owner-only Attachment permissions'
 
   run_pty_expected local-doctor-online-unreachable 1 "$binary" --config "$config_path" --db "$archive_path" --json doctor --online
   grep -Fq '"status": "connection_unhealthy"' "$evidence_root/local-doctor-online-unreachable.typescript" || fail 'online doctor did not stop at the missing Connection'

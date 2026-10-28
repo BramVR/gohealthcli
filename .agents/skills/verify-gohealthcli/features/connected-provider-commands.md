@@ -4,7 +4,7 @@ Connection setup and Provider reads require a real OAuth client, Credential Stor
 
 ## Sub-features
 
-- `connect` starts or completes OAuth. Headless start writes only pending PKCE authorization state; interactive completion or `connect --complete` writes runtime tokens to the configured Credential Store.
+- `connect` starts or completes OAuth. Headless start persists pending PKCE authorization state without storing runtime tokens or creating a Connection. Preflight can migrate the archive, and headless start creates a local claim lock. Interactive completion or `connect --complete` writes runtime tokens to the configured Credential Store.
 - `identity` refreshes the Google Identity metadata stored on the Connection without creating a snapshot.
 - `profile`, `settings`, `devices`, and `irn-profile` read Provider account metadata and append a new dated Identity Snapshot on every successful run.
 - `sync-live` reads Provider records and writes archive state.
