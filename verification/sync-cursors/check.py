@@ -69,7 +69,7 @@ def go_check(out, name, *, safety_only=False, overlay=None, modfile=None):
     for test in names:
         if terminal.get(test) not in ("pass", "fail"):
             raise RuntimeError(f"{name}: missing named result for {test}")
-    failures = {test.split("/", 1)[0] for test, action in terminal.items() if action == "fail"}
+    failures = {test for test, action in terminal.items() if action == "fail"}
     if result.returncode:
         if result.returncode != 1 or not failures:
             raise RuntimeError(f"{name}: Go checks did not reach a verification assertion; read {name}.out")
@@ -78,11 +78,16 @@ def go_check(out, name, *, safety_only=False, overlay=None, modfile=None):
             "TestFormalSyncCursorCommitFailure": ("TransactionReleased:",),
             "TestFormalSyncCursorHighwater": ("CursorHighwater:",),
         }
-        for test in failures:
+        for test in sorted(failures):
             output = "".join(event.get("Output", "") for event in events
-                             if event.get("Test", "").split("/", 1)[0] == test)
-            if not any(marker in output for marker in markers.get(test, ())):
-                raise RuntimeError(f"{test} failed outside a named invariant; read {name}.out")
+                             if event.get("Test") == test)
+            diagnostics = "".join(line for line in output.splitlines(keepends=True)
+                                  if not line.lstrip().startswith(("=== ", "--- ")))
+            if any(marker in diagnostics for marker in markers.get(test.split("/", 1)[0], ())):
+                continue
+            if not diagnostics.strip() and any(child.startswith(test + "/") for child in failures):
+                continue
+            raise RuntimeError(f"{test} failed outside a named invariant; read {name}.out")
     elif any(terminal[test] != "pass" for test in names) or failures:
         raise RuntimeError(f"{name}: missing named PASS result; read {name}.out")
     return result

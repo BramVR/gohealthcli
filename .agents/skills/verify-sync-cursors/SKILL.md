@@ -14,7 +14,7 @@ python3 -B -m unittest discover -s verification/sync-cursors -p test_check.py
 go test -count=1 -v -run '^TestSyncRunCommitFailureReleasesTransaction$' ./cmd/gohealthcli
 ```
 
-The runner saves logs and TLC traces under ignored `dist/formal-verification/run-*`. Go output is saved as both JSON events and decoded text. Each diagnostic belongs to its named test, including parallel subtests. Exit 0 means every selected check passed. Exit 1 means a property failed. Exit 2 means verification could not complete. Require every named Go result even when another property fails. A build failure, skipped proof, or command with missing tests is incomplete proof.
+The runner saves logs and TLC traces under ignored `dist/formal-verification/run-*`. Go output is saved as both JSON events and decoded text. Each diagnostic belongs to its full test name, including parallel subtests. Each failure needs its own invariant marker. A parent failure may propagate from failed children only when the parent has no other diagnostic. Exit 0 means every selected check passed. Exit 1 means a property failed. Exit 2 means verification could not complete. Require every named Go result even when another property fails. A build failure, skipped proof, or command with missing tests is incomplete proof.
 
 Read the full [model](../../../verification/sync-cursors/SyncCursors.tla), [config](../../../verification/sync-cursors/SyncCursors.cfg), and failing trace. The [view](../../../verification/sync-cursors/view.mjs) labels states and actions for a statechart. `Safety.cfg` checks completion and transaction release independently; its pass never replaces the full result.
 

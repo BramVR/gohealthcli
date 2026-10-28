@@ -33,7 +33,7 @@ class GoResultsTest(unittest.TestCase):
             {"Action": "fail", "Test": COMMIT + "/existing_cursor"},
             {"Action": "fail", "Test": COMMIT},
         ]
-        with self.assertRaisesRegex(RuntimeError, COMMIT + " failed outside a named invariant"):
+        with self.assertRaisesRegex(RuntimeError, COMMIT + "/existing_cursor failed outside a named invariant"):
             self.go_check(events)
 
     def test_known_failure_still_requires_every_test(self):
@@ -67,6 +67,53 @@ class GoResultsTest(unittest.TestCase):
         events = [{"Action": "pass", "Test": SAFETY}, {"Action": "skip", "Test": COMMIT}]
         with self.assertRaisesRegex(RuntimeError, "missing named result for " + COMMIT):
             self.go_check(events, code=0, safety_only=True)
+
+    def test_sibling_failure_cannot_borrow_transaction_marker(self):
+        events = [
+            {"Action": "pass", "Test": SAFETY},
+            {"Action": "output", "Test": COMMIT + "/absent_cursor", "Output": "TransactionReleased: active transaction\n"},
+            {"Action": "fail", "Test": COMMIT + "/absent_cursor"},
+            {"Action": "output", "Test": COMMIT + "/existing_cursor", "Output": "no such column: missing_probe_column\n"},
+            {"Action": "fail", "Test": COMMIT + "/existing_cursor"},
+            {"Action": "output", "Test": COMMIT, "Output": "--- FAIL: " + COMMIT + " (0.01s)\n"},
+            {"Action": "fail", "Test": COMMIT},
+        ]
+        with self.assertRaisesRegex(RuntimeError, COMMIT + "/existing_cursor failed outside a named invariant"):
+            self.go_check(events, safety_only=True)
+
+    def test_parent_failure_cannot_borrow_child_marker(self):
+        events = [
+            {"Action": "pass", "Test": SAFETY},
+            {"Action": "output", "Test": COMMIT + "/absent_cursor", "Output": "TransactionReleased: active transaction\n"},
+            {"Action": "fail", "Test": COMMIT + "/absent_cursor"},
+            {"Action": "output", "Test": COMMIT, "Output": "unrelated parent cleanup failure\n"},
+            {"Action": "fail", "Test": COMMIT},
+        ]
+        with self.assertRaisesRegex(RuntimeError, COMMIT + " failed outside a named invariant"):
+            self.go_check(events, safety_only=True)
+
+    def test_child_failure_cannot_borrow_parent_marker(self):
+        events = [
+            {"Action": "pass", "Test": SAFETY},
+            {"Action": "output", "Test": COMMIT, "Output": "TransactionReleased: active transaction\n"},
+            {"Action": "output", "Test": COMMIT + "/existing_cursor", "Output": "unrelated child failure\n"},
+            {"Action": "fail", "Test": COMMIT + "/existing_cursor"},
+            {"Action": "fail", "Test": COMMIT},
+        ]
+        with self.assertRaisesRegex(RuntimeError, COMMIT + "/existing_cursor failed outside a named invariant"):
+            self.go_check(events, safety_only=True)
+
+    def test_marked_sibling_failures_propagate_to_parent(self):
+        events = [
+            {"Action": "pass", "Test": SAFETY},
+            {"Action": "output", "Test": COMMIT + "/absent_cursor", "Output": "TransactionReleased: active transaction\n"},
+            {"Action": "fail", "Test": COMMIT + "/absent_cursor"},
+            {"Action": "output", "Test": COMMIT + "/existing_cursor", "Output": "TransactionReleased: active transaction\n"},
+            {"Action": "fail", "Test": COMMIT + "/existing_cursor"},
+            {"Action": "output", "Test": COMMIT, "Output": "--- FAIL: " + COMMIT + " (0.01s)\n"},
+            {"Action": "fail", "Test": COMMIT},
+        ]
+        self.assertEqual(self.go_check(events, safety_only=True).returncode, 1)
 
 
 if __name__ == "__main__":
