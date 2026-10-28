@@ -67,10 +67,6 @@ func TestSyncRunCommitFailureReleasesTransaction(t *testing.T) {
 			finalize := syncRunFinalize{SyncRunID: id, Outcome: syncRunOutcomeCompleted, SeenCount: 7, NewCount: 3, UpdatedCount: 2,
 				FinishedAt: "2026-01-03T01:00:00Z", CursorKey: key, CursorTo: "2026-01-03T00:00:00Z", CursorAdvanced: "2026-01-03T01:00:00Z"}
 			finalizeErr := archive.FinalizeSyncRun(ctx, finalize)
-			var exhausted *errFinalizeSyncRunBusyExhausted
-			if !errors.As(finalizeErr, &exhausted) || exhausted.attempts != finalizeSyncRunRetryBudget || !isSQLiteBusy(exhausted.cause) {
-				t.Fatalf("TransactionReleased: reader must reject COMMIT through the bounded SQLITE_BUSY retries: %v", finalizeErr)
-			}
 			if err := readTx.Rollback(); err != nil {
 				t.Fatal(err)
 			}
@@ -80,6 +76,10 @@ func TestSyncRunCommitFailureReleasesTransaction(t *testing.T) {
 			}
 			if err := tx.Rollback(); err != nil {
 				t.Fatal(err)
+			}
+			var exhausted *errFinalizeSyncRunBusyExhausted
+			if !errors.As(finalizeErr, &exhausted) || exhausted.attempts != finalizeSyncRunRetryBudget || !isSQLiteBusy(exhausted.cause) {
+				t.Fatalf("reader must reject COMMIT through the bounded SQLITE_BUSY retries: %v", finalizeErr)
 			}
 			if got := probeSyncRunRow(t, path, id); !reflect.DeepEqual(got, before) {
 				t.Fatalf("rejected COMMIT changed durable Sync Run: got %+v, want %+v", got, before)

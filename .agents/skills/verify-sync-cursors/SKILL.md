@@ -8,15 +8,17 @@ description: "Check Sync Cursor finalization after changes to cursor keys, termi
 Run from the repository root against synthetic local SQLite only.
 
 ```sh
-python3 verification/sync-cursors/check.py
-python3 verification/sync-cursors/check.py --mutations
+env -u GOFLAGS python3 verification/sync-cursors/check.py
+env -u GOFLAGS python3 verification/sync-cursors/check.py --mutations
 python3 -B -m unittest discover -s verification/sync-cursors -p test_check.py
-go test -count=1 -v -run '^TestSyncRunCommitFailureReleasesTransaction$' ./cmd/gohealthcli
+env -u GOFLAGS go test -count=1 -v -run '^TestSyncRunCommitFailureReleasesTransaction$' ./cmd/gohealthcli
 ```
 
-The runner saves logs and TLC traces under ignored `dist/formal-verification/run-*`. Go output is saved as both JSON events and decoded text. Each diagnostic belongs to its full test name, including parallel subtests. Each failure needs its own invariant marker. A parent failure may propagate from failed children only when the parent has no other diagnostic. Exit 0 means every selected check passed. Exit 1 means a property failed. Exit 2 means verification could not complete. Require every named Go result even when another property fails. A build failure, skipped proof, or command with missing tests is incomplete proof.
+The runner saves logs and TLC traces under ignored `dist/formal-verification/run-*`. Go output is saved as both JSON events and decoded text. Each diagnostic belongs to its full test name, including parallel subtests. Each failure needs its own invariant marker. A parent failure may propagate from failed children only when the parent has no other diagnostic. Exit 0 means every selected check passed. Exit 1 means a property failed. Exit 2 means verification could not complete. Require every named Go result and both `absent_cursor` and `existing_cursor` subtests, even when another property fails. A build failure, any skipped proof, or missing test is incomplete proof.
 
-Read the full [model](../../../verification/sync-cursors/SyncCursors.tla), [config](../../../verification/sync-cursors/SyncCursors.cfg), and failing trace. The [view](../../../verification/sync-cursors/view.mjs) labels states and actions for a statechart. `Safety.cfg` checks completion and transaction release independently; its pass never replaces the full result.
+`*.proof.json` records the exact case outcomes and their owned invariant witnesses. Successful proof requires every declared case to pass. Each mutation declares its failing owners; all other cases must pass, and both cursor cases must fail the driver-cleanup mutation on `TransactionReleased`. An unrelated error, a marker from another owner, or the known highwater finding cannot satisfy a mutation.
+
+Read the full [model](../../../verification/sync-cursors/SyncCursors.tla), [config](../../../verification/sync-cursors/SyncCursors.cfg), and failing trace. The [view](../../../verification/sync-cursors/view.mjs) labels states and actions for a statechart. `Safety.cfg` separates completion checks from the known highwater failure. The model assumes driver cleanup, so its `TransactionReleased` pass is not independent proof of SQLite transaction release. The real Go contention check and driver mutation establish that behavior. A safety pass never replaces the full result.
 
 ## Properties and current findings
 
@@ -45,7 +47,7 @@ Review changes since that commit in these repository-root paths:
 - `verification/sync-cursors/`. Model, configs, view, runner, and mutation anchors.
 - `cmd/gohealthcli/sync_cursor_formal_test.go` and `cmd/gohealthcli/sync_run_commit_failure_test.go`. Tagged schedule oracle and ordinary automatic contention regression.
 
-`runKey`, `horizon`, and `requestedOutcome` represent finalization inputs after ingestion. Initial running rows represent committed `StartSyncRun` calls. `Finalize` represents one durable transaction commit. Statement failures become `AbortFinalize`. `CommitRejected` preserves durable run/cursor state and leaves the connection clean, matching the driver's rollback. `Recover` represents a separate successful terminal write; `RecoveryExhausted` represents no durable recovery write. `highwater` is an independent specification oracle.
+`runKey`, `horizon`, and `requestedOutcome` represent finalization inputs after ingestion. Initial running rows represent committed `StartSyncRun` calls. `Finalize` represents one durable transaction commit. Statement failures become `AbortFinalize`. `CommitRejected` preserves durable run/cursor state and leaves the connection clean under the reviewed driver's rollback assumption. `connectionDirty` stays FALSE in this model; dirty-state view labels apply to counterexamples after changing that assumption. `Recover` represents a separate successful terminal write; `RecoveryExhausted` represents no durable recovery write. `highwater` is an independent specification oracle.
 
 If a trace does not replay against Go, treat it as a correspondence error. For intended behavior changes, update model, code mapping, oracle, and replay together. Advance the sync commit only after reviewing those mappings and rerunning full and mutation checks.
 
@@ -55,9 +57,11 @@ TLC 1.7.4 explores two started runs, two abstract keys, horizons 1 and 2, absent
 
 `TestFormalSyncCursorSafety` runs 1,620 SQLite schedules. It covers five key relationships, absent or seeded cursors, nine outcome pairs, nine statement-fault pairs, and both finalization orders. The expected cursor follows the current unconditional upsert; the separate highwater replay and model retain the stronger requirement.
 
-`TestFormalSyncCursorCommitFailure` calls the ordinary `TestSyncRunCommitFailureReleasesTransaction` regression. Both absent and existing cursors use file-backed rollback-journal SQLite, an independent reader with an acquired SELECT lock, and `busy_timeout=0`. COMMIT must exhaust the real bounded retry budget with a busy cause. After reader release, a new transaction on the same writer must succeed, durable state must be unchanged, and later successful finalization must publish both run and cursor. No sleeps synchronize the lock. No mock replaces COMMIT. The ordinary test runs in the existing Linux and Windows `go test ./...` jobs.
+`TestFormalSyncCursorCommitFailure` calls the ordinary `TestSyncRunCommitFailureReleasesTransaction` regression. Both absent and existing cursors use file-backed rollback-journal SQLite, an independent reader with an acquired SELECT lock, and `busy_timeout=0`. After reader release, a new transaction on the same writer must succeed. That failed `Begin` is the `TransactionReleased` assertion. The test separately requires exhaustion of the real bounded retry budget with a busy cause; an unexpected error shape is incomplete proof. Durable state must be unchanged, and later successful finalization must publish both run and cursor. No sleeps synchronize the lock. No mock replaces COMMIT. The ordinary test runs in the existing Linux and Windows `go test ./...` jobs.
 
 The runner uses the Go toolchain declared by `go.mod` and records its version, SQLite version, and checkout commit. It checksum-verifies TLC 1.7.4 and downloads it into ignored `dist/formal-tools`. Requirements are Python 3, curl, Go, and Java 11+. Set `JAVA` to a Java executable if needed. No Go dependencies are added.
+
+Unset `GOFLAGS` for normal proof as above. Explicit overlay probes may set it. `inputs.json` records whether it was set and its SHA-256 fingerprint without exposing flag values. Treat runs with different inputs separately.
 
 Excluded properties include Provider completeness, pagination, identity verification, ingestion correctness, arbitrary time representations and key strings, more than two runs, scheduler fairness, process crashes, filesystem durability, Attachments, and SQLite internals. Bounded model checks and real-code replays do not prove arbitrary Go executions.
 
