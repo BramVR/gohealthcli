@@ -145,6 +145,10 @@ The CLI dispatches through the Command Registry. Runtime adapters supply Provide
 
 ## Agent skills
 
+### Sync Cursor verification
+
+After changes to cursor keys, Sync Run finalization, transaction cleanup, or SQLite dependencies, use `.agents/skills/verify-sync-cursors/SKILL.md`.
+
 ### Issue tracker
 
 Issues and PRDs live in GitHub Issues for `BramVR/gohealthcli`. See `docs/agents/issue-tracker.md`.
