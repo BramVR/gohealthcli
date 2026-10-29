@@ -27,7 +27,8 @@ Finalize(r) ==
     /\ status' = [status EXCEPT ![r] = requestedOutcome[r]]
     /\ phase' = [phase EXCEPT ![r] = "done"]
     /\ IF requestedOutcome[r] = "sync_completed"
-       THEN /\ cursor' = [cursor EXCEPT ![runKey[r]] = horizon[r]]
+       THEN /\ cursor' = [cursor EXCEPT ![runKey[r]] =
+                  IF horizon[r] > @ THEN horizon[r] ELSE @]
             /\ highwater' = [highwater EXCEPT ![runKey[r]] =
                   IF horizon[r] > @ THEN horizon[r] ELSE @]
        ELSE UNCHANGED <<cursor, highwater>>

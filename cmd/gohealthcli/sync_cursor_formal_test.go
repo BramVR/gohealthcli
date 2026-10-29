@@ -222,8 +222,22 @@ func observeCursorSafety(t *testing.T) syncVerdict {
 									finalize := syncRunFinalize{SyncRunID: ids[r], Outcome: outcome,
 										SeenCount: 3, NewCount: 2, UpdatedCount: 1, FinishedAt: "2026-01-04T00:00:01Z",
 										CursorKey: keys[r], CursorTo: formalHorizon(r), CursorAdvanced: "2026-01-04T00:00:01Z"}
+									advanceCursor := outcome == syncRunOutcomeCompleted
+									if advanceCursor {
+										incoming, err := time.Parse(time.RFC3339Nano, finalize.CursorTo)
+										if err != nil {
+											t.Fatalf("parse synthetic incoming boundary: %q", err)
+										}
+										if previous, found := beforeCursors[keys[r]]; found {
+											existing, err := time.Parse(time.RFC3339Nano, previous.time)
+											if err != nil {
+												t.Fatalf("parse synthetic stored boundary: %q", err)
+											}
+											advanceCursor = incoming.After(existing)
+										}
+									}
 									err := archive.FinalizeSyncRun(context.Background(), finalize)
-									wantError := fault == "run" || (fault == "cursor" && outcome == syncRunOutcomeCompleted)
+									wantError := fault == "run" || (fault == "cursor" && advanceCursor)
 									if err != nil {
 										var sqliteErr *sqlite.Error
 										if !wantError || !errors.As(err, &sqliteErr) || sqliteErr.Code() != sqlite3.SQLITE_CONSTRAINT_TRIGGER {
@@ -236,7 +250,7 @@ func observeCursorSafety(t *testing.T) syncVerdict {
 									if !wantError {
 										beforeRuns[ids[r]] = formalRunValue{status: string(outcome), seen: 3, newCount: 2, updated: 1,
 											finishedAt: sql.NullString{String: finalize.FinishedAt, Valid: true}}
-										if outcome == syncRunOutcomeCompleted {
+										if advanceCursor {
 											beforeCursors[keys[r]] = formalCursorValue{time: finalize.CursorTo, advancedAt: finalize.CursorAdvanced}
 										}
 									}
