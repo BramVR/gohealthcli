@@ -1,0 +1,13 @@
+{
+  "rollupDataPoints": [
+    {
+      "caloriesInHeartRateZone": {
+        "caloriesInHeartRateZones": [
+          {"heartRateZone": "LIGHT", "kcal": 1.5}
+        ]
+      },
+      "startTime": "2026-01-05T00:00:00Z",
+      "endTime": "2026-01-05T01:00:00Z"
+    }
+  ]
+}

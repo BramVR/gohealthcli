@@ -510,6 +510,134 @@ func TestTotalCaloriesRollupSkipsAbsentUnionAndArchivesExplicitZero(t *testing.T
 	}
 }
 
+func TestCaloriesInHeartRateZoneIngestionShapes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		union        string
+		wantArchived bool
+	}{
+		{name: "absent_union", union: ``, wantArchived: false},
+		{name: "null_union", union: `"caloriesInHeartRateZone": null,`, wantArchived: false},
+		{name: "empty_union_object", union: `"caloriesInHeartRateZone": {},`, wantArchived: true},
+		{name: "missing_array", union: `"caloriesInHeartRateZone": {"futureField": true},`, wantArchived: true},
+		{name: "null_array", union: `"caloriesInHeartRateZone": {"caloriesInHeartRateZones": null},`, wantArchived: true},
+		{name: "empty_array", union: `"caloriesInHeartRateZone": {"caloriesInHeartRateZones": []},`, wantArchived: true},
+		{name: "missing_kcal", union: `"caloriesInHeartRateZone": {"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT"}, {"heartRateZone": "PEAK", "kcal": 3}]},`, wantArchived: true},
+		{name: "null_kcal", union: `"caloriesInHeartRateZone": {"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": null}, {"heartRateZone": "PEAK", "kcal": 3}]},`, wantArchived: true},
+		{name: "missing_and_null_zone_label", union: `"caloriesInHeartRateZone": {"caloriesInHeartRateZones": [{"kcal": 1}, {"heartRateZone": null, "kcal": 2}]},`, wantArchived: true},
+		{name: "unknown_and_unspecified_zone", union: `"caloriesInHeartRateZone": {"caloriesInHeartRateZones": [{"heartRateZone": "FUTURE_ZONE", "kcal": 1}, {"heartRateZone": "HEART_RATE_ZONE_TYPE_UNSPECIFIED", "kcal": 2}]},`, wantArchived: true},
+	}
+	families := []struct {
+		rollup, from, to, pageKey, times string
+	}{
+		{
+			rollup: "daily", from: "2026-01-01", to: "2026-01-02", pageKey: "2026-01-01/2026-01-02/",
+			times: `"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}}, "civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}`,
+		},
+		{
+			rollup: "hourly", from: "2026-01-01T00:00:00Z", to: "2026-01-02T00:00:00Z", pageKey: "2026-01-01T00:00:00Z/2026-01-02T00:00:00Z/3600s/",
+			times: `"startTime": "2026-01-01T00:00:00Z", "endTime": "2026-01-01T01:00:00Z"`,
+		},
+	}
+	for _, test := range tests {
+		for _, family := range families {
+			t.Run(test.name+"/"+family.rollup, func(t *testing.T) {
+				t.Parallel()
+				archive := &fakeGoogleHealthIngestionArchive{}
+				provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+					family.pageKey: `{"rollupDataPoints": [{` + test.union + family.times + `}]}`,
+				})
+				result, err := fakeGoogleHealthIngestion(provider).Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+					DataType: "calories-in-heart-rate-zone",
+					Rollup:   family.rollup,
+					From:     family.from,
+					To:       family.to,
+				}))
+				if err != nil {
+					t.Fatalf("ingest calories-in-heart-rate-zone %s Rollups: %v", family.rollup, err)
+				}
+				wantCount := 0
+				if test.wantArchived {
+					wantCount = 1
+				}
+				if result.RollupsSeen != wantCount || result.RollupsNew != wantCount || len(archive.rollups) != wantCount {
+					t.Fatalf("Rollup counts = (%d seen, %d new, %d archived), want %d", result.RollupsSeen, result.RollupsNew, len(archive.rollups), wantCount)
+				}
+			})
+		}
+	}
+}
+
+func TestCaloriesInHeartRateZoneIngestionRejectsMalformedValues(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		union   string
+		wantErr string
+	}{
+		{name: "union_scalar", union: `"SECRET_PAYLOAD"`, wantErr: "caloriesInHeartRateZone is not an object"},
+		{name: "union_array", union: `["SECRET_PAYLOAD"]`, wantErr: "caloriesInHeartRateZone is not an object"},
+		{name: "array_object", union: `{"caloriesInHeartRateZones": {"heartRateZone": "SECRET_PAYLOAD"}}`, wantErr: "caloriesInHeartRateZones is not an array"},
+		{name: "array_string", union: `{"caloriesInHeartRateZones": "SECRET_PAYLOAD"}`, wantErr: "caloriesInHeartRateZones is not an array"},
+		{name: "element_null", union: `{"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": 1}, null]}`, wantErr: "caloriesInHeartRateZones[1] is not an object"},
+		{name: "element_scalar", union: `{"caloriesInHeartRateZones": ["SECRET_PAYLOAD"]}`, wantErr: "caloriesInHeartRateZones[0] is not an object"},
+		{name: "zone_number", union: `{"caloriesInHeartRateZones": [{"heartRateZone": 4, "kcal": 1}]}`, wantErr: "caloriesInHeartRateZones[0].heartRateZone is not a string"},
+		{name: "kcal_string", union: `{"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": "SECRET_PAYLOAD"}]}`, wantErr: "caloriesInHeartRateZones[0].kcal is not a number"},
+		{name: "kcal_boolean", union: `{"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": true}]}`, wantErr: "caloriesInHeartRateZones[0].kcal is not a number"},
+		{name: "kcal_object", union: `{"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": {"value": "SECRET_PAYLOAD"}}]}`, wantErr: "caloriesInHeartRateZones[0].kcal is not a number"},
+		{name: "kcal_array", union: `{"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": ["SECRET_PAYLOAD"]}]}`, wantErr: "caloriesInHeartRateZones[0].kcal is not a number"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			archive := &fakeGoogleHealthIngestionArchive{}
+			provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+				"2026-01-01/2026-01-02/": `{"rollupDataPoints": [{"caloriesInHeartRateZone": ` + test.union + `,
+					"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+					"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}}]}`,
+			})
+			_, err := fakeGoogleHealthIngestion(provider).Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+				DataType: "calories-in-heart-rate-zone",
+				Rollup:   "daily",
+				From:     "2026-01-01",
+				To:       "2026-01-02",
+			}))
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("error = %v, want %q", err, test.wantErr)
+			}
+			if strings.Contains(err.Error(), "SECRET_PAYLOAD") {
+				t.Fatalf("error = %v, want no Provider payload echo", err)
+			}
+			if len(archive.rollups) != 0 {
+				t.Fatalf("archived Rollups = %d, want 0", len(archive.rollups))
+			}
+		})
+	}
+}
+
+func TestRequiredRollupValueAbsenceFailsSyncRun(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"2026-01-01/2026-01-02/": `{"rollupDataPoints": [{
+			"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+			"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}}]}`,
+	})
+	_, err := fakeGoogleHealthIngestion(provider).Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		Rollup:   "daily",
+		From:     "2026-01-01",
+		To:       "2026-01-02",
+	}))
+	if want := "Google Health steps daily Rollup missing steps value"; err == nil || err.Error() != want {
+		t.Fatalf("error = %v, want %q", err, want)
+	}
+	if len(archive.rollups) != 0 {
+		t.Fatalf("archived Rollups = %d, want 0", len(archive.rollups))
+	}
+}
+
 func TestGoogleHealthIngestionHeartRateDailyRollupUsesFourteenDayWindows(t *testing.T) {
 	t.Parallel()
 	archive := &fakeGoogleHealthIngestionArchive{}

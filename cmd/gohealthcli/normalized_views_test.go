@@ -132,6 +132,7 @@ var normalizedViewCatalogOrder = []string{
 	"total-calories-rollups",
 	"nutrition-log-sessions",
 	"nutrition-log-nutrients",
+	"calories-in-heart-rate-zone-rollups",
 }
 
 // TestNormalizedViewsRegistryCatalogOrderIsStable pins the full
@@ -175,6 +176,7 @@ var normalizedViewMigrationOrder = map[int][]string{
 	27: {"total_calories_rollups"},
 	28: {"nutrition_log_sessions"},
 	29: {"nutrition_log_nutrients"},
+	30: {"calories_in_heart_rate_zone_rollups"},
 }
 
 // TestNormalizedViewsRegistryMigrationStatementsPinViewsPerVersion pins
