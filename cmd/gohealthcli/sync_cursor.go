@@ -56,14 +56,16 @@ func rollupKindForSync(rollup string) syncCursorRollupKind {
 	return syncCursorRollupKind(rollup)
 }
 
+type syncCursorQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
 // resolveSyncCursor returns the current cursor_time for a key, plus a
 // boolean indicating whether a row exists. cursor_time itself is stored
 // as TEXT NOT NULL and commitSyncCursor rejects empty values, so the
 // returned string is non-empty whenever the boolean is true; the boolean
 // is the canonical "no prior successful Sync Run" signal.
-func resolveSyncCursor(ctx context.Context, db interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}, key syncCursorKey) (string, bool, error) {
+func resolveSyncCursor(ctx context.Context, db syncCursorQuerier, key syncCursorKey) (string, bool, error) {
 	var cursorTime string
 	err := db.QueryRowContext(ctx, `SELECT cursor_time FROM sync_cursors
 		WHERE connection_id = ?
