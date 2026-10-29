@@ -11,7 +11,7 @@ usage() {
   printf '  verify-gohealthcli self-check\n' >&2
   printf '  verify-gohealthcli suite <run-prefix> [smoke]\n' >&2
   printf '  verify-gohealthcli <launch|doctor|cleanup> <run-id>\n' >&2
-  printf '  verify-gohealthcli drive <run-id> <initialize|local|inspect|plan|sync|backup|connected|discover|catalog>\n' >&2
+  printf '  verify-gohealthcli drive <run-id> <initialize|local|inspect|route|plan|sync|backup|connected|discover|catalog>\n' >&2
   exit 2
 }
 
@@ -695,6 +695,37 @@ drive_inspect() {
     "$(sha256_file "$export_path")" "$(sha256_file "$jsonl_path")" > "$evidence_root/inspect-proof.txt"
 }
 
+sidecar_tree_fingerprint() {
+  if path_is_absent "$1"; then
+    printf 'absent\n'
+  else
+    tree_fingerprint "$1"
+  fi
+}
+
+drive_route() {
+  [[ -f "$archive_path" && ! -L "$archive_path" ]] || fail 'route requires an initialized archive'
+  local sidecar_root="$archive_path.attachments" output_path="$run_root/data/route.tcx"
+  local archive_files_before sidecar_before
+  run_pty route-help "$binary" route --help
+  grep -Fq -- '-stdout' "$evidence_root/route-help.typescript" || fail 'route help missing --stdout'
+  grep -Fq -- '-output' "$evidence_root/route-help.typescript" || fail 'route help missing --output'
+
+  run_pty_expected route-missing-destination 1 "$binary" --db "$archive_path" --json route run-1
+  grep -Fq '"status":"flag_invalid"' "$evidence_root/route-missing-destination.typescript" || fail 'missing destination was not flag_invalid'
+  grep -Fq 'route requires --output PATH or --stdout' "$evidence_root/route-missing-destination.typescript" || fail 'missing destination message drifted'
+
+  archive_files_before=$(sqlite_file_set_fingerprint "$archive_path")
+  sidecar_before=$(sidecar_tree_fingerprint "$sidecar_root")
+  run_pty_expected route-unknown-exercise 1 "$binary" --db "$archive_path" --json route run-1 --output "$output_path"
+  grep -Fq '"status":"flag_invalid"' "$evidence_root/route-unknown-exercise.typescript" || fail 'unknown exercise was not flag_invalid'
+  grep -Fq 'no archived Data Point matches' "$evidence_root/route-unknown-exercise.typescript" || fail 'unknown exercise message drifted'
+  path_is_absent "$output_path" || fail 'failed route created its output path'
+  [[ "$(sqlite_file_set_fingerprint "$archive_path")" == "$archive_files_before" ]] || fail 'route changed the SQLite file set'
+  [[ "$(sidecar_tree_fingerprint "$sidecar_root")" == "$sidecar_before" ]] || fail 'route changed the Attachment sidecar tree'
+  printf 'route: route\nresult: passed\nentries: help,missing-destination,unknown-exercise\noutput_after_failure: absent\narchive_after_failure: unchanged\nsidecar_after_failure: unchanged\nsuccess_path: not driven; needs an archived TCX Attachment\n' > "$evidence_root/route-proof.txt"
+}
+
 assert_raw_plan_no_effects() {
   local transcript=$1 effect
   for effect in provider_request credential_store_read token_load token_refresh health_archive_open health_archive_write rollup_write sync_run_change migration cursor_change sidecar_creation; do
@@ -1257,7 +1288,7 @@ drive_backup() {
 drive() {
   [[ -n "$route" ]] || usage
   case "$route" in
-    initialize|local|inspect|plan|sync|backup|connected|discover|catalog) ;;
+    initialize|local|inspect|route|plan|sync|backup|connected|discover|catalog) ;;
     *) usage ;;
   esac
   local attempt_marker="$evidence_root/$route-attempted.txt"
@@ -1269,6 +1300,7 @@ drive() {
     initialize) drive_initialize ;;
     local) drive_local ;;
     inspect) drive_inspect ;;
+    route) drive_route ;;
     plan) drive_plan ;;
     sync) drive_sync ;;
     backup) drive_backup ;;
@@ -1348,7 +1380,7 @@ self_check() {
 
   local -a expected_commands=(
     init doctor catalog connect identity profile settings devices irn-profile sync
-    backup status query export raw describe-schema completion schema docs-export-datasets
+    backup status query export route raw describe-schema completion schema docs-export-datasets
   )
   printf '%s\n' "${expected_commands[@]}" | sort > "$expected_tmp"
   isolated_go_build "$self_root/build-state" "$self_binary"
@@ -1412,6 +1444,7 @@ suite() {
   "$helper_dir/verify-gohealthcli" drive "$state_run" initialize
   "$helper_dir/verify-gohealthcli" drive "$state_run" local
   "$helper_dir/verify-gohealthcli" drive "$state_run" inspect
+  "$helper_dir/verify-gohealthcli" drive "$state_run" route
   "$helper_dir/verify-gohealthcli" drive "$state_run" sync
   "$helper_dir/verify-gohealthcli" drive "$state_run" backup
   "$helper_dir/verify-gohealthcli" cleanup "$state_run"

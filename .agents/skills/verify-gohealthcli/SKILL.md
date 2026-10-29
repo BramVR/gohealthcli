@@ -43,6 +43,7 @@ Use one mapped route. Each route records the literal command, PTY transcript, an
 "$VERIFY" drive "$RUN_ID" initialize
 "$VERIFY" drive "$RUN_ID" local
 "$VERIFY" drive "$RUN_ID" inspect
+"$VERIFY" drive "$RUN_ID" route
 "$VERIFY" drive "$RUN_ID" plan
 "$VERIFY" drive "$RUN_ID" sync
 "$VERIFY" drive "$RUN_ID" backup
@@ -54,6 +55,7 @@ Use one mapped route. Each route records the literal command, PTY transcript, an
 - `initialize`: requires a fresh run. Executes `init --json`, confirms the newest migration through `query --json`, then proves the same setup returns `already_initialized`.
 - `local`: requires an initialized run. Executes product `doctor` in JSON and plain modes, then proves `doctor --online` stops at the missing Connection.
 - `inspect`: requires an initialized run. Exercises status modes, accepted and rejected query paths, schema JSON and SQL, and empty CSV/JSONL exports.
+- `route`: requires an initialized run. Executes `route --help`, proves a missing destination fails `flag_invalid`, then proves an unknown exercise with `--output` fails `flag_invalid` with the output path absent and the SQLite file set and sidecar tree unchanged.
 - `plan`: requires a fresh run. Executes identity, Data Type list, Data Point get, reconcile, daily Rollup, physical Rollup, and paged list-endpoint plans; checks every reported planning effect is false and the page token is redacted; proves a range plan without `--timezone` stops at the configured-timezone lookup; exercises raw output validation and cleanup without Provider access; confirms local paths remain absent; then records the live-read path as unreachable at missing isolated setup.
 - `sync`: requires an initialized run without a Connection. Reads empty Sync Run history, records a blocked plan with all execution effects false, and proves normal sync fails before creating a Sync Run.
 - `backup`: requires an initialized run. Creates a task-owned bare Git remote, encrypts and pushes the synthetic archive locally, proves unchanged-push idempotence, restores to a new archive, and reads it through the compiled CLI. It then rotates in a second task-owned recipient, restores with that identity alone, and removes it again.
@@ -114,7 +116,7 @@ SUITE_ID="smoke-$(date -u +%Y%m%d-%H%M%S)-$$"
 "$VERIFY" suite "$SUITE_ID" smoke
 ```
 
-The suite uses one initialized state run plus separate fresh runs for planning, discovery, catalog, and connected-command gates. It cleans every owned run root and writes `/tmp/gohealthcli-verify-evidence/$SUITE_ID/summary.json`. Child evidence remains in sibling directories.
+The suite uses one initialized state run (initialize, local, inspect, route, sync, backup) plus separate fresh runs for planning, discovery, catalog, and connected-command gates. It cleans every owned run root and writes `/tmp/gohealthcli-verify-evidence/$SUITE_ID/summary.json`. Child evidence remains in sibling directories.
 
 ## Helpers
 
