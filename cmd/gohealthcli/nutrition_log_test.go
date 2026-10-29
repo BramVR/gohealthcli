@@ -566,7 +566,7 @@ func TestNutritionLogSessionsViewMigrationUpgradesAndIsIdempotent(t *testing.T) 
 	if err := lifecycle.Migrate(context.Background()); err != nil {
 		t.Fatalf("repeat migration: %v", err)
 	}
-	assertArchiveUserVersion(t, archivePath, 29)
+	assertArchiveUserVersion(t, archivePath, currentSchemaVersion)
 	db := openArchiveForTest(t, archivePath)
 	var viewCount, migrationCount int
 	if err := db.QueryRowContext(context.Background(), `SELECT count(*) FROM sqlite_master WHERE type = 'view' AND name = 'nutrition_log_sessions'`).Scan(&viewCount); err != nil {
@@ -584,7 +584,7 @@ func TestNutritionLogNutrientsViewMigrationFreshUpgradeAndIdempotent(t *testing.
 	t.Parallel()
 	t.Run("fresh", func(t *testing.T) {
 		_, archivePath, _ := initializeFileCredentialSetup(t, t.TempDir())
-		assertArchiveUserVersion(t, archivePath, 29)
+		assertArchiveUserVersion(t, archivePath, currentSchemaVersion)
 		assertNutritionLogViewMigrations(t, archivePath)
 	})
 	t.Run("upgrade and repeat", func(t *testing.T) {
@@ -597,7 +597,7 @@ func TestNutritionLogNutrientsViewMigrationFreshUpgradeAndIdempotent(t *testing.
 		if err := lifecycle.Migrate(context.Background()); err != nil {
 			t.Fatalf("repeat migration: %v", err)
 		}
-		assertArchiveUserVersion(t, archivePath, 29)
+		assertArchiveUserVersion(t, archivePath, currentSchemaVersion)
 		assertNutritionLogViewMigrations(t, archivePath)
 	})
 }

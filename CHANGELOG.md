@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add daily and physical-window `calories-in-heart-rate-zone` Rollup sync and the `calories-in-heart-rate-zone-rollups` export, one row per Rollup bucket and heart-rate zone, with 14-day Provider chunking, unknown zone labels passed through, empty buckets exporting no rows, and missing `kcal` exported as null.
 - Add offline `route <exercise>` to write the newest archived TCX route of one exercise Data Point as its exact bytes to stdout or a new owner-only file, verified against its Attachment row's path, size, and SHA-256.
 - Document that daily and Rollup queries and exports preserve absent days as missing records and stored zeros as zeros; warn against averaging absent days as zeros.
 - List every catalog-backed raw endpoint in help and the command reference, and include supported names and typo suggestions in unsupported-endpoint errors.

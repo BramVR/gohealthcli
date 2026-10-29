@@ -11,7 +11,7 @@ import (
 // summary-history path is supported by the catalog.
 func TestDailyRollupSupportMatchesDocumentedSummaryTypes(t *testing.T) {
 	t.Parallel()
-	want := []string{"floors", "heart-rate", "steps", "total-calories"}
+	want := []string{"calories-in-heart-rate-zone", "floors", "heart-rate", "steps", "total-calories"}
 	var got []string
 	for _, dataType := range googleHealthDataTypes.order {
 		entry, _ := googleHealthDataTypes.Lookup(dataType)
@@ -118,14 +118,14 @@ func TestSupportedEndpointsRejectCaloriesInHeartRateZoneDataPointSync(t *testing
 	if !ok {
 		t.Fatal("calories-in-heart-rate-zone not in catalog")
 	}
-	for _, family := range []endpointFamily{
-		endpointFamilyList,
-		endpointFamilyReconcile,
-		endpointFamilyRollUp,
-		endpointFamilyDailyRollUp,
-	} {
+	for _, family := range []endpointFamily{endpointFamilyList, endpointFamilyReconcile} {
 		if _, present := entry.SupportedEndpoints[family]; present {
-			t.Errorf("calories-in-heart-rate-zone SupportedEndpoints includes %q, want no implemented sync endpoint yet", family)
+			t.Errorf("calories-in-heart-rate-zone SupportedEndpoints includes %q, want Rollup families only", family)
+		}
+	}
+	for _, family := range []endpointFamily{endpointFamilyRollUp, endpointFamilyDailyRollUp} {
+		if entry.SupportedEndpoints[family].RollupValueType != "caloriesInHeartRateZone" {
+			t.Errorf("calories-in-heart-rate-zone %q RollupValueType = %q, want caloriesInHeartRateZone", family, entry.SupportedEndpoints[family].RollupValueType)
 		}
 	}
 	if SupportsSyncDataPoints("calories-in-heart-rate-zone") {
