@@ -2,15 +2,17 @@
 """Check the cursor model and replay bounded schedules against the SQLite writer."""
 
 import argparse
+from dataclasses import dataclass
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
+import secrets
 import shutil
 import subprocess
 import sys
 import tempfile
-from typing import NamedTuple
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -23,21 +25,177 @@ GO_ENV = {**os.environ, "GOTOOLCHAIN": "auto"}
 SAFETY_TEST = "TestFormalSyncCursorSafety"
 COMMIT_TEST = "TestFormalSyncCursorCommitFailure"
 HIGHWATER_TEST = "TestFormalSyncCursorHighwater"
-CURSOR_CASES = tuple(COMMIT_TEST + "/" + case for case in ("absent_cursor", "existing_cursor"))
-SAFETY_CASES = (SAFETY_TEST, COMMIT_TEST, *CURSOR_CASES)
+ATTR_KEY = "sync-cursor.case.v1"
+NONCE_ENV = "GOHEALTHCLI_SYNC_PROOF_NONCE"
+PACKAGE = "github.com/BramVR/gohealthcli/cmd/gohealthcli"
 
 
-class GoProof(NamedTuple):
-    returncode: int
-    stdout: str
-    cases: dict[str, str]
-    invariants: dict[str, tuple[str, ...]]
+@dataclass(frozen=True)
+class CaseSpec:
+    owner: str
+    allowed: frozenset[str]
+    suites: frozenset[str]
+
+
+CASES = (
+    CaseSpec(SAFETY_TEST, frozenset({"FinalizeOutcome", "AtomicRun", "CompletedOnly"}), frozenset({"full", "safety"})),
+    *(CaseSpec(COMMIT_TEST + "/" + case, frozenset({"TransactionReleased", "AtomicRun", "CompletedOnly"}),
+               frozenset({"full", "safety"})) for case in ("absent_cursor", "existing_cursor")),
+    CaseSpec(HIGHWATER_TEST, frozenset({"CursorHighwater"}), frozenset({"full"})),
+)
+
+
+@dataclass(frozen=True)
+class Finding:
+    owner: str
+    invariant: str
+
+
+@dataclass(frozen=True)
+class CaseResult:
+    owner: str
+    invariant: str | None
+    detail: str
+
+
+@dataclass(frozen=True)
+class CompletedProof:
+    cases: tuple[CaseResult, ...]
+
+    @property
+    def findings(self) -> frozenset[Finding]:
+        return frozenset(Finding(case.owner, case.invariant) for case in self.cases if case.invariant is not None)
+
+
+class IncompleteProof(RuntimeError):
+    pass
+
+
+def strict_json(text):
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError(f"duplicate JSON key {key!r}")
+            result[key] = value
+        return result
+
+    def nonfinite(value):
+        raise ValueError(f"non-finite JSON value {value!r}")
+
+    def finite_float(value):
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            return nonfinite(value)
+        return parsed
+
+    return json.loads(text, object_pairs_hook=pairs, parse_constant=nonfinite, parse_float=finite_float)
+
+
+def complete_capture(raw: str, process_code: int, *, suite: str, nonce: str) -> CompletedProof:
+    if process_code != 0:
+        raise IncompleteProof(f"Go process exited {process_code}")
+    specs = {case.owner: case for case in CASES if suite in case.suites}
+    if not specs or not nonce:
+        raise IncompleteProof("unknown suite or missing invocation nonce")
+    terminals = set(specs)
+    for owner in specs:
+        parts = owner.split("/")
+        terminals.update("/".join(parts[:i]) for i in range(1, len(parts)))
+    runs, passed, records, paused = set(), set(), {}, set()
+    package_started = package_passed = False
+    fields = {
+        "start": set(), "run": {"Test"}, "pause": {"Test"}, "cont": {"Test"},
+        "pass": {"Test", "Elapsed"}, "output": {"Test", "Output"},
+        "attr": {"Test", "Key", "Value"},
+    }
+    try:
+        for line in raw.removesuffix("\n").split("\n"):
+            event = strict_json(line)
+            if not isinstance(event, dict):
+                raise ValueError("Go event must be an object")
+            action, owner = event.get("Action"), event.get("Test")
+            if not isinstance(action, str) or action not in fields:
+                raise ValueError(f"nonpassing or unknown Go action {action!r}")
+            if event.get("Package") != PACKAGE:
+                raise ValueError("wrong Go package")
+            if set(event) - ({"Time", "Action", "Package"} | fields[action]):
+                raise ValueError("unexpected Go event fields")
+            if "Time" in event and not isinstance(event["Time"], str):
+                raise ValueError("invalid Go event time")
+            if "Elapsed" in event and (type(event["Elapsed"]) not in (int, float) or not 0 <= event["Elapsed"] < float("inf")):
+                raise ValueError("invalid Go elapsed time")
+            if "Test" in event and (not isinstance(owner, str) or owner not in terminals):
+                raise ValueError(f"unexpected Go owner {owner!r}")
+            if package_passed:
+                raise ValueError("event after package terminal")
+            if action == "start":
+                if package_started:
+                    raise ValueError("duplicate package start")
+                package_started = True
+                continue
+            if not package_started:
+                raise ValueError("event before package start")
+            if action == "output":
+                if not isinstance(event.get("Output"), str):
+                    raise ValueError("invalid Go output")
+                continue
+            if owner is None:
+                if action != "pass" or passed != terminals:
+                    raise ValueError("missing tests before package terminal")
+                package_passed = True
+                continue
+            parent = owner.rpartition("/")[0]
+            if action == "run":
+                if owner in runs or (parent and (parent not in runs or parent in passed)):
+                    raise ValueError(f"duplicate or unordered run {owner!r}")
+                runs.add(owner)
+                continue
+            if owner not in runs or owner in passed:
+                raise ValueError(f"event outside run-to-terminal window {owner!r}")
+            if action == "pass":
+                if owner in paused or any(test.startswith(owner + "/") and test not in passed for test in terminals):
+                    raise ValueError(f"unordered test terminal {owner!r}")
+                passed.add(owner)
+            elif action == "pause":
+                if owner in paused:
+                    raise ValueError("duplicate pause")
+                paused.add(owner)
+            elif action == "cont":
+                if owner not in paused:
+                    raise ValueError("continue without pause")
+                paused.remove(owner)
+            elif action == "attr":
+                if owner not in specs or owner in records or event.get("Key") != ATTR_KEY or not isinstance(event.get("Value"), str):
+                    raise ValueError(f"extra, duplicate or unowned record {owner!r}")
+                wire = strict_json(event["Value"])
+                if not isinstance(wire, dict) or type(wire.get("v")) is not int or wire["v"] != 1 or wire.get("nonce") != nonce:
+                    raise ValueError("invalid proof version or nonce")
+                verdict = wire.get("verdict")
+                if verdict == "holds" and set(wire) == {"v", "nonce", "verdict"}:
+                    records[owner] = CaseResult(owner, None, "")
+                elif (verdict == "violated" and set(wire) == {"v", "nonce", "verdict", "invariant", "detail"}
+                      and isinstance(wire["invariant"], str) and wire["invariant"] in specs[owner].allowed
+                      and isinstance(wire["detail"], str)):
+                    records[owner] = CaseResult(owner, wire["invariant"], wire["detail"])
+                else:
+                    raise ValueError(f"invalid verdict for {owner!r}")
+        if not package_passed or runs != terminals or passed != terminals or set(records) != set(specs):
+            raise ValueError("missing package, test or proof record")
+    except (ValueError, TypeError, RecursionError) as error:
+        raise IncompleteProof(str(error)) from error
+    return CompletedProof(tuple(records[owner] for owner in specs))
 
 
 def run(args, output, *, cwd=ROOT, env=None, echo=True):
     print("Running", " ".join(map(str, args)), flush=True)
-    result = subprocess.run(args, cwd=cwd, env=env, text=True, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, timeout=180)
+    try:
+        result = subprocess.run(args, cwd=cwd, env=env, text=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, timeout=180)
+    except subprocess.TimeoutExpired as error:
+        partial = error.stdout or b""
+        output.write_text(partial.decode(errors="replace") if isinstance(partial, bytes) else partial)
+        raise
     output.write_text(result.stdout)
     if echo:
         print(result.stdout, end="", flush=True)
@@ -66,63 +224,35 @@ def go_check(out, name, *, safety_only=False, overlay=None, modfile=None):
         command += ["-overlay", str(overlay)]
     if modfile:
         command += ["-modfile", str(modfile)]
-    result = run(command + ["./cmd/gohealthcli"], out / f"{name}.jsonl", env=GO_ENV, echo=False)
+    nonce = secrets.token_hex(32)
+    capture = out / f"{name}.jsonl"
     try:
-        events = [json.loads(line) for line in result.stdout.splitlines()]
-    except json.JSONDecodeError as error:
-        print(result.stdout, end="", flush=True)
-        raise RuntimeError(f"{name}: invalid Go test events; read {name}.jsonl") from error
-    result.stdout = "".join(event.get("Output", "") for event in events)
-    (out / f"{name}.out").write_text(result.stdout)
-    print(result.stdout, end="", flush=True)
-    terminal = {event["Test"]: event["Action"] for event in events
-                if "Test" in event and event["Action"] in ("pass", "fail", "skip")}
-    skipped = sorted(test for test, action in terminal.items() if action == "skip")
-    if skipped:
-        raise RuntimeError(f"{name}: skipped proof: {', '.join(skipped)}")
-    names = SAFETY_CASES + (() if safety_only else (HIGHWATER_TEST,))
-    for test in names:
-        if terminal.get(test) not in ("pass", "fail"):
-            raise RuntimeError(f"{name}: missing named result for {test}")
-    extra = sorted(set(terminal) - set(names))
-    if extra:
-        raise RuntimeError(f"{name}: unexpected named result: {', '.join(extra)}")
-    failures = {test for test, action in terminal.items() if action == "fail"}
-    invariants = {}
-    if result.returncode:
-        if result.returncode != 1 or not failures:
-            raise RuntimeError(f"{name}: Go checks did not reach a verification assertion; read {name}.out")
-        markers = {
-            SAFETY_TEST: ("atomic run invariant", "completed-only/key-isolation invariant", "finalize outcome invariant"),
-            COMMIT_TEST: ("TransactionReleased:",),
-            HIGHWATER_TEST: ("CursorHighwater:",),
-        }
-        for test in sorted(failures):
-            output = "".join(event.get("Output", "") for event in events
-                             if event.get("Test") == test)
-            diagnostics = "".join(line for line in output.splitlines(keepends=True)
-                                  if not line.lstrip().startswith(("=== ", "--- ")))
-            matched = tuple(marker for marker in markers.get(test.split("/", 1)[0], ()) if marker in diagnostics)
-            if matched:
-                invariants[test] = matched
-                continue
-            if not diagnostics.strip() and any(child.startswith(test + "/") for child in failures):
-                continue
-            raise RuntimeError(f"{test} failed outside a named invariant; read {name}.out")
-    elif any(terminal[test] != "pass" for test in names) or failures:
-        raise RuntimeError(f"{name}: missing named PASS result; read {name}.out")
+        result = run(command + ["./cmd/gohealthcli"], capture,
+                     env={**GO_ENV, NONCE_ENV: nonce}, echo=False)
+    finally:
+        diagnostics = []
+        if capture.exists():
+            for line in capture.read_text().removesuffix("\n").split("\n"):
+                try:
+                    event = strict_json(line)
+                    if isinstance(event, dict) and isinstance(event.get("Output"), str):
+                        diagnostics.append(event["Output"])
+                except (ValueError, RecursionError):
+                    continue
+        decoded = "".join(diagnostics)
+        (out / f"{name}.out").write_text(decoded)
+        print(decoded, end="", flush=True)
+    proof = complete_capture(result.stdout, result.returncode,
+                             suite="safety" if safety_only else "full", nonce=nonce)
     (out / f"{name}.proof.json").write_text(json.dumps({
-        "cases": terminal, "invariants": invariants,
+        "cases": [dict(owner=case.owner, invariant=case.invariant, detail=case.detail) for case in proof.cases],
     }, indent=2) + "\n")
-    return GoProof(result.returncode, result.stdout, terminal, invariants)
+    return proof
 
 
-def require_mutation_failure(name, proof, owners, marker):
-    expected = {case: "fail" if any(owner == case or owner.startswith(case + "/") for owner in owners) else "pass"
-                for case in SAFETY_CASES}
-    if (proof.returncode != 1 or proof.cases != expected or set(proof.invariants) != set(owners)
-            or any(marker not in proof.invariants[owner] for owner in owners)):
-        raise RuntimeError(f"{name}: did not fail on its intended cases and invariant")
+def require_mutation_failure(name: str, proof: CompletedProof, expected: frozenset[Finding]):
+    if proof.findings != expected:
+        raise RuntimeError(f"{name}: did not produce its exact intended findings: {proof.findings!r}")
 
 
 def mutations(out):
@@ -130,24 +260,24 @@ def mutations(out):
                             cwd=ROOT, env=GO_ENV, text=True, capture_output=True, check=True).stdout.strip()
     checks = [
         ("completed-only", ROOT / "cmd/gohealthcli/sync_cursor.go", "return outcome == syncRunOutcomeCompleted", "return true",
-         (SAFETY_TEST,), "completed-only/key-isolation invariant"),
+         frozenset({Finding(SAFETY_TEST, "CompletedOnly")})),
         ("atomic-run", ROOT / "cmd/gohealthcli/health_archive_writer.go",
          "func (archive *sqliteHealthArchiveWriter) finalizeSyncRunAttempt(ctx context.Context, finalize syncRunFinalize) error {",
          "func (archive *sqliteHealthArchiveWriter) finalizeSyncRunAttempt(ctx context.Context, finalize syncRunFinalize) error {\n"
          "\tif err := finishSyncRun(ctx, archive.db, finalize.runFinish()); err != nil { return err }",
-         (SAFETY_TEST,), "atomic run invariant"),
+         frozenset({Finding(SAFETY_TEST, "AtomicRun")})),
         ("key-isolation", ROOT / "cmd/gohealthcli/sync_cursor.go",
          "\t\tkey.sourceFamilyFilter,\n\t\tstring(key.rollupKind),\n\t\tto,",
          '\t\t"",\n\t\tstring(key.rollupKind),\n\t\tto,',
-         (SAFETY_TEST,), "completed-only/key-isolation invariant"),
+         frozenset({Finding(SAFETY_TEST, "CompletedOnly")})),
         ("transaction-released", Path(module) / "tx.go",
          "if t.c.db != 0 && sqlite3.Xsqlite3_get_autocommit(t.c.tls, t.c.db) == 0 {",
          "if false && t.c.db != 0 && sqlite3.Xsqlite3_get_autocommit(t.c.tls, t.c.db) == 0 {",
-         CURSOR_CASES, "TransactionReleased:"),
+         frozenset(Finding(case.owner, "TransactionReleased") for case in CASES if case.owner.startswith(COMMIT_TEST + "/"))),
     ]
-    if go_check(out, "mutation-baseline", safety_only=True).returncode:
+    if go_check(out, "mutation-baseline", safety_only=True).findings:
         raise RuntimeError("Safety baseline failed; do not attribute failures to mutations")
-    for name, source, old, new, owners, marker in checks:
+    for name, source, old, new, expected in checks:
         original = source.read_text()
         if original.count(old) != 1:
             raise RuntimeError(f"{name}: source changed; update the mutation after reviewing coverage")
@@ -165,7 +295,7 @@ def mutations(out):
                 result = run(["go", "mod", "edit", "-modfile", str(modfile),
                               "-replace", f"modernc.org/sqlite={module_copy}"],
                              scratch / "module-replacement.out", env=GO_ENV)
-                if result.returncode or go_check(out, "local-driver-baseline", safety_only=True, modfile=modfile).returncode:
+                if result.returncode or go_check(out, "local-driver-baseline", safety_only=True, modfile=modfile).findings:
                     raise RuntimeError("Unmodified local SQLite module baseline failed")
                 overlay_source = module_copy / "tx.go"
             replacement = scratch / (source.name + ".overlay")
@@ -173,11 +303,11 @@ def mutations(out):
             overlay = scratch / "overlay.json"
             overlay.write_text(json.dumps({"Replace": {str(overlay_source): str(replacement)}}))
             result = go_check(out, name, safety_only=True, overlay=overlay, modfile=modfile)
-        require_mutation_failure(name, result, owners, marker)
+        require_mutation_failure(name, result, expected)
         if source.read_text() != original:
             raise RuntimeError(f"{source} changed during mutation checking")
         print(f"DETECTED {name}", flush=True)
-    if go_check(out, "mutation-restored", safety_only=True).returncode:
+    if go_check(out, "mutation-restored", safety_only=True).findings:
         raise RuntimeError("Safety baseline failed after removing overlays")
 
 
@@ -220,7 +350,7 @@ def main():
             raise RuntimeError(f"TLC did not finish a valid invariant check; read {config}.out")
         results.append(result.returncode)
     sqlite = go_check(out, "sqlite")
-    results.append(sqlite.returncode)
+    results.append(bool(sqlite.findings))
     print(f"Evidence {out}", flush=True)
     return int(any(results))
 
