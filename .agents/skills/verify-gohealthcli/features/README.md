@@ -41,7 +41,7 @@ Each feature uses exactly four H2 sections: `Sub-features`, `How to get to it (u
 - [Diagnose local setup](local-diagnostics.md): offline setup health, archive integrity, output modes, and the online authorization boundary.
 - [Inspect a Health Archive](inspect-archive.md): status, guarded SQL, schema description, and dataset export against local state.
 - [Read an archived exercise route](read-exercise-route.md): offline route help, destination and unknown-exercise failures, and an unchanged archive and sidecar tree.
-- [Explore Provider requests safely](plan-provider-request.md): secret-free list/get/reconcile/Rollup/paging planning, the configured-timezone gate, output-path safety, and observed zero local effects.
+- [Explore Provider requests safely](plan-provider-request.md): endpoint discovery and typo suggestions, secret-free list/get/reconcile/Rollup/paging planning, the configured-timezone gate, output-path safety, and observed zero local effects.
 - [Plan and inspect sync](sync-planning-and-history.md): empty Sync Run history, blocked local planning, and preflight behavior without a Connection.
 - [Back up and restore an archive](encrypted-backup.md): task-local Git, age-encrypted shards, idempotence, restore, recipient rotation, and second-read proof.
 - [Reach connected Provider commands](connected-provider-commands.md): local failure gates and the explicit live-authorization boundary.
