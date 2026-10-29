@@ -113,6 +113,8 @@ An accepted issue or PRD authored or approved by Bram counts as sign-off for its
 - Never make a PR unless the developer explicitly asks you to do so.
 - Use a conventional commit title in plain language, for example `fix(sync): preserve cursor after partial failure`.
 - State the problem, the fix, focused proof, and confidentiality review. Fill out the repository pull request template.
+- If Claude review is unavailable, use a fresh independent `codex/gpt-6.1-sol` review. Its passing verdict satisfies the agent review gate; do not block on model-family diversity.
+- Explicit `merge` or `babysit and merge` authorizes fixes, commits, pushes, and landing after applicable CI and independent verification pass. Do not request another routine approval.
 - Branch from the latest `main`; required CI and reviews must pass before merge.
 - One concern per PR. If the description says "also", split it.
 - Before posting any public artifact, verify that it contains no secrets, tokens, OAuth client JSON, personal Health Archive data, raw Provider payloads, private filesystem paths, or identifying account details.
