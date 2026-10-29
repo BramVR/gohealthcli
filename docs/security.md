@@ -170,6 +170,10 @@ network drives, including parent links that resolve to them, are rejected before
 the Provider read. Other build targets reject file output if atomic no-replace
 rename is unavailable.
 
+`route --output` writes archived exercise routes, which are location data,
+through the same contract. It prepares the file only after the archived TCX
+Attachment passed its path, size, and SHA-256 checks.
+
 ## Out of Scope
 
 - Remote secret storage.

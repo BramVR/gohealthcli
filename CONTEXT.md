@@ -26,6 +26,9 @@ _Avoid_: duplicate, history row, event
 **Data Point Attachment**: A binary payload (TCX route, future byte-shaped Provider export) tied to exactly one Data Point and stored as an owner-only sidecar file next to the SQLite archive, content-addressed by SHA-256. A Data Point Attachment is not a Data Point and is not stored inside the SQLite file.
 _Avoid_: blob, asset, media, file
 
+**Route**: The archived TCX Data Point Attachment of one exercise Data Point. `gohealthcli route` returns the newest one after verifying it against its Attachment row. A Route is not a Data Point and not a Normalized View.
+_Avoid_: GPS file, track
+
 **Data Source**: The upstream origin attached to a Data Point, such as a wearable, app, or web client.
 _Avoid_: device, platform
 

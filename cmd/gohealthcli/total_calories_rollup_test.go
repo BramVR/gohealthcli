@@ -217,6 +217,7 @@ func TestTotalCaloriesRollupExportFormatsAreDeterministic(t *testing.T) {
 		{kind: "window=6h", start: "2026-01-02T00:00:00Z", end: "2026-01-02T06:00:00Z", raw: `{"totalCalories":{"kcalSum":100}}`},
 		{kind: "dailyRollUp", civil: "2026-01-01", raw: `{"totalCalories":{"kcalSum":2142.5}}`},
 		{kind: "hourly", start: "2026-01-01T00:00:00Z", end: "2026-01-01T01:00:00Z", raw: `{"totalCalories":{"kcalSum":0.0}}`},
+		{kind: "dailyRollUp", civil: "2026-01-04", raw: `{"totalCalories":{"kcalSum":0}}`},
 	} {
 		if _, err := db.ExecContext(context.Background(), `INSERT INTO rollups (
 			provider_name, connection_id, data_type, rollup_kind,
@@ -233,10 +234,12 @@ func TestTotalCaloriesRollupExportFormatsAreDeterministic(t *testing.T) {
 	wantCSV := "provider_name,connection_id,rollup_kind,window_start_utc,window_end_utc,civil_date,kcal_sum\n" +
 		"googlehealth,googlehealth:111111256096816351,dailyRollUp,,,2026-01-01,2142.5\n" +
 		"googlehealth,googlehealth:111111256096816351,hourly,2026-01-01T00:00:00Z,2026-01-01T01:00:00Z,,0.0\n" +
-		"googlehealth,googlehealth:111111256096816351,window=6h,2026-01-02T00:00:00Z,2026-01-02T06:00:00Z,,100\n"
+		"googlehealth,googlehealth:111111256096816351,window=6h,2026-01-02T00:00:00Z,2026-01-02T06:00:00Z,,100\n" +
+		"googlehealth,googlehealth:111111256096816351,dailyRollUp,,,2026-01-04,0\n"
 	wantJSONL := "{\"provider_name\":\"googlehealth\",\"connection_id\":\"googlehealth:111111256096816351\",\"rollup_kind\":\"dailyRollUp\",\"window_start_utc\":\"\",\"window_end_utc\":\"\",\"civil_date\":\"2026-01-01\",\"kcal_sum\":\"2142.5\"}\n" +
 		"{\"provider_name\":\"googlehealth\",\"connection_id\":\"googlehealth:111111256096816351\",\"rollup_kind\":\"hourly\",\"window_start_utc\":\"2026-01-01T00:00:00Z\",\"window_end_utc\":\"2026-01-01T01:00:00Z\",\"civil_date\":\"\",\"kcal_sum\":\"0.0\"}\n" +
-		"{\"provider_name\":\"googlehealth\",\"connection_id\":\"googlehealth:111111256096816351\",\"rollup_kind\":\"window=6h\",\"window_start_utc\":\"2026-01-02T00:00:00Z\",\"window_end_utc\":\"2026-01-02T06:00:00Z\",\"civil_date\":\"\",\"kcal_sum\":\"100\"}\n"
+		"{\"provider_name\":\"googlehealth\",\"connection_id\":\"googlehealth:111111256096816351\",\"rollup_kind\":\"window=6h\",\"window_start_utc\":\"2026-01-02T00:00:00Z\",\"window_end_utc\":\"2026-01-02T06:00:00Z\",\"civil_date\":\"\",\"kcal_sum\":\"100\"}\n" +
+		"{\"provider_name\":\"googlehealth\",\"connection_id\":\"googlehealth:111111256096816351\",\"rollup_kind\":\"dailyRollUp\",\"window_start_utc\":\"\",\"window_end_utc\":\"\",\"civil_date\":\"2026-01-04\",\"kcal_sum\":\"0\"}\n"
 	for _, test := range []struct {
 		name string
 		args []string
