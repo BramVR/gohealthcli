@@ -166,11 +166,26 @@ of the read-only compiled catalog and appear under the explicit
 reference](./docs/commands/catalog.md) for the machine-readable gap and
 unverifiable-fact fields.
 
-Normalized export datasets. `gohealthcli export` accepts any of the
+### Normalized export datasets
+
+`gohealthcli export` accepts any of the
 names below as its positional argument. The list is auto-generated from
 `exportDatasetCatalogSingleton.Names()` by `make docs-export-datasets`;
 the markers around the block are stable so the regenerator can rewrite
 just the bullets without touching the surrounding prose.
+
+Every dataset below, including daily and Rollup datasets, returns only rows
+derived from archived records. No dataset fills absent days or windows with
+zero rows. An absent day means the Health Archive has no qualifying record
+for that day. Possible causes include device non-wear, a device that has not
+synced, or a day outside the synced range. Absence alone does not identify
+the cause or prove archive completeness. A stored `0` is an explicit zero.
+
+For weekly or monthly averages, keep absent days missing and include stored
+zeros. Filling absent days with zeros silently lowers the average. Report
+the number of observed days and the requested date range with the result.
+The registry-generated list below enumerates all affected export datasets;
+`query` reads the same Normalized Views.
 
 <!-- export-datasets:start -->
 - `active-minutes-intervals`
@@ -401,6 +416,10 @@ gohealthcli export daily-steps --format csv --output steps.csv
 gohealthcli export total-calories-rollups --format csv --output calories.csv
 ```
 
+Daily and Rollup exports preserve gaps. A missing day produces no row; an
+explicit zero produces a row with `0`. Do not count missing days as zeros
+when you calculate averages. See the [dataset contract](#read-surface).
+
 Explore raw provider JSON:
 
 ```bash
@@ -478,6 +497,13 @@ gohealthcli query --plain 'SELECT data_type, COUNT(*) FROM data_points GROUP BY 
 
 Command flags must appear before the SQL argument because Go flag parsing stops
 at the first positional argument.
+
+Normalized Views preserve the same absent-day contract as exports. When
+averaging `daily_steps`, filter or group by `source_family_filter`. For
+`total_calories_rollups`, filter or group by `rollup_kind`. Within one group,
+`AVG(step_count)` includes stored zeros but has no row for an absent day.
+Use `COUNT(DISTINCT civil_date)` to report observed days alongside the requested
+range. Do not calendar-join and coalesce missing days to zero.
 
 Use `gohealthcli <command> --help` or `gohealthcli help <command>` for
 command-specific flags.
@@ -559,6 +585,10 @@ made the contract predictable across them; the notes below summarise the
 behaviour that is now stable. See each command's reference page under
 [docs/commands/](./docs/commands/) for the full prose.
 
+- Daily and Rollup Normalized Views and exports never synthesize rows for
+  absent days or windows. Missing records remain missing; stored zeros remain
+  zeros. Do not average absent days as zeros. The registry-generated
+  [export dataset list](#normalized-export-datasets) above covers every dataset.
 - `--db <path>` works on its own for every read command. Passing
   `gohealthcli --db /tmp/scratch.sqlite status` opens that archive
   directly without requiring a matching `--config` file. When only
