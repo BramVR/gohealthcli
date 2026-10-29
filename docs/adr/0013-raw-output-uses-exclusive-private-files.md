@@ -170,3 +170,7 @@ inheritance remains a documented platform limit.
 
 Add red command and file-operation tests, then fill the runtime operation
 without changing Provider request or Health Archive paths.
+
+## Route output
+
+`route --output` reuses `prepareRawOutput` unchanged for archived TCX routes. Because the payload comes from the local Health Archive rather than the Provider, it prepares the destination only after the archive read and Attachment verification succeed, so a read failure never creates a staging file.

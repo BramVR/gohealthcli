@@ -164,6 +164,20 @@ with zeros before averaging. Discover the full registry-backed dataset list
 through `describe-schema --json`; this applies to every daily and Rollup
 dataset in that list.
 
+Write an archived exercise route only on an explicit request. Name the session
+by the `upstream_resource_name` from export dataset `exercise-sessions` or by
+its trailing Provider ID:
+
+```bash
+gohealthcli route '<upstream-resource-name>' --output ./run.tcx --no-input
+```
+
+`route` is offline. It verifies the newest archived TCX Attachment against its
+row and writes those exact bytes to a new owner-only file. Route data is
+location data: report the path and byte count, never coordinates. A no-route
+failure means the Connection needs the `tcx` scope and an exercise re-sync over
+that session's window with `--from`.
+
 ### 7. Back up only when explicitly requested
 
 `backup push` snapshots the current local Health Archive only. It performs no

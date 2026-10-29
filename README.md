@@ -627,6 +627,28 @@ behaviour that is now stable. See each command's reference page under
   Table columns still report their declared types — the fallback is
   view-only (PRD #144 slice 8).
 
+### Read an archived route
+
+`route` writes the archived TCX route of one exercise Data Point as its exact
+bytes. Name the session by the `upstream_resource_name` column of the
+`exercise-sessions` export or by its trailing Provider ID:
+
+```bash
+gohealthcli route users/me/dataTypes/exercise/dataPoints/<id> --output ./run.tcx
+gohealthcli route <id> --stdout | xmllint --noout -
+```
+
+It is offline: no Provider request, Credential Store read, token refresh,
+archive write, migration, or sidecar creation. It returns the newest TCX
+Attachment for that exercise after checking the sidecar's path, size, and
+SHA-256 against its row, and never falls back to an older one. Route data is
+location data, so `--output` follows the `raw --output` file rules: a new file
+only, never an overwrite, mode `0600` on Linux and macOS, and on Windows the
+parent directory's inherited ACL. An exercise without an archived route needs
+`gohealthcli connect --add-scopes tcx` and then
+`gohealthcli sync --types exercise --from YYYY-MM-DD` over that session's
+window. See [docs/commands/route.md](./docs/commands/route.md).
+
 ## Configuration
 
 Default local paths:

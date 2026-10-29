@@ -209,7 +209,7 @@ func validateInspectionOnlyJournalMode(archivePath string) error {
 		return fmt.Errorf("read SQLite header: %w", err)
 	}
 	if string(header[:16]) == "SQLite format 3\x00" && (header[18] == 2 || header[19] == 2) {
-		return errors.New("inspection-only planning does not support SQLite WAL mode")
+		return errors.New("inspection-only Health Archive reads do not support SQLite WAL mode")
 	}
 	return nil
 }
