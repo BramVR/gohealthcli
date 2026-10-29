@@ -63,15 +63,16 @@ type FailureReport struct {
 type remediationAction string
 
 const (
-	remediationShowHelp     remediationAction = "gohealthcli --help"
-	remediationRunDoctor    remediationAction = "gohealthcli doctor"
-	remediationDoctorOnline remediationAction = "gohealthcli doctor --online"
-	remediationReconnect    remediationAction = "gohealthcli connect"
-	remediationInitialize   remediationAction = "gohealthcli init"
-	remediationInitHelp     remediationAction = "gohealthcli init --help"
-	remediationStatus       remediationAction = "gohealthcli status"
-	remediationSyncFrom     remediationAction = "gohealthcli sync --from YYYY-MM-DD"
-	maxRemediationActions                     = 3
+	remediationShowHelp         remediationAction = "gohealthcli --help"
+	remediationRunDoctor        remediationAction = "gohealthcli doctor"
+	remediationDoctorOnline     remediationAction = "gohealthcli doctor --online"
+	remediationReconnect        remediationAction = "gohealthcli connect"
+	remediationInitialize       remediationAction = "gohealthcli init"
+	remediationInitHelp         remediationAction = "gohealthcli init --help"
+	remediationStatus           remediationAction = "gohealthcli status"
+	remediationSyncFrom         remediationAction = "gohealthcli sync --from YYYY-MM-DD"
+	remediationSyncExerciseFrom remediationAction = "gohealthcli sync --types exercise --from YYYY-MM-DD"
+	maxRemediationActions                         = 3
 )
 
 // remediationError is the only carrier the Failure Reporter reads.
@@ -135,7 +136,7 @@ func normalizeRemediation(actions []remediationAction) []string {
 
 func isReporterRemediation(action string) bool {
 	switch remediationAction(action) {
-	case remediationShowHelp, remediationRunDoctor, remediationDoctorOnline, remediationReconnect, remediationInitialize, remediationInitHelp, remediationStatus, remediationSyncFrom:
+	case remediationShowHelp, remediationRunDoctor, remediationDoctorOnline, remediationReconnect, remediationInitialize, remediationInitHelp, remediationStatus, remediationSyncFrom, remediationSyncExerciseFrom:
 		return true
 	}
 	const addScopesPrefix = "gohealthcli connect --add-scopes "

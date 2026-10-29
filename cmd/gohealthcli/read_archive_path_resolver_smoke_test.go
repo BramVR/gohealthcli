@@ -132,3 +132,24 @@ func writeOwnerOnlyTOML(t *testing.T, path, body string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+func TestRouteOpensExplicitDBWithoutConfig(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tempDir, "missing-config-xdg"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(tempDir, "missing-data-xdg"))
+	archivePath := filepath.Join(tempDir, "scratch", "scratch.sqlite")
+	if err := createArchive(archivePath); err != nil {
+		t.Fatalf("create scratch archive: %v", err)
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{"route", "--db", archivePath, "--json", "--stdout", "run-1"}, stdout, stderr)
+	var envelope failureJSONEnvelope
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode envelope %q: %v", stdout.String(), err)
+	}
+	if code != 1 || envelope.Status != StatusFlagInvalid || envelope.Message != `no archived Data Point matches "run-1"` {
+		t.Fatalf("exit = %d envelope = %+v stderr = %q, want identifier lookup in the explicit archive", code, envelope, stderr.String())
+	}
+}

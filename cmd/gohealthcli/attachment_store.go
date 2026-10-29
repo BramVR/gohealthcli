@@ -418,6 +418,55 @@ func readContainedAttachment(rootDir, pathRelative string, expectedSize int64, e
 	return readAttachmentFileNoFollow(rootDir, pathRelative, expectedSize, expectedRoot)
 }
 
+type attachmentIntegrityError struct {
+	err error
+}
+
+func (err *attachmentIntegrityError) Error() string {
+	return "Data Point Attachment failed verification: " + err.err.Error()
+}
+func (err *attachmentIntegrityError) Unwrap() error { return err.err }
+
+func readVerifiedAttachment(rootDir string, record attachmentRecord) ([]byte, error) {
+	err := validateAttachmentRow(record.Kind, record.SHA256, record.PathRelative, record.ByteSize)
+	var payload []byte
+	if err == nil {
+		payload, err = readContainedAttachment(rootDir, record.PathRelative, record.ByteSize, nil)
+	}
+	if err == nil {
+		err = validateAttachmentPayload(record.SHA256, record.ByteSize, payload)
+	}
+	if err != nil {
+		return nil, &attachmentIntegrityError{err: fmt.Errorf("attachment %d: %w", record.ID, err)}
+	}
+	return payload, nil
+}
+
+func validateAttachmentRow(kind, sha256Hex, pathRelative string, byteSize int64) error {
+	wantPath, err := canonicalAttachmentPathRelative(kind, sha256Hex)
+	if err != nil {
+		return err
+	}
+	if pathRelative != wantPath {
+		return fmt.Errorf("path_relative %q, want canonical path %q", pathRelative, wantPath)
+	}
+	if byteSize < 0 {
+		return fmt.Errorf("byte_size %d must not be negative", byteSize)
+	}
+	return nil
+}
+
+func validateAttachmentPayload(sha256Hex string, byteSize int64, payload []byte) error {
+	if byteSize != int64(len(payload)) {
+		return fmt.Errorf("byte_size %d does not match payload size %d", byteSize, len(payload))
+	}
+	hash := sha256.Sum256(payload)
+	if got := hex.EncodeToString(hash[:]); got != sha256Hex {
+		return fmt.Errorf("sha256 %q does not match payload hash %q", sha256Hex, got)
+	}
+	return nil
+}
+
 func writeContainedAttachment(rootDir, pathRelative string, payload []byte) error {
 	if _, err := resolveContainedPath(rootDir, pathRelative); err != nil {
 		return err

@@ -3,9 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -421,7 +419,7 @@ func ValidateHealthArchiveSnapshot(snapshot HealthArchiveSnapshot) error {
 			return fmt.Errorf("duplicate Data Point Attachment identity for id %d", attachment.ID)
 		}
 		attachmentIdentities[identity] = struct{}{}
-		if err := validateSnapshotAttachmentRow(attachment); err != nil {
+		if err := validateAttachmentRow(attachment.Kind, attachment.SHA256, attachment.PathRelative, attachment.ByteSize); err != nil {
 			return fmt.Errorf("Data Point Attachment %d: %w", attachment.ID, err)
 		}
 		if previous, exists := attachmentPayloadRefs[attachment.PathRelative]; exists && (previous.SHA256 != attachment.SHA256 || previous.ByteSize != attachment.ByteSize) {
@@ -435,7 +433,7 @@ func ValidateHealthArchiveSnapshot(snapshot HealthArchiveSnapshot) error {
 			return fmt.Errorf("ambiguous duplicate Attachment payload path %q", payload.PathRelative)
 		}
 		attachmentPayloads[payload.PathRelative] = struct{}{}
-		if err := validateSnapshotAttachmentPayload(payload); err != nil {
+		if err := validateAttachmentPayload(payload.SHA256, payload.ByteSize, payload.Payload); err != nil {
 			return fmt.Errorf("Attachment payload %q: %w", payload.PathRelative, err)
 		}
 		attachment, exists := attachmentPayloadRefs[payload.PathRelative]
@@ -939,7 +937,7 @@ func exportSnapshotDataPointAttachments(ctx context.Context, db healthArchiveSna
 		if err := rows.Scan(&item.ID, &item.DataPointID, &item.Kind, &item.SHA256, &item.PathRelative, &item.ByteSize, &item.FetchedAt); err != nil {
 			return nil, nil, err
 		}
-		if err := validateSnapshotAttachmentRow(item); err != nil {
+		if err := validateAttachmentRow(item.Kind, item.SHA256, item.PathRelative, item.ByteSize); err != nil {
 			return nil, nil, fmt.Errorf("export Data Point Attachment %d: %w", item.ID, err)
 		}
 		if previous, exists := payloadsByPath[item.PathRelative]; exists {
@@ -964,7 +962,7 @@ func exportSnapshotDataPointAttachments(ctx context.Context, db healthArchiveSna
 				ByteSize:     item.ByteSize,
 				Payload:      payload,
 			}
-			if err := validateSnapshotAttachmentPayload(entry); err != nil {
+			if err := validateAttachmentPayload(entry.SHA256, entry.ByteSize, entry.Payload); err != nil {
 				return nil, nil, fmt.Errorf("export Data Point Attachment %d: %w", item.ID, err)
 			}
 			payloadsByPath[item.PathRelative] = entry
@@ -982,31 +980,6 @@ func exportSnapshotDataPointAttachments(ctx context.Context, db healthArchiveSna
 		return payloads[i].PathRelative < payloads[j].PathRelative
 	})
 	return items, payloads, nil
-}
-
-func validateSnapshotAttachmentRow(attachment HealthArchiveSnapshotDataPointAttachment) error {
-	wantPath, err := canonicalAttachmentPathRelative(attachment.Kind, attachment.SHA256)
-	if err != nil {
-		return err
-	}
-	if attachment.PathRelative != wantPath {
-		return fmt.Errorf("path_relative %q, want canonical path %q", attachment.PathRelative, wantPath)
-	}
-	if attachment.ByteSize < 0 {
-		return fmt.Errorf("byte_size %d must not be negative", attachment.ByteSize)
-	}
-	return nil
-}
-
-func validateSnapshotAttachmentPayload(payload HealthArchiveSnapshotAttachmentPayload) error {
-	if payload.ByteSize != int64(len(payload.Payload)) {
-		return fmt.Errorf("byte_size %d does not match payload size %d", payload.ByteSize, len(payload.Payload))
-	}
-	hash := sha256.Sum256(payload.Payload)
-	if got := hex.EncodeToString(hash[:]); got != payload.SHA256 {
-		return fmt.Errorf("sha256 %q does not match payload hash %q", payload.SHA256, got)
-	}
-	return nil
 }
 
 func exportSnapshotRollups(ctx context.Context, db healthArchiveSnapshotQuerier) ([]HealthArchiveSnapshotRollup, error) {

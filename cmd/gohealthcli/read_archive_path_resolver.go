@@ -3,7 +3,7 @@ package main
 import "fmt"
 
 // readArchivePathResolver owns Health Archive path resolution for the
-// four read commands (`status`, `query`, `export`, `describe-schema`).
+// read commands (`status`, `query`, `export`, `describe-schema`, `route`).
 // PRD #144 slice 1 (issue #155).
 //
 // Read commands accept three ergonomic shapes the write side does not:
@@ -29,8 +29,8 @@ type readArchivePathResolver struct {
 
 // resolveReadArchivePath is the one-line call site every read command
 // goes through. It snaps the four CommonFlagValues fields the resolver
-// needs into the struct literal so the four read-command entry points
-// (status, query, export, describe-schema) read as a single call rather
+// needs into the struct literal so the read-command entry points
+// (status, query, export, describe-schema, route) read as a single call rather
 // than re-typing the same `field: common.Field` mapping each time —
 // matching the PRD #144 Architecture Notes ("Every read command becomes
 // a one-line call").
