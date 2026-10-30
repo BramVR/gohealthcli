@@ -270,13 +270,16 @@ def mutations(out):
          "\t\tkey.sourceFamilyFilter,\n\t\tstring(key.rollupKind),\n\t\tto,",
          '\t\t"",\n\t\tstring(key.rollupKind),\n\t\tto,',
          frozenset({Finding(SAFETY_TEST, "CompletedOnly")})),
+        ("highwater", ROOT / "cmd/gohealthcli/sync_cursor.go",
+         "if !incoming.After(existing) {", "if false && !incoming.After(existing) {",
+         frozenset({Finding(SAFETY_TEST, "CompletedOnly"), Finding(HIGHWATER_TEST, "CursorHighwater")})),
         ("transaction-released", Path(module) / "tx.go",
          "if t.c.db != 0 && sqlite3.Xsqlite3_get_autocommit(t.c.tls, t.c.db) == 0 {",
          "if false && t.c.db != 0 && sqlite3.Xsqlite3_get_autocommit(t.c.tls, t.c.db) == 0 {",
          frozenset(Finding(case.owner, "TransactionReleased") for case in CASES if case.owner.startswith(COMMIT_TEST + "/"))),
     ]
-    if go_check(out, "mutation-baseline", safety_only=True).findings:
-        raise RuntimeError("Safety baseline failed; do not attribute failures to mutations")
+    if go_check(out, "mutation-baseline").findings:
+        raise RuntimeError("Full baseline failed; do not attribute failures to mutations")
     for name, source, old, new, expected in checks:
         original = source.read_text()
         if original.count(old) != 1:
@@ -295,20 +298,20 @@ def mutations(out):
                 result = run(["go", "mod", "edit", "-modfile", str(modfile),
                               "-replace", f"modernc.org/sqlite={module_copy}"],
                              scratch / "module-replacement.out", env=GO_ENV)
-                if result.returncode or go_check(out, "local-driver-baseline", safety_only=True, modfile=modfile).findings:
+                if result.returncode or go_check(out, "local-driver-baseline", modfile=modfile).findings:
                     raise RuntimeError("Unmodified local SQLite module baseline failed")
                 overlay_source = module_copy / "tx.go"
             replacement = scratch / (source.name + ".overlay")
             replacement.write_text(original.replace(old, new))
             overlay = scratch / "overlay.json"
             overlay.write_text(json.dumps({"Replace": {str(overlay_source): str(replacement)}}))
-            result = go_check(out, name, safety_only=True, overlay=overlay, modfile=modfile)
+            result = go_check(out, name, overlay=overlay, modfile=modfile)
         require_mutation_failure(name, result, expected)
         if source.read_text() != original:
             raise RuntimeError(f"{source} changed during mutation checking")
         print(f"DETECTED {name}", flush=True)
-    if go_check(out, "mutation-restored", safety_only=True).findings:
-        raise RuntimeError("Safety baseline failed after removing overlays")
+    if go_check(out, "mutation-restored").findings:
+        raise RuntimeError("Full baseline failed after removing overlays")
 
 
 def main():
