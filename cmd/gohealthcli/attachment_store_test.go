@@ -405,6 +405,15 @@ func TestAttachmentStoreWalkRejectsTraversalPathRelative(t *testing.T) {
 	}
 }
 
+func TestResolveContainedPathRejectsPortableAbsolutePaths(t *testing.T) {
+	t.Parallel()
+	for _, relative := range []string{"/etc/passwd", "//server/share/attachment.tcx"} {
+		if _, err := resolveContainedPath(t.TempDir(), relative); err == nil {
+			t.Errorf("accepted absolute portable path %q", relative)
+		}
+	}
+}
+
 func TestResolveContainedPathCleansRootBeforeBoundaryCheck(t *testing.T) {
 	t.Parallel()
 	// rootDir derives from the archive path and may carry internal dot

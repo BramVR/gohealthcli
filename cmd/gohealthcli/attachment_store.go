@@ -148,13 +148,6 @@ func inspectAttachmentRoot(archivePath string) (string, string, error) {
 	return root, mode, nil
 }
 
-// openAttachmentStoreReadOnly opens the store without taking the
-// write lock on the SQLite handle. Walk and the doctor integration
-// use this so integrity checks can run against read-only copies.
-func openAttachmentStoreReadOnly(archivePath string) (*attachmentStore, error) {
-	return openAttachmentStoreMode(archivePath, readOnlyArchive)
-}
-
 func openAttachmentStoreMode(archivePath string, mode healthArchiveOpenMode) (*attachmentStore, error) {
 	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(context.Background(), mode)
 	if err != nil {
@@ -375,7 +368,7 @@ func (store *attachmentStore) Walk(ctx context.Context, fn func(attachmentOrphan
 // Store).
 func resolveContainedPath(rootDir, pathRelative string) (string, error) {
 	osRelative := filepath.FromSlash(pathRelative)
-	if filepath.IsAbs(osRelative) {
+	if path.IsAbs(pathRelative) || filepath.IsAbs(osRelative) {
 		return "", fmt.Errorf("attachment path_relative %q is absolute", pathRelative)
 	}
 	// Scan segments on the OS-native path so a "..\\" segment is caught on
