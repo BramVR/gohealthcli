@@ -3,17 +3,64 @@ title: "Data Types"
 description: "What each Google Health Data Type captures and how gohealthcli stores it."
 ---
 
-A plain-language guide to every Data Type the Google Health catalog exposes through `gohealthcli`. Each entry names the sync key you pass to `sync --types`, the upstream record shape (sample / interval / session / daily), the OAuth scope required, and what the catalog row supports. For the canonical machine-readable list, see the [README](https://github.com/BramVR/gohealthcli#readme); for storage shape, see [`docs/data-model.md`](https://github.com/BramVR/gohealthcli/blob/main/docs/data-model.md).
+A plain-language guide to every Data Type the Google Health catalog exposes through `gohealthcli`. Each entry names the sync key you pass to `sync --types`, the upstream record shape (sample / interval / session / daily), the OAuth scope required, and what the catalog row supports. Run `gohealthcli catalog list --json` for the canonical machine-readable list, `gohealthcli catalog scopes --json` for exact scope membership, and `gohealthcli catalog describe <data-type> --json` for one type's compiled endpoint contract plus discovery-backed field names and JSON types. For storage shape, see [`docs/data-model.md`](https://github.com/BramVR/gohealthcli/blob/main/docs/data-model.md).
 
 ## How to read this page
 
 - **Sync key** — the literal string accepted by `sync --types`.
 - **Shape** — how the upstream returns each Data Point: `sample` (point-in-time reading), `interval` (a value over a span), `session` (a user activity with start/end), `daily` (one row per civil date).
-- **Scope** — the OAuth scope required. Tier 2 keys (`ecg`, `irn`, `tcx`) are opt-in via `connect --add-scopes …`.
+- **Scope** — the OAuth scope required. Opt-in keys (`ecg`, `irn`, `nutrition`, `tcx`, plus `settings`, which gates the `settings`/`devices` identity commands rather than any sync type) are granted via `connect --add-scopes …`; none of them are part of the default `connect` grant.
 - **Rollups** — which `--rollup` kinds the catalog row supports beyond raw Data Points.
 - **Stored as** — the table the row lands in (`data_points` for raw, `rollups` for aggregates) plus the normalized view exposed for queries and `export`.
 
-The catalog is authoritative in `cmd/gohealthcli/google_health_data_types.go`; this page is its narrative companion.
+The catalog is authoritative in `internal/googlehealth/catalog.go`; this page is its narrative companion.
+`catalog describe` keeps that compiled catalog authoritative: discovery facts
+are separately sourced and cannot override endpoint, filter, scope, record, or
+Rollup behavior.
+
+## Get one Data Point by ID
+
+The compiled catalog exposes the `get` endpoint family for `blood-glucose`,
+`body-fat`, `core-body-temperature`, `exercise`, `height`, `hydration-log`,
+`nutrition-log`, `sleep`, and `weight`. Fetch one with
+`gohealthcli raw data-type <data-type> get --id <provider-id>`. The Provider ID
+is opaque, the request treats it as one URL path component, and the operation
+does not accept a range, source filter, or paging input. Run
+`catalog describe <data-type> --json` and inspect
+`compiled.endpoint_families` instead of copying this support list into scripts.
+
+## How long does each type take to sync?
+
+Sync cost is proportional to Data Point count. Sustained throughput measures roughly 2,000–5,000 Data Points per minute on real runs; the table plans with the conservative ~2,000/min. Densities were measured 2026-06-10 from one real account backed by a Pixel Watch 4 (continuous heart-rate sampling) — your numbers scale with what your devices record. Cursor-resumed incremental syncs cover only the gap since the last run and finish in seconds regardless of type; Rollup syncs land one row per day or window and are always trivial.
+
+For a raw Data Point Initial Backfill, `sync` requests the largest safe provider page size automatically: `pageSize=10000` for `heart-rate`, `steps`, and other ordinary raw Data Types, with the documented smaller `pageSize=25` cap for `sleep` and `exercise`. This lowers page count and retry surface, but it cannot make continuous heart-rate history small: a high-density account still has hundreds of thousands of raw Data Points over weeks. The `raw` debugging command remains explicit — it sends no page size unless you pass `gohealthcli raw --page-size`.
+
+Points-per-day spans orders of magnitude because a Data Point is the upstream record unit, and that unit varies by shape: a `sample` point is a single reading (the watch emits a heart-rate sample every ~3 seconds), an `interval` point is one time-bucket (a steps point covers about a minute of walking), a `session` point is one whole activity (a sleep point is an entire night, stage breakdown included), and a `daily` point is one row per civil date.
+
+Each sync key links to its full description further down this page.
+
+| Sync key | Shape | Points/day | Two weeks ≈ | Sync time ≈ |
+| --- | --- | --- | --- | --- |
+| [`heart-rate`](#heart-rate) | sample | ~27,500 | ~385,000 pts | 1.5–3 h |
+| [`time-in-heart-rate-zone`](#time-in-heart-rate-zone) | interval | ~960 | ~13,400 pts | ~5 min |
+| [`active-energy-burned`](#active-energy-burned) | interval | ~630 | ~8,800 pts | ~4 min |
+| [`activity-level`](#activity-level) | interval | ~540 | ~7,600 pts | ~4 min |
+| [`oxygen-saturation`](#oxygen-saturation) | sample | ~480 | ~6,700 pts | ~3 min |
+| [`active-minutes`](#active-minutes) | interval | ~280 | ~3,900 pts | ~2 min |
+| [`steps`](#steps) | interval | ~260 | ~3,600 pts | ~2 min |
+| [`distance`](#distance) | interval | ~210 | ~2,900 pts | ~1–2 min |
+| [`heart-rate-variability`](#heart-rate-variability) | sample | ~60 | ~800 pts | under a minute |
+| [`sedentary-period`](#sedentary-period) | interval | ~14 | ~190 pts | seconds |
+| [`active-zone-minutes`](#active-zone-minutes) | interval | ~13 | ~180 pts | seconds |
+| [`altitude`](#altitude) | interval | ~8 | ~120 pts | seconds |
+| [`swim-lengths-data`](#swim-lengths-data) | interval | ~7 | ~100 pts | seconds |
+| [`exercise`](#exercise) | session | ~2 | ~30 pts | seconds |
+| [`sleep`](#sleep) | session | ~1 | ~18 pts | seconds |
+| [`vo2-max`](#vo2-max), [`run-vo2-max`](#run-vo2-max), [`respiratory-rate-sleep-summary`](#respiratory-rate-sleep-summary), the `daily-*` types | sample / daily | ~1 | ~14 pts | seconds |
+
+Not yet measured on this account: [`basal-energy-burned`](#basal-energy-burned), [`floors`](#floors), [`calories-in-heart-rate-zone`](#calories-in-heart-rate-zone), [`electrocardiogram`](#electrocardiogram), [`irregular-rhythm-notification`](#irregular-rhythm-notification), [`weight`](#weight), [`body-fat`](#body-fat), [`height`](#height), [`blood-glucose`](#blood-glucose), [`core-body-temperature`](#core-body-temperature), [`hydration-log`](#hydration-log), and [`nutrition-log`](#nutrition-log). Most of these are sparse user-logged or per-event records (weigh-ins, ECG sessions, hydration or food entries) and should sync in seconds; a continuously-recording source — a CGM feeding `blood-glucose`, for instance — raises density and cost accordingly.
+
+A run longer than an OAuth access token's ~1-hour lifetime survives it: the token is refreshed mid-run on the first 401 and the failed page retried, so even a two-week `heart-rate` backfill can run as a single `--from`/`--to` window in the standard `init --oauth-client-file` setup. The [sync reference](commands/sync.html) has the full timing prose, and `sync --status` watches a long run live from a second terminal.
 
 ## Activity and fitness
 
@@ -42,9 +89,10 @@ Distance travelled over a time interval, in metres. Reconcile-capable, so `--sou
 - **Shape:** interval
 - **Scope:** `activity_and_fitness.readonly`
 - **Rollups:** `daily`, `hourly`, `weekly`, `window=<duration>`
-- **Stored as:** `data_points` or `rollups`
+- **Stored as:** `data_points` (raw) or `rollups` (aggregated); normalized view `floors-intervals`
 
 Floors climbed over an interval. Not yet a default sync type — opt in via `--types floors` until the upstream filter shape is confirmed across multiple weeks of real data.
+Google does not expose `floors` through `dataPoints.list`; use a Rollup mode or `--source-family wearable` so gohealthcli uses a supported provider endpoint.
 
 ### Altitude
 
@@ -63,6 +111,16 @@ Altitude readings over an interval.
 - **Stored as:** `data_points`
 
 Active-only energy expenditure (kilocalories) over an interval, excluding basal metabolism.
+
+### Basal energy burned
+
+- **Sync key:** `basal-energy-burned`
+- **Shape:** interval
+- **Scope:** `activity_and_fitness.readonly`
+- **Rollups:** none
+- **Stored as:** `data_points`; normalized export `basal-energy-burned-intervals`
+
+Resting-metabolism energy expenditure in kilocalories over an interval. Raw sync uses `list`; `--source-family wearable` uses `reconcile`. Both filter on `basal_energy_burned.interval.start_time`. This opt-in Data Type is deliberately absent from `sync --all` until Google's English catalog catches up with the v4 discovery and localized calorie documentation.
 
 ### Active minutes
 
@@ -103,11 +161,14 @@ Continuous spans of low movement the provider flagged as sedentary.
 ### Calories in heart-rate zone
 
 - **Sync key:** `calories-in-heart-rate-zone`
-- **Shape:** interval
+- **Shape:** Rollup-only
 - **Scope:** `activity_and_fitness.readonly`
-- **Stored as:** `data_points`
+- **Rollups:** `daily`, `hourly`, `weekly`, `window=<duration>` (1h / 1d / 7d granularities)
+- **Stored as:** `rollups`; normalized export `calories-in-heart-rate-zone-rollups`
 
-Calories burned while in each heart-rate zone over an interval. The live API currently rejects the assumed filter; the catalog row is kept for future debugging.
+Calories burned in each heart-rate zone per Rollup bucket. Google exposes this type only through `dailyRollUp` and physical-window `rollUp`, so raw Data Point sync remains rejected. Each bucket is archived as one `rollups` row with its raw JSON. The export has one row per bucket and zone entry, with a zero-based `zone_index` that follows the Provider's array order. Zone labels pass through as Google sends them, including `HEART_RATE_ZONE_TYPE_UNSPECIFIED` and values gohealthcli does not know yet. Duplicate labels in one bucket stay separate rows.
+
+When the `caloriesInHeartRateZone` union member is absent, the bucket has no data and is skipped. When the member is present but its `caloriesInHeartRateZones` array is missing, null, or empty, the bucket is archived and exports no rows. A zone with `kcal: 0` exports `0`, and `kcal: 0.0` exports `0.0`. A zone with no `kcal` still exports a row, with an empty amount in CSV and plain output and `null` in JSONL. Whether Google omits zero amounts is not yet observed, so gohealthcli does not invent a zero. Google limits both endpoint modes to 14-day request spans; gohealthcli chunks longer ranges without gaps and keeps daily and physical Rollup cursors independent.
 
 ### Time in heart-rate zone
 
@@ -157,7 +218,17 @@ Per-length swim metrics (stroke type, length, duration) captured by waterproof w
 ### Total calories
 
 - **Sync key:** `total-calories`
-- **Status:** catalog-reserved; raw sync is not supported because Google exposes total-calories only as Rollup data.
+- **Shape:** Rollup-only
+- **Scope:** `activity_and_fitness.readonly`
+- **Rollups:** `daily`, `hourly`, `weekly`, `window=<duration>` (1h / 1d / 7d granularities)
+- **Stored as:** `rollups`; normalized export `total-calories-rollups`
+
+Google exposes total calories only through `dailyRollUp` and physical-window
+`rollUp`; raw Data Point sync remains rejected. An absent `totalCalories` union
+member means no manual or on-wrist data and is skipped. A present `kcalSum: 0`
+is an explicit measurement and remains queryable/exportable. Google limits both
+endpoint modes to 14-day request spans; gohealthcli chunks longer ranges without
+gaps and keeps daily and physical Rollup cursors independent.
 
 ## Heart rate Data Types
 
@@ -166,10 +237,19 @@ Per-length swim metrics (stroke type, length, duration) captured by waterproof w
 - **Sync key:** `heart-rate`
 - **Shape:** sample
 - **Scope:** `health_metrics_and_measurements.readonly`
-- **Rollups:** `hourly`, `weekly`, `window=<duration>` (1h / 1d / 7d granularities)
+- **Rollups:** `daily`, `hourly`, `weekly`, `window=<duration>` (1h / 1d / 7d granularities)
 - **Stored as:** `data_points` or `rollups`; normalized view `heart-rate-samples`
 
 Beats-per-minute readings at a point in time. The high-volume Data Type for any wearable, typically arriving at one sample per few seconds to minutes.
+Daily heart-rate Rollups are summary-history records in the `rollups` table and do not replace or imply a backfill of raw heart-rate samples.
+
+Choose the Initial Backfill path by the question you need to answer:
+
+- Exact sample history: `gohealthcli sync --types heart-rate --from 2026-01-01 --to 2026-01-15 --plain`
+- Fast daily summary history: `gohealthcli sync --types heart-rate --rollup daily --from 2026-01-01 --to 2026-03-01 --plain`
+- Fast hourly summary history: `gohealthcli sync --types heart-rate --rollup hourly --from 2026-01-01 --to 2026-01-15 --plain`
+
+Raw heart-rate Data Points and heart-rate Rollups write separate archive records and carry separate Sync Cursors. Running the daily Rollup path first is a good way to get trend history quickly, but a later raw sample sync still needs its own raw Initial Backfill.
 
 ### Heart-rate variability
 
@@ -215,10 +295,14 @@ These are gated behind opt-in scopes the user grants via `gohealthcli connect --
 
 - **Sync key:** `electrocardiogram`
 - **Shape:** session
-- **Scope:** `ecg.readonly` (Tier 2 opt-in)
+- **Scope:** `ecg.readonly` (Tier 2, opt-in via `connect --add-scopes ecg`)
 - **Stored as:** `data_points`; normalized export `electrocardiogram-sessions`
 
 A user-triggered ECG measurement: start/end, classification (e.g. sinus rhythm, AFib), and the underlying samples preserved in raw JSON.
+Google's list endpoint accepts only a physical
+`electrocardiogram.interval.start_time >= ...` filter. Sync applies the
+requested exclusive `--to` boundary before archiving, so its normal `[from,to)`
+contract still holds.
 
 ### Irregular rhythm notification
 
@@ -271,7 +355,7 @@ One respiratory-rate summary per civil date.
 
 - **Sync key:** `respiratory-rate-sleep-summary`
 - **Shape:** sample
-- **Scope:** `sleep.readonly`
+- **Scope:** `health_metrics_and_measurements.readonly`
 - **Stored as:** `data_points`; normalized export `respiratory-rate-sleep-summary`
 
 Breaths-per-minute summary derived from the sleep window — emitted per sleep session, not per civil date.
@@ -345,16 +429,44 @@ Glucose readings at a point in time, from a CGM or manual entry.
 
 Core-temperature readings at a point in time.
 
-## Hydration
+## Nutrition and hydration
 
 ### Hydration log
 
 - **Sync key:** `hydration-log`
 - **Shape:** session
-- **Scope:** `nutrition.readonly`
-- **Stored as:** `data_points`
+- **Scope:** `nutrition.readonly` (opt-in via `connect --add-scopes nutrition` — never part of the default `connect` grant)
+- **Stored as:** `data_points`; normalized view `hydration-log-sessions`
 
-A user-logged hydration entry: volume over a civil window. The only Data Type under the nutrition scope today.
+A user-logged hydration entry: volume over a civil window.
+
+### Nutrition log
+
+- **Sync key:** `nutrition-log`
+- **Shape:** session
+- **Scope:** `nutrition.readonly` (opt-in via `connect --add-scopes nutrition` — never part of the default `connect` grant)
+- **List / reconcile:** yes; civil filter `nutrition_log.interval.civil_start_time`
+- **Rollups:** not implemented
+- **Stored as:** `data_points`; normalized views `nutrition-log-sessions` and `nutrition-log-nutrients`
+- **Default / `sync --all`:** no; explicit `sync --types nutrition-log` only
+
+One raw Data Point per logged food. Identified foods retain the Food resource
+name; anonymous foods retain their display name. The Normalized View keeps one
+row per parent log with nullable meal, serving, energy, carbohydrate, fat, and
+food-reference columns. It also retains the unexpanded `nutrients_json` array;
+`nutrition-log-nutrients` expands that array into one row per nutrient with
+the parent session and food context, the original array index, the nutrient
+enum, and nullable grams. Unknown nutrient enum values pass through unchanged.
+
+## Upstream write-only Data Types
+
+Google Health discovery revision `20260817` adds `menstrual-period`, `moods`,
+`ovulation-test`, and `symptoms` to the raw Data Point union. Google's Data
+Types table and Women's Health guide document only `create`, `update`, and
+`batchDelete` operations for them, with write-only scopes. gohealthcli does not
+write or delete Provider health data, so these four names are not sync keys and
+do not appear in `catalog list` or completion. `catalog verify` accounts for
+them under the `upstream_write_only` known gap.
 
 ## Identity, device, and settings snapshots
 
@@ -362,9 +474,9 @@ These ride alongside the Data Point catalog and capture per-Connection metadata.
 
 - **Profile** — `gohealthcli profile`. Provider account profile (membership date, age, stride lengths). Stored as `kind='profile'`; queryable via the `searchable-text` view.
 - **Settings** — `gohealthcli settings`. Measurement system, timezone, stride length type. Exposed via the `current-settings` view.
-- **Paired devices** — `gohealthcli devices`. One row per paired wearable with model, manufacturer, battery, last-sync, and feature set. Exposed via the `paired-devices` view.
+- **Paired devices** — `gohealthcli devices`. One row per paired wearable with resource name, device type, device version, and battery status/level. Exposed via the `paired-devices` view.
 - **IRN profile** — `gohealthcli irn-profile` (Tier 2 `irn.readonly` opt-in). Tracks onboarding and enrollment state for irregular-rhythm notifications. Exposed via the `current-irn-profile` view.
 
 ## Rollups
 
-Most Data Types support `--rollup daily`, which calls the upstream `dailyRollUp` endpoint and writes to the `rollups` table instead of `data_points`. The catalog rows for `steps`, `heart-rate`, and `floors` additionally support the windowed `rollUp` endpoint (`--rollup hourly`, `--rollup weekly`, or `--rollup window=<duration>`) at 1h / 1d / 7d granularities. Each rollup kind carries its own Sync Cursor — syncing weekly aggregates does not disturb the hourly cursor for the same Data Type. See [`sync`](commands/sync.html) for the full flag matrix.
+`steps`, `heart-rate`, `floors`, and Rollup-only `total-calories` and `calories-in-heart-rate-zone` support `--rollup daily`, which calls the upstream `dailyRollUp` endpoint and writes to the `rollups` table instead of `data_points`. The same catalog rows support the windowed `rollUp` endpoint (`--rollup hourly`, `--rollup weekly`, or `--rollup window=<duration>`) at 1h / 1d / 7d granularities. Heart-rate daily Rollups are a fast daily summary-history path, not a replacement for raw heart-rate samples. Total-calories and calories-in-heart-rate-zone requests are capped at 14 days per Provider call, with physical chunk boundaries aligned to whole requested windows. Each rollup kind carries its own Sync Cursor — syncing daily aggregates does not disturb raw or hourly cursors for the same Data Type. See [`sync`](commands/sync.html) for the full flag matrix.
