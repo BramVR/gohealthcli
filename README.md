@@ -689,6 +689,22 @@ Use `doctor --plain` to check local setup without provider calls. Use
 `doctor --online --plain` only when you want token refresh and Google Health
 reachability checks.
 
+`doctor` verifies every Data Point Attachment's canonical path, byte size, and
+SHA-256 through the same no-follow reads as `route`. Corrupt Attachments produce
+`setup_invalid` and exit 1, with every failure listed in human, plain, and JSON
+output. JSON adds `attachments.verification_failures` records containing
+`attachment_id`, `data_point_id`, `sha256`, `path_relative`, and `reason`, ordered
+by Attachment ID. Plain output adds `attachments_verification_failures: N` and
+zero-based `attachments_verification_failures.N.<field>` lines. Existing
+`orphan_rows` and `orphan_files` arrays remain unchanged. Orphan-only reports
+still return `ok` and exit 0. Clean archives omit `attachments`.
+
+Doctor never migrates, creates, or repairs the Health Archive or sidecars.
+Stale schemas, SQLite WAL mode, missing roots, and symbolic-link roots fail
+without changes. Windows reparse points are also rejected. Local integrity
+failures stop `--online` before credentials or Provider access. To recover
+corrupt content, restore the matching archive and sidecars from a known-good copy.
+
 ## Encrypted backups
 
 `backup init` creates or reuses an X25519 age identity, records the backup

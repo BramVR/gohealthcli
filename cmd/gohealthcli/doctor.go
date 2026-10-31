@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -31,8 +32,47 @@ type doctorAttachmentReport struct {
 	// shape; nil slices would encode as null, so the constructor
 	// initialises them to []. omitempty would break the contract when
 	// only one side has orphans.
-	OrphanRows  []doctorOrphanRow  `json:"orphan_rows"`
-	OrphanFiles []doctorOrphanFile `json:"orphan_files"`
+	OrphanRows           []doctorOrphanRow         `json:"orphan_rows"`
+	OrphanFiles          []doctorOrphanFile        `json:"orphan_files"`
+	VerificationFailures []doctorAttachmentFailure `json:"verification_failures,omitempty"`
+}
+
+type doctorAttachmentFailure struct {
+	AttachmentID int64  `json:"attachment_id"`
+	DataPointID  int64  `json:"data_point_id"`
+	SHA256       string `json:"sha256"`
+	PathRelative string `json:"path_relative"`
+	Reason       string `json:"reason"`
+}
+
+func inspectDoctorArchive(ctx context.Context, result *doctorResult) (err error) {
+	handle, err := (healthArchiveLifecycle{path: result.ArchivePath}).openInspectionOnly(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, handle.Close()) }()
+	count, tokenStatus, err := inspectConnectionTokenMetadata(ctx, handle.db)
+	if err != nil {
+		return err
+	}
+	result.SchemaVersion = &handle.schemaVersion
+	result.ConnectionCount = &count
+	result.TokenStatus = tokenStatus
+	root, mode, err := inspectAttachmentRoot(result.ArchivePath)
+	result.AttachmentRootPath = root
+	result.AttachmentRootMode = mode
+	if err != nil {
+		return err
+	}
+	store := &attachmentStore{db: handle.db, archivePath: result.ArchivePath, rootDir: root}
+	result.Attachments, err = collectAttachmentReport(ctx, store)
+	if err != nil {
+		return err
+	}
+	if result.Attachments != nil && len(result.Attachments.VerificationFailures) > 0 {
+		return errors.New("Data Point Attachment verification failed; restore the matching Health Archive and sidecars from a known-good copy")
+	}
+	return nil
 }
 
 type doctorOrphanRow struct {
@@ -78,10 +118,6 @@ func runDoctorWithRuntime(args []string, globals CommonFlagValues, stdout, stder
 		if err != nil {
 			return runDoctorInvalid(common.ConfigPath, common.ArchivePath, fmt.Sprintf("config check failed: %v", err), mode, stdout, stderr)
 		}
-		archive, err := (healthArchiveLifecycle{path: common.ArchivePath}).MigrateAndInspect(context.Background(), true)
-		if err != nil {
-			return runDoctorInvalid(common.ConfigPath, common.ArchivePath, err.Error(), mode, stdout, stderr)
-		}
 		result := doctorResult{
 			Status:            "ok",
 			ConfigPath:        common.ConfigPath,
@@ -89,24 +125,22 @@ func runDoctorWithRuntime(args []string, globals CommonFlagValues, stdout, stder
 			OAuthClientSource: config.oauthClientSource,
 			CredentialStore:   config.credentialStore,
 			Timezone:          config.timezone,
-			SchemaVersion:     &archive.schemaVersion,
-			ConnectionCount:   &archive.connectionCount,
-			TokenStatus:       archive.tokenStatus,
+			TokenStatus:       "unknown",
 			Message:           "local gohealthcli setup is initialized",
 		}
-		attachmentRoot, attachmentMode, attachmentErr := inspectAttachmentRoot(common.ArchivePath)
-		if attachmentErr != nil {
-			return runDoctorInvalid(common.ConfigPath, common.ArchivePath, attachmentErr.Error(), mode, stdout, stderr)
+		inspectionErr := inspectDoctorArchive(context.Background(), &result)
+		if inspectionErr != nil {
+			result.Status = "setup_invalid"
+			result.Message = inspectionErr.Error()
+			if result.Attachments == nil || len(result.Attachments.VerificationFailures) == 0 {
+				result.Remediation = normalizeRemediation([]remediationAction{remediationRunDoctor, remediationInitialize})
+			}
 		}
-		result.AttachmentRootPath = attachmentRoot
-		result.AttachmentRootMode = attachmentMode
-		attachments, attachmentsErr := collectAttachmentOrphans(context.Background(), common.ArchivePath)
-		if attachmentsErr != nil {
-			return runDoctorInvalid(common.ConfigPath, common.ArchivePath, attachmentsErr.Error(), mode, stdout, stderr)
-		}
-		result.Attachments = attachments
 		if err := writeDoctorResult(result, mode, stdout); err != nil {
 			return reportWriteFailure("doctor", err, mode, stdout, stderr)
+		}
+		if inspectionErr != nil {
+			return 1
 		}
 		return 0
 	}
@@ -158,8 +192,10 @@ func runDoctorOnlineWithRuntime(configPath, archivePath string, mode outputMode,
 		if result.Status == "" || result.Status == "ok" {
 			result.Status = "connection_unhealthy"
 		}
-		result.Message = err.Error()
-		result.Remediation = remediationFromError(connectionFailureRemediation(err))
+		if result.Message == "" {
+			result.Message = err.Error()
+			result.Remediation = remediationFromError(connectionFailureRemediation(err))
+		}
 		if writeErr := writeDoctorResult(result, mode, stdout); writeErr != nil {
 			return reportWriteFailure("doctor", writeErr, mode, stdout, stderr)
 		}
@@ -186,33 +222,19 @@ func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtim
 		CredentialStore:   config.credentialStore.kind,
 		Timezone:          config.timezone,
 	}
-	archive, err := (healthArchiveLifecycle{path: archivePath}).MigrateAndInspect(context.Background(), true)
-	if err != nil {
+	if err := inspectDoctorArchive(context.Background(), &result); err != nil {
 		result.Status = "setup_invalid"
-		result.TokenStatus = "unknown"
+		if result.TokenStatus == "" {
+			result.TokenStatus = "unknown"
+		}
+		result.Message = err.Error()
 		return result, err
 	}
-	result.SchemaVersion = &archive.schemaVersion
-	result.ConnectionCount = &archive.connectionCount
-	result.TokenStatus = archive.tokenStatus
-	attachmentRoot, attachmentMode, attachmentErr := inspectAttachmentRoot(archivePath)
-	if attachmentErr != nil {
-		result.Status = "setup_invalid"
-		return result, attachmentErr
-	}
-	result.AttachmentRootPath = attachmentRoot
-	result.AttachmentRootMode = attachmentMode
-	attachments, attachmentsErr := collectAttachmentOrphans(context.Background(), archivePath)
-	if attachmentsErr != nil {
-		result.Status = "setup_invalid"
-		return result, attachmentsErr
-	}
-	result.Attachments = attachments
-	if archive.connectionCount == 0 {
+	if *result.ConnectionCount == 0 {
 		result.TokenStatus = "not_connected"
 		return result, missingConnectionRemediation(sql.ErrNoRows)
 	}
-	archiveAPI, err := openHealthArchiveConnectionAPI(archivePath)
+	archiveAPI, err := openExistingDoctorOnlineArchive(archivePath)
 	if err != nil {
 		result.Status = "setup_invalid"
 		result.TokenStatus = "archive_unavailable"
@@ -228,7 +250,7 @@ func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtim
 	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, protectedPaths, runtime)
 	tokenCheck, err := connectionAccess.RefreshableAccessToken(config.oauthClient)
 	if err != nil {
-		if result.TokenStatus == archive.tokenStatus {
+		if result.TokenStatus == "metadata_present" {
 			if isCurrentConnectionTokenMissing(err) {
 				result.TokenStatus = "token_missing"
 			} else {
@@ -256,6 +278,18 @@ func doctorOnlineSetupWithRuntime(configPath, archivePath string, runtime runtim
 	result.TokenStatus = "online_ok"
 	result.Message = "online Google Health check passed"
 	return result, nil
+}
+
+func openExistingDoctorOnlineArchive(archivePath string) (*sqliteHealthArchiveConnectionAPI, error) {
+	dsn, err := archiveDSN(archivePath, false)
+	if err != nil {
+		return nil, err
+	}
+	db, err := openArchiveDSN(dsn + "&mode=rw")
+	if err != nil {
+		return nil, err
+	}
+	return &sqliteHealthArchiveConnectionAPI{db: db}, nil
 }
 
 func persistDoctorOnlineRefreshedTokenWithRuntime(archive connectionTokenWriter, credentialStore credentialStoreConfig, connectionID string, token oauthTokenResponse, previousTokenMaterial map[string]any, runtime runtimeAdapters) error {
@@ -330,6 +364,16 @@ func writeDoctorPlain(writer *stickyWriter, result doctorResult) {
 			writer.Printf("attachments_orphan_rows: %d\n", n)
 		}
 	}
+	if result.Attachments != nil && len(result.Attachments.VerificationFailures) > 0 {
+		writer.Printf("attachments_verification_failures: %d\n", len(result.Attachments.VerificationFailures))
+		for i, failure := range result.Attachments.VerificationFailures {
+			writer.Printf("attachments_verification_failures.%d.attachment_id: %d\n", i, failure.AttachmentID)
+			writer.Printf("attachments_verification_failures.%d.data_point_id: %d\n", i, failure.DataPointID)
+			writer.Printf("attachments_verification_failures.%d.sha256: %s\n", i, escapePlainControlChars(failure.SHA256))
+			writer.Printf("attachments_verification_failures.%d.path_relative: %s\n", i, escapePlainControlChars(failure.PathRelative))
+			writer.Printf("attachments_verification_failures.%d.reason: %s\n", i, escapePlainControlChars(failure.Reason))
+		}
+	}
 	writer.Printf("message: %s\n", result.Message)
 	for index, action := range result.Remediation {
 		writer.Printf("remediation.%d: %s\n", index, action)
@@ -366,6 +410,11 @@ func writeDoctorHuman(writer *stickyWriter, result doctorResult) {
 	}
 	if result.TokenStatus != "" {
 		writer.Printf("Token status: %s\n", result.TokenStatus)
+	}
+	if result.Attachments != nil {
+		for _, failure := range result.Attachments.VerificationFailures {
+			writer.Printf("Attachment %d (Data Point %d, sha256 %s, path %q): %s\n", failure.AttachmentID, failure.DataPointID, escapePlainControlChars(failure.SHA256), failure.PathRelative, escapePlainControlChars(failure.Reason))
+		}
 	}
 	writer.Printf("Message: %s\n", result.Message)
 }
