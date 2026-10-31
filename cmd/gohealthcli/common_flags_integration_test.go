@@ -32,6 +32,7 @@ var migratedCommonFlagSubcommands = []string{
 // mutual-exclusion error and exits 1 when --plain and --json are passed
 // together.
 func TestMigratedSubcommandsRejectPlainAndJSON(t *testing.T) {
+	t.Parallel()
 	for _, name := range migratedCommonFlagSubcommands {
 		t.Run(name, func(t *testing.T) {
 			code, stdout, stderr := runCommand(t, name, "--plain", "--json")
@@ -55,6 +56,7 @@ func TestMigratedSubcommandsRejectPlainAndJSON(t *testing.T) {
 // filename) is the substring we look for because some subcommands
 // stat the parent and stop there.
 func TestMigratedSubcommandsFlowConfigAndDBThrough(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	uniqueMarker := "common-flag-set-flowthrough-marker"
 	parent := filepath.Join(tempDir, uniqueMarker)
@@ -111,12 +113,10 @@ func TestMigratedSubcommandsFlowConfigAndDBThrough(t *testing.T) {
 	}
 }
 
-// TestRawRejectsUnsupportedCommonFlags pins acceptance criterion of issue
-// #180: `raw`'s flag spec declares only {config, db}, so a stray --plain,
-// --json, or --no-input on `raw` yields the Common Flag Set's targeted
-// "--<flag> is not supported by raw" wording instead of the legacy
-// hand-written walker's "raw: unknown flag" prefix.
+// TestRawRejectsUnsupportedCommonFlags pins the normal-read contract:
+// --plain and --json require --plan, while --no-input remains unsupported.
 func TestRawRejectsUnsupportedCommonFlags(t *testing.T) {
+	t.Parallel()
 	for _, flagName := range []string{"plain", "json", "no-input"} {
 		t.Run(flagName, func(t *testing.T) {
 			code, stdout, stderr := runCommand(t, "raw", "--"+flagName, "endpoint", "getIdentity")
@@ -136,6 +136,7 @@ func TestRawRejectsUnsupportedCommonFlags(t *testing.T) {
 // `flag` package and writes the standard "flag provided but not defined"
 // diagnostic, NOT the legacy "raw: unknown flag" wrapper.
 func TestRawRejectsUnknownFlagViaStdlib(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t, "raw", "--bogus")
 	if code == 0 {
 		t.Fatalf("exit code = 0, want non-zero; stdout=%q stderr=%q", stdout.String(), stderr.String())
@@ -154,7 +155,9 @@ func TestRawRejectsUnknownFlagViaStdlib(t *testing.T) {
 // acceptance criterion #5 of issue #180: a static guarantee that any
 // future drift in init / doctor / connect / sync / query / raw (or the
 // already-migrated identity / profile / settings / devices / irn-profile
-// / status) fails the build.
+// / status) fails the build. The Identity Snapshot family parses its
+// flags inside the shared engine runner (issue #282), so those
+// commands anchor on runIdentitySnapshotCommand.
 //
 // The check is intentionally precise: it pinpoints the function body of
 // each subcommand's flag-parser entry point and inspects only that
@@ -163,6 +166,7 @@ func TestRawRejectsUnknownFlagViaStdlib(t *testing.T) {
 // gohealthcli FlagSet) and divergent subcommands (export, describe-schema,
 // schema) are out of scope by design and not consulted.
 func TestMigratedSubcommandEntryPointsCallRegisterCommon(t *testing.T) {
+	t.Parallel()
 	// entry maps each subcommand to the source file and the function-
 	// signature substring that anchors its flag-parser entry point. We
 	// slice the function body between this anchor and the next top-
@@ -172,18 +176,18 @@ func TestMigratedSubcommandEntryPointsCallRegisterCommon(t *testing.T) {
 		file    string
 		funcSig string
 	}{
-		{"init", "main.go", "func runInit("},
-		{"doctor", "main.go", "func runDoctorWithRuntime("},
-		{"connect", "main.go", "func runConnectWithRuntime("},
-		{"sync", "main.go", "func runSyncWithRuntime("},
-		{"raw", "main.go", "func runRawWithRuntime("},
+		{"init", "init.go", "func runInit("},
+		{"doctor", "doctor.go", "func runDoctorWithRuntime("},
+		{"connect", "connect.go", "func runConnectWithRuntime("},
+		{"sync", "sync.go", "func runSyncWithRuntime("},
+		{"raw", "raw.go", "func runRawWithRuntime("},
 		{"query", "query.go", "func runQuery("},
-		{"identity", "main.go", "func runIdentityWithRuntime("},
-		{"profile", "main.go", "func runProfileWithRuntime("},
-		{"settings", "settings.go", "func runSettingsWithRuntime("},
-		{"devices", "devices.go", "func runDevicesWithRuntime("},
-		{"irn-profile", "irn_profile.go", "func runIRNProfileWithRuntime("},
-		{"status", "main.go", "func runStatus("},
+		{"identity", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
+		{"profile", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
+		{"settings", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
+		{"devices", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
+		{"irn-profile", "identity_snapshot_command.go", "func runIdentitySnapshotCommand["},
+		{"status", "status.go", "func runStatus("},
 	}
 	// Per-subcommand legacy preamble lines that would re-appear if a
 	// migration was reverted. Each match in the corresponding function

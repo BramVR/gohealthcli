@@ -76,7 +76,9 @@ read_when:
 - provider name
 - connection ID
 - Data Type
-- rollup kind: rollUp or dailyRollUp
+- rollup kind: `dailyRollUp` for daily Rollups; `hourly`, `weekly`, or
+  `window=<duration>` for windowed Rollups (the `rollUp` endpoint name is
+  never stored)
 - window start/end as UTC instants when available
 - civil date when daily
 - timezone offset or provider timezone metadata when supplied
@@ -102,8 +104,9 @@ the latest snapshot of each kind per Connection into queryable columns:
 - `current_settings` — `kind='settings'` projected as measurement system,
   timezone, stride length type.
 - `paired_devices` — `kind='paired-devices'` exploded via `json_each` into
-  one row per device with `device_type`, `model`, `manufacturer`,
-  `battery_percentage`, `last_sync_time`, and `features`.
+  one row per device with `name`, `device_type`, `device_version`,
+  `battery_status`, and `battery_level` (the real
+  `users.pairedDevices.list` shape, #298).
 - `current_irn_profile` — `kind='irn-profile'` projected as
   `onboarding_state`, `enrollment_state`, `last_update_time`. Requires
   the `irn.readonly` OAuth scope granted via `connect --add-scopes irn`.
@@ -146,9 +149,9 @@ with owner-only POSIX permissions (`0700` dirs, `0600` files). Schema:
 `(id, data_point_id, kind, sha256, path_relative, byte_size,
 fetched_at)`.
 
-The Attachment Store module exposes `Store(dataPointID, kind, bytes)
-→ {sha256, path}` (content-addressed; same bytes → same path,
-idempotent insert), `Resolve(sha256) → path`, and `Walk(fn)` for
+The Attachment Store module exposes a `Store` operation
+(content-addressed; same bytes → same sidecar path, idempotent
+insert) and a `Walk` operation for
 orphan detection (row with no sidecar, sidecar with no row). `doctor`
 surfaces the orphan counts in its default report (`attachments_orphan_files`
 and `attachments_orphan_rows` in `--plain`, an `attachments` block in
@@ -190,6 +193,13 @@ before the HTTP call — exercise Data Points still archive, but no TCX
 sidecar is fetched and no round-trip is wasted on a guaranteed-403
 endpoint. The 403 graceful-skip remains as belt-and-suspenders.
 
+Health Archive Snapshot export carries Data Point Attachment rows plus one
+deduplicated payload entry per content-addressed sidecar path. Export and
+restore validate canonical paths, byte sizes, SHA-256 hashes, row references,
+and symlink containment before using payload bytes. Restore recreates sidecars
+with owner-only permissions; callers do not derive the sidecar layout, and the
+restored archive must pass the same Attachment orphan checks used by `doctor`.
+
 ## LLM-facing schema discovery
 
 `gohealthcli describe-schema --json` emits the curated JSON catalog
@@ -212,12 +222,19 @@ default; no parallel-table-with-view shim was used (PRD #93
 - provider name
 - connection ID
 - Data Types requested
-- range requested
+- range audit JSON: `from` / `to` are the exact resolved Provider boundaries;
+  newer rows also carry the explicit resolution timezone, UTC `resolved_at`,
+  and `from_input` / `to_input` only for operator-supplied named boundaries
+  (`now`, `today`, `yesterday`); historical rows retain only `from` / `to`
 - endpoint family used
 - source-family filter when requested
 - status (`sync_running`, `sync_completed`, `sync_failed`, `sync_canceled`)
 - seen/new/updated counts
 - started/finished timestamps
+- last-progress heartbeat timestamp (`last_progress_at`, migration 22),
+  rewritten after every archived page so a concurrent `sync --status` can
+  tell a live long run from an abandoned one; NULL on rows predating the
+  migration
 - error summary
 
 The First Release records Sync Runs and newest archived timestamps, but does not
@@ -229,7 +246,7 @@ Types, source filtering, and correction behavior are better understood.
 - connection ID
 - Data Type
 - source-family filter (empty string when none)
-- rollup kind (`none`, `daily`; future: `hourly`, `weekly`, `window:<duration>`)
+- rollup kind (`none`, `daily`, `hourly`, `weekly`, `window=<duration>`)
 - cursor time — the durable highwater mark, used as the next `--from`
 - advanced-at timestamp
 
@@ -245,8 +262,9 @@ design (see ADR-0008).
 
 ## Normalized Views
 
-Normalized Views are SQLite views over `data_points.raw_json` (and
-`identity_snapshots.raw_json` for `current_*` and `paired_devices`)
+Normalized Views are SQLite views over `data_points.raw_json`, `rollups.raw_json`
+(for `total_calories_rollups` and `calories_in_heart_rate_zone_rollups`), and `identity_snapshots.raw_json` (for
+`current_*` and `paired_devices`)
 that project the principal scalars of each Data Type as typed columns,
 so downstream consumers can `SELECT ... FROM <view>` instead of walking
 JSON paths. Every view registered through the **Normalized Views
@@ -263,6 +281,8 @@ gohealthcli describe-schema --json | jq '[.views[].name] | sort'
 The current catalog spans (grouped, with PRD anchors):
 
 - **Activity & fitness** — `daily_steps`, `floors_intervals`,
+  `basal_energy_burned_intervals`, `total_calories_rollups`,
+  `calories_in_heart_rate_zone_rollups`,
   `active_minutes_intervals`, `active_zone_minutes_intervals`,
   `activity_level_intervals`, `altitude_intervals`,
   `sedentary_period_intervals`, `swim_lengths_data_intervals`,
@@ -276,8 +296,9 @@ The current catalog spans (grouped, with PRD anchors):
   `core_body_temperature_samples`.
 - **Sleep & recovery** — `sleep_sessions`, `sleep_stages`,
   `respiratory_rate_sleep_summary`, `daily_sleep_temperature_derivations`.
-- **Exercise & hydration** — `exercise_sessions`, `exercise_splits`,
-  `hydration_log_sessions`.
+- **Exercise, nutrition & hydration** — `exercise_sessions`,
+  `exercise_splits`, `hydration_log_sessions`, `nutrition_log_sessions`,
+  `nutrition_log_nutrients`.
 - **Identity & search** — `current_settings`, `paired_devices`,
   `current_irn_profile`, `searchable_text`.
 

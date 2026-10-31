@@ -1,17 +1,13 @@
 package main
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
-	"errors"
-	"flag"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"io"
-	"net/http"
-	"time"
 )
-
-const googleHealthSettingsURL = "https://health.googleapis.com/v4/users/me/settings"
 
 // googleSettings is the raw payload returned by users.getSettings. We
 // keep the raw JSON so a Normalized View can project new fields without
@@ -20,170 +16,74 @@ type googleSettings struct {
 	rawJSON string
 }
 
-// fetchSettings is the seam tests stub. Production calls
-// fetchGoogleSettings which hits the real Google Health API.
-var fetchSettings = fetchGoogleSettings
-
 type settingsResult struct {
-	Status             string `json:"status"`
-	ConnectionID       string `json:"connection_id,omitempty"`
-	ProviderName       string `json:"provider_name,omitempty"`
-	GoogleHealthUserID string `json:"google_health_user_id,omitempty"`
-	SnapshotID         int64  `json:"snapshot_id,omitempty"`
-	FetchedAt          string `json:"fetched_at,omitempty"`
-	Message            string `json:"message"`
+	Status             string   `json:"status"`
+	ConnectionID       string   `json:"connection_id,omitempty"`
+	ProviderName       string   `json:"provider_name,omitempty"`
+	GoogleHealthUserID string   `json:"google_health_user_id,omitempty"`
+	SnapshotID         int64    `json:"snapshot_id,omitempty"`
+	FetchedAt          string   `json:"fetched_at,omitempty"`
+	Message            string   `json:"message"`
+	Remediation        []string `json:"remediation,omitempty"`
 }
 
-func runSettingsWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-	flags := flag.NewFlagSet("settings", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-
-	// settings does no prompting and never blocks on browser input, so
-	// --no-input would imply a behaviour the command does not have.
-	// The Common Flag Set's pre-Parse scan turns a stray --no-input
-	// into a targeted "--no-input is not supported by settings" message
-	// (issue #171), so the help block and the runtime spec agree. The
-	// accepted-flag list is sourced from the same identitySnapshotCommon-
-	// FlagNames helper the registry uses, so runtime parsing and the
-	// published schema cannot drift apart.
-	common := RegisterCommon(flags, CommonFlagSpec{Accepted: identitySnapshotCommonFlagNames()}, CommonFlagValues{
-		ConfigPath:  configPath,
-		ArchivePath: archivePath,
-		JSONOutput:  mode.json,
-		PlainOutput: mode.plain,
-	})
-
-	if err := ParseCommon(flags, common, args); err != nil {
-		return commonFlagsExitCode(flags, err, stdout, stderr)
-	}
-	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
-	if flags.NArg() != 0 {
-		return ReportFailure(FailureReport{
-			Command: "settings",
-			Status:  StatusUnexpectedArgument,
-			Message: fmt.Sprintf("unexpected settings argument: %s", flags.Arg(0)),
-			Mode:    mode,
-		}, stdout, stderr)
-	}
-
-	result, err := settingsSetupWithRuntime(common.ConfigPath, common.ArchivePath, runtime)
-	if err != nil {
-		if result.Status == "" {
-			result.Status = "settings_failed"
+// settingsSnapshotCommand is settings' Identity Snapshot engine spec
+// (issue #282): the command is the spec — settings has no decoration
+// beyond the shared fetch → handoff → render pipeline. The fetchPayload
+// closure rides the runtime adapters' fetchSettings seam, so tests
+// inject fakes through the adapters value (#283).
+//
+// settings does no prompting and never blocks on browser input, so
+// --no-input would imply a behaviour the command does not have. The
+// Common Flag Set's pre-Parse scan turns a stray --no-input into a
+// targeted "--no-input is not supported by settings" message (issue
+// #171), so the help block and the runtime spec agree. The
+// accepted-flag list is sourced from the same identitySnapshotCommon-
+// FlagNames helper the registry uses, so runtime parsing and the
+// published schema cannot drift apart.
+var settingsSnapshotCommand = identitySnapshotCommandSpec[settingsResult, googleSettings]{
+	command: "settings",
+	commonFlags: func() CommonFlagSpec {
+		return CommonFlagSpec{Accepted: identitySnapshotCommonFlagNames()}
+	},
+	statusFailed:       "settings_failed",
+	statusUnavailable:  "settings_unavailable",
+	statusScopeMissing: "settings_scope_missing",
+	scopeEndpointKey:   "getSettings",
+	seedResult: func(connection archived.Connection) settingsResult {
+		return settingsResult{
+			ConnectionID:       connection.ID,
+			ProviderName:       connection.ProviderName,
+			GoogleHealthUserID: connection.GoogleHealthUserID,
 		}
-		result.Message = err.Error()
-		if writeErr := writeSettingsResult(result, mode, stdout); writeErr != nil {
-			return ReportFailure(FailureReport{
-				Command: "settings",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", writeErr),
-				Mode:    mode,
-			}, stdout, stderr)
-		}
-		return 1
-	}
-	if err := writeSettingsResult(result, mode, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "settings",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
-	}
-	return 0
+	},
+	status:         func(result *settingsResult) string { return result.Status },
+	setStatus:      func(result *settingsResult, status string) { result.Status = status },
+	setMessage:     func(result *settingsResult, message string) { result.Message = message },
+	setRemediation: func(result *settingsResult, remediation []string) { result.Remediation = remediation },
+	writeResult:    writeSettingsResult,
+	snapshotKind:   snapshotKindSettings,
+	fetchPayload: func(runtime runtimeAdapters, accessToken string) (googleSettings, error) {
+		return runtime.fetchSettings(accessToken)
+	},
+	payloadRawJSON: func(payload googleSettings) string { return payload.rawJSON },
+	finishArchived: func(result *settingsResult, snapshotID int64, fetchedAt string) {
+		result.Status = "settings_archived"
+		result.SnapshotID = snapshotID
+		result.FetchedAt = fetchedAt
+		result.Message = "Settings Snapshot archived"
+	},
 }
 
-func settingsSetupWithRuntime(configPath, archivePath string, runtime runtimeAdapters) (settingsResult, error) {
-	runtime = runtime.withDefaults()
-	config, err := inspectIdentityConfig(configPath, archivePath)
-	if err != nil {
-		return settingsResult{}, fmt.Errorf("config check failed: %w", err)
-	}
-	archive, err := openHealthArchiveConnectionAPI(archivePath)
-	if err != nil {
-		return settingsResult{}, err
-	}
-	// archive is closed either by writeIdentitySnapshotHandoff (success
-	// path) or by this deferred guard (any error before handoff).
-	archiveClosed := false
-	defer func() {
-		if !archiveClosed {
-			_ = archive.Close()
-		}
-	}()
-	connection, err := archive.CurrentConnection()
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return settingsResult{Status: "settings_unavailable"}, errors.New("no Connection found; run `gohealthcli connect` first")
-		}
-		return settingsResult{}, err
-	}
-	result := settingsResult{
-		ConnectionID:       connection.id,
-		ProviderName:       connection.providerName,
-		GoogleHealthUserID: connection.googleHealthUserID,
-	}
-	// The deepened currentConnectionAccess pattern (PRD #142): wire
-	// WithAutoRefresh when the OAuth client is a file source — the
-	// archive handle openHealthArchiveConnectionAPI returned already
-	// satisfies connectionTokenWriter — so an expired access token
-	// refreshes and persists transparently, the way
-	// sync_run_lifecycle.go already does. The required scope comes
-	// from googleHealthIdentityEndpointScopes["getSettings"] so a
-	// slice-2 revision of the catalog (PRD #142 #176) flows into
-	// settings automatically. The scope pre-check happens inside
-	// AccessToken via the errCurrentConnectionScopeMissing sentinel,
-	// so we set the per-command status without re-implementing the
-	// scope-list comparison locally.
-	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{configPath, archivePath}, runtime)
-	if config.oauthClient.kind == "file" {
-		connectionAccess = connectionAccess.WithAutoRefresh(config.oauthClient, archive)
-	}
-	accessToken, err := connectionAccess.AccessToken(googleHealthIdentityEndpointScopes["getSettings"])
-	if err != nil {
-		if errors.Is(err, errCurrentConnectionScopeMissing) {
-			result.Status = "settings_scope_missing"
-		}
-		return result, err
-	}
-	settings, err := fetchSettings(accessToken)
-	if err != nil {
-		return result, currentConnectionProviderError(err)
-	}
-	fetchedAt := runtime.now().UTC().Format(time.RFC3339)
-	snapshotID, err := writeIdentitySnapshotHandoff(archive, archivePath, connection, "settings", settings.rawJSON, fetchedAt)
-	archiveClosed = true // handoff owns archive's lifecycle now
-	if err != nil {
-		return result, err
-	}
-	result.Status = "settings_archived"
-	result.SnapshotID = snapshotID
-	result.FetchedAt = fetchedAt
-	result.Message = "Settings Snapshot archived"
-	return result, nil
-}
-
-func fetchGoogleSettings(accessToken string) (googleSettings, error) {
-	request, err := http.NewRequest(http.MethodGet, googleHealthSettingsURL, nil)
+// fetchGoogleSettings is a thin call site over the shared Provider GET
+// module (internal/googlehealth, issue #280), which owns the transport
+// behavior: bearer auth, size limit, timeout, typed labeled status
+// errors, JSON validity, and retry/Retry-After. The module value
+// carries the HTTP doer (#281).
+func fetchGoogleSettings(get googlehealth.GET, accessToken string) (googleSettings, error) {
+	body, err := get.FetchJSON(context.Background(), googlehealth.SettingsURL, "settings", accessToken)
 	if err != nil {
 		return googleSettings{}, err
-	}
-	request.Header.Set("Authorization", "Bearer "+accessToken)
-	request.Header.Set("Accept", "application/json")
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		return googleSettings{}, err
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
-		return googleSettings{}, err
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return googleSettings{}, fmt.Errorf("Google Health settings request failed with HTTP %d", response.StatusCode)
-	}
-	if !json.Valid(body) {
-		return googleSettings{}, errors.New("Google Health settings response is not valid JSON")
 	}
 	return googleSettings{rawJSON: string(body)}, nil
 }
@@ -208,8 +108,10 @@ func writeSettingsResult(result settingsResult, mode outputMode, stdout io.Write
 				return err
 			}
 		}
-		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
-		return err
+		if _, err := fmt.Fprintf(stdout, "message: %s\n", result.Message); err != nil {
+			return err
+		}
+		return writePlainRemediation(stdout, result.Remediation)
 	}
 	if _, err := fmt.Fprintf(stdout, "Settings: %s\n", result.Status); err != nil {
 		return err

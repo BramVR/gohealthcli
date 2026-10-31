@@ -1,20 +1,13 @@
 package main
 
+import (
+	"context"
+
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
+)
+
 type syncRunExecutor struct {
 	runtime runtimeAdapters
-}
-
-// healthArchiveWriterOpenerForTest allows tests to inject a wrapped writer
-// (for example, one that forces CommitSyncCursor to fail) without rewriting
-// the whole sync pipeline. Production always uses openHealthArchiveWriter.
-var healthArchiveWriterOpenerForTest = openHealthArchiveWriter
-
-func syncSetup(options syncCommandOptions) (syncResult, error) {
-	return syncSetupWithRuntime(options, productionRuntimeAdapters())
-}
-
-func syncSetupWithRuntime(options syncCommandOptions, runtime runtimeAdapters) (syncResult, error) {
-	return (syncRunExecutor{runtime: runtime}).Execute(options)
 }
 
 // preflightFailureResult shapes the syncResult returned when the gate
@@ -27,11 +20,12 @@ func syncSetupWithRuntime(options syncCommandOptions, runtime runtimeAdapters) (
 // every error path, so plan.from/plan.to would always be empty here.
 func preflightFailureResult(options syncCommandOptions, err error) syncResult {
 	return syncResult{
-		Status:    "sync_failed",
-		DataTypes: options.dataTypes,
-		From:      options.from,
-		To:        options.to,
-		Message:   err.Error(),
+		Status:      "sync_failed",
+		DataTypes:   options.dataTypes,
+		From:        options.from,
+		To:          options.to,
+		Message:     err.Error(),
+		Remediation: remediationFromError(err),
 	}
 }
 
@@ -43,23 +37,24 @@ func preflightFailureResult(options syncCommandOptions, err error) syncResult {
 // that invariant. After Validate, the post-preflight path lives in
 // syncRunLifecycle.Run (PRD #141 slice 4 AC #1): this method is a thin
 // caller composing the gate and the lifecycle.
-func (executor syncRunExecutor) Execute(options syncCommandOptions) (syncResult, error) {
+func (executor syncRunExecutor) Execute(ctx context.Context, options syncCommandOptions) (syncResult, error) {
 	runtime := executor.runtime.withDefaults()
-	gate := syncPreflightGate{ctx: productionSyncPreflightContext(options, runtime)}
+	gate := syncPreflightGate{ctx: productionSyncPreflightContext(ctx, options, runtime)}
 	plan, err := gate.Validate(options)
 	if err != nil {
+		err = syncFailureRemediation(err)
 		return preflightFailureResult(options, err), err
 	}
-	return syncRunLifecycle{options: options, plan: plan, runtime: runtime}.Run()
+	return syncRunLifecycle{options: options, plan: plan, runtime: runtime}.Run(ctx)
 }
 
-func applyGoogleHealthIngestionCounts(result *syncResult, ingestionResult googleHealthIngestionResult) {
-	result.DataPointsSeen = ingestionResult.dataPointsSeen
-	result.DataPointsNew = ingestionResult.dataPointsNew
-	result.DataPointsUpdated = ingestionResult.dataPointsUpdated
-	result.RollupsSeen = ingestionResult.rollupsSeen
-	result.RollupsNew = ingestionResult.rollupsNew
-	result.RollupsUpdated = ingestionResult.rollupsUpdated
+func applyGoogleHealthIngestionCounts(result *syncResult, ingestionResult googlehealth.IngestionResult) {
+	result.DataPointsSeen = ingestionResult.DataPointsSeen
+	result.DataPointsNew = ingestionResult.DataPointsNew
+	result.DataPointsUpdated = ingestionResult.DataPointsUpdated
+	result.RollupsSeen = ingestionResult.RollupsSeen
+	result.RollupsNew = ingestionResult.RollupsNew
+	result.RollupsUpdated = ingestionResult.RollupsUpdated
 }
 
 func syncResultTotalCounts(result syncResult) (int, int, int) {

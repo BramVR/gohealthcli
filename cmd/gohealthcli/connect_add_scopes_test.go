@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"strings"
 	"testing"
 )
@@ -12,6 +13,7 @@ import (
 // Google Health API scope URL. Unknown keywords surface as an error
 // so a typo doesn't silently shrink the OAuth scope set.
 func TestExpandConnectAddScopesMapsKeywordsToScopeStrings(t *testing.T) {
+	t.Parallel()
 	scopes, err := expandConnectAddScopes([]string{"irn"})
 	if err != nil {
 		t.Fatalf("expand irn: %v", err)
@@ -76,6 +78,65 @@ func TestExpandConnectAddScopesMapsKeywordsToScopeStrings(t *testing.T) {
 	}
 }
 
+// TestConnectHelpAddScopesUsageListsEveryAcceptedKeyword is the #148
+// drift guard for the `connect --help` flag block: the `--add-scopes`
+// usage text must name every keyword `expandConnectAddScopes` accepts,
+// rendered exactly as supportedAddScopeKeywords() renders them (the
+// same rendering the unknown-keyword error uses). Deriving the
+// expectation from connectAddScopeKeywords means adding a keyword to
+// the map without surfacing it in --help fails here instead of
+// shipping (the `nutrition` keyword shipped invisible to --help for
+// two days because nothing pinned the two together).
+func TestConnectHelpAddScopesUsageListsEveryAcceptedKeyword(t *testing.T) {
+	t.Parallel()
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := runConnectWithRuntime([]string{"--help"}, CommonFlagValues{ConfigPath: "config.json", ArchivePath: "archive.db"}, stdout, stderr, runtimeAdapters{})
+	if code != 0 {
+		t.Fatalf("connect --help exit = %d, want 0 (stderr=%s)", code, stderr.String())
+	}
+
+	help := stderr.String()
+	want := connectAddScopesUsage()
+	if !strings.Contains(help, want) {
+		t.Fatalf("connect --help output missing canonical --add-scopes usage line\nwant substring: %q\ngot:\n%s", want, help)
+	}
+	for keyword := range connectAddScopeKeywords {
+		if !strings.Contains(help, keyword) {
+			t.Fatalf("connect --help output does not mention accepted --add-scopes keyword %q:\n%s", keyword, help)
+		}
+	}
+}
+
+// TestConnectSchemaAddScopesUsageMatchesAcceptedKeywords extends the
+// #148 drift guard to the published schema: the `schema --json`
+// contract (and the docs/commands/connect.md page generated from it)
+// renders the connect command's add-scopes usage from the same
+// commandDef entry, so that entry must carry the identical
+// canonically-rendered keyword list the runtime flag registration
+// uses. With both surfaces pinned to connectAddScopesUsage(), a new
+// keyword in connectAddScopeKeywords propagates to --help, the schema,
+// and the regenerated reference page without any hand-edited list.
+func TestConnectSchemaAddScopesUsageMatchesAcceptedKeywords(t *testing.T) {
+	t.Parallel()
+	for _, command := range commands {
+		if command.Name != "connect" {
+			continue
+		}
+		for _, spec := range command.Flags {
+			if spec.Name != "add-scopes" {
+				continue
+			}
+			if want := connectAddScopesUsage(); spec.Usage != want {
+				t.Fatalf("connect schema add-scopes usage = %q, want %q (derived from connectAddScopeKeywords)", spec.Usage, want)
+			}
+			return
+		}
+		t.Fatal("connect commandDef has no add-scopes flagSpec")
+	}
+	t.Fatal("command registry has no connect commandDef")
+}
+
 // TestGoogleHealthIdentityEndpointScopesCatalog pins the AC for PRD
 // #142 slice 1 plus the slice-2 revision (#176): the declarative
 // catalog has entries for getProfile, getSettings, pairedDevices,
@@ -86,21 +147,22 @@ func TestExpandConnectAddScopesMapsKeywordsToScopeStrings(t *testing.T) {
 // https://developers.google.com/health/api/reference/rest/v4/users.pairedDevices/list);
 // profile.readonly returns HTTP 403 for those two endpoints.
 func TestGoogleHealthIdentityEndpointScopesCatalog(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		endpoint   string
 		wantScopes []string
 	}{
-		{endpoint: "getProfile", wantScopes: []string{googleHealthProfileReadonlyScope}},
-		{endpoint: "getSettings", wantScopes: []string{googleHealthSettingsReadonlyScope}},
-		{endpoint: "pairedDevices", wantScopes: []string{googleHealthSettingsReadonlyScope}},
-		{endpoint: "getIrnProfile", wantScopes: []string{googleHealthIrnReadonlyScope}},
-		{endpoint: "getIdentity", wantScopes: []string{googleHealthProfileReadonlyScope}},
+		{endpoint: "getProfile", wantScopes: []string{googlehealth.ScopeProfileReadonly}},
+		{endpoint: "getSettings", wantScopes: []string{googlehealth.ScopeSettingsReadonly}},
+		{endpoint: "pairedDevices", wantScopes: []string{googlehealth.ScopeSettingsReadonly}},
+		{endpoint: "getIrnProfile", wantScopes: []string{googlehealth.ScopeIrnReadonly}},
+		{endpoint: "getIdentity", wantScopes: []string{googlehealth.ScopeProfileReadonly}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.endpoint, func(t *testing.T) {
-			got, ok := googleHealthIdentityEndpointScopes[tt.endpoint]
-			if !ok {
-				t.Fatalf("googleHealthIdentityEndpointScopes missing entry for %q", tt.endpoint)
+			got := googlehealth.IdentityEndpointScopes(tt.endpoint)
+			if len(got) == 0 {
+				t.Fatalf("googlehealth.IdentityEndpointScopes missing entry for %q", tt.endpoint)
 			}
 			if len(got) != len(tt.wantScopes) {
 				t.Fatalf("scopes for %q = %v, want %v", tt.endpoint, got, tt.wantScopes)
@@ -119,6 +181,7 @@ func TestGoogleHealthIdentityEndpointScopesCatalog(t *testing.T) {
 // authorisation URL whose scope parameter includes the IRN scope on
 // top of the default scope set.
 func TestConnectAddScopesIsCommunicatedToOAuthFlow(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	runtime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -143,7 +206,7 @@ func TestConnectAddScopesIsCommunicatedToOAuthFlow(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := runConnectWithRuntime([]string{"--config", configPath, "--db", archivePath, "--add-scopes", "irn", "--json"}, configPath, archivePath, true, outputMode{json: true}, stdout, stderr, runtime)
+	code := runConnectWithRuntime([]string{"--config", configPath, "--db", archivePath, "--add-scopes", "irn", "--json"}, CommonFlagValues{ConfigPath: configPath, ArchivePath: archivePath, NoInput: true, JSONOutput: true}, stdout, stderr, runtime)
 	if code != 0 {
 		t.Fatalf("connect exit = %d, stderr=%s, stdout=%s", code, stderr.String(), stdout.String())
 	}

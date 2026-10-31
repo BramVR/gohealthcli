@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,6 +31,8 @@ import (
 // that is not part of the Go test prerequisites. CI runs with both
 // installed, so the skip never fires there.
 func TestDocsCommandsRegenIsStable(t *testing.T) {
+	// NOT t.Parallel(): mutates / regenerates the shared repo docs tree
+	// (docs/commands*), so it must never overlap the sibling docs tests.
 	for _, bin := range []string{"make", "node"} {
 		if _, err := exec.LookPath(bin); err != nil {
 			t.Skipf("docs regen requires %q on PATH: %v", bin, err)
@@ -54,7 +57,7 @@ func TestDocsCommandsRegenIsStable(t *testing.T) {
 		}
 	})
 
-	regen := exec.Command("make", "docs-commands")
+	regen := exec.CommandContext(context.Background(), "make", "docs-commands")
 	regen.Dir = repoRoot
 	if out, err := regen.CombinedOutput(); err != nil {
 		t.Fatalf("`make docs-commands` failed: %v\n%s", err, out)

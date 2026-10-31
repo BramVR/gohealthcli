@@ -1,17 +1,13 @@
 package main
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
-	"errors"
-	"flag"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"io"
-	"net/http"
-	"time"
 )
-
-const googleHealthIRNProfileURL = "https://health.googleapis.com/v4/users/me/irnProfile"
 
 // googleIRNProfile is the raw response from users.getIrnProfile. Slice
 // C will project this through current_irn_profile.
@@ -19,140 +15,63 @@ type googleIRNProfile struct {
 	rawJSON string
 }
 
-// fetchIRNProfile is the test seam.
-var fetchIRNProfile = fetchGoogleIRNProfile
-
 type irnProfileResult struct {
-	Status             string `json:"status"`
-	ConnectionID       string `json:"connection_id,omitempty"`
-	ProviderName       string `json:"provider_name,omitempty"`
-	GoogleHealthUserID string `json:"google_health_user_id,omitempty"`
-	SnapshotID         int64  `json:"snapshot_id,omitempty"`
-	FetchedAt          string `json:"fetched_at,omitempty"`
-	Message            string `json:"message"`
+	Status             string   `json:"status"`
+	ConnectionID       string   `json:"connection_id,omitempty"`
+	ProviderName       string   `json:"provider_name,omitempty"`
+	GoogleHealthUserID string   `json:"google_health_user_id,omitempty"`
+	SnapshotID         int64    `json:"snapshot_id,omitempty"`
+	FetchedAt          string   `json:"fetched_at,omitempty"`
+	Message            string   `json:"message"`
+	Remediation        []string `json:"remediation,omitempty"`
 }
 
-func runIRNProfileWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-	flags := flag.NewFlagSet("irn-profile", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-
-	// irn-profile does no prompting and never blocks on browser input,
-	// so --no-input would imply a behaviour the command does not have.
-	// The Common Flag Set's pre-Parse scan turns a stray --no-input
-	// into a targeted "--no-input is not supported by irn-profile"
-	// message (issue #171), so the help block and the runtime spec
-	// agree. The accepted-flag list is sourced from the same
-	// identitySnapshotCommonFlagNames helper the registry uses, so
-	// runtime parsing and the published schema cannot drift apart.
-	common := RegisterCommon(flags, CommonFlagSpec{Accepted: identitySnapshotCommonFlagNames()}, CommonFlagValues{
-		ConfigPath:  configPath,
-		ArchivePath: archivePath,
-		JSONOutput:  mode.json,
-		PlainOutput: mode.plain,
-	})
-
-	if err := ParseCommon(flags, common, args); err != nil {
-		return commonFlagsExitCode(flags, err, stdout, stderr)
-	}
-	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
-	if flags.NArg() != 0 {
-		return ReportFailure(FailureReport{
-			Command: "irn-profile",
-			Status:  StatusUnexpectedArgument,
-			Message: fmt.Sprintf("unexpected irn-profile argument: %s", flags.Arg(0)),
-			Mode:    mode,
-		}, stdout, stderr)
-	}
-
-	result, err := irnProfileSetupWithRuntime(common.ConfigPath, common.ArchivePath, runtime)
-	if err != nil {
-		if result.Status == "" {
-			result.Status = "irn_profile_failed"
+// irnProfileSnapshotCommand is irn-profile's Identity Snapshot engine
+// spec (issue #282): the command is the spec — irn-profile has no
+// decoration beyond the shared fetch → handoff → render pipeline. The
+// fetchPayload closure rides the runtime adapters' fetchIRNProfile
+// seam, so tests inject fakes through the adapters value (#283).
+//
+// irn-profile does no prompting and never blocks on browser input, so
+// --no-input would imply a behaviour the command does not have. The
+// Common Flag Set's pre-Parse scan turns a stray --no-input into a
+// targeted "--no-input is not supported by irn-profile" message
+// (issue #171), so the help block and the runtime spec agree. The
+// accepted-flag list is sourced from the same identitySnapshotCommon-
+// FlagNames helper the registry uses, so runtime parsing and the
+// published schema cannot drift apart.
+var irnProfileSnapshotCommand = identitySnapshotCommandSpec[irnProfileResult, googleIRNProfile]{
+	command: "irn-profile",
+	commonFlags: func() CommonFlagSpec {
+		return CommonFlagSpec{Accepted: identitySnapshotCommonFlagNames()}
+	},
+	statusFailed:       "irn_profile_failed",
+	statusUnavailable:  "irn_profile_unavailable",
+	statusScopeMissing: "irn_profile_scope_missing",
+	scopeEndpointKey:   "getIrnProfile",
+	seedResult: func(connection archived.Connection) irnProfileResult {
+		return irnProfileResult{
+			ConnectionID:       connection.ID,
+			ProviderName:       connection.ProviderName,
+			GoogleHealthUserID: connection.GoogleHealthUserID,
 		}
-		result.Message = err.Error()
-		if writeErr := writeIRNProfileResult(result, mode, stdout); writeErr != nil {
-			return ReportFailure(FailureReport{
-				Command: "irn-profile",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", writeErr),
-				Mode:    mode,
-			}, stdout, stderr)
-		}
-		return 1
-	}
-	if err := writeIRNProfileResult(result, mode, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "irn-profile",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
-	}
-	return 0
-}
-
-func irnProfileSetupWithRuntime(configPath, archivePath string, runtime runtimeAdapters) (irnProfileResult, error) {
-	runtime = runtime.withDefaults()
-	config, err := inspectIdentityConfig(configPath, archivePath)
-	if err != nil {
-		return irnProfileResult{}, fmt.Errorf("config check failed: %w", err)
-	}
-	archive, err := openHealthArchiveConnectionAPI(archivePath)
-	if err != nil {
-		return irnProfileResult{}, err
-	}
-	archiveClosed := false
-	defer func() {
-		if !archiveClosed {
-			_ = archive.Close()
-		}
-	}()
-	connection, err := archive.CurrentConnection()
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return irnProfileResult{Status: "irn_profile_unavailable"}, errors.New("no Connection found; run `gohealthcli connect` first")
-		}
-		return irnProfileResult{}, err
-	}
-	result := irnProfileResult{
-		ConnectionID:       connection.id,
-		ProviderName:       connection.providerName,
-		GoogleHealthUserID: connection.googleHealthUserID,
-	}
-	// The deepened currentConnectionAccess pattern (PRD #142): wire
-	// WithAutoRefresh when the OAuth client is a file source — the
-	// archive handle already satisfies connectionTokenWriter — so an
-	// expired access token refreshes and persists transparently, the
-	// way sync_run_lifecycle.go already does. The scope pre-check
-	// happens inside AccessToken via the errCurrentConnectionScopeMissing
-	// sentinel, so we set the per-command status without re-implementing
-	// the scope-list comparison locally.
-	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{configPath, archivePath}, runtime)
-	if config.oauthClient.kind == "file" {
-		connectionAccess = connectionAccess.WithAutoRefresh(config.oauthClient, archive)
-	}
-	accessToken, err := connectionAccess.AccessToken(googleHealthIdentityEndpointScopes["getIrnProfile"])
-	if err != nil {
-		if errors.Is(err, errCurrentConnectionScopeMissing) {
-			result.Status = "irn_profile_scope_missing"
-		}
-		return result, err
-	}
-	irn, err := fetchIRNProfile(accessToken)
-	if err != nil {
-		return result, currentConnectionProviderError(err)
-	}
-	fetchedAt := runtime.now().UTC().Format(time.RFC3339)
-	snapshotID, err := writeIdentitySnapshotHandoff(archive, archivePath, connection, "irn-profile", irn.rawJSON, fetchedAt)
-	archiveClosed = true
-	if err != nil {
-		return result, err
-	}
-	result.Status = "irn_profile_archived"
-	result.SnapshotID = snapshotID
-	result.FetchedAt = fetchedAt
-	result.Message = "IRN Profile Snapshot archived"
-	return result, nil
+	},
+	status:         func(result *irnProfileResult) string { return result.Status },
+	setStatus:      func(result *irnProfileResult, status string) { result.Status = status },
+	setMessage:     func(result *irnProfileResult, message string) { result.Message = message },
+	setRemediation: func(result *irnProfileResult, remediation []string) { result.Remediation = remediation },
+	writeResult:    writeIRNProfileResult,
+	snapshotKind:   snapshotKindIRNProfile,
+	fetchPayload: func(runtime runtimeAdapters, accessToken string) (googleIRNProfile, error) {
+		return runtime.fetchIRNProfile(accessToken)
+	},
+	payloadRawJSON: func(payload googleIRNProfile) string { return payload.rawJSON },
+	finishArchived: func(result *irnProfileResult, snapshotID int64, fetchedAt string) {
+		result.Status = "irn_profile_archived"
+		result.SnapshotID = snapshotID
+		result.FetchedAt = fetchedAt
+		result.Message = "IRN Profile Snapshot archived"
+	},
 }
 
 func scopeListContains(scopes []string, want string) bool {
@@ -164,27 +83,15 @@ func scopeListContains(scopes []string, want string) bool {
 	return false
 }
 
-func fetchGoogleIRNProfile(accessToken string) (googleIRNProfile, error) {
-	request, err := http.NewRequest(http.MethodGet, googleHealthIRNProfileURL, nil)
+// fetchGoogleIRNProfile is a thin call site over the shared Provider
+// GET module (internal/googlehealth, issue #280), which owns the transport
+// behavior: bearer auth, size limit, timeout, typed labeled status
+// errors, JSON validity, and retry/Retry-After. The module value
+// carries the HTTP doer (#281).
+func fetchGoogleIRNProfile(get googlehealth.GET, accessToken string) (googleIRNProfile, error) {
+	body, err := get.FetchJSON(context.Background(), googlehealth.IRNProfileURL, "irnProfile", accessToken)
 	if err != nil {
 		return googleIRNProfile{}, err
-	}
-	request.Header.Set("Authorization", "Bearer "+accessToken)
-	request.Header.Set("Accept", "application/json")
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		return googleIRNProfile{}, err
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
-		return googleIRNProfile{}, err
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return googleIRNProfile{}, fmt.Errorf("Google Health irnProfile request failed with HTTP %d", response.StatusCode)
-	}
-	if !json.Valid(body) {
-		return googleIRNProfile{}, errors.New("Google Health irnProfile response is not valid JSON")
 	}
 	return googleIRNProfile{rawJSON: string(body)}, nil
 }
@@ -209,8 +116,10 @@ func writeIRNProfileResult(result irnProfileResult, mode outputMode, stdout io.W
 				return err
 			}
 		}
-		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
-		return err
+		if _, err := fmt.Fprintf(stdout, "message: %s\n", result.Message); err != nil {
+			return err
+		}
+		return writePlainRemediation(stdout, result.Remediation)
 	}
 	if _, err := fmt.Fprintf(stdout, "IRN Profile: %s\n", result.Status); err != nil {
 		return err

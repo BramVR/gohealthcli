@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -12,36 +13,32 @@ import (
 // that an LLM (or a user) can run one LIKE query against one column
 // instead of juggling four underlying paths.
 func TestSearchableTextViewReturnsRowsFromAllFourSources(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	t.Parallel()
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	// Seed one paired-devices snapshot + one profile snapshot.
 	snapshots, err := openIdentitySnapshotArchive(archivePath)
 	if err != nil {
 		t.Fatalf("open snapshot archive: %v", err)
 	}
-	connection, err := snapshots.CurrentConnection()
+	connection, err := readCurrentConnection(context.Background(), snapshots.db)
 	if err != nil {
 		snapshots.Close()
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
-	if _, err := snapshots.Insert(connection, "paired-devices", `{"devices":[
-		{"deviceType":"WATCH","model":"Pixel Watch 2","manufacturer":"Google"},
-		{"deviceType":"TRACKER","model":"Fitbit Charge 5","manufacturer":"Fitbit"}
+	if _, err := snapshots.Insert(context.Background(), connection, "paired-devices", `{"pairedDevices":[
+		{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"WATCH","deviceVersion":"Pixel Watch 2"},
+		{"name":"users/111111256096816351/pairedDevices/1122334455","deviceType":"TRACKER","deviceVersion":"Fitbit Charge 5"}
 	]}`, "2026-06-08T00:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert paired-devices: %v", err)
 	}
-	if _, err := snapshots.Insert(connection, "profile", `{"firstName":"Bram","lastName":"Van Rompuy"}`, "2026-06-08T00:00:00Z"); err != nil {
+	if _, err := snapshots.Insert(context.Background(), connection, "profile", `{"firstName":"Bram","lastName":"Van Rompuy"}`, "2026-06-08T00:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert profile: %v", err)
 	}
@@ -62,13 +59,9 @@ func TestSearchableTextViewReturnsRowsFromAllFourSources(t *testing.T) {
 		rawJSON:      `{"exercise":{"exerciseType":"RUNNING","displayName":"Morning run"}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
-	rows, err := db.Query(`SELECT kind, text FROM searchable_text ORDER BY kind, text`)
+	rows, err := db.QueryContext(context.Background(), `SELECT kind, text FROM searchable_text ORDER BY kind, text`)
 	if err != nil {
 		t.Fatalf("query searchable_text: %v", err)
 	}
@@ -86,7 +79,8 @@ func TestSearchableTextViewReturnsRowsFromAllFourSources(t *testing.T) {
 			t.Errorf("kind=%q produced 0 rows; want at least one", kind)
 		}
 	}
-	// Sanity-check: the device kind must contain at least one of the seeded models.
+	// Sanity-check: the device kind must contain at least one of the
+	// seeded device versions.
 	deviceText := strings.Join(seen["device"], " | ")
 	if !strings.Contains(deviceText, "Pixel Watch 2") {
 		t.Errorf("device rows missing 'Pixel Watch 2'; got %q", deviceText)
@@ -105,28 +99,24 @@ func TestSearchableTextViewReturnsRowsFromAllFourSources(t *testing.T) {
 // query shape: a single LIKE against `text` returns hits from any
 // underlying source without the caller knowing which.
 func TestSearchableTextLIKENeedleAnswersAcrossKinds(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	t.Parallel()
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 	snapshots, err := openIdentitySnapshotArchive(archivePath)
 	if err != nil {
 		t.Fatalf("open snapshots: %v", err)
 	}
-	connection, err := snapshots.CurrentConnection()
+	connection, err := readCurrentConnection(context.Background(), snapshots.db)
 	if err != nil {
 		snapshots.Close()
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
-	// "Pixel" appears in both a paired device model and a data source's device display name.
-	if _, err := snapshots.Insert(connection, "paired-devices", `{"devices":[{"deviceType":"WATCH","model":"Pixel Watch 2","manufacturer":"Google"}]}`, "2026-06-08T00:00:00Z"); err != nil {
+	// "Pixel" appears in both a paired device version and a data source's device display name.
+	if _, err := snapshots.Insert(context.Background(), connection, "paired-devices", `{"pairedDevices":[{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"WATCH","deviceVersion":"Pixel Watch 2"}]}`, "2026-06-08T00:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert paired-devices: %v", err)
 	}
@@ -144,12 +134,8 @@ func TestSearchableTextLIKENeedleAnswersAcrossKinds(t *testing.T) {
 		rawJSON:      `{"exercise":{"exerciseType":"RUNNING"}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
-	rows, err := db.Query(`SELECT DISTINCT kind FROM searchable_text WHERE text LIKE '%Pixel%' ORDER BY kind`)
+	db := openArchiveForTest(t, archivePath)
+	rows, err := db.QueryContext(context.Background(), `SELECT DISTINCT kind FROM searchable_text WHERE text LIKE '%Pixel%' ORDER BY kind`)
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}

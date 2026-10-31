@@ -30,9 +30,12 @@ In the Google Cloud console:
    - `https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly`
    - `https://www.googleapis.com/auth/googlehealth.sleep.readonly`
 
-   Optionally add these too if you plan to use `connect --add-scopes`:
-   - `https://www.googleapis.com/auth/googlehealth.irn.readonly` — needed by `gohealthcli irn-profile`.
-   - `https://www.googleapis.com/auth/googlehealth.electrocardiogram.readonly` — needed by Tier 2 ECG Data Types.
+   Optionally add these too if you plan to use `connect --add-scopes`. Each scope below maps to one of the five `--add-scopes` keywords (`ecg`, `irn`, `nutrition`, `settings`, `tcx`); declaring it here now saves a return trip to Google Cloud later:
+   - `https://www.googleapis.com/auth/googlehealth.ecg.readonly` (`ecg`) — needed by the Tier 2 `electrocardiogram` Data Type.
+   - `https://www.googleapis.com/auth/googlehealth.irn.readonly` (`irn`) — needed by `gohealthcli irn-profile` and the Tier 2 `irregular-rhythm-notification` Data Type.
+   - `https://www.googleapis.com/auth/googlehealth.nutrition.readonly` (`nutrition`) — needed by the `hydration-log` and `nutrition-log` Data Types.
+   - `https://www.googleapis.com/auth/googlehealth.settings.readonly` (`settings`) — needed by `gohealthcli settings` and `gohealthcli devices`.
+   - `https://www.googleapis.com/auth/googlehealth.location.readonly` (`tcx`) — needed to archive TCX route files during exercise sync.
 6. Create an OAuth client with application type **Desktop app**.
 7. Download the client JSON.
 
@@ -90,12 +93,79 @@ gohealthcli status --plain
 gohealthcli sync --types heart-rate,sleep --from 2026-01-01 --to 2026-01-07 --plain
 ```
 
+## Choose an Initial Backfill path
+
+An Initial Backfill is the first historical range you archive for a Data Type or Rollup kind. For low-density Data Types, a raw Data Point Initial Backfill is usually fine. For continuous wearable heart-rate history, choose deliberately:
+
+- Exact raw samples: use raw Data Points when you need every point-in-time BPM reading in `data_points` and the `heart_rate_samples` Normalized View.
+- Fast summary history: use heart-rate Rollups when daily or hourly trends are enough. Rollups store separate records in `rollups`; they do not replace raw heart-rate Data Points or prove raw sample history is complete.
+
+Raw heart-rate samples:
+
+```bash
+gohealthcli sync --types heart-rate --from 2026-01-01 --to 2026-01-15 --plain
+```
+
+Fast daily heart-rate summary history:
+
+```bash
+gohealthcli sync --types heart-rate --rollup daily --from 2026-01-01 --to 2026-03-01 --plain
+```
+
+Hourly summary history:
+
+```bash
+gohealthcli sync --types heart-rate --rollup hourly --from 2026-01-01 --to 2026-01-15 --plain
+```
+
+Each raw or Rollup path has its own Sync Cursor key. A successful daily Rollup Sync Run advances the `heart-rate` daily Rollup cursor, not the raw `heart-rate` cursor; a later raw Data Point sync still needs its own successful Initial Backfill before cursor-resumed raw syncs can omit `--from`.
+
+Total calories are Rollup-only. Use a daily or physical-window mode and export
+the `total-calories-rollups` dataset; raw total-calories sync is intentionally
+rejected:
+
+```bash
+gohealthcli sync --types total-calories --rollup daily --from 2026-01-01 --to 2026-01-15 --plain
+gohealthcli export total-calories-rollups --format csv --stdout
+```
+
+Calories in heart-rate zone are Rollup-only too, with one exported row per bucket and zone:
+
+```bash
+gohealthcli sync --types calories-in-heart-rate-zone --rollup daily --from 2026-01-01 --to 2026-01-15 --plain
+gohealthcli export calories-in-heart-rate-zone-rollups --format csv --stdout
+```
+
+## How long will a sync take?
+
+Cursor-resumed incremental syncs (no `--from`) finish in seconds. An explicit Initial Backfill window costs time in proportion to how many Data Points it covers, and that depends on the Data Type's density. `sync` uses the largest safe raw Data Point page size automatically — `pageSize=10000` for Data Types such as `heart-rate` and `steps`, and the provider's smaller `pageSize=25` cap for `sleep` and `exercise` — but page size only reduces provider round-trips. It does not reduce the number of raw Data Points that must be parsed and archived. Sustained throughput measures roughly 2,000–5,000 Data Points per minute on real runs; the table plans with the conservative ~2,000/min, using densities measured 2026-06-10 from a real archive backed by a Pixel Watch 4 (continuous heart-rate sampling). A Data Point is the upstream record unit, which is why the counts differ so wildly per type: a heart-rate point is a single reading (every ~3 seconds on the watch), a steps point is a one-minute bucket, and a sleep point is an entire night with its stage breakdown.
+
+| Data Type | Density (points/day) | Two weeks ≈ | Sync time ≈ |
+| --- | --- | --- | --- |
+| `heart-rate` | ~27,500 | ~385,000 pts | 1.5–3 h |
+| `time-in-heart-rate-zone` | ~960 | ~13,400 pts | ~5 min |
+| `active-energy-burned` | ~630 | ~8,800 pts | ~4 min |
+| `oxygen-saturation` | ~480 | ~6,700 pts | ~3 min |
+| `steps` | ~260 | ~3,600 pts | ~2 min |
+| `sleep`, `daily-*` types | ~1 | ~14 pts | seconds |
+
+One caveat: density is account-specific — a phone-only account without a continuously-sampling wearable runs far lower across the board. Long backfills are safe to run in one go: when a run outlives its OAuth access token (about an hour), the token is refreshed mid-run and the failed page retried automatically in the standard `init --oauth-client-file` setup.
+
+The full per-type table — every measured Data Type, not just these anchors — is on the [Data Types page](data-types.html#how-long-does-each-type-take-to-sync).
+
+Watch a long run from a second terminal while it is in flight:
+
+```bash
+gohealthcli sync --status
+```
+
 ## Daily Rollups and wearable-only filtering
 
-Daily Rollups summarise raw Data Points over a day — useful for time-series charting without re-aggregating in your own code. Wearable-only filtering returns Data Points whose Data Source is a watch or tracker.
+Daily Rollups summarise raw Data Points over a day — useful for time-series charting without re-aggregating in your own code. They write Rollups and carry Rollup Sync Cursors, separate from raw Data Points and raw Sync Cursors. Wearable-only filtering returns Data Points whose Data Source is a watch or tracker.
 
 ```bash
 gohealthcli sync --types steps --rollup daily --from 2026-01-01 --to 2026-01-31 --plain
+gohealthcli sync --types heart-rate --rollup daily --from 2026-01-01 --to 2026-01-31 --plain
 gohealthcli sync --types heart-rate --source-family wearable --from 2026-01-01 --to 2026-01-02 --plain
 ```
 
@@ -114,14 +184,46 @@ Command flags must appear **before** the SQL argument — Go's `flag` parser sto
 ```bash
 gohealthcli export daily-steps --format jsonl --stdout
 gohealthcli export daily-steps --format csv --output steps.csv
+gohealthcli export basal-energy-burned-intervals --format csv --output basal-energy.csv
 ```
 
-`raw` prints upstream provider JSON for endpoint exploration without writing to the archive.
+`raw` prints upstream provider JSON for endpoint exploration without archiving the
+response. Data Type lists accept the same named range grammar and timezone
+precedence as `sync`; identity endpoints reject range and timezone flags.
 
 ```bash
+gohealthcli raw endpoint getIdentity --plan --json
+gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --plan --json
+gohealthcli raw data-type steps daily-rollup --from yesterday --to today --timezone Europe/Brussels --plan --json
+gohealthcli raw data-type total-calories rollup --from yesterday --to today --timezone Europe/Brussels --window 1h --plan --json
 gohealthcli raw endpoint getIdentity
-gohealthcli raw data-type steps --from 2026-01-01 --to 2026-01-02
+gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels
+gohealthcli raw data-type steps --from yesterday --to today --timezone Europe/Brussels --output ./steps-response.json
+gohealthcli raw data-type steps daily-rollup --from yesterday --to today --timezone Europe/Brussels --output ./daily-rollup-response.json
 ```
+
+Run the plan first. It prints the exact method, sanitized production URL and
+POST body, non-secret headers, required scopes, resolved Data Type range and
+timezone, and paging inputs. Its Provider, credential, token, Health Archive,
+Rollup, Sync Run, migration, Sync Cursor, and sidecar effects are all false. `--json` and `--plain` shape
+plan output only. A normal raw read keeps the Provider's response bytes
+unchanged on stdout. Add `--output PATH` to write those exact bytes to a new
+file instead. The command refuses existing files, symbolic links, directories,
+and invalid parents. It creates mode `0600` on Linux and macOS and reports only
+the quoted path and byte count on stderr. The effective user must own the Linux
+or macOS parent, and group or other users must not be able to write there;
+macOS also rejects an extended parent
+ACL. Windows local
+volumes publish without
+replacement but inherit the parent directory ACL, so use an ACL-private
+directory. UNC paths and mapped network drives are rejected before the Provider
+read, including parent links that resolve to them. Other build targets reject
+file output if atomic no-replace rename is unavailable.
+
+Raw Rollup reads issue one request and return its bytes unchanged. The catalog
+controls which Data Types support `daily-rollup` and `rollup`, plus accepted
+physical `--window` granularities. A range that exceeds one Provider request
+fails locally instead of being split like a Sync Run.
 
 ## Where next
 

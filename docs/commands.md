@@ -9,6 +9,7 @@ Every user-facing subcommand exposed by `gohealthcli`. Pages are regenerated fro
 
 - [`gohealthcli init`](commands/init.html) — Create local config and an empty Health Archive.
 - [`gohealthcli doctor`](commands/doctor.html) — Validate local setup and provider reachability.
+- [`gohealthcli catalog`](commands/catalog.html) — Browse and verify the compiled Provider catalog.
 - [`gohealthcli connect`](commands/connect.html) — Run the browser OAuth flow and anchor one Google Identity.
 - [`gohealthcli identity`](commands/identity.html) — Refresh the archived Google Identity metadata.
 - [`gohealthcli profile`](commands/profile.html) — Archive a Profile Snapshot from the provider.
@@ -16,11 +17,14 @@ Every user-facing subcommand exposed by `gohealthcli`. Pages are regenerated fro
 - [`gohealthcli devices`](commands/devices.html) — Archive a Paired Devices Snapshot from the provider.
 - [`gohealthcli irn-profile`](commands/irn-profile.html) — Archive an IRN Profile Snapshot from the provider.
 - [`gohealthcli sync`](commands/sync.html) — Archive Google Health Data Points and supported Rollups.
+- [`gohealthcli backup`](commands/backup.html) — Initialize, push, pull, and inspect encrypted Health Archive backups.
 - [`gohealthcli status`](commands/status.html) — Summarise archive counts and newest synced timestamps.
 - [`gohealthcli query`](commands/query.html) — Run guarded read-only SQL over the Health Archive.
 - [`gohealthcli export`](commands/export.html) — Write a normalised dataset to CSV or JSONL.
-- [`gohealthcli raw`](commands/raw.html) — Print raw provider JSON for endpoint exploration.
+- [`gohealthcli route`](commands/route.html) — Write one archived exercise route as its exact TCX file.
+- [`gohealthcli raw`](commands/raw.html) — Print one raw Provider page or plan its request.
 - [`gohealthcli describe-schema`](commands/describe-schema.html) — Self-describe the Health Archive for LLM consumption.
+- [`gohealthcli completion`](commands/completion.html) — Generate a shell completion script.
 
 ## Discoverability
 

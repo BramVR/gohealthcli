@@ -1,0 +1,385 @@
+package main
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"flag"
+	"fmt"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
+	"io"
+	"strings"
+)
+
+type rawCommandOptions struct {
+	configPath   string
+	archivePath  string
+	from         string
+	to           string
+	timezone     string
+	pageSize     int64
+	pageToken    string
+	sourceFamily string
+	window       string
+	id           string
+	target       []string
+	plan         bool
+	outputPath   string
+}
+
+type rawPlanningConfigError struct {
+	err error
+}
+
+func (err *rawPlanningConfigError) Error() string { return err.err.Error() }
+func (err *rawPlanningConfigError) Unwrap() error { return err.err }
+
+func rawEndpointHelp() string {
+	return "Supported endpoints:\n\n- " + strings.Join(googlehealth.RawEndpointNames(), "\n- ") +
+		"\n\nThe `dataTypes.<data-type>.list` aliases use the same range and paging flags as `raw data-type <data-type>`."
+}
+
+func runRawWithRuntime(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+	flags := flag.NewFlagSet("raw", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	// raw accepts structured output only for --plan. Normal reads keep the
+	// provider-byte stdout contract and reject --json / --plain below.
+	common := RegisterCommon(flags, CommonFlagSpec{Accepted: rawCommonFlagNames()}, CommonFlagValues{
+		ConfigPath:          globals.ConfigPath,
+		ArchivePath:         globals.ArchivePath,
+		JSONOutput:          globals.JSONOutput,
+		PlainOutput:         globals.PlainOutput,
+		ArchivePathExplicit: globals.ArchivePathExplicit,
+		ConfigPathExplicit:  globals.ConfigPathExplicit,
+	})
+	rawFrom := flags.String("from", "", "inclusive time-range start (where supported by the endpoint)")
+	rawTo := flags.String("to", "", "exclusive time-range end (where supported by the endpoint)")
+	rawTimezone := flags.String("timezone", "", "IANA timezone for now, today, and yesterday (Data Type range reads only; default config, then UTC)")
+	rawPageSize := flags.Int64("page-size", 0, "pagination page size (positive integer; where supported by the endpoint)")
+	rawPageToken := flags.String("page-token", "", "pagination page token from a prior response")
+	rawSourceFamily := flags.String("source-family", "", syncSourceFamilyUsage())
+	rawWindow := flags.String("window", "", "physical Rollup window duration (data-type rollup only; catalog-supported granularities)")
+	rawID := flags.String("id", "", "opaque Provider Data Point ID (data-type get only)")
+	rawPlan := flags.Bool("plan", false, "print the exact secret-free Provider request plan without external access")
+	rawOutput := flags.String("output", "", "write exact Provider response bytes to a new private file")
+
+	// raw uses a bespoke usage block (`raw endpoint getIdentity` etc.)
+	// rather than the auto-generated stdlib one, because its first
+	// positional is a verb (`endpoint`/`data-type`) — not a flag.
+	// Override fs.Usage so a parse failure or -h prints raw's own
+	// three-line block on stderr instead of the stdlib auto-listing.
+	// On --help we additionally mirror it to stdout below; the duplicate
+	// stderr copy would surface twice otherwise, so we route only on
+	// genuine parse errors here.
+	rawUsage := func(w io.Writer) {
+		fmt.Fprintln(w, "usage: gohealthcli raw endpoint <name> [--output <path> | --plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw endpoint dataTypes.<data-type>.list --from <boundary> [--to <boundary>] [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> --from <boundary> [--to <boundary>] [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> get --id <provider-id> [--output <path> | --plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> reconcile --source-family <family> --from <boundary> [--to <boundary>] [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> daily-rollup --from <boundary> --to <boundary> [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
+		fmt.Fprintln(w, "usage: gohealthcli raw data-type <data-type> rollup --from <boundary> --to <boundary> --window <duration> [--timezone <IANA>] [--output <path> | --plan [--json|--plain]]")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, rawEndpointHelp())
+	}
+	// stdlib's flag package calls fs.Usage on BOTH `-h` and a parse
+	// error. Suppress that auto-call entirely and emit the bespoke
+	// block from the error branches below so each failure mode picks
+	// the right destination (stdout for --help, stderr for parse error)
+	// and the user never sees the block twice.
+	flags.Usage = func() {}
+
+	// raw's subverbs (`endpoint <name>`, `data-type <data-type>`) are
+	// positional arguments that may appear BEFORE the flag block —
+	// stdlib's `flag` package stops parsing at the first non-flag, so
+	// `raw endpoint getIdentity --config X` would otherwise leave
+	// `--config X` unread. Reorder the args so flags come first and
+	// positionals trail; the FlagSet then parses everything, and
+	// fs.Args() returns just the trailing positionals.
+	reordered, target := partitionRawFlagArgs(flags, args)
+	if err := ParseCommon(flags, common, reordered, runtime.observeSubcommandFlagSet); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			// --help / -h flowed through; raw's success output is the
+			// provider's raw bytes on stdout, so the bespoke usage
+			// block follows the same convention when the user
+			// explicitly asks for it.
+			rawUsage(stdout)
+			return 0
+		}
+		// Genuine parse failures (unknown flag, malformed value): the
+		// error message went to stderr via fs.SetOutput already; append
+		// the bespoke usage block on the same stream so the user sees
+		// "what to use instead" without a second copy on stdout.
+		if errors.Is(err, ErrFlagParseFailed) {
+			rawUsage(stderr)
+		}
+		return commonFlagsExitCode(flags, err, stdout, stderr)
+	}
+	mode := commonOutputMode(*common)
+	localJSON := flagWasProvided(flags, "json")
+	localPlain := flagWasProvided(flags, "plain")
+	if !*rawPlan && (localJSON || localPlain) {
+		flagName := "--plain"
+		if localJSON {
+			flagName = "--json"
+		}
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: flagName + " is not supported by raw without --plan"}, stdout, stderr)
+	}
+	if *rawPlan && flagWasProvided(flags, "output") {
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: "--output is not supported with --plan", Mode: mode}, stdout, stderr)
+	}
+	if flagWasProvided(flags, "output") && *rawOutput == "" {
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: "--output requires a non-empty path", Mode: mode}, stdout, stderr)
+	}
+	if *rawPageSize < 0 || (flagWasProvided(flags, "page-size") && *rawPageSize <= 0) {
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: "--page-size must be a positive integer", Mode: mode}, stdout, stderr)
+	}
+	if flagWasProvided(flags, "timezone") && *rawTimezone == "" {
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: "--timezone requires a non-empty IANA timezone", Mode: mode}, stdout, stderr)
+	}
+	options := rawCommandOptions{
+		configPath:   common.ConfigPath,
+		archivePath:  common.ArchivePath,
+		from:         *rawFrom,
+		to:           *rawTo,
+		timezone:     *rawTimezone,
+		pageSize:     *rawPageSize,
+		pageToken:    *rawPageToken,
+		sourceFamily: *rawSourceFamily,
+		window:       *rawWindow,
+		id:           *rawID,
+		target:       target,
+		plan:         *rawPlan,
+		outputPath:   *rawOutput,
+	}
+	requestOptions := googlehealth.RawRequestOptions{
+		Target:               options.target,
+		ID:                   options.id,
+		IDProvided:           flagWasProvided(flags, "id"),
+		From:                 options.from,
+		To:                   options.to,
+		Timezone:             options.timezone,
+		FromProvided:         flagWasProvided(flags, "from"),
+		ToProvided:           flagWasProvided(flags, "to"),
+		TimezoneProvided:     flagWasProvided(flags, "timezone"),
+		PageSize:             options.pageSize,
+		PageToken:            options.pageToken,
+		PageSizeProvided:     flagWasProvided(flags, "page-size"),
+		PageTokenProvided:    flagWasProvided(flags, "page-token"),
+		SourceFamily:         options.sourceFamily,
+		SourceFamilyProvided: flagWasProvided(flags, "source-family"),
+		Window:               options.window,
+		WindowProvided:       flagWasProvided(flags, "window"),
+	}
+	if err := googlehealth.ValidateRawRequestOptions(requestOptions); err != nil {
+		var unsupported *googlehealth.UnsupportedRawEndpointError
+		if !errors.As(err, &unsupported) {
+			return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
+		}
+		names := googlehealth.RawEndpointNames()
+		exit := ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error() + "; supported: " + strings.Join(names, ", "), Mode: mode}, stdout, stderr)
+		if !mode.json {
+			if suggestions := suggestNames(unsupported.Name, names); len(suggestions) > 0 {
+				fmt.Fprintf(stderr, "Did you mean: %s?\n", strings.Join(suggestions, ", "))
+			}
+			fmt.Fprintln(stderr, "Run 'gohealthcli raw --help' for the full list of supported endpoints.")
+		}
+		return exit
+	}
+	runtime = runtime.withDefaults()
+	requestOptions.ResolvedAt = runtime.now()
+	if options.plan {
+		requestOptions.TimezoneFallback = func() (string, error) {
+			timezone, err := inspectRawPlanningTimezone(options.configPath)
+			if err != nil {
+				return "", &rawPlanningConfigError{err: err}
+			}
+			return timezone, nil
+		}
+		description, err := googlehealth.DescribeRawRequest(requestOptions)
+		if err != nil {
+			var configErr *rawPlanningConfigError
+			if errors.As(err, &configErr) {
+				cause := setupFailureRemediation(configErr.err, fmt.Sprintf("config check failed: %v", configErr.err))
+				return ReportFailure(FailureReport{Command: "raw", Status: StatusOperationFailed, Message: cause.Error(), Mode: mode, Cause: cause}, stdout, stderr)
+			}
+			return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
+		}
+		return writeRawPlan(description, requestOptions, mode, stdout, stderr)
+	}
+	var preparedOutput preparedRawOutput
+	preparedOutputSettled := false
+	if options.outputPath != "" {
+		var prepareErr error
+		preparedOutput, prepareErr = runtime.prepareRawOutput(options.outputPath)
+		if prepareErr != nil {
+			status := StatusOperationFailed
+			var validationError *rawOutputValidationError
+			if errors.As(prepareErr, &validationError) {
+				status = StatusFlagInvalid
+			}
+			return ReportFailure(FailureReport{Command: "raw", Status: status, Message: prepareErr.Error(), Mode: mode}, stdout, stderr)
+		}
+		// Explicit error paths below surface cleanup errors. This fallback keeps
+		// future post-preparation returns from leaking the staging resource.
+		defer func() {
+			if !preparedOutputSettled {
+				_ = preparedOutput.Abort(fmt.Errorf("raw stopped before output completion"))
+			}
+		}()
+	}
+	config, err := inspectIdentityConfig(options.configPath, options.archivePath)
+	if err != nil {
+		if preparedOutput != nil {
+			err = preparedOutput.Abort(err)
+			preparedOutputSettled = true
+		}
+		cause := setupFailureRemediation(err, fmt.Sprintf("config check failed: %v", err))
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusOperationFailed, Message: cause.Error(), Mode: mode, Cause: cause}, stdout, stderr)
+	}
+	if requestOptions.Timezone == "" {
+		requestOptions.Timezone = config.timezone
+	}
+	request, err := googlehealth.BuildRawRequest(requestOptions)
+	if err != nil {
+		if preparedOutput != nil {
+			err = preparedOutput.Abort(err)
+			preparedOutputSettled = true
+		}
+		return ReportFailure(FailureReport{Command: "raw", Status: StatusFlagInvalid, Message: err.Error(), Mode: mode}, stdout, stderr)
+	}
+	// rawSetupWithRuntime contains every remaining archive, Connection, and
+	// Provider failure path. Its single returned error aborts the prepared file.
+	body, err := rawSetupWithRuntime(options.configPath, options.archivePath, config, request, runtime)
+	if err != nil {
+		if preparedOutput != nil {
+			err = preparedOutput.Abort(err)
+			preparedOutputSettled = true
+		}
+		// Provider outage (non-auth HTTP failure or network error) maps
+		// to the documented provider_unreachable failure status so JSON
+		// consumers can tell it apart from local misconfiguration
+		// (issue #272); everything else stays operation_failed.
+		status := StatusOperationFailed
+		if googlehealth.IsUnreachableError(err) {
+			status = StatusProviderUnreachable
+		}
+		return ReportFailure(FailureReport{Command: "raw", Status: status, Message: err.Error(), Mode: mode, Cause: err}, stdout, stderr)
+	}
+	if options.outputPath != "" {
+		byteCount, err := preparedOutput.Complete(body)
+		preparedOutputSettled = true
+		if err != nil {
+			return ReportFailure(FailureReport{Command: "raw", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
+		}
+		writer := newStickyWriter(stderr)
+		if _, err := fmt.Fprintf(writer, "raw: wrote %d bytes to %q\n", byteCount, options.outputPath); err != nil {
+			return reportWriteFailure("raw", err, mode, stdout, stderr)
+		}
+		return 0
+	}
+	writer := newStickyWriter(stdout)
+	if _, err := writer.Write(body); err != nil {
+		return reportWriteFailure("raw", err, mode, stdout, stderr)
+	}
+	return 0
+}
+
+// partitionRawFlagArgs splits raw's argv so flags come first and the
+// subverb-positional tail (e.g. `endpoint getIdentity`,
+// `data-type steps`) trails. stdlib's `flag.Parse` stops at the first
+// non-flag, so without this reorder the legacy invocation
+// `raw endpoint getIdentity --config X` would leave `--config X` unread.
+//
+// The walk respects `--` (end of flags), recognises string flags
+// registered on fs so their value argument is not mistaken for a
+// positional, and leaves bool / unknown flags' subsequent token to be
+// parsed in the usual way. Returns the flag-first arg list and the
+// trailing positional slice (which the caller uses verbatim as raw's
+// `target`, bypassing fs.Args() so an early `--` still surfaces the
+// subverb).
+func partitionRawFlagArgs(fs *flag.FlagSet, args []string) ([]string, []string) {
+	flagArgs := make([]string, 0, len(args))
+	positionals := make([]string, 0, len(args))
+	endOfFlags := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if endOfFlags {
+			positionals = append(positionals, arg)
+			continue
+		}
+		if arg == "--" {
+			endOfFlags = true
+			flagArgs = append(flagArgs, arg)
+			continue
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			positionals = append(positionals, arg)
+			continue
+		}
+		flagArgs = append(flagArgs, arg)
+		// If the flag is registered as a non-bool on fs, the next arg
+		// is its value — pull it along (unless this is the `--name=value`
+		// form, which is self-contained).
+		name := strings.TrimLeft(arg, "-")
+		if eq := strings.IndexByte(name, '='); eq >= 0 {
+			continue
+		}
+		f := fs.Lookup(name)
+		if f == nil {
+			continue
+		}
+		if bf, ok := f.Value.(boolFlag); ok && bf.IsBoolFlag() {
+			continue
+		}
+		if i+1 < len(args) {
+			i++
+			flagArgs = append(flagArgs, args[i])
+		}
+	}
+	// fs.Parse consumes only the leading flag block; appending the
+	// positionals lets fs.Args() report them too, while the explicit
+	// `positionals` return survives even if a future change pre-trims
+	// args before fs.Parse sees them.
+	out := append(flagArgs, positionals...)
+	return out, positionals
+}
+
+func rawSetupWithRuntime(configPath, archivePath string, config fullConfigCheck, request googlehealth.RawRequest, runtime runtimeAdapters) ([]byte, error) {
+	runtime = runtime.withDefaults()
+	// PRD #142 slice 6 (issue #179): open the archive in writable mode
+	// via openHealthArchiveConnectionAPI so the handle satisfies
+	// connectionTokenWriter — WithAutoRefresh below can then persist a
+	// refreshed token's metadata the same way sync and irn-profile
+	// already do. ADR-0002 is not violated: the only write `raw`
+	// performs is updating connections.token_metadata_json, the same
+	// kind of write `sync` already performs on the same path.
+	archive, err := openHealthArchiveConnectionAPI(archivePath)
+	if err != nil {
+		return nil, err
+	}
+	defer archive.Close()
+	connection, err := archive.CurrentConnection()
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, missingConnectionRemediation(err)
+		}
+		return nil, err
+	}
+	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{configPath, archivePath}, runtime)
+	if config.oauthClient.kind == "file" {
+		connectionAccess = connectionAccess.WithAutoRefresh(config.oauthClient, archive)
+	}
+	accessToken, err := connectionAccess.AccessToken(request.RequiredScopes)
+	if err != nil {
+		return nil, connectionFailureRemediation(err)
+	}
+	// raw is an interactive exploration command with no SIGINT
+	// instrumentation; Background keeps the request context-scoped (the
+	// shared timeout client still bounds it) without wiring a handler.
+	body, err := runtime.fetchRawProvider(context.Background(), request, accessToken)
+	if err != nil {
+		return nil, connectionFailureRemediation(googlehealth.NormalizeError(err))
+	}
+	return body, nil
+}

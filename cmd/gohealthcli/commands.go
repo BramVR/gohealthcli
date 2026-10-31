@@ -13,32 +13,35 @@ import "io"
 //   - long            (string)              — full prose for the per-page body
 //   - hidden          (bool)                — hidden from --help and reference
 //   - positional_args (string, optional)    — usage hint for trailing positional
-//                                             arguments (e.g. "<SQL>"); omitted
-//                                             entirely when empty
+//     arguments (e.g. "<SQL>"); omitted
+//     entirely when empty
 //   - flags           (array of flagSpec)   — flag specifications
 //   - common_flags    (array of strings, optional) — subset of the five shared
-//                                             flag names that the subcommand
-//                                             accepts via the runtime
-//                                             CommonFlagSet module (issue #166).
-//                                             Omitted entirely when empty so
-//                                             the wire shape stays additive.
+//     flag names that the subcommand
+//     accepts via the runtime
+//     CommonFlagSet module (issue #166).
+//     Omitted entirely when empty so
+//     the wire shape stays additive.
 //
-// Run is the dispatch adapter — invoked by runWithRuntime after a successful
-// registry lookup (PRD #143 slice 6, issue #175). The `json:"-"` tag keeps
-// the function out of the published JSON contract: the schema documents the
-// surface, the adapter implements the call. Subcommands whose underlying
-// signature differs (status's ArchivePathExplicit, export's no-runtime,
-// schema's stdout/stderr-only) satisfy this uniform type via thin wrappers
-// that fold the differences into CommonFlagValues or ignore unused params.
+// Run is the dispatch entry point — invoked by runWithRuntime after a
+// successful registry lookup (PRD #143 slice 6, issue #175). The `json:"-"`
+// tag keeps the function out of the published JSON contract: the schema
+// documents the surface, Run implements the call. Since issue #285 every
+// runner accepts the CommonFlagValues struct directly, so most entries bind
+// their runner as a plain function value; the remaining closures only fold
+// in a per-command spec (the Identity Snapshot family) or adapt the two
+// build-time verbs (schema, docs-export-datasets) that ignore the common
+// flags entirely.
 type commandDef struct {
-	Name           string                                                                                              `json:"name"`
-	Short          string                                                                                              `json:"short"`
-	Long           string                                                                                              `json:"long"`
-	Hidden         bool                                                                                                `json:"hidden"`
-	PositionalArgs string                                                                                              `json:"positional_args,omitempty"`
-	Flags          []flagSpec                                                                                          `json:"flags"`
-	CommonFlags    []string                                                                                            `json:"common_flags,omitempty"`
-	Run            func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int `json:"-"`
+	Name                 string                                                                                              `json:"name"`
+	Short                string                                                                                              `json:"short"`
+	Long                 string                                                                                              `json:"long"`
+	Hidden               bool                                                                                                `json:"hidden"`
+	PositionalArgs       string                                                                                              `json:"positional_args,omitempty"`
+	Flags                []flagSpec                                                                                          `json:"flags"`
+	CommonFlags          []string                                                                                            `json:"common_flags,omitempty"`
+	Run                  func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int `json:"-"`
+	PositionalCompletion valueCompletionPolicy                                                                               `json:"-"`
 }
 
 // flagSpec describes one flag accepted by a subcommand. The string-typed
@@ -50,11 +53,30 @@ type commandDef struct {
 // other machines. Document the resolved location in prose (long descriptions,
 // README, install page) rather than baking a per-host value into the schema.
 type flagSpec struct {
-	Name    string `json:"name"`
-	Type    string `json:"type"`
-	Default string `json:"default"`
-	Usage   string `json:"usage"`
+	Name            string                `json:"name"`
+	Type            string                `json:"type"`
+	Default         string                `json:"default"`
+	Usage           string                `json:"usage"`
+	ValueCompletion valueCompletionPolicy `json:"-"`
 }
+
+type valueCompletionPolicy uint8
+
+const (
+	valueCompletionUnspecified valueCompletionPolicy = iota
+	valueCompletionFile
+	valueCompletionNone
+	valueCompletionExportDataset
+	valueCompletionSyncDataTypesCSV
+	valueCompletionAddScopesCSV
+	valueCompletionRollup
+	valueCompletionSourceFamily
+	valueCompletionRawPositionals
+	valueCompletionRawRollupWindow
+	valueCompletionShell
+	valueCompletionCatalogAction
+	valueCompletionBackupAction
+)
 
 // schemaVersion is the version of the schema --json payload's outer shape.
 // Bump when a backwards-incompatible field change ships; the Node generator
@@ -62,38 +84,51 @@ type flagSpec struct {
 // markdown.
 const commandSchemaVersion = 1
 
+// commandIndex keys the registry by Name so dispatch is a map lookup
+// (#75) rather than a linear scan. Values are indices into `commands`
+// — not copied commandDef values — because the `schema` entry's Run
+// adapter is wired by init() after the slice literal is initialised;
+// storing indices keeps the index coherent with that late binding
+// regardless of init order. Built once at startup by the init() below.
+var commandIndex = make(map[string]int, len(commands))
+
+// init builds commandIndex from the registry. A duplicate Name panics:
+// two entries sharing a name would make one unreachable from dispatch,
+// which is a registry-build programmer error, not a runtime condition —
+// the same convention withCommonSubset / withCommonOverrides follow.
+// This panic is the actual enforcement: it fires during package init,
+// before any test runs. TestCommandNamesAreUnique documents and pins
+// the same invariant in the suite.
+func init() {
+	for i, cmd := range commands {
+		if _, dup := commandIndex[cmd.Name]; dup {
+			panic("duplicate command name in registry: " + cmd.Name)
+		}
+		commandIndex[cmd.Name] = i
+	}
+}
+
 // lookupCommand returns the registry entry whose Name matches the given
 // subcommand. It deliberately INCLUDES hidden entries: the `help <cmd>` verb
 // (PRD #143 slice 2) must surface the prose for hidden build-time commands
 // like `schema` when asked explicitly, even though they are filtered from the
 // top-level `--help` listing.
 func lookupCommand(name string) (commandDef, bool) {
-	for _, cmd := range commands {
-		if cmd.Name == name {
-			return cmd, true
-		}
+	i, ok := commandIndex[name]
+	if !ok {
+		return commandDef{}, false
 	}
-	return commandDef{}, false
+	return commands[i], true
 }
 
-// commonFlags are the five shared flags that the standard output subcommands
-// (init, doctor, connect, identity, profile, sync, status, query) accept.
-// `export` and `raw` use different flag sets — see their explicit Flags slices
-// below — because their output semantics differ.
-//
-// Centralising the shared flags here keeps the registry concise; the dedicated
-// commonFlagsSpec module that #76 introduces will collapse them further.
-var commonFlags = []flagSpec{
-	{Name: "config", Type: "string", Default: "", Usage: "config file path"},
-	{Name: "db", Type: "string", Default: "", Usage: "SQLite Health Archive path"},
-	{Name: "json", Type: "bool", Default: "false", Usage: "write stable JSON to stdout"},
-	{Name: "plain", Type: "bool", Default: "false", Usage: "write plain key/value output to stdout"},
-	{Name: "no-input", Type: "bool", Default: "false", Usage: "never prompt, never wait for browser input"},
-}
-
+// withCommon projects commonFlagsSpec (the issue #76 single source of
+// truth for the five shared flags, defined in common_flags.go) plus the
+// subcommand-specific extras into a registry entry's Flags slice. The
+// runtime side of the same spec is RegisterCommon, so the schema and the
+// FlagSet a subcommand actually parses cannot disagree.
 func withCommon(extra ...flagSpec) []flagSpec {
-	out := make([]flagSpec, 0, len(commonFlags)+len(extra))
-	out = append(out, commonFlags...)
+	out := make([]flagSpec, 0, len(commonFlagsSpec)+len(extra))
+	out = append(out, commonFlagsSpec...)
 	out = append(out, extra...)
 	return out
 }
@@ -110,8 +145,15 @@ func identitySnapshotCommonFlagNames() []string {
 	return []string{"config", "db", "json", "plain"}
 }
 
+// rawCommonFlagNames returns the shared flags raw accepts. --json and
+// --plain shape --plan output; normal reads reject them after parsing so their
+// provider-byte stdout contract stays unchanged.
+func rawCommonFlagNames() []string {
+	return []string{"config", "db", "json", "plain"}
+}
+
 // withCommonSubset is the per-subcommand variant of withCommon that
-// projects only the named shared flags (in the canonical commonFlags
+// projects only the named shared flags (in the canonical commonFlagsSpec
 // order) into the registry entry's Flags slice. Used by subcommands
 // whose runtime CommonFlagSpec.Accepted is a strict subset of the
 // five shared flags, so the help block and `--json` schema reflect
@@ -122,8 +164,8 @@ func identitySnapshotCommonFlagNames() []string {
 // a misspelled name would reintroduce the help/schema drift this
 // helper exists to prevent (mirroring withCommonOverrides' contract).
 func withCommonSubset(names []string, extra ...flagSpec) []flagSpec {
-	known := make(map[string]bool, len(commonFlags))
-	for _, flag := range commonFlags {
+	known := make(map[string]bool, len(commonFlagsSpec))
+	for _, flag := range commonFlagsSpec {
 		known[flag.Name] = true
 	}
 	include := make(map[string]bool, len(names))
@@ -137,7 +179,7 @@ func withCommonSubset(names []string, extra ...flagSpec) []flagSpec {
 		include[name] = true
 	}
 	out := make([]flagSpec, 0, len(names)+len(extra))
-	for _, flag := range commonFlags {
+	for _, flag := range commonFlagsSpec {
 		if include[flag.Name] {
 			out = append(out, flag)
 		}
@@ -158,8 +200,8 @@ func withCommonSubset(names []string, extra ...flagSpec) []flagSpec {
 // unknown names panic at init() because registry-build mistakes are
 // programmer errors, not runtime conditions.
 func withCommonOverrides(overrides map[string]string, extra ...flagSpec) []flagSpec {
-	out := make([]flagSpec, 0, len(commonFlags)+len(extra))
-	for _, flag := range commonFlags {
+	out := make([]flagSpec, 0, len(commonFlagsSpec)+len(extra))
+	for _, flag := range commonFlagsSpec {
 		if override, ok := overrides[flag.Name]; ok {
 			flag.Usage = override
 		}
@@ -167,7 +209,7 @@ func withCommonOverrides(overrides map[string]string, extra ...flagSpec) []flagS
 	}
 	for name := range overrides {
 		found := false
-		for _, flag := range commonFlags {
+		for _, flag := range commonFlagsSpec {
 			if flag.Name == name {
 				found = true
 				break
@@ -182,23 +224,25 @@ func withCommonOverrides(overrides map[string]string, extra ...flagSpec) []flagS
 }
 
 // commonFlagNames returns the five shared flag names in their canonical
-// commonFlags order. Registry entries for subcommands whose runtime flag
+// commonFlagsSpec order. Registry entries for subcommands whose runtime flag
 // setup goes through the CommonFlagSet module (issue #166) carry this
 // slice as their `common_flags` schema field, so downstream tooling can
 // see at a glance which subset of shared flags each subcommand accepts.
 func commonFlagNames() []string {
-	names := make([]string, 0, len(commonFlags))
-	for _, f := range commonFlags {
+	names := make([]string, 0, len(commonFlagsSpec))
+	for _, f := range commonFlagsSpec {
 		names = append(names, f.Name)
 	}
 	return names
 }
 
 // commonOutputMode collapses the CommonFlagValues' json/plain pair into
-// the outputMode struct every subcommand's WithRuntime entry point already
-// expects. Keeping the projection in one place means a future shared-flag
-// addition (a hypothetical --quiet) only has to be wired here and in the
-// CommonFlagSet module — not threaded through every adapter inline.
+// the outputMode struct the render paths expect. Runners call it after
+// ParseCommon resolves the subcommand-slot flags (raw, which accepts
+// neither, projects the global-slot values instead). Keeping the
+// projection in one place means a future shared-flag addition (a
+// hypothetical --quiet) only has to be wired here and in the
+// CommonFlagSet module — not threaded through every runner inline.
 func commonOutputMode(common CommonFlagValues) outputMode {
 	return outputMode{json: common.JSONOutput, plain: common.PlainOutput}
 }
@@ -206,79 +250,101 @@ func commonOutputMode(common CommonFlagValues) outputMode {
 // commands is the registry of every subcommand the binary exposes. The
 // dispatch path (`runWithRuntime` after `--version` / `--help`) and the
 // `--help` printer both read from this slice — there is no parallel switch.
-// PRD #143 slice 6 (issue #175): every entry's Run adapter binds the
-// uniform `(args, common, stdout, stderr, runtime) → int` shape down to
-// each subcommand's existing entry point, folding the diverged signatures
-// (status's ArchivePathExplicit, export's no-runtime, schema's minimal)
-// into thin wrappers that ignore unused params.
+// PRD #143 slice 6 (issue #175) introduced the uniform
+// `(args, common, stdout, stderr, runtime) → int` Run shape; issue #285
+// made every runner accept CommonFlagValues directly, so entries bind
+// their runner as a plain function value instead of an exploding wrapper.
+// Each runner seeds RegisterCommon from the global-slot values itself and
+// documents which fields it deliberately ignores.
 //
 // Entries are listed in the order that they should appear in the Project
 // Site sidebar and the auto-generated command-reference index.
+const authRemediationCommandHelp = "\n\nSetup and Connection failures may add `remediation` to JSON results and zero-based `remediation.N` fields to plain results; human output stays unchanged. Steps are Reporter-owned and diagnosis-first: `doctor` before `init` or `connect`, `doctor --online` before reconnecting or choosing a new archive, and missing-scope consent uses only sorted `--add-scopes` keywords from the public catalog. Building or rendering these steps never performs Provider I/O, starts OAuth, or interpolates error text."
+
+const headlessConnectCommandHelp = "\n\nFor a host without a local browser, `connect --headless-start` performs the same local preflight, stores a ten-minute PKCE pending authorization only in the configured Credential Store, and prints `authorization_url` plus `expires_at`. Open that URL in a trusted browser. Then pipe the complete redirected loopback URL to `connect --complete`; the completion command accepts exactly one URL on stdin and never accepts a bare authorization code or a URL argument. Repeat the same `--add-scopes` value on both commands. Because completion must read stdin, `--complete` cannot be combined with `--no-input`.\n\nPending authorization is bound to the config, Health Archive, OAuth client, exact redirect, requested scopes, and existing Google Identity expectation. It is atomically single-use across concurrent completion processes. Invalid state, redirect, binding, input, or expiry never changes the Connection or token material; a state-valid cancellation and a claimed completion consume the pending authorization. Starting again replaces the prior pending authorization. Treat both printed and redirected URLs as sensitive transfer material: keep them out of shell history, logs, screenshots, and shared artifacts. Interactive `connect` remains the default when the browser and CLI share a host."
+
+const syncArchiveRemediationCommandHelp = "\n\nReviewed Sync and Health Archive failures may add `remediation` to JSON results and zero-based `remediation.N` fields to explicit plain results; human/default output stays unchanged. An Initial Backfill uses the fixed `gohealthcli sync --from YYYY-MM-DD` template without copying invocation arguments. Fan-out keeps actions only on the affected child. Canceled, corrupt, invalid-query, and unknown failures omit remediation. Building or rendering these steps performs no Provider I/O, OAuth, or archive mutation and never interpolates error text."
+
 var commands = []commandDef{
 	{
 		Name:  "init",
 		Short: "Create local config and an empty Health Archive.",
-		Long:  "Initialise a fresh `gohealthcli` install: write the config file, create the Health Archive on disk, and run the initial schema migration. After `init` finishes the binary is ready for `connect`.\n\n`--oauth-client-file` points at a Google OAuth Desktop-app client JSON downloaded from the Google Cloud console (see the [Install](../install.html) page). `--secret-provider` and `--oauth-client-item` are an alternative path that pulls the client from a Secret Provider (for example, 1Password) instead of a file.\n\n`init` never overwrites an existing Health Archive; rerun with a different `--db` to create a second archive in a separate location.",
+		Long:  "Initialise a fresh `gohealthcli` install: write the config file, create the Health Archive on disk, and run the initial schema migration. After `init` finishes the binary is ready for `connect`.\n\n`--timezone <IANA-zone>` sets the persisted calendar for named sync boundaries. It defaults to UTC, and every newly written config records the value explicitly.\n\n`--oauth-client-file` points at a Google OAuth Desktop-app client JSON downloaded from the Google Cloud console (see the [Install](../install.html) page). `--secret-provider` and `--oauth-client-item` are an alternative path that pulls the client from a Secret Provider (for example, 1Password) instead of a file.\n\n`init` never overwrites an existing Health Archive; rerun with a different `--db` to create a second archive in a separate location.",
 		Flags: withCommon(
-			flagSpec{Name: "oauth-client-file", Type: "string", Default: "", Usage: "OAuth client JSON file reference"},
-			flagSpec{Name: "secret-provider", Type: "string", Default: "", Usage: "Secret Provider name for OAuth client setup"},
-			flagSpec{Name: "oauth-client-item", Type: "string", Default: "", Usage: "Secret Provider item name for OAuth client setup"},
+			flagSpec{Name: "oauth-client-file", Type: "string", Default: "", Usage: "OAuth client JSON file reference", ValueCompletion: valueCompletionFile},
+			flagSpec{Name: "secret-provider", Type: "string", Default: "", Usage: "Secret Provider name for OAuth client setup", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "oauth-client-item", Type: "string", Default: "", Usage: "Secret Provider item name for OAuth client setup", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "timezone", Type: "string", Default: "UTC", Usage: "IANA timezone for named sync ranges", ValueCompletion: valueCompletionNone},
 		),
 		CommonFlags: commonFlagNames(),
-		// init runs entirely against the local filesystem (config + archive),
-		// so the runtime adapter bundle is ignored.
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runInit(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr)
-		},
+		// init runs entirely against the local filesystem (config + archive);
+		// the runtime adapter bundle only carries the flag-drift observer.
+		Run: runInit,
 	},
 	{
 		Name:  "doctor",
 		Short: "Validate local setup and provider reachability.",
-		Long:  "Run a diagnostic check against the local gohealthcli installation: config presence, Health Archive path, Credential Store status, schema version, and connection count.\n\nThe report also includes the Data Point Attachment Store: the `attachment_root_path` and `attachment_root_mode` it owns, plus an `attachments` block listing orphan sidecar files (file on disk with no matching row) and orphan rows (row in the archive whose sidecar file is gone). In `--plain` mode the orphan counts surface as `attachments_orphan_files: N` and `attachments_orphan_rows: N` lines, emitted only when the count is positive. `doctor` never modifies the archive or the sidecar tree — it reports only.\n\nWith `--online`, also refresh stored tokens and verify Google Health API reachability. The command never writes health data; it only inspects local state and (with `--online`) performs a single read-only round trip to the provider.\n\nThe output is a structured report on stdout. Use `--json` for stable machine-readable output, `--plain` for terminal-friendly key/value lines.",
+		Long:  "Run a diagnostic check against the local gohealthcli installation: config presence, resolved timezone, Health Archive path, Credential Store status, schema version, and connection count. Legacy configs without `timezone` report UTC.\n\nThe report also includes the Data Point Attachment Store: the `attachment_root_path` and `attachment_root_mode` it owns, plus an `attachments` block listing orphan sidecar files (file on disk with no matching row) and orphan rows (row in the archive whose sidecar file is gone). In `--plain` mode the orphan counts surface as `attachments_orphan_files: N` and `attachments_orphan_rows: N` lines, emitted only when the count is positive. `doctor` never modifies the archive or the sidecar tree — it reports only.\n\nWith `--online`, also refresh stored tokens and verify Google Health API reachability. The command never writes health data; it only inspects local state and (with `--online`) performs a single read-only round trip to the provider.\n\nThe output is a structured report on stdout. Use `--json` for stable machine-readable output, `--plain` for terminal-friendly key/value lines." + authRemediationCommandHelp,
 		Flags: withCommon(
 			flagSpec{Name: "online", Type: "bool", Default: "false", Usage: "refresh tokens and check provider reachability"},
 		),
 		CommonFlags: commonFlagNames(),
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runDoctorWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
-		},
+		Run:         runDoctorWithRuntime,
+	},
+	{
+		Name:                 "catalog",
+		Short:                "Browse and verify the compiled Provider catalog.",
+		Long:                 "Use `catalog list` to list every compiled Google Health Data Type in canonical catalog order. Each machine-readable row separates default or opt-in selection from supported or unsupported raw Data Point access. Use `catalog scopes` to group each exact required OAuth scope with its catalog-ordered Data Type membership.\n\nUse `catalog describe <data-type>` for the detailed contract of one compiled Data Type. Endpoint families, filters, range shapes, page policies, required scopes, record kind, and rollup modes come only from the compiled catalog. Field names and JSON types come from the committed discovery snapshot by default. Use `--discovery PATH` for a bounded local document or `--live` for the fixed public v4 discovery endpoint; the two flags are mutually exclusive. Every fact group reports its source and discovery revision. Discovery enrichment is validated against the compiled identity and record kind and never overrides compiled facts.\n\nThe list, scopes, and default describe actions work without config, a Health Archive, Connection, credentials, or network access; they report catalog requirements, not the current token's grants.\n\nUse `catalog verify` to compare the same canonical catalog with the live public v4 discovery document, or with an offline document supplied through `--discovery PATH`. Its stable result status remains `verified`, `verified_with_known_gaps`, or `drift_detected`; unexpected drift exits nonzero. Known local Rollup-only, upstream-only raw, and upstream write-only Data Types are reported as explicit exceptions. The public discovery document does not establish exact per-Data-Type operation or filter support, so the result reports those facts as unverifiable instead of guessing.",
+		PositionalArgs:       "<list|scopes|verify|describe> [data-type]",
+		PositionalCompletion: valueCompletionCatalogAction,
+		Flags: withCommonSubset(catalogCommonFlagNames(),
+			flagSpec{Name: "discovery", Type: "string", Default: "", Usage: "with describe or verify: read a Google Health discovery document from PATH", ValueCompletion: valueCompletionFile},
+			flagSpec{Name: "live", Type: "bool", Default: "false", Usage: "with describe: read the fixed public Google Health discovery endpoint"},
+		),
+		CommonFlags: catalogCommonFlagNames(),
+		Run:         runCatalogWithRuntime,
 	},
 	{
 		Name:  "connect",
 		Short: "Run the browser OAuth flow and anchor one Google Identity.",
-		Long:  "Open the system browser, run the installed-app OAuth flow against the OAuth client supplied at `init`, and store the resulting tokens in the OS-native Credential Store (Keychain on macOS, Credential Manager on Windows, Secret Service on Linux).\n\nA Health Archive holds exactly one Connection. Running `connect` against an archive that already has a Connection refreshes the token material in place rather than adding a second identity.\n\n`--add-scopes` extends an existing grant with optional scope keywords (`irn`, `ecg`, `nutrition`, `tcx`, `settings`) without re-running setup; Google's `include_granted_scopes=true` makes the resulting token cover the union of prior + new scopes. Use `connect --add-scopes irn` to unlock `gohealthcli irn-profile` and Tier 2 ECG / IRN Data Types; use `connect --add-scopes nutrition` to unlock hydration-log; use `connect --add-scopes tcx` to unlock TCX route archival on exercise sync (grants `googlehealth.location.readonly`, required on top of `activity_and_fitness.readonly` for Google's `exportExerciseTcx` endpoint); use `connect --add-scopes settings` to unlock `gohealthcli settings` and `gohealthcli devices` (grants `googlehealth.settings.readonly`, which Google requires for `users.getSettings` and `users.pairedDevices.list`).\n\n`--no-input` makes the command fail with a non-zero exit code if the browser flow would block (useful in CI smoke tests after the tokens are already provisioned).",
+		Long:  "Open the system browser, run the installed-app OAuth flow against the OAuth client supplied at `init`, and store the resulting tokens in the OS-native Credential Store (Keychain on macOS, Credential Manager on Windows, Secret Service on Linux).\n\nA Health Archive holds exactly one Connection. Running `connect` against an archive that already has a Connection refreshes the token material in place rather than adding a second identity.\n\n`--add-scopes` extends an existing grant with optional scope keywords (`irn`, `ecg`, `nutrition`, `tcx`, `settings`) without re-running setup; Google's `include_granted_scopes=true` makes the resulting token cover the union of prior + new scopes. Use `connect --add-scopes irn` to unlock `gohealthcli irn-profile` and Tier 2 ECG / IRN Data Types; use `connect --add-scopes nutrition` to unlock hydration-log and nutrition-log; use `connect --add-scopes tcx` to unlock TCX route archival on exercise sync (grants `googlehealth.location.readonly`, required on top of `activity_and_fitness.readonly` for Google's `exportExerciseTcx` endpoint); use `connect --add-scopes settings` to unlock `gohealthcli settings` and `gohealthcli devices` (grants `googlehealth.settings.readonly`, which Google requires for `users.getSettings` and `users.pairedDevices.list`).\n\n`--no-input` makes the command fail with a non-zero exit code if the browser flow would block (useful in CI smoke tests after the tokens are already provisioned)." + headlessConnectCommandHelp + authRemediationCommandHelp,
 		Flags: withCommon(
-			flagSpec{Name: "add-scopes", Type: "string", Default: "", Usage: "extend the OAuth grant with optional scope keywords (csv): irn, ecg, nutrition, tcx, settings"},
+			// Usage is rendered from connectAddScopeKeywords (same source
+			// as the runtime flag registration and the unknown-keyword
+			// error) so the schema --json contract and the generated
+			// docs/commands/connect.md page cannot drift from the
+			// accepted keyword set (#148).
+			flagSpec{Name: "add-scopes", Type: "string", Default: "", Usage: connectAddScopesUsage(), ValueCompletion: valueCompletionAddScopesCSV},
+			flagSpec{Name: "headless-start", Type: "bool", Default: "false", Usage: "start headless OAuth and print the authorization URL"},
+			flagSpec{Name: "complete", Type: "bool", Default: "false", Usage: "complete headless OAuth from a redirected URL read on stdin"},
 		),
 		CommonFlags: commonFlagNames(),
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runConnectWithRuntime(args, common.ConfigPath, common.ArchivePath, common.NoInput, commonOutputMode(common), stdout, stderr, runtime)
-		},
+		Run:         runConnectWithRuntime,
 	},
 	{
 		Name:        "identity",
 		Short:       "Refresh the archived Google Identity metadata.",
-		Long:        "Re-fetch the upstream Google Identity payload (Google Health user ID and legacy Fitbit user ID when present) and update the metadata stored alongside the Connection.\n\n`identity` does not change the OAuth tokens or move the Connection between archives — use `connect` for those. It is a low-cost, read-only operation against the provider.",
+		Long:        "Re-fetch the upstream Google Identity payload (Google Health user ID and legacy Fitbit user ID when present) and update the metadata stored alongside the Connection.\n\n`identity` does not change the OAuth tokens or move the Connection between archives — use `connect` for those. It is a low-cost, read-only operation against the provider.\n\nIf the Provider cannot be reached — a network failure or a non-auth upstream HTTP error — the command exits non-zero with JSON status `provider_unreachable`, so automation can distinguish a Provider outage from local misconfiguration. An upstream HTTP 401 instead reports the `Google Health rejected stored Connection token` message: re-run `gohealthcli connect`." + authRemediationCommandHelp,
 		Flags:       withCommon(),
 		CommonFlags: commonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runIdentityWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runIdentitySnapshotCommand(identityCommand, args, common, stdout, stderr, runtime)
 		},
 	},
 	{
 		Name:        "profile",
 		Short:       "Archive a Profile Snapshot from the provider.",
-		Long:        "Fetch the upstream profile blob (units, time zone, demographic settings as exposed by the Google Health API) and append it to the Health Archive as a new Profile Snapshot. Each invocation creates a new dated snapshot rather than overwriting the prior one, so historical settings drift is preserved.\n\nA Profile Snapshot is not a Data Point. It is metadata about the consenting user's account and the unit conventions in force at the time of fetch.",
+		Long:        "Fetch the upstream profile blob (units, time zone, demographic settings as exposed by the Google Health API) and append it to the Health Archive as a new Profile Snapshot. Each invocation creates a new dated snapshot rather than overwriting the prior one, so historical settings drift is preserved.\n\nA Profile Snapshot is not a Data Point. It is metadata about the consenting user's account and the unit conventions in force at the time of fetch.\n\nIf the Provider cannot be reached — a network failure or a non-auth upstream HTTP error — the command exits non-zero with JSON status `provider_unreachable`, so automation can distinguish a Provider outage from local misconfiguration. An upstream HTTP 401 instead reports the `Google Health rejected stored Connection token` message: re-run `gohealthcli connect`." + authRemediationCommandHelp,
 		Flags:       withCommon(),
 		CommonFlags: commonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runProfileWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runIdentitySnapshotCommand(profileSnapshotCommand, args, common, stdout, stderr, runtime)
 		},
 	},
 	{
 		Name:  "settings",
 		Short: "Archive a Settings Snapshot from the provider.",
-		Long:  "Fetch the upstream `users.getSettings` payload and append it to the Health Archive as a new Identity Snapshot of kind `settings`. The `current_settings` Normalized View projects the latest snapshot's measurement system, timezone, and stride-length type into columns for `query` and `export`.\n\n`settings` is read-only against the provider and writes the raw response to the archive; the JSON shape stays the source of truth, so new fields can be projected into the view without a re-sync.\n\nRequires the `settings.readonly` OAuth scope (PRD #142 #176 confirmed empirically — `profile.readonly` alone returns HTTP 403). If the scope is missing, `settings` exits with status `settings_scope_missing` and a remediation hint; run `gohealthcli connect --add-scopes settings` once to grant it. No second base-set browser sign-in is needed.",
+		Long:  "Fetch the upstream `users.getSettings` payload and append it to the Health Archive as a new Identity Snapshot of kind `settings`. The `current_settings` Normalized View projects the latest snapshot's measurement system, timezone, and stride-length type into columns for `query` and `export`.\n\n`settings` is read-only against the provider and writes the raw response to the archive; the JSON shape stays the source of truth, so new fields can be projected into the view without a re-sync.\n\nRequires the `settings.readonly` OAuth scope (PRD #142 #176 confirmed empirically — `profile.readonly` alone returns HTTP 403). If the scope is missing, `settings` exits with status `settings_scope_missing` and a remediation hint; run `gohealthcli connect --add-scopes settings` once to grant it. No second base-set browser sign-in is needed.\n\nIf the Provider cannot be reached — a network failure or a non-auth upstream HTTP error — the command exits non-zero with JSON status `provider_unreachable`, so automation can distinguish a Provider outage from local misconfiguration. An upstream HTTP 401 instead reports the `Google Health rejected stored Connection token` message: re-run `gohealthcli connect`." + authRemediationCommandHelp,
 		// settings does no prompting and never blocks on browser input,
 		// so --no-input is intentionally omitted from both Flags and
 		// CommonFlags (issue #171): the help block, the schema, and
@@ -286,13 +352,13 @@ var commands = []commandDef{
 		Flags:       withCommonSubset(identitySnapshotCommonFlagNames()),
 		CommonFlags: identitySnapshotCommonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runSettingsWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runIdentitySnapshotCommand(settingsSnapshotCommand, args, common, stdout, stderr, runtime)
 		},
 	},
 	{
 		Name:  "devices",
 		Short: "Archive a Paired Devices Snapshot from the provider.",
-		Long:  "Fetch the upstream `users.pairedDevices.list` payload and append it to the Health Archive as a new Identity Snapshot of kind `paired-devices`. The `paired_devices` Normalized View explodes the latest snapshot via `json_each`, returning one row per device with `device_type`, `model`, `manufacturer`, `battery_percentage`, `last_sync_time`, and `features`.\n\nThis is the LLM's path to questions like \"which Pixel Watch synced last?\" or \"what's my Fitbit battery?\" — every projection is read-only against the raw snapshot, so new fields can be added without re-syncing.\n\nRequires the `settings.readonly` OAuth scope (PRD #142 #176 confirmed empirically — `profile.readonly` alone returns HTTP 403). If the scope is missing, `devices` exits with status `devices_scope_missing` and a remediation hint; run `gohealthcli connect --add-scopes settings` once to grant it. No second base-set browser sign-in is needed.",
+		Long:  "Fetch the upstream `users.pairedDevices.list` payload and append it to the Health Archive as a new Identity Snapshot of kind `paired-devices`. The `paired_devices` Normalized View explodes the latest snapshot via `json_each`, returning one row per device with `name`, `device_type`, `device_version`, `battery_status`, and `battery_level` — the real payload shape verified against a live archive (#298).\n\nThis is the LLM's path to questions like \"which devices are paired?\" or \"what's my watch battery?\" — every projection is read-only against the raw snapshot, so new fields can be added without re-syncing.\n\nRequires the `settings.readonly` OAuth scope (PRD #142 #176 confirmed empirically — `profile.readonly` alone returns HTTP 403). If the scope is missing, `devices` exits with status `devices_scope_missing` and a remediation hint; run `gohealthcli connect --add-scopes settings` once to grant it. No second base-set browser sign-in is needed.\n\nIf the Provider cannot be reached — a network failure or a non-auth upstream HTTP error — the command exits non-zero with JSON status `provider_unreachable`, so automation can distinguish a Provider outage from local misconfiguration. An upstream HTTP 401 instead reports the `Google Health rejected stored Connection token` message: re-run `gohealthcli connect`." + authRemediationCommandHelp,
 		// devices does no prompting and never blocks on browser input,
 		// so --no-input is intentionally omitted from both Flags and
 		// CommonFlags (issue #171): the help block, the schema, and
@@ -300,13 +366,13 @@ var commands = []commandDef{
 		Flags:       withCommonSubset(identitySnapshotCommonFlagNames()),
 		CommonFlags: identitySnapshotCommonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runDevicesWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runIdentitySnapshotCommand(devicesSnapshotCommand, args, common, stdout, stderr, runtime)
 		},
 	},
 	{
 		Name:  "irn-profile",
 		Short: "Archive an IRN Profile Snapshot from the provider.",
-		Long:  "Fetch the upstream `users.getIrnProfile` payload (onboarding state, enrollment state for Google's irregular-rhythm-notification feature) and append it to the Health Archive as a new Identity Snapshot of kind `irn-profile`. The `current_irn_profile` Normalized View projects the latest snapshot as columns.\n\nRequires the `irn.readonly` OAuth scope — run `gohealthcli connect --add-scopes irn` once to grant it. If the scope is not granted, `irn-profile` exits with a clear reconnect instruction and does **not** trigger the browser flow.",
+		Long:  "Fetch the upstream `users.getIrnProfile` payload (onboarding state, enrollment state for Google's irregular-rhythm-notification feature) and append it to the Health Archive as a new Identity Snapshot of kind `irn-profile`. The `current_irn_profile` Normalized View projects the latest snapshot as columns.\n\nRequires the `irn.readonly` OAuth scope — run `gohealthcli connect --add-scopes irn` once to grant it. If the scope is not granted, `irn-profile` exits with a clear reconnect instruction and does **not** trigger the browser flow.\n\nIf the Provider cannot be reached — a network failure or a non-auth upstream HTTP error — the command exits non-zero with JSON status `provider_unreachable`, so automation can distinguish a Provider outage from local misconfiguration. An upstream HTTP 401 instead reports the `Google Health rejected stored Connection token` message: re-run `gohealthcli connect`." + authRemediationCommandHelp,
 		// irn-profile does no prompting and never blocks on browser
 		// input, so --no-input is intentionally omitted from both
 		// Flags and CommonFlags (issue #171): the help block, the
@@ -314,45 +380,62 @@ var commands = []commandDef{
 		Flags:       withCommonSubset(identitySnapshotCommonFlagNames()),
 		CommonFlags: identitySnapshotCommonFlagNames(),
 		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runIRNProfileWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
+			return runIdentitySnapshotCommand(irnProfileSnapshotCommand, args, common, stdout, stderr, runtime)
 		},
 	},
 	{
 		Name:  "sync",
 		Short: "Archive Google Health Data Points and supported Rollups.",
-		Long:  "Pull raw Data Points for the requested Data Types within an inclusive `--from` / exclusive `--to` window and append them to the Health Archive. Sync is the primary write path; everything else in the binary either reads from the archive or refreshes metadata.\n\n`--types` accepts a comma-separated list (for example `steps,heart-rate,sleep`); multi-type invocations fan out into one Sync Run per Data Type, each with its own outcome and Sync Cursor. When neither `--types` nor `--all` is set, `sync` falls back to a single-type run against `steps`. `--all` is shorthand for every default Data Type in the catalog. Per-type failures stay isolated: one Data Type erroring does not stop the others. `--rollup` switches the sync from raw Data Points to upstream Rollup records: `daily` calls the `dailyRollUp` endpoint (civil-time windows), `hourly` / `weekly` / `window=<duration>` call the windowed `rollUp` endpoint (RFC3339 windows) with a 1h / 7d / parsed-duration window size respectively. Unsupported combinations error with the Data Type's actual `SupportedEndpoints` quoted in the message. `--source-family wearable` restricts the result set to Data Points whose Data Source family is a watch or tracker.\n\n`--from` and `--to` accept both civil dates (`YYYY-MM-DD`, interpreted as start-of-UTC-day) and RFC3339 timestamps. The emitted shape is per rollup kind:\n\n- `daily`: emits civil dates (`YYYY-MM-DD`). RFC3339 inputs are projected to their UTC calendar day so the upstream `dailyRollUp` body carries the catalog-required civil interval.\n- `hourly` / `weekly` / `window=<duration>`: emits RFC3339 so the windowed `rollUp` body carries the upstream-required RFC3339 range.\n\nShape-rejection messages name both supported forms per rollup kind so operators no longer see an opaque upstream HTTP 400 for civil-on-hourly or similar.\n\n`--from` is optional once an initial backfill has succeeded — subsequent runs read the durable Sync Cursor for the same `(connection_id, data_type, source_family_filter, rollup_kind)` key and resume from it. Each rollup kind (`daily` / `hourly` / `weekly` / `window=<duration>`) carries its own cursor, so syncing weekly aggregates does not disturb the hourly cursor for the same Data Type. The cursor advances only when a Sync Run finishes with `sync_completed`, so failed or cancelled runs re-read the same window on the next attempt (ADR-0008). The terminal Sync Run status and the cursor advance are written in one SQLite transaction, so a crash between them cannot leave the audit trail and the cursor disagreeing.\n\nA Sync Run row is recorded for every invocation that reaches upstream — succeeded, failed, or cancelled — so the archive carries an audit trail of attempts as well as records. Every `--json` envelope carries a non-empty `status` from the enum `sync_completed | sync_failed | sync_canceled`; the empty string is structurally impossible because every code path emits a non-empty status.\n\nPreflight failures exit before contacting the provider and do NOT write a `sync_runs` audit row. The full list of no-audit-row rejections is:\n\n- Unparseable `--from` or `--to` (range parse).\n- Inverted range (`--from > --to`).\n- Zero-width range (`--from == --to`).\n- Unsupported `--rollup` kind (parse failure).\n- `--rollup <kind>` requested for a Data Type whose catalog entry does not support that kind (e.g. `--rollup hourly --types daily-resting-heart-rate`).\n- Unsupported Data Type (not syncable yet).\n- Source-family vs Data Type mismatch.\n- `--rollup` combined with `--source-family` (mutually exclusive).\n- No Connection on file (connection lookup failure).\n- `--all` combined with `--types` (mutually exclusive).\n- Duplicate entries in `--types`.\n- `--all` expanding to zero supported Data Types.\n- SIGINT received before any Data Type has started its audit row (no run is in flight to mark).\n\nSIGINT (Ctrl-C) during a fan-out marks the in-flight Sync Run `sync_canceled`, leaves its Sync Cursor un-advanced, and stops cleanly; prior Data Types remain `sync_completed`.\n\nTerminal writes are resilient to SQLite contention: on `SQLITE_BUSY`, the terminal write retries with bounded exponential backoff plus full jitter. If the retry budget is exhausted, the run surfaces as `sync_failed` with a contention-aware message and a separate short-transaction recovery write drives the row to a terminal state under the same retry budget so a `sync_running` row never lingers. `sync_canceled` outcomes are preserved through the recovery path — they are never reclassified as `sync_failed`.",
+		Long:  "Pull raw Data Points for the requested Data Types within an inclusive `--from` / exclusive `--to` window and append them to the Health Archive. Sync is the primary write path; everything else in the binary either reads from the archive or refreshes metadata.\n\n`--types` accepts a comma-separated list (for example `steps,heart-rate,sleep`); multi-type invocations fan out into one Sync Run per Data Type, each with its own outcome and Sync Cursor. When neither `--types` nor `--all` is set, `sync` falls back to a single-type run against `steps`. `--all` is shorthand for every default Data Type in the catalog. Per-type failures stay isolated: one Data Type erroring does not stop the others. `--rollup` switches the sync from raw Data Points to upstream Rollup records: `daily` calls the `dailyRollUp` endpoint (civil-time windows), `hourly` / `weekly` / `window=<duration>` call the windowed `rollUp` endpoint (RFC3339 windows) with a 1h / 7d / parsed-duration window size respectively. Daily heart-rate Rollups are summary-history records and do not replace or imply a backfill of raw heart-rate samples. `total-calories` and `calories-in-heart-rate-zone` are Rollup-only, and raw Data Point sync rejects them; daily and physical requests are split into at most 14-day Provider spans, and physical chunk boundaries align to multiples of the requested window. Unsupported combinations error with the Data Type's actual `SupportedEndpoints` quoted in the message. `--source-family wearable` restricts the result set to Data Points whose Data Source family is a watch or tracker.\n\n`--from` and `--to` accept `now`, `today`, `yesterday`, civil dates (`YYYY-MM-DD`, interpreted as start-of-UTC-day), and RFC3339 timestamps. The named-boundary timezone resolves by precedence: `sync --timezone`, root config `timezone`, then UTC for legacy configs. It never comes from the machine timezone, Provider settings, Data Point metadata, locale, or IP, and never reinterprets explicit dates or RFC3339 instants. Named physical boundaries emit UTC RFC3339, civil boundaries emit local `YYYY-MM-DDTHH:mm:ss`, and daily boundaries emit `YYYY-MM-DD`. Yesterday is calendar-based, so a physical `yesterday` to `today` window can span 23 or 25 hours across daylight-saving transitions; a timezone that skipped the resolved civil date fails locally.\n\nThe emitted shape for explicit rollup inputs remains per rollup kind:\n\n- `daily`: emits civil dates (`YYYY-MM-DD`). RFC3339 inputs are projected to their UTC calendar day so the upstream `dailyRollUp` body carries the catalog-required civil interval.\n- `hourly` / `weekly` / `window=<duration>`: emits RFC3339 so the windowed `rollUp` body carries the upstream-required RFC3339 range.\n\nShape-rejection messages name the supported forms so operators no longer see an opaque upstream HTTP 400.\n\n`--from` is optional once an initial backfill has succeeded — subsequent runs read the durable Sync Cursor for the same `(connection_id, data_type, source_family_filter, rollup_kind)` key and resume from it. Each rollup kind (`daily` / `hourly` / `weekly` / `window=<duration>`) carries its own cursor, so syncing weekly aggregates does not disturb the hourly cursor for the same Data Type. The cursor advances only when a Sync Run finishes with `sync_completed`, so failed or cancelled runs re-read the same window on the next attempt (ADR-0008). The terminal Sync Run status and the cursor advance are written in one SQLite transaction, so a crash between them cannot leave the audit trail and the cursor disagreeing.\n\nA Sync Run row is recorded for every invocation that reaches upstream — succeeded, failed, or cancelled — so the archive carries an audit trail of attempts as well as records. Its `range_requested_json` object keeps `from` and `to` as the exact resolved Provider boundaries and adds the resolution `timezone`, UTC `resolved_at`, and `from_input` / `to_input` only when the operator supplied a named boundary. Historical rows with only `from` and `to` remain readable. Every `--json` envelope carries a non-empty `status` from the enum `sync_completed | sync_failed | sync_canceled`; the empty string is structurally impossible because every code path emits a non-empty status.\n\nPreflight failures exit before contacting the provider and do NOT write a `sync_runs` audit row. The full list of no-audit-row rejections is:\n\n- Invalid or empty flag/config timezone, an unsupported named boundary, a skipped civil date, or an otherwise unparseable `--from` / `--to`.\n- Inverted range (`--from > --to`).\n- Zero-width range (`--from == --to`).\n- Unsupported `--rollup` kind (parse failure).\n- `--rollup <kind>` requested for a Data Type whose catalog entry does not support that kind (e.g. `--rollup hourly --types daily-resting-heart-rate`).\n- Unsupported Data Type (not syncable yet).\n- Source-family vs Data Type mismatch.\n- `--rollup` combined with `--source-family` (mutually exclusive).\n- No Connection on file (connection lookup failure).\n- `--all` combined with `--types` (mutually exclusive).\n- Duplicate entries in `--types`.\n- `--all` expanding to zero supported Data Types.\n- SIGINT received before any Data Type has started its audit row (no run is in flight to mark).\n\nSIGINT (Ctrl-C) aborts the in-flight Provider request (every request is scoped to the run's context, and a Retry-After backoff sleep is cut short the same way), marks the in-flight Sync Run `sync_canceled`, leaves its Sync Cursor un-advanced, and stops cleanly; prior Data Types remain `sync_completed` and later ones are skipped.\n\nTerminal writes are resilient to SQLite contention: on `SQLITE_BUSY`, the terminal write retries with bounded exponential backoff plus full jitter. If the retry budget is exhausted, the run surfaces as `sync_failed` with a contention-aware message and a separate short-transaction recovery write drives the row to a terminal state under the same retry budget so a `sync_running` row never lingers. `sync_canceled` outcomes are preserved through the recovery path — they are never reclassified as `sync_failed`.\n\nLive progress (#236): before every page fetch the Sync Run heartbeats — the counts archived so far plus a `last_progress_at` timestamp land on the `sync_runs` row as a best-effort autocommit write — so a concurrent reader can watch progress from another terminal while the run is in flight, and a slow first page (large backfill, 429 retry backoff) still shows a live heartbeat from second zero. Heartbeats are advisory; the finalize transaction's terminal counts stay authoritative, and a heartbeat write failure never fails the sync.\n\n`sync --status` is that concurrent reader, packaged: it lists recent Sync Runs from the local archive — one row per run with id, Data Types, status, stored resolved `from` / `to`, resolution timezone and timestamp when available, original named inputs when available, counts, duration, heartbeat age, and a truncated error summary — and performs no provider I/O or historical range recomputation. Finished runs are listed when they finished inside `--window` (Go duration, default `15m`, max `24h`); `sync_running` rows are window-exempt, so a long in-flight run never ages out of the default view. `--status` cannot be combined with `--types`, `--all`, `--from`, `--to`, `--timezone`, `--rollup`, or `--source-family`, and `--window` requires `--status`. The shared `--json` / `--plain` flags shape the output like every other read command.\n\nAbandoned-run fencing: on entry to `sync`, `sync --status`, and `status`, any `sync_running` row whose heartbeat (or `started_at`, for rows that died before their first page) is older than 5 minutes is flipped to `sync_failed` with `error_summary` `abandoned (no heartbeat for 5m)` and `finished_at` set — so orphans from killed processes stop reading as alive without manual SQL. The fence is idempotent and never touches the Sync Cursor (ADR-0008: only a completed finalize advances it). Because it keys on heartbeat staleness rather than wall-clock age, a multi-hour backfill with a fresh heartbeat is never mis-flagged; and if a fenced process turns out to be alive after all, its eventual finalize overwrites the fence so the row converges to its true terminal status.\n\nHow long does a sync take? A cursor-resumed incremental sync finishes in seconds — a steps delta covering ~7 hours archived 97 Data Points in 7s. An explicit backfill window costs time in proportion to how many Data Points it covers: sustained throughput on large completed runs measures roughly 2,000–5,000 Data Points per minute (plan with ~2,000/min), so the Data Type's density per day decides the wall-clock. Densities measured 2026-06-10 from a real archive backed by a Pixel Watch 4 (continuous heart-rate sampling), and what two weeks of data costs at the conservative rate: heart-rate ~27,500 points/day, so two weeks is ~385,000 points and 1.5–3 hours of syncing; time-in-heart-rate-zone ~960/day, ~13,400 points, ~5 minutes; active-energy-burned ~630/day, ~8,800 points, ~4 minutes; oxygen-saturation ~480/day, ~6,700 points, ~3 minutes; steps ~260/day, ~3,600 points, ~2 minutes; sleep and the daily-* types are a point or so per day and finish in seconds. Density is account-specific — a phone-only account with no continuously-sampling wearable runs far lower across the board. Runs longer than an access token's ~1-hour lifetime survive it: a mid-run upstream 401 triggers a single token refresh and a retry of the failed request, and the refreshed token carries the rest of the run — at most one refresh per fetch, so a revoked grant still fails, and 403 is never retried because a fresh token cannot fix a missing scope. Mid-run refresh requires a Connection that supports auto-refresh (the standard `init --oauth-client-file` setup does); without it, a run that outlives its token keeps the historical behavior — it fails with `Google Health rejected stored Connection token` and leaves the Sync Cursor un-advanced — so chunk such backfills into `--from`/`--to` windows under ~100,000 points (2–3 days of continuously-sampled heart-rate). While a long run is in flight, `sync --status` from a second terminal shows the live counts and heartbeat age.",
 		Flags: withCommon(
-			flagSpec{Name: "types", Type: "string", Default: "", Usage: "comma-separated Data Types; defaults to \"steps\" when neither --types nor --all is set"},
+			flagSpec{Name: "types", Type: "string", Default: "", Usage: syncTypesUsage(), ValueCompletion: valueCompletionSyncDataTypesCSV},
 			flagSpec{Name: "all", Type: "bool", Default: "false", Usage: "sync every default Data Type"},
-			flagSpec{Name: "from", Type: "string", Default: "", Usage: "inclusive sync range start; optional once a Sync Cursor exists"},
-			flagSpec{Name: "to", Type: "string", Default: "", Usage: "exclusive sync range end"},
-			flagSpec{Name: "rollup", Type: "string", Default: "", Usage: "rollup kind to sync; supported: daily | hourly | weekly | window=<duration>"},
-			flagSpec{Name: "source-family", Type: "string", Default: "", Usage: "source family filter; supported: wearable"},
+			flagSpec{Name: "from", Type: "string", Default: "", Usage: "inclusive sync range start; optional once a Sync Cursor exists", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "to", Type: "string", Default: "", Usage: "exclusive sync range end", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "timezone", Type: "string", Default: "", Usage: "IANA timezone for now, today, and yesterday (default UTC)", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "rollup", Type: "string", Default: "", Usage: syncRollupUsage(), ValueCompletion: valueCompletionRollup},
+			flagSpec{Name: "source-family", Type: "string", Default: "", Usage: syncSourceFamilyUsage(), ValueCompletion: valueCompletionSourceFamily},
+			flagSpec{Name: "plan", Type: "bool", Default: "false", Usage: syncPlanUsage()},
+			flagSpec{Name: "status", Type: "bool", Default: "false", Usage: "list recent Sync Runs from the local archive instead of syncing"},
+			flagSpec{Name: "window", Type: "string", Default: "", Usage: "with --status: how far back to list finished Sync Runs (Go duration, default 15m, max 24h)", ValueCompletion: valueCompletionNone},
 		),
 		CommonFlags: commonFlagNames(),
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runSyncWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
-		},
+		Run:         runSyncWithRuntime,
+	},
+	{
+		Name:                 "backup",
+		Short:                "Initialize, push, pull, and inspect encrypted Health Archive backups.",
+		Long:                 "Manage the explicit age-encrypted Git backup for the current local Health Archive. `backup init` creates or reuses a local X25519 age identity, writes an owner-only backup config, initializes or clones the configured Git checkout, writes its recovery README, commits it, and pushes unless `--no-push` is set. `backup push` exports only the current local Health Archive into deterministic logical JSONL shards, compresses them with fixed gzip metadata, encrypts every shard with age before Git sees it, updates the cleartext manifest, commits, and pushes unless `--no-push` is set. It does not sync, refresh Identity Snapshots, read the Credential Store, or contact Google Health. `backup pull` pulls/rebases the configured Git checkout, decrypts and verifies every manifest-owned shard, validates the complete Health Archive Snapshot, and restores it only into a fresh Health Archive path. Data Point Attachment rows and encrypted payloads restore as owner-only sidecars that satisfy the same missing-row and orphan-file integrity rules reported by `doctor`. `backup status` reads only cleartext manifest metadata; it does not read the private age identity, decrypt health data, open the Health Archive, contact Google Health, or mutate the backup checkout.\n\nThe default backup config is `backup.json` under the XDG-style gohealthcli config directory, and the default age identity is stored beside it. In this command family `--config` selects that backup config. `--db` selects the source Health Archive for `backup push` and the fresh target Health Archive for `backup pull`. The Git checkout defaults to `~/Projects/backup-gohealthcli`, and `--remote`, `--repo`, `--identity`, and repeatable `--recipient` values override the saved backup configuration. To add or rotate recipients, rerun `backup init` with the complete desired set of additional public recipients, then run `backup push`. Recipients are trimmed, deduplicated, and sorted; a changed set re-encrypts unchanged shards, while a later unchanged push reuses authenticated ciphertext and leaves Git clean. Shards absent from a new Snapshot are removed from the current backup tree without rewriting earlier Git history.\n\nThe age identity and backup config stay local and owner-only. Never commit either file. Private Credential Store token material, OAuth client secrets, and Secret Provider contents are not backed up; Provider commands may require reconnecting after restore. Keep a private recovery copy of the identity: if every configured identity is lost, the encrypted backup cannot be restored. The backup repository still reveals cleartext metadata such as backup time, public recipients, Health Archive schema version, table names, record counts, shard paths, encrypted sizes, plaintext hashes, cadence, and changed shards.",
+		PositionalArgs:       "<init|push|pull|status>",
+		PositionalCompletion: valueCompletionBackupAction,
+		Flags: withCommonSubset(backupCommonFlagNames(),
+			flagSpec{Name: "repo", Type: "string", Default: "", Usage: backupRepoFlagUsage, ValueCompletion: valueCompletionFile},
+			flagSpec{Name: "remote", Type: "string", Default: "", Usage: backupRemoteFlagUsage, ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "identity", Type: "string", Default: "", Usage: backupIdentityFlagUsage, ValueCompletion: valueCompletionFile},
+			flagSpec{Name: "recipient", Type: "string", Default: "", Usage: backupRecipientFlagUsage, ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "no-push", Type: "bool", Default: "false", Usage: backupNoPushFlagUsage},
+		),
+		CommonFlags: backupCommonFlagNames(),
+		Run:         runBackup,
 	},
 	{
 		Name:        "status",
 		Short:       "Summarise archive counts and newest synced timestamps.",
-		Long:        "Print a per-Data-Type summary of the Health Archive: how many Data Points are stored, the newest synced timestamp, and the most recent Sync Run status. Useful as a quick health check before or after a long sync.\n\nAlso reports identity-metadata freshness: a `paired_device_count` line (when a `paired-devices` snapshot is archived) and an `identity_snapshot.<kind>.fetched_at` line per Identity Snapshot kind that has at least one row (`profile`, `settings`, `paired-devices`, `irn-profile`). In `--json` these surface under an `identity_snapshots_freshness` block — omitted entirely when no snapshots exist. `paired_device_count` is also emitted as a top-level JSON key so `--plain` and `--json` carry the same field; the nested `identity_snapshots_freshness.paired_device_count` is preserved for back-compat.\n\n`--plain` and `--json` carry the same information. The plain `known_data_types: a,b,c` line maps to a top-level `known_data_types` JSON array. Plain `data_type.<name>.*` and `identity_snapshot.<kind>.*` lines flatten the JSON `data_types[]` and `identity_snapshots_freshness` blocks, and the `latest_successful_sync_run_*` / `latest_failed_sync_run_*` lines flatten the matching JSON objects.\n\nAlso reports Tier 2 coverage: `electrocardiogram_event_count` and `irregular_rhythm_notification_count` (plain) appear only when the corresponding scope has been granted via `connect --add-scopes ecg,irn`. In `--json` these surface under a `tier_2` block alongside `electrocardiogram_scope_granted` / `irregular_rhythm_notification_scope_granted` flags, both counts defaulting to 0 when the scope is not granted.\n\n`status` does no provider I/O — it reads only the local Health Archive.",
+		Long:        "Print a per-Data-Type summary of the Health Archive: how many Data Points are stored, the newest synced timestamp, and the most recent Sync Run status. Useful as a quick health check before or after a long sync.\n\nAlso reports identity-metadata freshness: a `paired_device_count` line (when a `paired-devices` snapshot is archived) and an `identity_snapshot.<kind>.fetched_at` line per Identity Snapshot kind that has at least one row (`profile`, `settings`, `paired-devices`, `irn-profile`). In `--json` these surface under an `identity_snapshots_freshness` block — omitted entirely when no snapshots exist. `paired_device_count` is also emitted as a top-level JSON key so `--plain` and `--json` carry the same field; the nested `identity_snapshots_freshness.paired_device_count` is preserved for back-compat.\n\n`--plain` and `--json` carry the same information. The plain `known_data_types: a,b,c` line maps to a top-level `known_data_types` JSON array. Plain `data_type.<name>.*` and `identity_snapshot.<kind>.*` lines flatten the JSON `data_types[]` and `identity_snapshots_freshness` blocks, and the `latest_successful_sync_run_*` / `latest_failed_sync_run_*` lines flatten the matching JSON objects.\n\nAlso reports Tier 2 coverage: `electrocardiogram_event_count` and `irregular_rhythm_notification_count` (plain) appear only when the corresponding scope has been granted via `connect --add-scopes ecg,irn`. In `--json` these surface under a `tier_2` block alongside `electrocardiogram_scope_granted` / `irregular_rhythm_notification_scope_granted` flags, both counts defaulting to 0 when the scope is not granted.\n\n`status` does no provider I/O — it reads only the local Health Archive. On entry it fences abandoned Sync Runs: any `sync_running` row whose heartbeat is older than 5 minutes is flipped to `sync_failed` with `error_summary` `abandoned (no heartbeat for 5m)` (see `sync --status` for the full fencing rule), so the summary never reports a killed process as still running.",
 		Flags:       withCommon(),
 		CommonFlags: commonFlagNames(),
-		// status's underlying signature carries an explicit ArchivePathExplicit
-		// flag (so its own --db can win over the config-recorded path); the
-		// adapter sources it from CommonFlagValues, which the dispatch path
-		// populates from the FlagSet Visit pass.
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runStatus(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr)
-		},
+		// status reads the ConfigPathExplicit / ArchivePathExplicit bits out
+		// of CommonFlagValues (so its own --db can win over the
+		// config-recorded path); the dispatch path populates them from the
+		// FlagSet Visit pass.
+		Run: runStatus,
 	},
 	{
-		Name:           "query",
-		Short:          "Run guarded read-only SQL over the Health Archive.",
-		Long:           "Execute a single SQL statement against the Health Archive. The binary refuses anything that would write or alter the archive — `query` is for inspection, not maintenance.\n\nFlags must appear **before** the SQL argument because Go's `flag` parser stops at the first positional argument. To explore the schema, query the `sqlite_master` table or run `gohealthcli export` for the canonical normalised datasets.\n\nThe default no-flag output is the `--plain` key/value shape: every cell appears on its own `row.<row>.<column>: <value>` line, with `\\n` / `\\t` / `\\r` / `\\\\` escaped so a downstream parser can split on the first `: ` and recover the value verbatim. The legacy `Row N: column=value column=value` shape — which silently broke on values containing spaces or `=` — was removed in PRD #144 slice 7; the default now produces byte-identical output to `--plain`, with no stderr warning, so scripted and LLM consumers get a parseable shape by default.\n\nIn `--json` mode, JSON-typed columns pass through as nested JSON objects so downstream consumers can read them with one parse instead of two. The recognised columns are `raw_json`, `data_source_json`, `timezone_metadata`, `token_metadata_json`, `google_identity_json`, and any column whose name ends in `_json`. Pass `--raw-text` to opt out and receive the literal stored string instead. NULL JSON-typed cells stay `null`; invalid JSON payloads fall back to the stored string so no row ever fails the query.\n\nBLOB columns in `--json` mode are wrapped in a `{\"__blob_base64__\": \"<base64>\"}` marker object so raw bytes survive the JSON path without UTF-8 replacement-character corruption. Detection covers both schema-declared BLOB columns (`sql.ColumnType.DatabaseTypeName() == \"BLOB\"`) and typeless expressions whose scan result is a byte slice (e.g. `SELECT randomblob(8)`). Decode the payload with any base64 decoder (`jq -r '.rows[0][0].__blob_base64__' | base64 -d`). The BLOB marker takes precedence over the JSON-typed allowlist, so a `raw_json` column that comes back as a BLOB is base64-encoded, never double-parsed. NULL BLOB cells stay `null`.\n\nBLOB columns in `--plain` mode are emitted as a `<blob:base64><payload>` string so the `row.N.M:` line stays parseable; without the prefix today's path emits the raw bytes and prints `\\ufffd` replacement characters wherever the bytes are not valid UTF-8.",
-		PositionalArgs: "<sql>",
+		Name:                 "query",
+		Short:                "Run guarded read-only SQL over the Health Archive.",
+		Long:                 "Execute a single SQL statement against the Health Archive. The binary refuses anything that would write or alter the archive — `query` is for inspection, not maintenance.\n\nFlags must appear **before** the SQL argument because Go's `flag` parser stops at the first positional argument. To explore the schema, query the `sqlite_master` table or run `gohealthcli export` for the canonical normalised datasets.\n\nDaily and Rollup Normalized Views do not synthesize rows for absent days or windows. An absent day means no qualifying record in the Health Archive, not measured zero. Non-wear, delayed device sync, or a day outside the synced range are possible causes; absence alone does not establish the cause or archive completeness. Stored zeros remain zeros. Do not average absent days as zeros. Include stored zeros and report the observed-day count and requested range. When averaging `daily_steps`, filter or group by `source_family_filter`. For `total_calories_rollups`, filter or group by `rollup_kind`. Count observed days with `COUNT(DISTINCT civil_date)`.\n\nThe default no-flag output is the `--plain` key/value shape: every cell appears on its own `row.<row>.<column>: <value>` line, with `\\n` / `\\t` / `\\r` / `\\\\` escaped so a downstream parser can split on the first `: ` and recover the value verbatim. The legacy `Row N: column=value column=value` shape — which silently broke on values containing spaces or `=` — was removed in PRD #144 slice 7; the default now produces byte-identical output to `--plain`, with no stderr warning, so scripted and LLM consumers get a parseable shape by default.\n\nIn `--json` mode, JSON-typed columns pass through as nested JSON objects so downstream consumers can read them with one parse instead of two. The recognised columns are `raw_json`, `data_source_json`, `timezone_metadata`, `token_metadata_json`, `google_identity_json`, and any column whose name ends in `_json`. Pass `--raw-text` to opt out and receive the literal stored string instead. NULL JSON-typed cells stay `null`; invalid JSON payloads fall back to the stored string so no row ever fails the query.\n\nBLOB columns in `--json` mode are wrapped in a `{\"__blob_base64__\": \"<base64>\"}` marker object so raw bytes survive the JSON path without UTF-8 replacement-character corruption. Detection covers both schema-declared BLOB columns (`sql.ColumnType.DatabaseTypeName() == \"BLOB\"`) and typeless expressions whose scan result is a byte slice (e.g. `SELECT randomblob(8)`). Decode the payload with any base64 decoder (`jq -r '.rows[0][0].__blob_base64__' | base64 -d`). The BLOB marker takes precedence over the JSON-typed allowlist, so a `raw_json` column that comes back as a BLOB is base64-encoded, never double-parsed. NULL BLOB cells stay `null`.\n\nBLOB columns in `--plain` mode are emitted as a `<blob:base64><payload>` string so the `row.N.M:` line stays parseable; without the prefix today's path emits the raw bytes and prints `\\ufffd` replacement characters wherever the bytes are not valid UTF-8.",
+		PositionalArgs:       "<sql>",
+		PositionalCompletion: valueCompletionNone,
 		Flags: withCommon(
 			// --raw-text registered on the runtime FlagSet inside
 			// runQuery; mirrored here so docs-commands regen + the
@@ -364,83 +447,92 @@ var commands = []commandDef{
 		CommonFlags: commonFlagNames(),
 		// query, like status, reads ArchivePathExplicit so a --db passed
 		// on the global side (before the subcommand) still wins. query
-		// hits the archive read-only, so the runtime adapter bundle is
-		// not needed.
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runQuery(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr)
-		},
+		// hits the archive read-only, so the runtime adapter bundle only
+		// carries the flag-drift observer.
+		Run: runQuery,
 	},
 	{
-		Name:           "export",
-		Short:          "Write a normalised dataset to CSV or JSONL.",
-		Long:           "Render one of the curated normalised datasets (daily-steps, heart-rate-samples, resting-heart-rate-by-day, sleep-sessions, exercise-sessions, weight-samples, and many more) from the Health Archive. Exports are read-only; nothing in the archive is mutated.\n\nRun `gohealthcli export --help` to see the full list of supported datasets, sorted alphabetically. If you pass a name that does not exist, the error message includes the closest matches (Levenshtein ≤ 3, top 3) and a pointer back to `export --help`.\n\nExactly one of `--output PATH` or `--stdout` must be supplied — the explicit destination prevents an accidental terminal dump of a long export.\n\n`--json` is a Common Flag Set synonym for `--format jsonl`; `--plain` is a synonym for `--format csv`. Passing a synonym alongside a contradictory `--format` value (`--json --format csv`, `--plain --format jsonl`) fails with a `--<synonym> conflicts with --format <value>` error. `--plain --json` together fails with the documented mutual-exclusion error from the Common Flag Set seam.",
-		PositionalArgs: "<dataset>",
+		Name:                 "export",
+		Short:                "Write a normalised dataset to CSV or JSONL.",
+		Long:                 "Render one of the curated normalised datasets (daily-steps, heart-rate-samples, resting-heart-rate-by-day, sleep-sessions, exercise-sessions, weight-samples, and many more) from the Health Archive. Exports are read-only; nothing in the archive is mutated.\n\nEvery registered dataset, including daily and Rollup datasets, preserves gaps in the Health Archive. An absent day or window produces no row; a stored zero produces a zero row. An absent day means no qualifying archived record, not measured zero. Non-wear, delayed device sync, or a day outside the synced range are possible causes; absence alone does not identify the cause or prove completeness. Do not fill absent days with zeros when calculating weekly or monthly averages. Include stored zeros and report the observed-day count and requested range. When averaging `daily_steps`, filter or group by `source_family_filter`. For `total_calories_rollups`, filter or group by `rollup_kind`. Count observed days with `COUNT(DISTINCT civil_date)`.\n\nRun `gohealthcli export --help` to see the full list of supported datasets, sorted alphabetically. If you pass a name that does not exist, the error message includes the closest matches (Levenshtein ≤ 3, top 3) and a pointer back to `export --help`.\n\nExactly one of `--output PATH` or `--stdout` must be supplied — the explicit destination prevents an accidental terminal dump of a long export.\n\n`--json` is a Common Flag Set synonym for `--format jsonl`; `--plain` is a synonym for `--format csv`. Passing a synonym alongside a contradictory `--format` value (`--json --format csv`, `--plain --format jsonl`) fails with a `--<synonym> conflicts with --format <value>` error. `--plain --json` together fails with the documented mutual-exclusion error from the Common Flag Set seam.",
+		PositionalArgs:       "<dataset>",
+		PositionalCompletion: valueCompletionExportDataset,
 		Flags: withCommonOverrides(
-			map[string]string{
-				"json":     "synonym for --format jsonl",
-				"plain":    "synonym for --format csv",
-				"no-input": "accepted for uniformity; export does no prompting",
-			},
-			flagSpec{Name: "format", Type: "string", Default: "csv", Usage: "export format: csv or jsonl (synonyms: --json → jsonl, --plain → csv)"},
-			flagSpec{Name: "output", Type: "string", Default: "", Usage: "write export to path"},
+			exportCommonFlagUsageOverrides,
+			flagSpec{Name: "format", Type: "string", Default: "csv", Usage: "export format: csv or jsonl (synonyms: --json → jsonl, --plain → csv)", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "output", Type: "string", Default: "", Usage: "write export to path", ValueCompletion: valueCompletionFile},
 			flagSpec{Name: "stdout", Type: "bool", Default: "false", Usage: "write export data to stdout"},
 		),
 		CommonFlags: commonFlagNames(),
 		// export reads ArchivePathExplicit identically to status / query; it
 		// has its own --format / --output flag surface, plus the Common
-		// Flag Set synonym mappings handled inside runExport. The runtime
-		// adapter bundle is unused (export is read-only against the local
-		// archive).
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runExport(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, stdout, stderr)
-		},
+		// Flag Set synonym mappings handled inside runExport. export is
+		// read-only against the local archive; the runtime adapter bundle
+		// only carries the flag-drift observer. The global-slot --json /
+		// --plain are deliberately ignored inside runExport: the synonyms
+		// are scoped to export's own flag slot.
+		Run: runExport,
 	},
 	{
-		Name:           "raw",
-		Short:          "Print raw provider JSON for endpoint exploration.",
-		Long:           "Fetch a single upstream Google Health API response and print the raw body to stdout. Useful for endpoint exploration without committing the response to the Health Archive.\n\nFirst positional argument is `endpoint <name>` (for example `endpoint getIdentity`) or `data-type <data-type>` (for example `data-type steps --from 2026-01-01 --to 2026-01-02`). `--from` and `--to` constrain time ranges where the endpoint supports them; `--page-size` and `--page-token` drive pagination.\n\n`raw` is provider-shaped on purpose — the JSON you see is what the provider returns, not the normalised shape the archive stores.",
-		PositionalArgs: "<target> [<args>...]",
-		Flags: []flagSpec{
-			{Name: "config", Type: "string", Default: "", Usage: "config file path"},
-			{Name: "db", Type: "string", Default: "", Usage: "SQLite Health Archive path"},
-			{Name: "from", Type: "string", Default: "", Usage: "inclusive time-range start (where supported by the endpoint)"},
-			{Name: "to", Type: "string", Default: "", Usage: "exclusive time-range end (where supported by the endpoint)"},
-			{Name: "page-size", Type: "int", Default: "", Usage: "pagination page size (positive integer; where supported by the endpoint)"},
-			{Name: "page-token", Type: "string", Default: "", Usage: "pagination page token from a prior response"},
-		},
-		// raw's success output is the provider's raw bytes on stdout, so
-		// --plain / --json / --no-input would have no useful effect. Its
-		// CommonFlagSpec at the runtime layer (see runRawWithRuntime in
-		// main.go) declares only {config, db}; CommonFlags here mirrors
-		// that contract so the schema reflects the divergence honestly.
-		CommonFlags: []string{"config", "db"},
-		// raw owns its own --from / --to / --page-size / --page-token flag
-		// surface and writes the provider's raw bytes. runRawWithRuntime's
-		// signature already declares the outputMode arg unused (`_`), but
-		// the adapter still passes commonOutputMode(common) so this entry
-		// has the same call-site shape as every other registry adapter —
-		// future code that promotes the mode out of unused-arg status will
-		// not have to special-case `raw`.
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runRawWithRuntime(args, common.ConfigPath, common.ArchivePath, commonOutputMode(common), stdout, stderr, runtime)
-		},
+		Name:                 "route",
+		Short:                "Write one archived exercise route as its exact TCX file.",
+		Long:                 "Read the archived TCX route of one exercise Data Point from the local Health Archive and write its exact bytes. Name the exercise by the `upstream_resource_name` shown in the `exercise-sessions` export (`users/<user>/dataTypes/exercise/dataPoints/<id>`) or by its trailing Provider ID. The identifier is matched exactly; an unknown identifier, one that matches more than one Data Point, or one that names a non-exercise Data Point fails with `flag_invalid` before any sidecar read.\n\nWhen `sync --types exercise` archived several TCX Attachments for one session, `route` returns the newest. Before emitting anything it checks the sidecar's canonical path, byte size, and SHA-256 against the Attachment row and refuses missing, symbolic-link, or out-of-root sidecars with `operation_failed` and `gohealthcli doctor` as remediation. It never falls back to an older Attachment.\n\nExactly one of `--output PATH` or `--stdout` must be supplied. `--stdout` writes the exact bytes. `--output` follows the same new-file contract as `raw --output`: it refuses every existing destination and never overwrites, creates the file as owner-only mode `0600` on Linux and macOS, writes nothing to stdout, and reports only the quoted path and byte count on stderr. On Windows the file inherits its parent directory ACL, so choose a private directory. Route data is location data.\n\nAn exercise with no archived route fails with `operation_failed` and remediation `gohealthcli connect --add-scopes tcx`, then `gohealthcli sync --types exercise --from YYYY-MM-DD` over that session's window.\n\n`route` is offline. It never contacts the Provider, reads the Credential Store, refreshes a token, writes or migrates the Health Archive, records a Sync Run, changes a Sync Cursor, or creates a sidecar. `--json` and `--plain` select only the failure envelope; success output is the route bytes in every mode.",
+		PositionalArgs:       "<exercise>",
+		PositionalCompletion: valueCompletionNone,
+		Flags: withCommonOverrides(
+			routeCommonFlagUsageOverrides,
+			flagSpec{Name: "format", Type: "string", Default: "tcx", Usage: routeFormatUsage(), ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "output", Type: "string", Default: "", Usage: routeOutputUsage, ValueCompletion: valueCompletionFile},
+			flagSpec{Name: "stdout", Type: "bool", Default: "false", Usage: routeStdoutUsage},
+		),
+		CommonFlags: commonFlagNames(),
+		Run:         runRoute,
+	},
+	{
+		Name:                 "raw",
+		Short:                "Print one raw Provider page or plan its request.",
+		Long:                 "Fetch one upstream Google Health API response page and print the raw body to stdout. Useful for endpoint exploration without committing the response to the Health Archive.\n\nFirst positional argument is `endpoint <name>` (for example `endpoint getIdentity`) or `data-type <data-type>` (for example `data-type steps --from yesterday --to today`). Data Type list, reconcile, and Rollup targets accept the same exact range grammar as `sync`: `now`, `today`, `yesterday`, `YYYY-MM-DD`, or RFC3339. Named boundaries use `--timezone`, then the configured timezone, then UTC; one captured clock and the Provider Data Type's physical, civil, or daily filter shape determine the exact range. Identity endpoints reject `--from`, `--to`, and `--timezone` because those flags have no meaning there. Google's ECG list endpoint accepts only a physical `electrocardiogram.interval.start_time >= ...` lower bound, so `raw data-type electrocardiogram` rejects an explicit `--to` rather than claiming to narrow the Provider-shaped response. `--page-size` and `--page-token` select one page. Identity endpoints reject those paging flags.\n\n`raw data-type <data-type> get --id <provider-id>` fetches one Data Point only when the compiled Provider catalog includes the `get` endpoint family. The Provider ID remains opaque and is escaped as one URL path component. This operation rejects range, timezone, paging, and source-filter inputs before setup, performs one request without pagination, and shares raw's exact-byte stdout, safe `--output`, Provider error, scope, and zero-effect `--plan` paths.\n\n`raw data-type <data-type> reconcile --source-family <family> --from <boundary> [--to <boundary>]` fetches one reconciled response page only when the compiled Provider catalog includes the `reconcile` endpoint family and accepts that source family. It uses the same Provider request builder, range shape, required scopes, source-family mapping, default page size, and page-token handling as sync. It never follows a returned page token automatically, parses or archives Data Points, records a Sync Run, advances a Sync Cursor, or creates an Attachment sidecar. Missing or incompatible inputs fail before credential or Provider access.\n\n`raw data-type <data-type> daily-rollup --from <boundary> --to <boundary>` and `raw data-type <data-type> rollup --from <boundary> --to <boundary> --window <duration>` return one exact Provider response without entering Sync Run ingestion. The canonical catalog controls endpoint support and physical window granularities. Both operations use sync's range normalization, scopes, page fields, Provider limits, and low-level request builders. A range that sync would split fails locally with an instruction to narrow it.\n\n`--plan` prints the exact secret-free request description without contacting the Provider, reading the Credential Store, loading or refreshing a token, opening or writing the Health Archive, writing a Rollup, recording a Sync Run, migrating, changing a Sync Cursor, or creating an Attachment sidecar. The plan contains the method, sanitized production URL and POST body, non-secret headers, required scopes, resolved range and timezone for Data Type targets, source family where present, paging inputs, and an all-false effect report. Page-token and Provider-ID material is redacted. A lower-bound-only target omits `range.to` and the human mode labels the missing Provider upper bound. Use `--json` or `--plain` with `--plan` for structured output.\n\nWithout `--plan`, `raw` is Provider-shaped on purpose. The JSON you see is what the Provider returns, not the normalized shape the archive stores. Normal reads preserve the Provider's exact response bytes on stdout and reject command-local `--json` or `--plain`; their only possible write remains persisting an existing OAuth token refresh.\n\nPass `--output PATH` to write those same exact bytes to a new file instead of stdout. The command refuses every existing destination, including symbolic links and directories, and never overwrites. On Linux and macOS the parent directory must be owned by the effective user and not writable by group or other users; macOS also rejects parents with an extended ACL. The command creates the file as owner-only mode `0600`, writes no Provider content to stdout, and reports only the quoted path and byte count on stderr. A failed, short, permission, close, or publish write never creates the final destination. Windows uses atomic no-replace publication on local volumes and rejects a pre-existing reparse destination, but the new file inherits its parent directory ACL; choose a directory whose ACL is already private. Windows also rejects filenames with special Win32 normalization, reserved device names, or alternate-stream syntax. UNC paths, mapped network drives, and local-looking parent links that resolve to a network share are rejected before the Provider read because Windows network rename requests cannot preserve the pinned-parent publication contract. Other build targets reject file output because the required atomic no-replace rename is unavailable. `--output` cannot be combined with `--plan`.\n\nFailures route through the unified Failure Reporter: a Provider outage (network failure or non-auth upstream HTTP error) reports status `provider_unreachable`, while other operation errors, including an upstream HTTP 401 auth rejection with the `Google Health rejected stored Connection token` message, report `operation_failed`." + "\n\n" + rawEndpointHelp() + authRemediationCommandHelp,
+		PositionalArgs:       "<target> [<args>...]",
+		PositionalCompletion: valueCompletionRawPositionals,
+		Flags: withCommonSubset(rawCommonFlagNames(),
+			flagSpec{Name: "id", Type: "string", Default: "", Usage: "opaque Provider Data Point ID (data-type get only)", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "from", Type: "string", Default: "", Usage: "inclusive time-range start (where supported by the endpoint)", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "to", Type: "string", Default: "", Usage: "exclusive time-range end (where supported by the endpoint)", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "timezone", Type: "string", Default: "", Usage: "IANA timezone for now, today, and yesterday (Data Type range reads only; default config, then UTC)", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "page-size", Type: "int", Default: "", Usage: "pagination page size (positive integer; where supported by the endpoint)", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "page-token", Type: "string", Default: "", Usage: "pagination page token from a prior response", ValueCompletion: valueCompletionNone},
+			flagSpec{Name: "source-family", Type: "string", Default: "", Usage: syncSourceFamilyUsage(), ValueCompletion: valueCompletionSourceFamily},
+			flagSpec{Name: "window", Type: "string", Default: "", Usage: "physical Rollup window duration (data-type rollup only; catalog-supported granularities)", ValueCompletion: valueCompletionRawRollupWindow},
+			flagSpec{Name: "plan", Type: "bool", Default: "false", Usage: "print the exact secret-free Provider request plan without external access"},
+			flagSpec{Name: "output", Type: "string", Default: "", Usage: "write exact Provider response bytes to a new private file", ValueCompletion: valueCompletionFile},
+		),
+		// raw's normal success output is still the Provider's exact bytes.
+		// --json and --plain apply only to --plan.
+		CommonFlags: rawCommonFlagNames(),
+		Run:         runRawWithRuntime,
 	},
 	{
 		Name:  "describe-schema",
 		Short: "Self-describe the Health Archive for LLM consumption.",
 		Long:  "Emit the archive's schema in one of two modes.\n\n`--sql` dumps live DDL straight from `sqlite_master`, excluding internal `sqlite_*` objects. Use this when you want the actual truth of what tables and views exist right now.\n\nThe JSON catalog is the success-mode default: it emits a curated document combining the Normalized Views Registry's per-view metadata (name, migration version, declared columns), the live table+column shape from `pragma_table_info`, the merged hand-curated narrative file, and a stable wire-shape version field. Downstream tools (a Claude skill, an MCP server, a dashboard) read the JSON catalog as the contract. The Common Flag Set `--json` flag is accepted for the uniform-flag contract but does not change behaviour — the catalog is emitted unless `--sql` overrides.\n\n`--plain` is accepted as a no-op — the schema catalog has no key/value plain shape, so `describe-schema --plain` emits the JSON catalog and surfaces a `// note: --plain is a no-op …` comment line on stderr; stdout stays valid JSON so users redirecting it to a file are unaffected. `--plain --json` together fails with the documented mutual-exclusion error.\n\n`--db <path>` is honoured on its own — passing a Health Archive path without `--config` opens that archive directly, matching the other read commands (PRD #144 slice 1). When `--config` is left at its default and only `--db` is explicit, `--db` wins without an agreement check; when both `--config` and `--db` are explicit and disagree, the error names `--db` and `--config` rather than the internal `archive_path` field.\n\nA drift test in CI fails when a public view exists in `sqlite_master` without a matching catalog entry — the JSON shape and the live schema cannot diverge silently.\n\n### Normalized View column types\n\nSQLite views don't carry declared column types. `pragma_table_info` reports the type of each view column from the underlying expression's affinity, which for any non-trivial JSON projection comes back as either an empty string or the literal `BLOB`. The JSON catalog is read as a contract by LLM consumers, so a column like `daily_steps.step_count` (an INTEGER projection over `data_points`) being reported as `BLOB` actively poisons agent reasoning.\n\nThe catalog rewrites those misleading values to the literal `\"unknown\"`. Every entry in `views[*].columns_detailed[*].type` is therefore either a real SQL type (`TEXT`, `INTEGER`, `REAL`, `NUMERIC`, …) or the literal `\"unknown\"` — never `BLOB`, never empty. Treat `\"unknown\"` as \"the runtime type is opaque from the catalog alone — inspect a row or consult the view DDL\".\n\nTable columns (in `tables[*].columns`) are unaffected: real `BLOB` columns on real tables still report `BLOB`. The fallback is view-only.",
 		Flags: withCommonOverrides(
-			map[string]string{
-				"json":     "accepted for uniformity; the JSON catalog is the success-mode default",
-				"plain":    "no-op (schema catalog has no plain shape); emits JSON catalog + stderr note",
-				"no-input": "accepted for uniformity; describe-schema does no prompting",
-			},
+			describeSchemaCommonFlagUsageOverrides,
 			flagSpec{Name: "sql", Type: "bool", Default: "false", Usage: "dump live DDL from sqlite_master (excludes internal sqlite_* objects)"},
 		),
 		CommonFlags: commonFlagNames(),
-		Run: func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-			return runDescribeSchemaWithRuntime(args, common.ConfigPath, common.ArchivePath, common.ConfigPathExplicit, common.ArchivePathExplicit, commonOutputMode(common), stdout, stderr, runtime)
+		Run:         runDescribeSchemaWithRuntime,
+	},
+	{
+		Name:                 "completion",
+		Short:                "Generate a shell completion script.",
+		Long:                 "Generate a shell-native completion script from the Command Registry for Bash, Zsh, Fish, or PowerShell. The output is deterministic and can be redirected to the shell's completion directory; generation does not read configuration, the Health Archive, a Connection, credentials, or the Provider.\n\nThe generated script completes catalog-backed values such as export datasets, Data Types, raw targets, scope keywords, Rollup modes, and source families. Comma-separated values preserve the part already typed and omit duplicates. SQL, dates, credentials, tokens, profiles, users, and providers are never suggested; native filesystem completion remains enabled only for path values.\n\nPass `--no-descriptions` to omit command and flag descriptions from shells that display them. See the [Install](../install.html#shell-completion) page for current-session and persistent setup commands for all four shells.",
+		PositionalArgs:       "<shell>",
+		PositionalCompletion: valueCompletionShell,
+		Flags: []flagSpec{
+			{Name: "no-descriptions", Type: "bool", Default: "false", Usage: "disable completion descriptions"},
 		},
+		// completion's Run adapter is wired below in init() because it
+		// projects the complete registry, including this entry.
 	},
 	{
 		Name:   "schema",
@@ -470,13 +562,13 @@ var commands = []commandDef{
 		Long:   "Rewrite the auto-generated bullet list in `README.md` between the `<!-- export-datasets:start -->` and `<!-- export-datasets:end -->` markers from `exportDatasetCatalogSingleton.Names()`.\n\nInvoked by `make docs-export-datasets`; the drift guard in `docs_export_datasets_test.go` fails CI when the committed README does not match a fresh regeneration. Pass `--readme PATH` to point at the file to rewrite (no default — an empty path is rejected so a misconfigured target cannot silently overwrite the wrong file).",
 		Hidden: true,
 		Flags: []flagSpec{
-			{Name: "readme", Type: "string", Default: "", Usage: "path to README.md to rewrite in place"},
+			{Name: "readme", Type: "string", Default: "", Usage: "path to README.md to rewrite in place", ValueCompletion: valueCompletionFile},
 		},
 		// docs-export-datasets reads / writes one file and has no
-		// archive or provider dependency; the runtime adapter bundle
-		// and the CommonFlagValues block are ignored.
-		Run: func(args []string, _ CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runDocsExportDatasets(args, stdout, stderr)
+		// archive or provider dependency; the CommonFlagValues block is
+		// ignored and the adapters only carry the flag-drift observer.
+		Run: func(args []string, _ CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+			return runDocsExportDatasets(args, stdout, stderr, runtime.observeSubcommandFlagSet)
 		},
 	},
 }
@@ -488,13 +580,28 @@ var commands = []commandDef{
 // a reorder of `commands` does not break this binding.
 func init() {
 	for i := range commands {
-		if commands[i].Name != "schema" {
-			continue
+		switch commands[i].Name {
+		case "sync":
+			commands[i].Long += syncPlanCommandHelp
+			commands[i].Long += syncArchiveRemediationCommandHelp
+		case "status", "query":
+			commands[i].Long += syncArchiveRemediationCommandHelp
+		case "completion":
+			commands[i].Run = func(args []string, common CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+				return runCompletionWithRegistry(
+					args,
+					commands,
+					commonOutputMode(common),
+					stdout,
+					stderr,
+					runtime.observeSubcommandFlagSet,
+				)
+			}
+		case "schema":
+			commands[i].Run = func(args []string, _ CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
+				return runSchemaWithRegistry(args, commands, stdout, stderr, runtime.observeSubcommandFlagSet)
+			}
 		}
-		commands[i].Run = func(args []string, _ CommonFlagValues, stdout, stderr io.Writer, _ runtimeAdapters) int {
-			return runSchemaWithRegistry(args, commands, stdout, stderr)
-		}
-		return
 	}
 }
 
@@ -518,19 +625,26 @@ const suggestMaxDistance = 2
 // An empty result means the unknown-command path should print no `Did you mean`
 // line; the caller still prints the canonical help hint.
 func (r commandRegistry) Suggest(typo string) []string {
+	names := make([]string, 0, len(r))
+	for _, cmd := range r {
+		if !cmd.Hidden {
+			names = append(names, cmd.Name)
+		}
+	}
+	return suggestNames(typo, names)
+}
+
+func suggestNames(typo string, names []string) []string {
 	type candidate struct {
 		name     string
 		distance int
 		order    int
 	}
 	var candidates []candidate
-	for i, cmd := range r {
-		if cmd.Hidden {
-			continue
-		}
-		d := levenshteinDistance(typo, cmd.Name)
+	for i, name := range names {
+		d := levenshteinDistance(typo, name)
 		if d <= suggestMaxDistance {
-			candidates = append(candidates, candidate{name: cmd.Name, distance: d, order: i})
+			candidates = append(candidates, candidate{name: name, distance: d, order: i})
 		}
 	}
 	if len(candidates) == 0 {
@@ -541,10 +655,6 @@ func (r commandRegistry) Suggest(typo string) []string {
 		// untouched either way.
 		return []string{}
 	}
-	// Sort by (distance asc, registry-order asc). The candidate slice is
-	// bounded by the number of non-hidden commands (~14 today), so an
-	// in-place insertion sort is dependency-free, easy to audit, and
-	// trivially correct for that working-set size.
 	for i := 1; i < len(candidates); i++ {
 		for j := i; j > 0; j-- {
 			a, b := candidates[j-1], candidates[j]

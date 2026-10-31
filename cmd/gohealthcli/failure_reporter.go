@@ -2,8 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"sort"
+	"strings"
 )
 
 // FailureStatus is the six-valued enum the unified Failure Reporter uses
@@ -11,17 +14,23 @@ import (
 // user-facing concept the operator can reason about:
 //
 //   - StatusFlagInvalid          — flag parse, mutual-exclusion, unknown flag,
-//                                  missing required flag, "no SQL statement".
+//     missing required flag, "no SQL statement".
 //   - StatusUnexpectedArgument   — positional arg the subcommand did not expect
-//                                  ("unexpected sync argument: foo").
+//     ("unexpected sync argument: foo").
 //   - StatusSetupMissing         — config + Health Archive absent; the only
-//                                  status that returns exit code 2 to match the
-//                                  prior `setupMissingExitCode` semantics.
+//     status that returns exit code 2 to match the
+//     prior `setupMissingExitCode` semantics.
 //   - StatusArchiveUnwritable    — writing stdout/stdout-result/export-file
-//                                  failed at the io.Writer layer.
-//   - StatusProviderUnreachable  — provider HTTP error (403, 503, network).
+//     failed at the io.Writer layer.
+//   - StatusProviderUnreachable  — non-auth Provider HTTP failure (403,
+//     5xx, ...) or a network failure reaching the
+//     Provider, classified by the typed-error
+//     translation layer (issue #272). Upstream 401
+//     auth rejections are NOT unreachable — they
+//     surface as StatusOperationFailed carrying the
+//     "run `gohealthcli connect` again" message.
 //   - StatusOperationFailed      — any other operation error (DB, schema,
-//                                  config check, OAuth, etc.).
+//     config check, OAuth, etc.).
 //
 // The enum's wire shape (snake_case strings) is part of the --json
 // failure contract; downstream tooling pivots on the literal value.
@@ -39,25 +48,144 @@ const (
 // FailureReport carries one failure's worth of context: which subcommand
 // hit it (Command, empty for the top-level surface), how it classifies
 // (Status), what to tell the operator (Message — single line, no
-// trailing newline), and which output mode the invocation was running
-// in (Mode). The Mode parameter lives on the report struct rather than
-// on ReportFailure's signature because every migrated call site already
-// has it in scope.
+// trailing newline), which output mode the invocation was running in
+// (Mode), and an optional typed Cause whose Reporter-owned remediation
+// actions may be rendered in structured modes. Message remains separate
+// so adding a cause never changes the stable user-facing text.
 type FailureReport struct {
 	Command string
 	Status  FailureStatus
 	Message string
 	Mode    outputMode
+	Cause   error
+}
+
+type remediationAction string
+
+const (
+	remediationShowHelp         remediationAction = "gohealthcli --help"
+	remediationRunDoctor        remediationAction = "gohealthcli doctor"
+	remediationDoctorOnline     remediationAction = "gohealthcli doctor --online"
+	remediationReconnect        remediationAction = "gohealthcli connect"
+	remediationInitialize       remediationAction = "gohealthcli init"
+	remediationInitHelp         remediationAction = "gohealthcli init --help"
+	remediationStatus           remediationAction = "gohealthcli status"
+	remediationSyncFrom         remediationAction = "gohealthcli sync --from YYYY-MM-DD"
+	remediationSyncExerciseFrom remediationAction = "gohealthcli sync --types exercise --from YYYY-MM-DD"
+	maxRemediationActions                         = 3
+)
+
+// remediationError is the only carrier the Failure Reporter reads.
+// Unwrap preserves the original error chain for errors.Is/errors.As;
+// actions are fixed Reporter vocabulary rather than caller text.
+type remediationError struct {
+	cause   error
+	message string
+	actions []string
+}
+
+func (err *remediationError) Error() string {
+	if err.message != "" {
+		return err.message
+	}
+	return err.cause.Error()
+}
+func (err *remediationError) Unwrap() error { return err.cause }
+
+func (err *remediationError) Remediation() []string {
+	return append([]string(nil), err.actions...)
+}
+
+func withRemediation(cause error, actions ...remediationAction) error {
+	return &remediationError{cause: cause, actions: normalizeRemediation(actions)}
+}
+
+func withRemediationMessage(cause error, message string, actions ...remediationAction) error {
+	return &remediationError{cause: cause, message: message, actions: normalizeRemediation(actions)}
+}
+
+func unknownCommandError(command string) error {
+	return withRemediation(fmt.Errorf("unknown command: %s", command), remediationShowHelp)
+}
+
+// normalizeRemediation collapses whitespace, removes duplicates without
+// reordering, rejects anything outside the Reporter catalog, and caps
+// the structured output. Parameterized scope recovery is accepted only
+// when every keyword is sorted and present in connectAddScopeKeywords;
+// paths, identifiers, Provider text, SQL, health data, secrets, and
+// echoed user input cannot cross this boundary.
+func normalizeRemediation(actions []remediationAction) []string {
+	remediation := make([]string, 0, min(len(actions), maxRemediationActions))
+	seen := make(map[string]struct{}, len(actions))
+	for _, action := range actions {
+		normalized := strings.Join(strings.Fields(string(action)), " ")
+		if !isReporterRemediation(normalized) {
+			continue
+		}
+		if _, duplicate := seen[normalized]; duplicate {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		remediation = append(remediation, normalized)
+		if len(remediation) == maxRemediationActions {
+			break
+		}
+	}
+	return remediation
+}
+
+func isReporterRemediation(action string) bool {
+	switch remediationAction(action) {
+	case remediationShowHelp, remediationRunDoctor, remediationDoctorOnline, remediationReconnect, remediationInitialize, remediationInitHelp, remediationStatus, remediationSyncFrom, remediationSyncExerciseFrom:
+		return true
+	}
+	const addScopesPrefix = "gohealthcli connect --add-scopes "
+	keywords, ok := strings.CutPrefix(action, addScopesPrefix)
+	if !ok || keywords == "" {
+		return false
+	}
+	parts := strings.Split(keywords, ",")
+	if !sort.StringsAreSorted(parts) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(parts))
+	for _, keyword := range parts {
+		if _, allowed := connectAddScopeKeywords[keyword]; !allowed {
+			return false
+		}
+		if _, duplicate := seen[keyword]; duplicate {
+			return false
+		}
+		seen[keyword] = struct{}{}
+	}
+	return true
+}
+
+func remediationFromError(err error) []string {
+	var carrier *remediationError
+	if !errors.As(err, &carrier) {
+		return nil
+	}
+	return carrier.Remediation()
+}
+
+func writePlainRemediation(writer io.Writer, remediation []string) error {
+	for index, action := range remediation {
+		if _, err := fmt.Fprintf(writer, "remediation.%d: %s\n", index, action); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // failureJSONEnvelope is the on-the-wire shape of `--json` failure
-// output: a single-line `{"status":"<status>","message":"<message>"}`.
-// Field order (status, message) follows struct declaration order, which
-// is what encoding/json actually guarantees, so the emitted bytes are
-// stable across builds.
+// output. remediation is additive and omitted when empty. Field order
+// (status, message, remediation) follows struct declaration order, which
+// encoding/json guarantees, so emitted bytes stay stable across builds.
 type failureJSONEnvelope struct {
-	Status  FailureStatus `json:"status"`
-	Message string        `json:"message"`
+	Status      FailureStatus `json:"status"`
+	Message     string        `json:"message"`
+	Remediation []string      `json:"remediation,omitempty"`
 }
 
 // ReportFailure writes a FailureReport in the requested output mode and
@@ -65,9 +193,9 @@ type failureJSONEnvelope struct {
 //
 //   - default (no --plain, no --json): `<cmd>: <message>\n` to stderr.
 //     Empty Command uses `gohealthcli` instead of an empty prefix.
-//   - --plain: same stderr line AND `status: <s>\nmessage: <m>\n` block
-//     on stdout, so terminal users see the prefix and machine-readable
-//     scripts can still parse stdout.
+//   - --plain: same stderr line AND `status: <s>\nmessage: <m>\n` block,
+//     followed by zero-based remediation.N lines when present, on stdout.
+//     Terminal users see the prefix and scripts can parse stdout.
 //   - --json: a single line `{"status":"<s>","message":"<m>"}\n` on
 //     stdout, nothing on stderr. encoding/json escapes the message so a
 //     payload with quotes or backslashes cannot corrupt the envelope.
@@ -89,8 +217,9 @@ func ReportFailure(report FailureReport, stdout, stderr io.Writer) int {
 		// exactly. encoding/json escapes the message contents; a
 		// hand-rolled fmt.Fprintf would not.
 		payload, err := json.Marshal(failureJSONEnvelope{
-			Status:  report.Status,
-			Message: report.Message,
+			Status:      report.Status,
+			Message:     report.Message,
+			Remediation: remediationFromError(report.Cause),
 		})
 		// If json.Marshal fails (struct of one FailureStatus + one
 		// string — should never happen) OR stdout itself rejects the
@@ -114,6 +243,9 @@ func ReportFailure(report FailureReport, stdout, stderr io.Writer) int {
 		// fails, so a broken-stdout failure path still surfaces.
 		fmt.Fprintf(stderr, "%s: %s\n", prefix, report.Message)
 		fmt.Fprintf(stdout, "status: %s\nmessage: %s\n", report.Status, report.Message)
+		for index, action := range remediationFromError(report.Cause) {
+			fmt.Fprintf(stdout, "remediation.%d: %s\n", index, action)
+		}
 	default:
 		fmt.Fprintf(stderr, "%s: %s\n", prefix, report.Message)
 	}
@@ -136,3 +268,5 @@ func failureExitCode(status FailureStatus) int {
 	}
 	return 1
 }
+
+const setupMissingExitCode = 2

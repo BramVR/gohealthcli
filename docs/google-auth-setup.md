@@ -24,10 +24,10 @@ Use the target Google Cloud project, then configure:
   - `https://www.googleapis.com/auth/googlehealth.irn.readonly` — required
     by `gohealthcli irn-profile` and the Tier 2 `irregular-rhythm-notification`
     Data Type (#104).
-  - `https://www.googleapis.com/auth/googlehealth.electrocardiogram.readonly`
+  - `https://www.googleapis.com/auth/googlehealth.ecg.readonly`
     — required by the Tier 2 `electrocardiogram` Data Type (#104).
   - `https://www.googleapis.com/auth/googlehealth.nutrition.readonly` —
-    required by `hydration-log` and any future nutrition Data Type (#103).
+    required by `hydration-log` and `nutrition-log`.
   - `https://www.googleapis.com/auth/googlehealth.location.readonly` —
     required (on top of `activity_and_fitness.readonly`) by the
     `users.dataTypes.dataPoints.exportExerciseTcx` endpoint that
@@ -74,7 +74,8 @@ path = "/absolute/path/to/client_secret.json"
 ## Credential Store
 
 Default runtime token storage is OS-native. For local testing, the explicit file
-fallback is acceptable if it stays owner-only:
+fallback is acceptable if it stays owner-only. The file store has no default
+path — pick one and set it explicitly:
 
 ```toml
 [credential_store]
@@ -85,10 +86,11 @@ path = "/absolute/path/to/gohealthcli/tokens.json"
 Use the file fallback if macOS Keychain storage blocks at a `security` prompt
 during `connect`.
 
-After `connect`, verify token-file permissions without printing token material:
+After `connect`, verify token-file permissions at the configured path without
+printing token material:
 
 ```bash
-ls -l ~/.config/gohealthcli/tokens.json
+ls -l /absolute/path/to/gohealthcli/tokens.json
 ```
 
 Expected mode: `-rw-------`.
@@ -106,6 +108,25 @@ gohealthcli profile --plain
 
 The browser may briefly show a localhost callback page after consent. If the CLI
 prints `status: connected`, the callback worked.
+
+## Headless Connect
+
+When the CLI host has no local browser, use the existing Desktop OAuth client:
+
+```bash
+gohealthcli connect --headless-start --plain
+gohealthcli connect --complete --plain
+```
+
+Open the printed authorization URL in a trusted browser. After consent reaches
+the unavailable loopback page, copy the complete address-bar URL and supply it
+as the completion command's only stdin line. Never pass a bare code or put the
+URL on the command line. The pending authorization expires after ten minutes;
+starting again replaces it. When extending consent, repeat the exact
+`--add-scopes` value on both commands. A state-valid cancellation or a claimed
+completion is single-use; invalid state, redirect, binding, input, expiry, and
+concurrent-loser attempts leave the Connection and stored token material
+unchanged.
 
 ## Smoke Test
 
@@ -148,9 +169,18 @@ Run that exact line to extend the grant — `include_granted_scopes=true`
 preserves the base set, so no second base-set browser sign-in is
 needed.
 
+In JSON mode, setup and Connection failures may also include an ordered
+`remediation` array; plain mode emits the same commands as zero-based
+`remediation.N` fields. Diagnose before changing state: run `doctor` before
+`init`, `connect`, or the emitted sorted `connect --add-scopes ...` command;
+token rejection uses `doctor --online` before reconnecting. Identity mismatch
+guidance uses `init --help`, leaving the alternate archive path as an explicit
+user choice. Human output remains unchanged, and remediation rendering itself
+never contacts Google or starts consent.
+
 ## Tier 2 Opt-in Scopes (ECG + IRN)
 
-After enabling `electrocardiogram.readonly` and `irn.readonly` in
+After enabling `ecg.readonly` and `irn.readonly` in
 the Google Cloud Data Access page, extend the existing local grant
 without re-running setup:
 

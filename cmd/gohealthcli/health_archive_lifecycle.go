@@ -1,10 +1,17 @@
 package main
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"io"
+	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
 )
 
 type healthArchiveOpenMode int
@@ -16,6 +23,20 @@ const (
 
 type healthArchiveLifecycle struct {
 	path string
+	// now stamps schema_migrations.applied_at. Zero value means the
+	// real clock: callers that do not care about migration timestamps
+	// construct the lifecycle with the path only, tests inject a fixed
+	// clock through this field (#283).
+	now func() time.Time
+}
+
+// clock returns the lifecycle's stamp clock, defaulting to the real
+// clock when no fixed clock was injected.
+func (lifecycle healthArchiveLifecycle) clock() func() time.Time {
+	if lifecycle.now != nil {
+		return lifecycle.now
+	}
+	return productionNow
 }
 
 type healthArchiveHandle struct {
@@ -37,7 +58,7 @@ func (err healthArchiveOpenError) Unwrap() error {
 	return err.err
 }
 
-func (lifecycle healthArchiveLifecycle) Create() (err error) {
+func (lifecycle healthArchiveLifecycle) Create(ctx context.Context) (err error) {
 	if err := ensureOwnerOnlyDir(filepath.Dir(lifecycle.path)); err != nil {
 		return err
 	}
@@ -59,7 +80,7 @@ func (lifecycle healthArchiveLifecycle) Create() (err error) {
 		return err
 	}
 	defer db.Close()
-	if err := applyMigrations(db); err != nil {
+	if err := applyMigrations(ctx, db, lifecycle.clock()); err != nil {
 		return err
 	}
 	if !usesPOSIXPermissions() {
@@ -68,8 +89,9 @@ func (lifecycle healthArchiveLifecycle) Create() (err error) {
 	return os.Chmod(lifecycle.path, 0o600)
 }
 
-func (lifecycle healthArchiveLifecycle) Open(mode healthArchiveOpenMode) (healthArchiveHandle, error) {
-	archive, err := lifecycle.MigrateAndInspect(false)
+func (lifecycle healthArchiveLifecycle) Open(ctx context.Context, mode healthArchiveOpenMode) (healthArchiveHandle, error) {
+	repairAttachmentRoot := mode == writeArchive
+	archive, err := lifecycle.migrateAndInspect(ctx, false, repairAttachmentRoot)
 	if err != nil {
 		return healthArchiveHandle{}, err
 	}
@@ -84,7 +106,16 @@ func (lifecycle healthArchiveLifecycle) Open(mode healthArchiveOpenMode) (health
 	}, nil
 }
 
-func (lifecycle healthArchiveLifecycle) Migrate() error {
+func (lifecycle healthArchiveLifecycle) Migrate(ctx context.Context) error {
+	if err := lifecycle.migrateSchema(ctx); err != nil {
+		return err
+	}
+	// Backfill the attachment root for archives that predate #107 /
+	// migration 15. Idempotent — no-op when the dir already exists.
+	return ensureOwnerOnlyDir(attachmentRootDirForArchive(lifecycle.path))
+}
+
+func (lifecycle healthArchiveLifecycle) migrateSchema(ctx context.Context) error {
 	if err := lifecycle.validateExistingFile(); err != nil {
 		return err
 	}
@@ -93,19 +124,27 @@ func (lifecycle healthArchiveLifecycle) Migrate() error {
 		return err
 	}
 	defer db.Close()
-	if err := applyPendingMigrations(db); err != nil {
+	if err := applyPendingMigrations(ctx, db, lifecycle.clock()); err != nil {
 		return err
 	}
-	// Backfill the attachment root for archives that predate #107 /
-	// migration 15. Idempotent — no-op when the dir already exists.
-	return ensureOwnerOnlyDir(attachmentRootDirForArchive(lifecycle.path))
+	return nil
 }
 
-func (lifecycle healthArchiveLifecycle) MigrateAndInspect(validateTokens bool) (archiveCheck, error) {
-	if err := lifecycle.Migrate(); err != nil {
+func (lifecycle healthArchiveLifecycle) MigrateAndInspect(ctx context.Context, validateTokens bool) (archiveCheck, error) {
+	return lifecycle.migrateAndInspect(ctx, validateTokens, false)
+}
+
+func (lifecycle healthArchiveLifecycle) migrateAndInspect(ctx context.Context, validateTokens, repairAttachmentRoot bool) (archiveCheck, error) {
+	var err error
+	if repairAttachmentRoot {
+		err = lifecycle.Migrate(ctx)
+	} else {
+		err = lifecycle.migrateSchema(ctx)
+	}
+	if err != nil {
 		return archiveCheck{}, fmt.Errorf("Health Archive migration failed: %w", err)
 	}
-	archive, err := lifecycle.Inspect(validateTokens)
+	archive, err := lifecycle.Inspect(ctx, validateTokens)
 	if err != nil {
 		return archive, healthArchiveOpenError{
 			schemaVersion: archive.schemaVersion,
@@ -115,7 +154,7 @@ func (lifecycle healthArchiveLifecycle) MigrateAndInspect(validateTokens bool) (
 	return archive, nil
 }
 
-func (lifecycle healthArchiveLifecycle) Inspect(validateTokens bool) (archiveCheck, error) {
+func (lifecycle healthArchiveLifecycle) Inspect(ctx context.Context, validateTokens bool) (archiveCheck, error) {
 	if err := lifecycle.validateExistingFile(); err != nil {
 		return archiveCheck{}, err
 	}
@@ -125,8 +164,70 @@ func (lifecycle healthArchiveLifecycle) Inspect(validateTokens bool) (archiveChe
 	}
 	defer db.Close()
 
+	return inspectOpenArchive(ctx, db, validateTokens)
+}
+
+// openInspectionOnly validates and returns the same SQLite mode=ro
+// handle. WAL mode is rejected before SQLite opens the file because
+// WAL readers necessarily update shared-memory reader marks. Unlike
+// Open, it never runs migrations or repairs the Attachment root; stale
+// and missing archives fail before a caller can issue planning reads.
+func (lifecycle healthArchiveLifecycle) openInspectionOnly(ctx context.Context) (healthArchiveHandle, error) {
+	if err := lifecycle.validateExistingFile(); err != nil {
+		return healthArchiveHandle{}, err
+	}
+	if err := validateInspectionOnlyJournalMode(lifecycle.path); err != nil {
+		return healthArchiveHandle{}, err
+	}
+	db, err := openArchiveReadOnly(lifecycle.path)
+	if err != nil {
+		return healthArchiveHandle{}, err
+	}
+	archive, err := inspectOpenArchive(ctx, db, false)
+	if err != nil {
+		return healthArchiveHandle{}, inspectionOnlyOpenError(archive, err, db.Close())
+	}
+	return healthArchiveHandle{
+		path:          lifecycle.path,
+		db:            db,
+		schemaVersion: archive.schemaVersion,
+	}, nil
+}
+
+func validateInspectionOnlyJournalMode(archivePath string) error {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return err
+	}
+	header := make([]byte, 20)
+	_, readErr := io.ReadFull(file, header)
+	closeErr := file.Close()
+	if closeErr != nil {
+		closeErr = fmt.Errorf("close SQLite header: %w", closeErr)
+	}
+	if err := errors.Join(readErr, closeErr); err != nil {
+		return fmt.Errorf("read SQLite header: %w", err)
+	}
+	if string(header[:16]) == "SQLite format 3\x00" && (header[18] == 2 || header[19] == 2) {
+		return errors.New("inspection-only Health Archive reads do not support SQLite WAL mode")
+	}
+	return nil
+}
+
+func inspectionOnlyOpenError(archive archiveCheck, inspectionErr, closeErr error) error {
+	if closeErr != nil {
+		closeErr = fmt.Errorf("close inspection-only Health Archive: %w", closeErr)
+		inspectionErr = errors.Join(inspectionErr, closeErr)
+	}
+	return healthArchiveOpenError{
+		schemaVersion: archive.schemaVersion,
+		err:           fmt.Errorf("Health Archive check failed: %w", inspectionErr),
+	}
+}
+
+func inspectOpenArchive(ctx context.Context, db *sql.DB, validateTokens bool) (archiveCheck, error) {
 	var userVersion int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&userVersion); err != nil {
 		return archiveCheck{}, err
 	}
 	if userVersion != currentSchemaVersion {
@@ -135,7 +236,7 @@ func (lifecycle healthArchiveLifecycle) Inspect(validateTokens bool) (archiveChe
 
 	for version, name := range expectedSchemaMigrations() {
 		var migrationCount int
-		if err := db.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version = ? AND name = ?`, version, name).Scan(&migrationCount); err != nil {
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations WHERE version = ? AND name = ?`, version, name).Scan(&migrationCount); err != nil {
 			return archiveCheck{schemaVersion: userVersion}, err
 		}
 		if migrationCount != 1 {
@@ -145,7 +246,7 @@ func (lifecycle healthArchiveLifecycle) Inspect(validateTokens bool) (archiveChe
 	if !validateTokens {
 		return archiveCheck{schemaVersion: userVersion}, nil
 	}
-	count, tokenStatus, err := inspectConnectionTokenMetadata(db)
+	count, tokenStatus, err := inspectConnectionTokenMetadata(ctx, db)
 	if err != nil {
 		return archiveCheck{}, err
 	}
@@ -186,4 +287,62 @@ func (lifecycle healthArchiveLifecycle) validateExistingFile() error {
 		return fmt.Errorf("%s is not owner-only: mode %04o, want 0600", lifecycle.path, info.Mode().Perm())
 	}
 	return nil
+}
+
+type archiveCheck struct {
+	schemaVersion   int
+	connectionCount int
+	tokenStatus     string
+}
+
+func openArchive(archivePath string) (*sql.DB, error) {
+	dsn, err := archiveDSN(archivePath, false)
+	if err != nil {
+		return nil, err
+	}
+	return openArchiveDSN(dsn)
+}
+
+func openArchiveReadOnly(archivePath string) (*sql.DB, error) {
+	dsn, err := archiveDSN(archivePath, true)
+	if err != nil {
+		return nil, err
+	}
+	return openArchiveDSN(dsn)
+}
+
+func openArchiveDSN(dsn string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	return db, nil
+}
+
+func archiveDSN(archivePath string, readOnly bool) (string, error) {
+	absPath, err := filepath.Abs(archivePath)
+	if err != nil {
+		return "", err
+	}
+	uriPath := filepath.ToSlash(absPath)
+	if runtime.GOOS == "windows" && !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	query := url.Values{}
+	query.Add("_pragma", "foreign_keys=on")
+	// busy_timeout makes SQLite block internally for up to 5 seconds
+	// when it encounters a lock contention (SQLITE_BUSY) instead of
+	// immediately surfacing the error. This is what lets two concurrent
+	// sync invocations against the same Health Archive coexist without
+	// the second one failing at StartSyncRun — modernc's driver does
+	// not implement an automatic global busy_timeout the way mattn's
+	// does, so the DSN must opt in explicitly. The finalize-time retry
+	// (retryFinalizeSyncRunOnBusy) still guards the terminal-write
+	// path for the rare case where the wait elapses.
+	query.Add("_pragma", "busy_timeout=5000")
+	if readOnly {
+		query.Add("mode", "ro")
+	}
+	return (&url.URL{Scheme: "file", Path: uriPath, RawQuery: query.Encode()}).String(), nil
 }

@@ -1,20 +1,24 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
 	"time"
 )
 
+var errHealthArchiveIdentityMismatch = errors.New("Health Archive already belongs to a different Google Identity; use a new archive path")
+
 type healthArchiveConnectionAPI interface {
 	Close() error
-	EnsureSameGoogleIdentity(healthUserID string) error
-	CurrentConnection() (archivedConnection, error)
-	UpsertConnection(connectionID string, identity googleIdentity, token oauthTokenResponse, now time.Time) error
+	EnsureSameGoogleIdentity(ctx context.Context, healthUserID string) error
+	CurrentConnection() (archived.Connection, error)
+	UpsertConnection(ctx context.Context, connectionID string, identity googleIdentity, token oauthTokenResponse, now time.Time) error
 	UpdateConnectionTokenMetadata(connectionID string, token oauthTokenResponse, now time.Time) error
-	RefreshConnectionIdentity(connection archivedConnection, identity googleIdentity, now time.Time) error
+	RefreshConnectionIdentity(ctx context.Context, connection archived.Connection, identity googleIdentity, now time.Time) error
 	InspectConnectionTokenMetadata() (int, string, error)
 }
 
@@ -23,7 +27,7 @@ type sqliteHealthArchiveConnectionAPI struct {
 }
 
 func openHealthArchiveConnectionAPI(archivePath string) (healthArchiveConnectionAPI, error) {
-	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(writeArchive)
+	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(context.Background(), writeArchive)
 	if err != nil {
 		return nil, err
 	}
@@ -34,32 +38,34 @@ func (archive *sqliteHealthArchiveConnectionAPI) Close() error {
 	return archive.db.Close()
 }
 
-func (archive *sqliteHealthArchiveConnectionAPI) EnsureSameGoogleIdentity(healthUserID string) error {
-	return ensureSameArchiveIdentity(archive.db, healthUserID)
+func (archive *sqliteHealthArchiveConnectionAPI) EnsureSameGoogleIdentity(ctx context.Context, healthUserID string) error {
+	return ensureSameArchiveIdentity(ctx, archive.db, healthUserID)
 }
 
-func (archive *sqliteHealthArchiveConnectionAPI) CurrentConnection() (archivedConnection, error) {
-	return readCurrentConnection(archive.db)
+func (archive *sqliteHealthArchiveConnectionAPI) CurrentConnection() (archived.Connection, error) {
+	return readCurrentConnection(context.Background(), archive.db)
 }
 
-func (archive *sqliteHealthArchiveConnectionAPI) UpsertConnection(connectionID string, identity googleIdentity, token oauthTokenResponse, now time.Time) error {
-	return upsertConnection(archive.db, connectionID, identity, token, now)
+func (archive *sqliteHealthArchiveConnectionAPI) UpsertConnection(ctx context.Context, connectionID string, identity googleIdentity, token oauthTokenResponse, now time.Time) error {
+	return upsertConnection(ctx, archive.db, connectionID, identity, token, now)
 }
 
 func (archive *sqliteHealthArchiveConnectionAPI) UpdateConnectionTokenMetadata(connectionID string, token oauthTokenResponse, now time.Time) error {
-	return updateConnectionTokenMetadata(archive.db, connectionID, token, now)
+	// context.Background(): token persistence is deliberately not
+	// cancelable — see the healthArchiveWriter interface comment (#305).
+	return updateConnectionTokenMetadata(context.Background(), archive.db, connectionID, token, now)
 }
 
-func (archive *sqliteHealthArchiveConnectionAPI) RefreshConnectionIdentity(connection archivedConnection, identity googleIdentity, now time.Time) error {
-	return refreshConnectionIdentity(archive.db, connection, identity, now)
+func (archive *sqliteHealthArchiveConnectionAPI) RefreshConnectionIdentity(ctx context.Context, connection archived.Connection, identity googleIdentity, now time.Time) error {
+	return refreshConnectionIdentity(ctx, archive.db, connection, identity, now)
 }
 
 func (archive *sqliteHealthArchiveConnectionAPI) InspectConnectionTokenMetadata() (int, string, error) {
-	return inspectConnectionTokenMetadata(archive.db)
+	return inspectConnectionTokenMetadata(context.Background(), archive.db)
 }
 
-func ensureSameArchiveIdentity(db *sql.DB, healthUserID string) error {
-	rows, err := db.Query(`SELECT DISTINCT google_health_user_id FROM connections`)
+func ensureSameArchiveIdentity(ctx context.Context, db *sql.DB, healthUserID string) error {
+	rows, err := db.QueryContext(ctx, `SELECT DISTINCT google_health_user_id FROM connections`)
 	if err != nil {
 		return err
 	}
@@ -70,14 +76,14 @@ func ensureSameArchiveIdentity(db *sql.DB, healthUserID string) error {
 			return err
 		}
 		if existing != healthUserID {
-			return errors.New("Health Archive already belongs to a different Google Identity; use a new archive path")
+			return errHealthArchiveIdentityMismatch
 		}
 	}
 	return rows.Err()
 }
 
-func readCurrentConnection(db *sql.DB) (archivedConnection, error) {
-	rows, err := db.Query(`SELECT
+func readCurrentConnection(ctx context.Context, db *sql.DB) (archived.Connection, error) {
+	rows, err := db.QueryContext(ctx, `SELECT
 		id,
 		provider_name,
 		google_health_user_id,
@@ -85,48 +91,47 @@ func readCurrentConnection(db *sql.DB) (archivedConnection, error) {
 		token_metadata_json
 	FROM connections ORDER BY created_at, id LIMIT 2`)
 	if err != nil {
-		return archivedConnection{}, err
+		return archived.Connection{}, err
 	}
 	defer rows.Close()
 
-	var connections []archivedConnection
+	var connections []archived.Connection
 	for rows.Next() {
-		var connection archivedConnection
+		var connection archived.Connection
 		var legacyFitbitUserID sql.NullString
 		if err := rows.Scan(
-			&connection.id,
-			&connection.providerName,
-			&connection.googleHealthUserID,
+			&connection.ID,
+			&connection.ProviderName,
+			&connection.GoogleHealthUserID,
 			&legacyFitbitUserID,
-			&connection.tokenMetadataJSON,
+			&connection.TokenMetadataJSON,
 		); err != nil {
-			return archivedConnection{}, err
+			return archived.Connection{}, err
 		}
 		if legacyFitbitUserID.Valid {
-			connection.legacyFitbitUserID = legacyFitbitUserID.String
+			connection.LegacyFitbitUserID = legacyFitbitUserID.String
 		}
 		connections = append(connections, connection)
 	}
 	if err := rows.Err(); err != nil {
-		return archivedConnection{}, err
+		return archived.Connection{}, err
 	}
 	if len(connections) == 0 {
-		return archivedConnection{}, sql.ErrNoRows
+		return archived.Connection{}, sql.ErrNoRows
 	}
 	if len(connections) > 1 {
-		return archivedConnection{}, errors.New("multiple Connections found; use a separate Health Archive for each Google Identity")
+		return archived.Connection{}, errors.New("multiple Connections found; use a separate Health Archive for each Google Identity")
 	}
 	return connections[0], nil
 }
 
-
-func upsertConnection(db *sql.DB, connectionID string, identity googleIdentity, token oauthTokenResponse, now time.Time) error {
+func upsertConnection(ctx context.Context, db *sql.DB, connectionID string, identity googleIdentity, token oauthTokenResponse, now time.Time) error {
 	metadataJSON, err := connectionTokenMetadataJSON(connectionID, token)
 	if err != nil {
 		return err
 	}
 	nowText := now.UTC().Format(time.RFC3339)
-	_, err = db.Exec(`INSERT INTO connections (
+	_, err = db.ExecContext(ctx, `INSERT INTO connections (
 		id,
 		provider_name,
 		google_health_user_id,
@@ -153,12 +158,12 @@ func upsertConnection(db *sql.DB, connectionID string, identity googleIdentity, 
 	return err
 }
 
-func updateConnectionTokenMetadata(db *sql.DB, connectionID string, token oauthTokenResponse, now time.Time) error {
+func updateConnectionTokenMetadata(ctx context.Context, db *sql.DB, connectionID string, token oauthTokenResponse, now time.Time) error {
 	metadataJSON, err := connectionTokenMetadataJSON(connectionID, token)
 	if err != nil {
 		return err
 	}
-	result, err := db.Exec(`UPDATE connections SET token_metadata_json = ?, updated_at = ? WHERE id = ?`,
+	result, err := db.ExecContext(ctx, `UPDATE connections SET token_metadata_json = ?, updated_at = ? WHERE id = ?`,
 		string(metadataJSON),
 		now.UTC().Format(time.RFC3339),
 		connectionID,
@@ -189,12 +194,12 @@ func connectionTokenMetadataJSON(connectionID string, token oauthTokenResponse) 
 	return json.Marshal(metadata)
 }
 
-func refreshConnectionIdentity(db *sql.DB, connection archivedConnection, identity googleIdentity, now time.Time) error {
-	legacyFitbitUserID := connection.legacyFitbitUserID
+func refreshConnectionIdentity(ctx context.Context, db *sql.DB, connection archived.Connection, identity googleIdentity, now time.Time) error {
+	legacyFitbitUserID := connection.LegacyFitbitUserID
 	if identity.legacyFitbitUserID != "" {
 		legacyFitbitUserID = identity.legacyFitbitUserID
 	}
-	_, err := db.Exec(`UPDATE connections SET
+	_, err := db.ExecContext(ctx, `UPDATE connections SET
 		google_health_user_id = ?,
 		legacy_fitbit_user_id = ?,
 		google_identity_json = ?,
@@ -204,13 +209,13 @@ func refreshConnectionIdentity(db *sql.DB, connection archivedConnection, identi
 		legacyFitbitUserID,
 		identity.rawJSON,
 		now.UTC().Format(time.RFC3339),
-		connection.id,
+		connection.ID,
 	)
 	return err
 }
 
-func inspectConnectionTokenMetadata(db *sql.DB) (int, string, error) {
-	rows, err := db.Query(`SELECT id, token_metadata_json FROM connections ORDER BY id`)
+func inspectConnectionTokenMetadata(ctx context.Context, db *sql.DB) (int, string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT id, token_metadata_json FROM connections ORDER BY id`)
 	if err != nil {
 		return 0, "", err
 	}

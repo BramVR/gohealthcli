@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -10,6 +11,7 @@ import (
 )
 
 func TestQueryReadsArchivedStepsDataPointsReadOnly(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -57,7 +59,34 @@ func TestQueryReadsArchivedStepsDataPointsReadOnly(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestQueryDoesNotRecreateMissingAttachmentRoot(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	rootDir := attachmentRootDirForArchive(archivePath)
+	movedRootDir := rootDir + ".moved"
+	if err := os.Rename(rootDir, movedRootDir); err != nil {
+		t.Fatalf("rename attachment root: %v", err)
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"query",
+		"--db", archivePath,
+		"--json",
+		"SELECT 1",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("query exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if _, err := os.Stat(rootDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("attachment root stat err = %v, want missing root", err)
+	}
+}
+
 func TestQueryPlainOutputIsStable(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -93,6 +122,7 @@ func TestQueryPlainOutputIsStable(t *testing.T) {
 }
 
 func TestQueryPlainOutputEscapesControlCharacters(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -120,6 +150,85 @@ func TestQueryPlainOutputEscapesControlCharacters(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+// TestQueryPlainOutputEscapesEscAndBelControlBytes pins issue #244: a Data
+// Point value containing the JSON-escaped ESC/BEL that SQLite's json_extract
+// decodes into raw ESC (0x1b) and BEL (0x07) bytes must render those bytes in
+// a visible, reversible escape form in the plain/default `query` output —
+// terminal escape-sequence injection (CWE-150) must not reach the terminal raw.
+// char(27) and char(7) stand in for the decoded provider-derived control bytes.
+func TestQueryPlainOutputEscapesEscAndBelControlBytes(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"query",
+		"--config", configPath,
+		"--plain",
+		`SELECT 'a' || char(27) || 'b' || char(7) || 'c' AS note`,
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("query exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	out := stdout.String()
+	want := `row.1.1: a\x1bb\x07c` + "\n"
+	if !strings.Contains(out, want) {
+		t.Fatalf("stdout missing %q:\n%s", want, out)
+	}
+	if strings.ContainsAny(out, "\x1b\x07") {
+		t.Fatalf("stdout contains a raw control byte:\n%q", out)
+	}
+	assertNoSecretWords(t, out+stderr.String())
+}
+
+// TestQueryJSONOutputUnchangedForControlBytes guards the issue #244
+// boundary: JSON output mode is explicitly out of scope. A value carrying
+// raw ESC (0x1b)/BEL (0x07) bytes must still emit valid JSON with the
+// encoding/json \u escapes intact (not the plain-mode \xHH form), and no
+// raw control byte may reach stdout.
+func TestQueryJSONOutputUnchangedForControlBytes(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"query",
+		"--config", configPath,
+		"--json",
+		`SELECT 'a' || char(27) || 'b' || char(7) || 'c' AS note`,
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("query exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	out := stdout.String()
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, out)
+	}
+	// JSON mode escapes control bytes as \u001b / \u0007 (encoding/json),
+	// not the plain-mode \xHH form, and never leaks a raw control byte.
+	if !strings.Contains(out, `\u001b`) || !strings.Contains(out, `\u0007`) {
+		t.Fatalf("JSON output missing \\u-escaped control bytes:\n%s", out)
+	}
+	if strings.Contains(out, `\x1b`) || strings.Contains(out, `\x07`) {
+		t.Fatalf("JSON output leaked plain-mode \\xHH escapes:\n%s", out)
+	}
+	if strings.ContainsAny(out, "\x1b\x07") {
+		t.Fatalf("JSON output contains a raw control byte:\n%q", out)
+	}
+	assertNoSecretWords(t, out+stderr.String())
+}
+
 // TestQueryDefaultOutputEmitsPlainShape pins the PRD #144 slice 7 contract:
 // when neither --json nor --plain is set, `query` emits the --plain key/value
 // shape (parseable, byte-for-byte the same as --plain) instead of the legacy
@@ -128,6 +237,7 @@ func TestQueryPlainOutputEscapesControlCharacters(t *testing.T) {
 // TestQueryDefaultOutputMatchesPlainModeByteForByte for the negative and
 // equivalence assertions.
 func TestQueryDefaultOutputEmitsPlainShape(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -169,6 +279,7 @@ func TestQueryDefaultOutputEmitsPlainShape(t *testing.T) {
 // future regression that reintroduces the format is caught even if the column
 // names happen to be space-free.
 func TestQueryDefaultOutputDoesNotEmitLegacyRowFormat(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -211,6 +322,7 @@ func TestQueryDefaultOutputDoesNotEmitLegacyRowFormat(t *testing.T) {
 // divergence (an accidental stderr warning, a header line added to one mode
 // only) before it ships.
 func TestQueryDefaultOutputMatchesPlainModeByteForByte(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -242,6 +354,7 @@ func TestQueryDefaultOutputMatchesPlainModeByteForByte(t *testing.T) {
 }
 
 func TestQueryMigratesLegacyV3ArchiveBeforeValidation(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	if err := os.Remove(archivePath); err != nil {
@@ -274,6 +387,7 @@ func TestQueryMigratesLegacyV3ArchiveBeforeValidation(t *testing.T) {
 }
 
 func TestQueryRejectsWriteAttemptsBeforeMigratingLegacyArchive(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	if err := os.Remove(archivePath); err != nil {
@@ -308,7 +422,33 @@ func TestQueryRejectsWriteAttemptsBeforeMigratingLegacyArchive(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+// TestQueryAcceptsMultipleSelectCTEs pins the comma path of the CTE
+// scanner: after each `name AS (...)`, the next CTE name is consumed and
+// the loop continues without re-checking the (out-of-scope) name token,
+// so a multi-CTE SELECT with no MATERIALIZED options must be accepted.
+func TestQueryAcceptsMultipleSelectCTEs(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath, _, _ := initializeFileCredentialSetup(t, tempDir)
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"query",
+		"--config", configPath,
+		"--json",
+		"WITH first_kind AS (SELECT data_type FROM data_points), second_kind AS (SELECT data_type FROM first_kind) SELECT count(*) AS count FROM second_kind",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("query exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
 func TestQueryAcceptsSelectCTE(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -346,6 +486,7 @@ func TestQueryAcceptsSelectCTE(t *testing.T) {
 }
 
 func TestQueryAcceptsCTEIdentifierDigits(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -375,6 +516,7 @@ func TestQueryAcceptsCTEIdentifierDigits(t *testing.T) {
 }
 
 func TestQueryAcceptsTrailingCommentsAfterTerminator(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -404,6 +546,7 @@ func TestQueryAcceptsTrailingCommentsAfterTerminator(t *testing.T) {
 }
 
 func TestQueryRejectsWriteAttemptsWithoutChangingArchive(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)

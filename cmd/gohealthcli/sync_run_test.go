@@ -1,23 +1,21 @@
 package main
 
 import (
+	"context"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestSyncRunExecutorArchivesDataPointList(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	testRuntime, requests := withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
@@ -36,7 +34,7 @@ func TestSyncRunExecutorArchivesDataPointList(t *testing.T) {
 		}`,
 	})
 
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -53,28 +51,24 @@ func TestSyncRunExecutorArchivesDataPointList(t *testing.T) {
 	if result.DataPointsSeen != 1 || result.DataPointsNew != 1 || result.DataPointsUpdated != 0 {
 		t.Fatalf("Data Point counts = (%d, %d, %d), want (1, 1, 0)", result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated)
 	}
-	if len(*requests) != 1 || (*requests)[0].endpointName != "dataTypes.steps.list" {
+	if len(*requests) != 1 || (*requests)[0].EndpointName != "dataTypes.steps.list" {
 		t.Fatalf("requests = %#v, want one steps list request", *requests)
 	}
-	if strings.Contains((*requests)[0].url, "dataSourceFamily") {
-		t.Fatalf("list request unexpectedly used source-family filtering: %s", (*requests)[0].url)
+	if strings.Contains((*requests)[0].URL, "dataSourceFamily") {
+		t.Fatalf("list request unexpectedly used source-family filtering: %s", (*requests)[0].URL)
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 1)
 	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "steps", "list", 1, 1, 0, "")
 }
 
 func TestSyncRunExecutorArchivesDataPointReconcileForSourceFamily(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	testRuntime, requests := withStepReconcileFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
@@ -93,7 +87,7 @@ func TestSyncRunExecutorArchivesDataPointReconcileForSourceFamily(t *testing.T) 
 		}`,
 	})
 
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:   configPath,
 		archivePath:  archivePath,
 		dataTypes:    []string{"steps"},
@@ -108,10 +102,10 @@ func TestSyncRunExecutorArchivesDataPointReconcileForSourceFamily(t *testing.T) 
 	if result.Status != "sync_completed" || result.EndpointFamily != "reconcile" || result.SourceFamily != "wearable" {
 		t.Fatalf("Sync Run result = (%q, %q, %q), want completed reconcile wearable", result.Status, result.EndpointFamily, result.SourceFamily)
 	}
-	if len(*requests) != 1 || (*requests)[0].endpointName != "dataTypes.steps.reconcile" {
+	if len(*requests) != 1 || (*requests)[0].EndpointName != "dataTypes.steps.reconcile" {
 		t.Fatalf("requests = %#v, want one steps reconcile request", *requests)
 	}
-	if gotFamily := mustURLQuery(t, (*requests)[0].url).Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
+	if gotFamily := mustURLQuery(t, (*requests)[0].URL).Get("dataSourceFamily"); gotFamily != "users/me/dataSourceFamilies/google-wearables" {
 		t.Fatalf("dataSourceFamily = %q, want google-wearables", gotFamily)
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 1)
@@ -119,18 +113,102 @@ func TestSyncRunExecutorArchivesDataPointReconcileForSourceFamily(t *testing.T) 
 	assertSyncRunWithEndpointFamilyAndSourceFamily(t, archivePath, 1, "sync_completed", "reconcile", "wearable", 1, 1, 0, "")
 }
 
+func TestSyncRunExecutorListRequestsUseSafeDataPointPageSize(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		dataType     string
+		wantPageSize string
+	}{
+		{dataType: "steps", wantPageSize: "10000"},
+		{dataType: "heart-rate", wantPageSize: "10000"},
+		{dataType: "sleep", wantPageSize: "25"},
+		{dataType: "exercise", wantPageSize: "25"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.dataType, func(t *testing.T) {
+			t.Parallel()
+			configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
+				accessToken:        "connect-access-secret",
+				refreshToken:       "connect-refresh-secret",
+				healthUserID:       "111111256096816351",
+				legacyFitbitUserID: "A1B2C3",
+			})
+			testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
+			requests := bindDataPointSyncFetchFake(t, &testRuntime, "connect-access-secret", tt.dataType, map[string]string{
+				"": `{"dataPoints":[]}`,
+			})
+
+			result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
+				configPath:  configPath,
+				archivePath: archivePath,
+				dataTypes:   []string{tt.dataType},
+				from:        "2026-01-01",
+				to:          "2026-01-02",
+			})
+			if err != nil {
+				t.Fatalf("execute Sync Run: %v", err)
+			}
+			if result.Status != "sync_completed" || result.EndpointFamily != "list" {
+				t.Fatalf("Sync Run result = (%q, %q), want completed list", result.Status, result.EndpointFamily)
+			}
+			if len(*requests) != 1 {
+				t.Fatalf("request count = %d, want 1", len(*requests))
+			}
+			if got := mustURLQuery(t, (*requests)[0].URL).Get("pageSize"); got != tt.wantPageSize {
+				t.Fatalf("pageSize = %q, want %q in %s", got, tt.wantPageSize, (*requests)[0].URL)
+			}
+		})
+	}
+}
+
+func TestSyncRunExecutorReconcileRequestsUseSafeDataPointPageSize(t *testing.T) {
+	t.Parallel()
+	for _, dataType := range []string{"steps", "heart-rate"} {
+		t.Run(dataType, func(t *testing.T) {
+			t.Parallel()
+			configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
+				accessToken:        "connect-access-secret",
+				refreshToken:       "connect-refresh-secret",
+				healthUserID:       "111111256096816351",
+				legacyFitbitUserID: "A1B2C3",
+			})
+			testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
+			requests := bindDataPointReconcileFetchFake(t, &testRuntime, "connect-access-secret", dataType, map[string]string{
+				"": `{"dataPoints":[]}`,
+			})
+
+			result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
+				configPath:   configPath,
+				archivePath:  archivePath,
+				dataTypes:    []string{dataType},
+				sourceFamily: "wearable",
+				from:         "2026-01-01",
+				to:           "2026-01-02",
+			})
+			if err != nil {
+				t.Fatalf("execute Sync Run: %v", err)
+			}
+			if result.Status != "sync_completed" || result.EndpointFamily != "reconcile" {
+				t.Fatalf("Sync Run result = (%q, %q), want completed reconcile", result.Status, result.EndpointFamily)
+			}
+			if len(*requests) != 1 {
+				t.Fatalf("request count = %d, want 1", len(*requests))
+			}
+			if got := mustURLQuery(t, (*requests)[0].URL).Get("pageSize"); got != "10000" {
+				t.Fatalf("pageSize = %q, want 10000 in %s", got, (*requests)[0].URL)
+			}
+		})
+	}
+}
+
 func TestSyncRunExecutorArchivesDailyRollups(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC) }
 
 	testRuntime, requests := withStepDailyRollupFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
@@ -143,7 +221,7 @@ func TestSyncRunExecutorArchivesDailyRollups(t *testing.T) {
 		}`,
 	})
 
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -161,13 +239,60 @@ func TestSyncRunExecutorArchivesDailyRollups(t *testing.T) {
 	if result.DataPointsSeen != 0 || result.RollupsSeen != 1 || result.RollupsNew != 1 || result.RollupsUpdated != 0 {
 		t.Fatalf("counts = dataPointsSeen:%d rollups:(%d, %d, %d), want dataPointsSeen:0 rollups:(1, 1, 0)", result.DataPointsSeen, result.RollupsSeen, result.RollupsNew, result.RollupsUpdated)
 	}
-	if len(*requests) != 1 || (*requests)[0].endpointName != "dataTypes.steps.dailyRollUp" {
+	if len(*requests) != 1 || (*requests)[0].EndpointName != "dataTypes.steps.dailyRollUp" {
 		t.Fatalf("requests = %#v, want one steps dailyRollUp request", *requests)
 	}
 	assertArchiveTableCount(t, archivePath, "data_points", 0)
 	assertArchiveTableCount(t, archivePath, "rollups", 1)
 	assertArchivedStepsDailyRollup(t, archivePath, "1234")
 	assertSyncRunWithEndpointFamily(t, archivePath, 1, "sync_completed", "dailyRollUp", 1, 1, 0, "")
+}
+
+func TestSyncRunExecutorArchivesHeartRateDailyRollups(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	testRuntime.now = func() time.Time { return time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC) }
+
+	testRuntime, requests := withHeartRateDailyRollupFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
+		"2026-01-01/2026-01-02/": `{
+			"rollupDataPoints": [{
+				"heartRate": {"bpmAvg": 68.5, "bpmMin": 49.0, "bpmMax": 122.0},
+				"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+				"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}
+			}]
+		}`,
+	})
+
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
+		configPath:  configPath,
+		archivePath: archivePath,
+		dataTypes:   []string{"heart-rate"},
+		rollup:      "daily",
+		from:        "2026-01-01",
+		to:          "2026-01-02",
+	})
+	if err != nil {
+		t.Fatalf("execute Sync Run: %v", err)
+	}
+
+	if result.Status != "sync_completed" || result.EndpointFamily != "dailyRollUp" {
+		t.Fatalf("Sync Run result = (%q, %q), want completed dailyRollUp", result.Status, result.EndpointFamily)
+	}
+	if result.DataPointsSeen != 0 || result.RollupsSeen != 1 || result.RollupsNew != 1 || result.RollupsUpdated != 0 {
+		t.Fatalf("counts = dataPointsSeen:%d rollups:(%d, %d, %d), want dataPointsSeen:0 rollups:(1, 1, 0)", result.DataPointsSeen, result.RollupsSeen, result.RollupsNew, result.RollupsUpdated)
+	}
+	if len(*requests) != 1 || (*requests)[0].EndpointName != "dataTypes.heart-rate.dailyRollUp" {
+		t.Fatalf("requests = %#v, want one heart-rate dailyRollUp request", *requests)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 0)
+	assertArchiveTableCount(t, archivePath, "rollups", 1)
+	assertArchivedHeartRateDailyRollup(t, archivePath)
+	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "heart-rate", "dailyRollUp", 1, 1, 0, "")
 }
 
 // TestSyncRunExecutorWiresNormalizedFromIntoHourlyRollup is the slice-3
@@ -179,17 +304,13 @@ func TestSyncRunExecutorArchivesDailyRollups(t *testing.T) {
 // `options.from = plan.from` assignment surfaces as "no fake rollup
 // page for key ..." with the civil form on the left-hand side.
 func TestSyncRunExecutorWiresNormalizedFromIntoHourlyRollup(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC) }
 
 	testRuntime, requests := withHeartRateHourlyRollupFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
@@ -202,7 +323,7 @@ func TestSyncRunExecutorWiresNormalizedFromIntoHourlyRollup(t *testing.T) {
 		}`,
 	})
 
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"heart-rate"},
@@ -223,23 +344,19 @@ func TestSyncRunExecutorWiresNormalizedFromIntoHourlyRollup(t *testing.T) {
 	if result.To != "2026-01-02T00:00:00Z" {
 		t.Errorf("result.To = %q, want RFC3339 normalized form 2026-01-02T00:00:00Z", result.To)
 	}
-	if len(*requests) != 1 || (*requests)[0].endpointName != "dataTypes.heart-rate.rollUp" {
+	if len(*requests) != 1 || (*requests)[0].EndpointName != "dataTypes.heart-rate.rollUp" {
 		t.Fatalf("requests = %#v, want one heart-rate rollUp request", *requests)
 	}
 }
 
 func TestSyncRunExecutorRecordsFailedListRunForRepeatedPageToken(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
@@ -247,7 +364,7 @@ func TestSyncRunExecutorRecordsFailedListRunForRepeatedPageToken(t *testing.T) {
 		"same-token": `{"dataPoints":[],"nextPageToken":"same-token"}`,
 	})
 
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -265,17 +382,13 @@ func TestSyncRunExecutorRecordsFailedListRunForRepeatedPageToken(t *testing.T) {
 }
 
 func TestSyncRunExecutorRecordsPartialCountsWhenLaterPageFails(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
@@ -295,7 +408,7 @@ func TestSyncRunExecutorRecordsPartialCountsWhenLaterPageFails(t *testing.T) {
 		"bad-page": `{`,
 	})
 
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -312,7 +425,15 @@ func TestSyncRunExecutorRecordsPartialCountsWhenLaterPageFails(t *testing.T) {
 	assertSyncRunForDataType(t, archivePath, 1, "sync_failed", "steps", "list", 1, 1, 0, "not valid JSON")
 }
 
-func TestSyncRunExecutorAutoRefreshesExpiredAccessTokenAndPersists(t *testing.T) {
+// TestSyncRunExecutorRefreshesAccessTokenMidRunAndPersists covers the
+// long-backfill shape: the access token is valid when the Sync Run
+// starts, then expires between pages. Page 2 comes back 401 with the
+// original token; the run must refresh via the stored refresh token,
+// retry page 2 with the rotated token, finish, and persist the rotated
+// token's metadata — instead of failing and leaving the Sync Cursor
+// un-advanced.
+func TestSyncRunExecutorRefreshesAccessTokenMidRunAndPersists(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	connectAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -323,9 +444,100 @@ func TestSyncRunExecutorAutoRefreshesExpiredAccessTokenAndPersists(t *testing.T)
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
+
+	// 00:30: the stored token (expires 01:00) is still valid at run
+	// start, so the pre-run AccessToken path does NOT refresh.
+	syncNow := connectAt.Add(30 * time.Minute)
+	refreshedExpiresAt := syncNow.Add(time.Hour)
+	testRuntime.now = func() time.Time { return syncNow }
+	refreshCalls := 0
+	bindRefreshOAuthTokenFake(t, &testRuntime, fakeRefreshConfig{
+		wantRefreshToken: "connect-refresh-secret",
+		accessToken:      "rotated-access-secret",
+		expiresAt:        refreshedExpiresAt,
+		calls:            &refreshCalls,
+	})
+
+	dataPointPage := func(name, nextPageToken string) string {
+		return `{
+			"dataPoints": [{
+				"name": "users/me/dataTypes/steps/dataPoints/` + name + `",
+				"dataSource": {"platform": "FITBIT"},
+				"steps": {
+					"interval": {
+						"startTime": "2026-01-01T08:00:00Z",
+						"endTime": "2026-01-01T08:15:00Z"
+					},
+					"count": "512"
+				}
+			}],
+			"nextPageToken": "` + nextPageToken + `"
+		}`
 	}
+	var fetches []string
+	testRuntime.fetchRawProvider = func(_ context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
+		pageToken := mustURLQuery(t, request.URL).Get("pageToken")
+		fetches = append(fetches, pageToken+":"+accessToken)
+		switch {
+		case accessToken == "connect-access-secret" && pageToken == "":
+			return []byte(dataPointPage("page-one-point", "page-2")), nil
+		case accessToken == "connect-access-secret" && pageToken == "page-2":
+			// The access token expired between pages.
+			return nil, &googlehealth.HTTPError{StatusCode: 401}
+		case accessToken == "rotated-access-secret" && pageToken == "page-2":
+			return []byte(dataPointPage("page-two-point", "")), nil
+		default:
+			t.Fatalf("unexpected fetch (pageToken=%q, accessToken=%q)", pageToken, accessToken)
+			return nil, nil
+		}
+	}
+
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
+		configPath:  configPath,
+		archivePath: archivePath,
+		dataTypes:   []string{"steps"},
+		from:        "2026-01-01",
+		to:          "2026-01-01T12:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("execute Sync Run: %v", err)
+	}
+	if result.Status != "sync_completed" {
+		t.Fatalf("Sync Run status = (%q, %q), want sync_completed", result.Status, result.Message)
+	}
+	if result.DataPointsSeen != 2 || result.DataPointsNew != 2 {
+		t.Fatalf("Data Point counts = (%d, %d), want (2, 2)", result.DataPointsSeen, result.DataPointsNew)
+	}
+	if refreshCalls != 1 {
+		t.Fatalf("refresh calls = %d, want 1", refreshCalls)
+	}
+	wantFetches := ":connect-access-secret,page-2:connect-access-secret,page-2:rotated-access-secret"
+	if strings.Join(fetches, ",") != wantFetches {
+		t.Fatalf("fetches = %v, want %s", fetches, wantFetches)
+	}
+	assertArchiveTableCount(t, archivePath, "data_points", 2)
+	assertSyncRunForDataType(t, archivePath, 1, "sync_completed", "steps", "list", 2, 2, 0, "")
+
+	gotMetadata := archivedConnectionTokenMetadata(t, archivePath)
+	if !strings.Contains(gotMetadata, refreshedExpiresAt.Format(time.RFC3339)) {
+		t.Fatalf("token metadata after sync = %s, want refreshed expires_at %s", gotMetadata, refreshedExpiresAt.Format(time.RFC3339))
+	}
+}
+
+func TestSyncRunExecutorAutoRefreshesExpiredAccessTokenAndPersists(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	connectAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+		now:                connectAt,
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	// Force the stored access-token expires_at into the past so AccessToken
 	// must take the auto-refresh path.
 	setConnectionTokenExpiry(t, archivePath, "2026-01-01T00:00:00Z")
@@ -333,24 +545,11 @@ func TestSyncRunExecutorAutoRefreshesExpiredAccessTokenAndPersists(t *testing.T)
 	syncNow := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC)
 	refreshedExpiresAt := syncNow.Add(time.Hour)
 	testRuntime.now = func() time.Time { return syncNow }
-	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-		if refreshToken != "connect-refresh-secret" {
-			t.Fatalf("refresh token = %q, want connect-refresh-secret", refreshToken)
-		}
-		return oauthTokenResponse{
-			accessToken:  "rotated-access-secret",
-			refreshToken: "connect-refresh-secret",
-			tokenType:    "Bearer",
-			scopes:       fallbackScopes,
-			expiresAt:    refreshedExpiresAt,
-			rawTokenMaterialObject: map[string]any{
-				"access_token":  "rotated-access-secret",
-				"refresh_token": "connect-refresh-secret",
-				"token_type":    "Bearer",
-				"expires_in":    float64(3600),
-			},
-		}, nil
-	}
+	bindRefreshOAuthTokenFake(t, &testRuntime, fakeRefreshConfig{
+		wantRefreshToken: "connect-refresh-secret",
+		accessToken:      "rotated-access-secret",
+		expiresAt:        refreshedExpiresAt,
+	})
 	testRuntime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
 		if accessToken != "rotated-access-secret" {
 			t.Fatalf("identity access token = %q, want rotated token", accessToken)
@@ -362,7 +561,7 @@ func TestSyncRunExecutorAutoRefreshesExpiredAccessTokenAndPersists(t *testing.T)
 		"": `{"dataPoints":[]}`,
 	})
 
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},

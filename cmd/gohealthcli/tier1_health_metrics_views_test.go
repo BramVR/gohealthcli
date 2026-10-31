@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 )
@@ -13,6 +14,7 @@ import (
 // core_body_temperature_samples, height_samples, current_height.
 
 func TestBodyFatSamplesViewProjectsPercentage(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -31,13 +33,9 @@ func TestBodyFatSamplesViewProjectsPercentage(t *testing.T) {
 		rawJSON: `{"bodyFat":{"sampleTime":{"physicalTime":"2026-06-08T08:00:00+01:00"},"percentage":"23.4"}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
-	row := db.QueryRow(`SELECT sample_time_utc, percentage, civil_date, upstream_resource_name FROM body_fat_samples`)
+	row := db.QueryRowContext(context.Background(), `SELECT sample_time_utc, percentage, civil_date, upstream_resource_name FROM body_fat_samples`)
 	var sampleTime, percentage, civilDate, resource string
 	if err := row.Scan(&sampleTime, &percentage, &civilDate, &resource); err != nil {
 		t.Fatalf("scan body_fat_samples: %v", err)
@@ -57,6 +55,7 @@ func TestBodyFatSamplesViewProjectsPercentage(t *testing.T) {
 }
 
 func TestBloodGlucoseSamplesViewProjectsLevel(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -75,13 +74,9 @@ func TestBloodGlucoseSamplesViewProjectsLevel(t *testing.T) {
 		rawJSON: `{"bloodGlucose":{"sampleTime":{"physicalTime":"2026-06-08T08:00:00+01:00"},"bloodGlucoseLevel":{"milligramsPerDeciliter":"95.0"}}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
-	row := db.QueryRow(`SELECT sample_time_utc, milligrams_per_deciliter, civil_date FROM blood_glucose_samples`)
+	row := db.QueryRowContext(context.Background(), `SELECT sample_time_utc, milligrams_per_deciliter, civil_date FROM blood_glucose_samples`)
 	var sampleTime, mgdl, civilDate string
 	if err := row.Scan(&sampleTime, &mgdl, &civilDate); err != nil {
 		t.Fatalf("scan blood_glucose_samples: %v", err)
@@ -98,6 +93,7 @@ func TestBloodGlucoseSamplesViewProjectsLevel(t *testing.T) {
 }
 
 func TestCoreBodyTemperatureSamplesViewProjectsCelsius(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -116,13 +112,9 @@ func TestCoreBodyTemperatureSamplesViewProjectsCelsius(t *testing.T) {
 		rawJSON: `{"coreBodyTemperature":{"sampleTime":{"physicalTime":"2026-06-08T08:00:00+01:00"},"celsius":"36.7"}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
-	row := db.QueryRow(`SELECT sample_time_utc, celsius, civil_date FROM core_body_temperature_samples`)
+	row := db.QueryRowContext(context.Background(), `SELECT sample_time_utc, celsius, civil_date FROM core_body_temperature_samples`)
 	var sampleTime, celsius, civilDate string
 	if err := row.Scan(&sampleTime, &celsius, &civilDate); err != nil {
 		t.Fatalf("scan core_body_temperature_samples: %v", err)
@@ -139,6 +131,7 @@ func TestCoreBodyTemperatureSamplesViewProjectsCelsius(t *testing.T) {
 }
 
 func TestHeightSamplesViewProjectsMeters(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -157,13 +150,9 @@ func TestHeightSamplesViewProjectsMeters(t *testing.T) {
 		rawJSON: `{"height":{"sampleTime":{"physicalTime":"2026-06-08T08:00:00+01:00"},"heightMeters":"1.83"}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
-	row := db.QueryRow(`SELECT sample_time_utc, height_meters, civil_date FROM height_samples`)
+	row := db.QueryRowContext(context.Background(), `SELECT sample_time_utc, height_meters, civil_date FROM height_samples`)
 	var sampleTime, heightMeters, civilDate string
 	if err := row.Scan(&sampleTime, &heightMeters, &civilDate); err != nil {
 		t.Fatalf("scan height_samples: %v", err)
@@ -183,6 +172,7 @@ func TestHeightSamplesViewProjectsMeters(t *testing.T) {
 // the issue asked for: an LLM should be able to answer "what's my
 // height?" without ordering manually.
 func TestCurrentHeightViewReturnsLatestSample(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -213,13 +203,9 @@ func TestCurrentHeightViewReturnsLatestSample(t *testing.T) {
 		rawJSON:      `{"height":{"sampleTime":{"physicalTime":"2026-06-08T08:00:00+01:00"},"heightMeters":"1.83"}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
-	rows, err := db.Query(`SELECT sample_time_utc, height_meters FROM current_height`)
+	rows, err := db.QueryContext(context.Background(), `SELECT sample_time_utc, height_meters FROM current_height`)
 	if err != nil {
 		t.Fatalf("query current_height: %v", err)
 	}

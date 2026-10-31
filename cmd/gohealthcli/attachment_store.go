@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 )
 
 // attachmentStore is the Data Point Attachment Store from PRD #93 and
@@ -24,18 +26,60 @@ type attachmentStore struct {
 }
 
 type attachmentRecord struct {
-	ID            int64
-	DataPointID   int64
-	Kind          string
-	SHA256        string
-	PathRelative  string
-	AbsolutePath  string
-	ByteSize      int64
-	FetchedAt     string
+	ID           int64
+	DataPointID  int64
+	Kind         string
+	SHA256       string
+	PathRelative string
+	AbsolutePath string
+	ByteSize     int64
+	FetchedAt    string
 }
 
 func attachmentRootDirForArchive(archivePath string) string {
 	return archivePath + ".attachments"
+}
+
+func rejectSymlinkedAttachmentRoot(rootDir string) error {
+	info, err := os.Lstat(rootDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("attachment root %q is a symbolic link", rootDir)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("attachment root %q is not a directory", rootDir)
+	}
+	return nil
+}
+
+func validateSnapshotRestoreAttachmentRoot(rootDir string) error {
+	if err := rejectSymlinkedAttachmentRoot(rootDir); err != nil {
+		return err
+	}
+	_, err := os.Lstat(rootDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return filepath.Walk(rootDir, func(current string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if current == rootDir {
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("attachment root %q must contain only empty directories before Health Archive Snapshot restore", rootDir)
+		}
+		return nil
+	})
 }
 
 // collectAttachmentOrphans opens the attachment store read-only and
@@ -44,7 +88,7 @@ func attachmentRootDirForArchive(archivePath string) string {
 // populated report otherwise. The slices inside the report are
 // initialised to empty so JSON encoding is `[]` not `null` when only
 // one orphan kind is present. Pure reporting — never mutates state.
-func collectAttachmentOrphans(archivePath string) (*doctorAttachmentReport, error) {
+func collectAttachmentOrphans(ctx context.Context, archivePath string) (*doctorAttachmentReport, error) {
 	store, err := openAttachmentStoreReadOnly(archivePath)
 	if err != nil {
 		return nil, err
@@ -54,7 +98,7 @@ func collectAttachmentOrphans(archivePath string) (*doctorAttachmentReport, erro
 		OrphanRows:  []doctorOrphanRow{},
 		OrphanFiles: []doctorOrphanFile{},
 	}
-	if err := store.Walk(func(o attachmentOrphan) error {
+	if err := store.Walk(ctx, func(o attachmentOrphan) error {
 		switch o.Kind {
 		case attachmentOrphanRowMissingFile:
 			report.OrphanRows = append(report.OrphanRows, doctorOrphanRow{
@@ -96,20 +140,15 @@ func inspectAttachmentRoot(archivePath string) (string, string, error) {
 	return root, mode, nil
 }
 
-func openAttachmentStore(archivePath string) (*attachmentStore, error) {
-	return openAttachmentStoreMode(archivePath, writeArchive)
-}
-
 // openAttachmentStoreReadOnly opens the store without taking the
-// write lock on the SQLite handle. Resolve/Walk and the planned
-// doctor integration use this so integrity checks can run against
-// read-only copies.
+// write lock on the SQLite handle. Walk and the doctor integration
+// use this so integrity checks can run against read-only copies.
 func openAttachmentStoreReadOnly(archivePath string) (*attachmentStore, error) {
 	return openAttachmentStoreMode(archivePath, readOnlyArchive)
 }
 
 func openAttachmentStoreMode(archivePath string, mode healthArchiveOpenMode) (*attachmentStore, error) {
-	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(mode)
+	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(context.Background(), mode)
 	if err != nil {
 		return nil, err
 	}
@@ -131,21 +170,22 @@ func (store *attachmentStore) Close() error {
 // inserts a row in data_point_attachments. Idempotent: if a row with
 // the same (data_point_id, sha256) already exists, the existing row +
 // file are returned unchanged.
-func (store *attachmentStore) Store(dataPointID int64, kind string, payload []byte, fetchedAt string) (attachmentRecord, error) {
+func (store *attachmentStore) Store(ctx context.Context, dataPointID int64, kind string, payload []byte, fetchedAt string) (attachmentRecord, error) {
 	if kind == "" {
 		return attachmentRecord{}, errors.New("attachment kind must not be empty")
 	}
 	hash := sha256.Sum256(payload)
 	hashHex := hex.EncodeToString(hash[:])
-	ext := attachmentFileExtension(kind)
-	subdir := filepath.Join(store.rootDir, kind, hashHex[:2])
 	// path_relative is stored with forward slashes so an archive moved
 	// between POSIX and Windows resolves consistently. The on-disk path
 	// is built from filepath.FromSlash at the seam.
-	pathRelative := path.Join(kind, hashHex[:2], hashHex+ext)
+	pathRelative, err := canonicalAttachmentPathRelative(kind, hashHex)
+	if err != nil {
+		return attachmentRecord{}, err
+	}
 	absolutePath := filepath.Join(store.rootDir, filepath.FromSlash(pathRelative))
 
-	if existing, found, err := store.findExisting(dataPointID, hashHex); err != nil {
+	if existing, found, err := store.findExisting(ctx, dataPointID, hashHex); err != nil {
 		return attachmentRecord{}, err
 	} else if found {
 		existing.AbsolutePath = filepath.Join(store.rootDir, filepath.FromSlash(existing.PathRelative))
@@ -154,18 +194,18 @@ func (store *attachmentStore) Store(dataPointID int64, kind string, payload []by
 		// disk corruption); the byte content is content-addressed so
 		// re-write is safe.
 		if _, statErr := os.Stat(existing.AbsolutePath); errors.Is(statErr, os.ErrNotExist) {
-			if err := writeSidecarFile(subdir, existing.AbsolutePath, payload); err != nil {
+			if err := writeContainedAttachment(store.rootDir, existing.PathRelative, payload); err != nil {
 				return attachmentRecord{}, err
 			}
 		}
 		return existing, nil
 	}
 
-	if err := writeSidecarFile(subdir, absolutePath, payload); err != nil {
+	if err := writeContainedAttachment(store.rootDir, pathRelative, payload); err != nil {
 		return attachmentRecord{}, err
 	}
 
-	result, err := store.db.Exec(`INSERT INTO data_point_attachments (
+	result, err := store.db.ExecContext(ctx, `INSERT INTO data_point_attachments (
 		data_point_id, kind, sha256, path_relative, byte_size, fetched_at
 	) VALUES (?, ?, ?, ?, ?, ?)`,
 		dataPointID, kind, hashHex, pathRelative, int64(len(payload)), fetchedAt)
@@ -188,43 +228,47 @@ func (store *attachmentStore) Store(dataPointID int64, kind string, payload []by
 	}, nil
 }
 
-// Resolve returns the absolute path for a given sha256. The on-disk
-// location is kind-scoped, so the same SHA in two kinds would resolve
-// non-deterministically — guard against that by checking that every
-// row for the SHA points at the same path_relative. Returns a clear
-// error when the hash isn't in data_point_attachments.
-func (store *attachmentStore) Resolve(hashHex string) (string, error) {
-	rows, err := store.db.Query(`SELECT path_relative FROM data_point_attachments WHERE sha256 = ?`, hashHex)
-	if err != nil {
-		return "", err
+func canonicalAttachmentPathRelative(kind, hashHex string) (string, error) {
+	if !isPortableAttachmentKind(kind) {
+		return "", fmt.Errorf("invalid attachment kind %q", kind)
 	}
-	defer rows.Close()
-	var canonical string
-	for rows.Next() {
-		var pathRelative string
-		if err := rows.Scan(&pathRelative); err != nil {
-			return "", err
-		}
-		if canonical == "" {
-			canonical = pathRelative
-			continue
-		}
-		if canonical != pathRelative {
-			return "", fmt.Errorf("attachment %s ambiguous: appears at %s AND %s", hashHex, canonical, pathRelative)
-		}
+	if len(hashHex) != sha256.Size*2 {
+		return "", fmt.Errorf("invalid attachment sha256 %q", hashHex)
 	}
-	if err := rows.Err(); err != nil {
-		return "", err
+	decoded, err := hex.DecodeString(hashHex)
+	if err != nil || hex.EncodeToString(decoded) != hashHex {
+		return "", fmt.Errorf("invalid attachment sha256 %q", hashHex)
 	}
-	if canonical == "" {
-		return "", fmt.Errorf("attachment %s not found", hashHex)
-	}
-	return filepath.Join(store.rootDir, filepath.FromSlash(canonical)), nil
+	return path.Join(kind, hashHex[:2], hashHex+attachmentFileExtension(kind)), nil
 }
 
-func (store *attachmentStore) findExisting(dataPointID int64, hashHex string) (attachmentRecord, bool, error) {
+func isPortableAttachmentKind(kind string) bool {
+	if kind == "" || kind == "." || kind == ".." || strings.ContainsAny(kind, `<>:"/\|?*`) || strings.HasSuffix(kind, ".") || strings.HasSuffix(kind, " ") {
+		return false
+	}
+	for _, character := range kind {
+		if character < 0x20 {
+			return false
+		}
+	}
+	base := strings.ToUpper(strings.SplitN(kind, ".", 2)[0])
+	if base == "CON" || base == "PRN" || base == "AUX" || base == "NUL" {
+		return false
+	}
+	if len(base) == 4 && (strings.HasPrefix(base, "COM") || strings.HasPrefix(base, "LPT")) && base[3] >= '1' && base[3] <= '9' {
+		return false
+	}
+	for _, reserved := range []string{"COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³"} {
+		if base == reserved {
+			return false
+		}
+	}
+	return true
+}
+
+func (store *attachmentStore) findExisting(ctx context.Context, dataPointID int64, hashHex string) (attachmentRecord, bool, error) {
 	var record attachmentRecord
-	err := store.db.QueryRow(`SELECT id, data_point_id, kind, sha256, path_relative, byte_size, fetched_at
+	err := store.db.QueryRowContext(ctx, `SELECT id, data_point_id, kind, sha256, path_relative, byte_size, fetched_at
 		FROM data_point_attachments
 		WHERE data_point_id = ? AND sha256 = ? LIMIT 1`, dataPointID, hashHex).Scan(
 		&record.ID, &record.DataPointID, &record.Kind, &record.SHA256,
@@ -262,22 +306,40 @@ type attachmentOrphan struct {
 // whose sidecar file is missing, and sidecar files whose row is
 // missing. v1 does not prune; the seam exists so doctor (#108) can
 // surface diagnostics without re-deriving the path layout.
-func (store *attachmentStore) Walk(fn func(attachmentOrphan) error) error {
+func (store *attachmentStore) Walk(ctx context.Context, fn func(attachmentOrphan) error) error {
 	knownPaths := map[string]struct{}{}
 
 	// Row-side: read every attachment row, check the sidecar exists.
-	rows, err := store.db.Query(`SELECT data_point_id, sha256, path_relative FROM data_point_attachments`)
+	// The deferred Close (instead of per-return manual closes) is safe to
+	// hold through the file-side walk below: that walk is pure filesystem
+	// and never touches store.db, so no connection-pool contention.
+	rows, err := store.db.QueryContext(ctx, `SELECT data_point_id, sha256, path_relative FROM data_point_attachments`)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var dataPointID int64
 		var sha, pathRelative string
 		if err := rows.Scan(&dataPointID, &sha, &pathRelative); err != nil {
-			rows.Close()
 			return err
 		}
-		abs := filepath.Join(store.rootDir, pathRelative)
+		abs, containErr := resolveContainedPath(store.rootDir, pathRelative)
+		if containErr != nil {
+			// A path that escapes the attachment root is an integrity
+			// violation: never stat it, and never let it claim a knownPaths
+			// key. Report it as a row whose sidecar is unresolvable.
+			if cbErr := fn(attachmentOrphan{
+				Kind:         attachmentOrphanRowMissingFile,
+				SHA256:       sha,
+				AbsolutePath: store.rootDir,
+				PathRelative: pathRelative,
+				DataPointID:  dataPointID,
+			}); cbErr != nil {
+				return cbErr
+			}
+			continue
+		}
 		knownPaths[abs] = struct{}{}
 		if _, statErr := os.Stat(abs); errors.Is(statErr, os.ErrNotExist) {
 			if cbErr := fn(attachmentOrphan{
@@ -287,12 +349,10 @@ func (store *attachmentStore) Walk(fn func(attachmentOrphan) error) error {
 				PathRelative: pathRelative,
 				DataPointID:  dataPointID,
 			}); cbErr != nil {
-				rows.Close()
 				return cbErr
 			}
 		}
 	}
-	rows.Close()
 	if err := rows.Err(); err != nil {
 		return err
 	}
@@ -318,6 +378,112 @@ func (store *attachmentStore) Walk(fn func(attachmentOrphan) error) error {
 	})
 }
 
+// resolveContainedPath joins a stored path_relative onto rootDir and
+// rejects anything that escapes the attachment root. A foreign or
+// tampered archive (see docs/security.md threat model: "archive
+// contents written by earlier runs") could carry an absolute path, a
+// "../" traversal, or any value that — after filepath.Join+Clean — no
+// longer sits under rootDir. Walk owns the live containment rule
+// through this helper. path_relative is stored with forward slashes;
+// FromSlash maps it to the OS separator before joining (matching
+// Store).
+func resolveContainedPath(rootDir, pathRelative string) (string, error) {
+	osRelative := filepath.FromSlash(pathRelative)
+	if filepath.IsAbs(osRelative) {
+		return "", fmt.Errorf("attachment path_relative %q is absolute", pathRelative)
+	}
+	// Scan segments on the OS-native path so a "..\\" segment is caught on
+	// Windows too, not only the forward-slash "../" form.
+	for _, segment := range strings.Split(osRelative, string(filepath.Separator)) {
+		if segment == ".." {
+			return "", fmt.Errorf("attachment path_relative %q contains a parent (\"..\") segment", pathRelative)
+		}
+	}
+	// Clean rootDir before the boundary comparison: it derives from the
+	// archive path (e.g. `--db a/../archive.sqlite`) and may carry internal
+	// dot segments that filepath.Join collapses, which would otherwise make
+	// the prefix check reject legitimate in-root attachments.
+	cleanRoot := filepath.Clean(rootDir)
+	abs := filepath.Join(cleanRoot, osRelative)
+	if abs != cleanRoot && !strings.HasPrefix(abs, cleanRoot+string(filepath.Separator)) {
+		return "", fmt.Errorf("attachment path_relative %q escapes attachment root", pathRelative)
+	}
+	return abs, nil
+}
+
+func readContainedAttachment(rootDir, pathRelative string, expectedSize int64, expectedRoot *attachmentRootIdentity) ([]byte, error) {
+	if _, err := resolveContainedPath(rootDir, pathRelative); err != nil {
+		return nil, err
+	}
+	return readAttachmentFileNoFollow(rootDir, pathRelative, expectedSize, expectedRoot)
+}
+
+type attachmentIntegrityError struct {
+	err error
+}
+
+func (err *attachmentIntegrityError) Error() string {
+	return "Data Point Attachment failed verification: " + err.err.Error()
+}
+func (err *attachmentIntegrityError) Unwrap() error { return err.err }
+
+func readVerifiedAttachment(rootDir string, record attachmentRecord) ([]byte, error) {
+	err := validateAttachmentRow(record.Kind, record.SHA256, record.PathRelative, record.ByteSize)
+	var payload []byte
+	if err == nil {
+		payload, err = readContainedAttachment(rootDir, record.PathRelative, record.ByteSize, nil)
+	}
+	if err == nil {
+		err = validateAttachmentPayload(record.SHA256, record.ByteSize, payload)
+	}
+	if err != nil {
+		return nil, &attachmentIntegrityError{err: fmt.Errorf("attachment %d: %w", record.ID, err)}
+	}
+	return payload, nil
+}
+
+func validateAttachmentRow(kind, sha256Hex, pathRelative string, byteSize int64) error {
+	wantPath, err := canonicalAttachmentPathRelative(kind, sha256Hex)
+	if err != nil {
+		return err
+	}
+	if pathRelative != wantPath {
+		return fmt.Errorf("path_relative %q, want canonical path %q", pathRelative, wantPath)
+	}
+	if byteSize < 0 {
+		return fmt.Errorf("byte_size %d must not be negative", byteSize)
+	}
+	return nil
+}
+
+func validateAttachmentPayload(sha256Hex string, byteSize int64, payload []byte) error {
+	if byteSize != int64(len(payload)) {
+		return fmt.Errorf("byte_size %d does not match payload size %d", byteSize, len(payload))
+	}
+	hash := sha256.Sum256(payload)
+	if got := hex.EncodeToString(hash[:]); got != sha256Hex {
+		return fmt.Errorf("sha256 %q does not match payload hash %q", sha256Hex, got)
+	}
+	return nil
+}
+
+func writeContainedAttachment(rootDir, pathRelative string, payload []byte) error {
+	if _, err := resolveContainedPath(rootDir, pathRelative); err != nil {
+		return err
+	}
+	// The Health Archive lifecycle owns root creation and validation before
+	// this helper runs. Keeping root ownership there avoids path-based mkdir
+	// races before the platform no-follow traversal opens its root handle.
+	return writeAttachmentFileNoFollow(rootDir, pathRelative, payload, nil)
+}
+
+func writeContainedSnapshotAttachment(rootDir, pathRelative string, payload []byte, expectedRoot attachmentRootIdentity) error {
+	if _, err := resolveContainedPath(rootDir, pathRelative); err != nil {
+		return err
+	}
+	return writeAttachmentFileNoFollow(rootDir, pathRelative, payload, &expectedRoot)
+}
+
 func attachmentFileExtension(kind string) string {
 	switch kind {
 	case "tcx":
@@ -325,30 +491,4 @@ func attachmentFileExtension(kind string) string {
 	default:
 		return ".bin"
 	}
-}
-
-func writeSidecarFile(subdir, absolutePath string, payload []byte) error {
-	if err := os.MkdirAll(subdir, 0o700); err != nil {
-		return fmt.Errorf("create attachment subdir: %w", err)
-	}
-	if usesPOSIXPermissions() {
-		// Tighten BOTH the per-kind dir and its child shard subdir.
-		// MkdirAll may have left a pre-existing intermediate `<kind>`
-		// dir with looser perms; re-chmod walks up one level.
-		if err := os.Chmod(subdir, 0o700); err != nil {
-			return fmt.Errorf("chmod attachment subdir: %w", err)
-		}
-		if err := os.Chmod(filepath.Dir(subdir), 0o700); err != nil {
-			return fmt.Errorf("chmod attachment kind dir: %w", err)
-		}
-	}
-	if err := os.WriteFile(absolutePath, payload, 0o600); err != nil {
-		return fmt.Errorf("write sidecar: %w", err)
-	}
-	if usesPOSIXPermissions() {
-		if err := os.Chmod(absolutePath, 0o600); err != nil {
-			return fmt.Errorf("chmod sidecar: %w", err)
-		}
-	}
-	return nil
 }

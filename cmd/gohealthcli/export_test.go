@@ -2,14 +2,18 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 func TestExportDatasetDefinitionsIncludeViewSQL(t *testing.T) {
+	t.Parallel()
 	if len(exportDatasetDefinitions) != len(exportDatasetSpecs) {
 		t.Fatalf("definition count = %d, lookup count = %d", len(exportDatasetDefinitions), len(exportDatasetSpecs))
 	}
@@ -47,6 +51,7 @@ func TestExportDatasetDefinitionsIncludeViewSQL(t *testing.T) {
 }
 
 func TestExportDatasetDefinitionsDriveViewMigrations(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		statements []string
@@ -54,12 +59,12 @@ func TestExportDatasetDefinitionsDriveViewMigrations(t *testing.T) {
 	}{
 		{
 			name:       "daily steps migration",
-			statements: dailyStepsViewMigrationStatements(),
+			statements: normalizedViewsRegistry().MigrationStatements(4),
 			wantViews:  []string{"daily_steps"},
 		},
 		{
 			name:       "first release normalized views migration",
-			statements: firstReleaseNormalizedViewMigrationStatements(),
+			statements: normalizedViewsRegistry().MigrationStatements(5),
 			wantViews: []string{
 				"heart_rate_samples",
 				"resting_heart_rate_by_day",
@@ -82,12 +87,13 @@ func TestExportDatasetDefinitionsDriveViewMigrations(t *testing.T) {
 			}
 		})
 	}
-	if got := exportDatasetViewMigrationStatements(999); len(got) != 0 {
+	if got := normalizedViewsRegistry().MigrationStatements(999); len(got) != 0 {
 		t.Fatalf("unknown migration statements = %v, want empty", got)
 	}
 }
 
 func TestExportDatasetLookupRejectsDuplicateNames(t *testing.T) {
+	t.Parallel()
 	defer func() {
 		if recover() == nil {
 			t.Fatal("duplicate dataset panic = nil")
@@ -100,6 +106,7 @@ func TestExportDatasetLookupRejectsDuplicateNames(t *testing.T) {
 }
 
 func TestExportDatasetLookupRejectsMissingNames(t *testing.T) {
+	t.Parallel()
 	defer func() {
 		if recover() == nil {
 			t.Fatal("missing dataset name panic = nil")
@@ -117,6 +124,7 @@ func TestExportDatasetLookupRejectsMissingNames(t *testing.T) {
 // already panics on duplicates, but Names() owns the public surface, so
 // it should not assume that).
 func TestExportDatasetCatalogNamesSortedAndDeduped(t *testing.T) {
+	t.Parallel()
 	catalog := newExportDatasetCatalog([]exportDatasetSpec{
 		{name: "weight-samples"},
 		{name: "daily-steps"},
@@ -138,6 +146,7 @@ func TestExportDatasetCatalogNamesSortedAndDeduped(t *testing.T) {
 // TestExportDatasetCatalogFindHitAndMiss pins Find() returns (spec, true)
 // for a known dataset and (zero, false) for an unknown one.
 func TestExportDatasetCatalogFindHitAndMiss(t *testing.T) {
+	t.Parallel()
 	catalog := newExportDatasetCatalog(exportDatasetDefinitions)
 	if spec, ok := catalog.Find("daily-steps"); !ok || spec.name != "daily-steps" {
 		t.Fatalf("Find(\"daily-steps\") = (%+v, %v), want spec with name daily-steps and ok=true", spec, ok)
@@ -153,6 +162,7 @@ func TestExportDatasetCatalogFindHitAndMiss(t *testing.T) {
 // gibberish input (distance > 3 from every name) returns an empty
 // slice (not nil — the same shape contract commandRegistry.Suggest uses).
 func TestExportDatasetCatalogSuggestRanking(t *testing.T) {
+	t.Parallel()
 	catalog := newExportDatasetCatalog(exportDatasetDefinitions)
 
 	// One-edit typo: "daily-step" → "daily-steps" (insert one char).
@@ -188,8 +198,9 @@ func TestExportDatasetCatalogSuggestRanking(t *testing.T) {
 // TestExportDatasetCatalogSuggestCapAndTieBreak pins that Suggest returns
 // at most 3 entries and that ties on distance break alphabetically.
 func TestExportDatasetCatalogSuggestCapAndTieBreak(t *testing.T) {
+	t.Parallel()
 	catalog := newExportDatasetCatalog([]exportDatasetSpec{
-		{name: "bcde"}, // distance 1 from "abcde"
+		{name: "bcde"},  // distance 1 from "abcde"
 		{name: "abcdf"}, // distance 1
 		{name: "abcdz"}, // distance 1
 		{name: "abxxx"}, // distance 3
@@ -215,6 +226,7 @@ func TestExportDatasetCatalogSuggestCapAndTieBreak(t *testing.T) {
 // name returned by the catalog so the binary's help text stays the
 // authoritative surface for LLM and script consumers.
 func TestExportHelpListsEveryDataset(t *testing.T) {
+	t.Parallel()
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
 	code := run([]string{"export", "--help"}, stdout, stderr)
@@ -240,6 +252,7 @@ func TestExportHelpListsEveryDataset(t *testing.T) {
 // and the closest match (daily-steps); a gibberish dataset name must
 // produce stderr that points to `export --help`.
 func TestExportTypoMentionsDidYouMeanAndHelp(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -272,6 +285,7 @@ func TestExportTypoMentionsDidYouMeanAndHelp(t *testing.T) {
 // typo is far enough that no suggestion fires; stderr must still point
 // at `export --help` so the user knows where to discover the full list.
 func TestExportGibberishDatasetPointsAtHelp(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -306,6 +320,7 @@ func TestExportGibberishDatasetPointsAtHelp(t *testing.T) {
 // must not silently satisfy the guard while the section itself stays
 // stale.
 func TestREADMEListsEveryExportDataset(t *testing.T) {
+	t.Parallel()
 	readmePath := filepath.Join("..", "..", "README.md")
 	content, err := os.ReadFile(readmePath)
 	if err != nil {
@@ -340,32 +355,37 @@ func TestREADMEListsEveryExportDataset(t *testing.T) {
 }
 
 func TestDailyStepsNormalizedViewPrefersRollupsAndAggregatesDataPoints(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
 	insertExportStepDataPoint(t, archivePath, "users/me/dataTypes/steps/dataPoints/c", "2026-01-01T12:00:00Z", "2026-01-01T12:10:00Z", `{"steps":{"count":"128"}}`)
 	insertExportStepDataPoint(t, archivePath, "users/me/dataTypes/steps/dataPoints/d", "2026-01-04T12:00:00Z", "2026-01-04T12:10:00Z", `{"steps":{"count":"1"}}`)
+	insertExportStepDataPoint(t, archivePath, "users/me/dataTypes/steps/dataPoints/zero", "2026-01-05T12:00:00Z", "2026-01-05T12:10:00Z", `{"steps":{"count":"0"}}`)
 	insertExportStepDataPointWithSourceFamily(t, archivePath, "users/me/dataTypes/steps/dataPoints/wearable", "2026-01-01T08:00:00Z", "2026-01-01T08:15:00Z", `{"steps":{"count":"256"}}`, "wearable")
 	insertExportStepDataPointWithSourceFamily(t, archivePath, "users/me/dataTypes/steps/dataPoints/wearable-rollup-day", "2026-01-04T08:00:00Z", "2026-01-04T08:15:00Z", `{"steps":{"count":"384"}}`, "wearable")
 
-	rows, err := dailyStepsExportRows(archivePath)
+	rows, err := exportRows(context.Background(), archivePath, exportDatasetSpecs["daily-steps"])
 	if err != nil {
 		t.Fatalf("daily steps rows: %v", err)
 	}
-	if len(rows) != 5 {
-		t.Fatalf("row count = %d, want 5: %+v", len(rows), rows)
+	if len(rows) != 6 {
+		t.Fatalf("row count = %d, want 6 with no row for absent 2026-01-03: %+v", len(rows), rows)
 	}
 	assertDailyStepsRow(t, rows[0], "2026-01-01", 640, "dataPoints", "", 2)
 	assertDailyStepsRow(t, rows[1], "2026-01-01", 256, "dataPoints", "wearable", 1)
 	assertDailyStepsRow(t, rows[2], "2026-01-02", 1024, "dataPoints", "", 1)
 	assertDailyStepsRow(t, rows[3], "2026-01-04", 2048, "dailyRollUp", "", 1)
 	assertDailyStepsRow(t, rows[4], "2026-01-04", 384, "dataPoints", "wearable", 1)
+	assertDailyStepsRow(t, rows[5], "2026-01-05", 0, "dataPoints", "", 1)
 }
 
 func TestExportDailyStepsCSVToFile(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
+	insertExportStepDataPoint(t, archivePath, "users/me/dataTypes/steps/dataPoints/zero", "2026-01-05T12:00:00Z", "2026-01-05T12:10:00Z", `{"steps":{"count":"0"}}`)
 	outputPath := filepath.Join(tempDir, "daily-steps.csv")
 
 	stdout := new(bytes.Buffer)
@@ -393,7 +413,8 @@ func TestExportDailyStepsCSVToFile(t *testing.T) {
 	want := "provider_name,connection_id,civil_date,step_count,source_kind,source_family_filter,source_record_count,latest_source_timestamp\n" +
 		"googlehealth,googlehealth:111111256096816351,2026-01-01,512,dataPoints,,1,2026-01-01T08:15:00Z\n" +
 		"googlehealth,googlehealth:111111256096816351,2026-01-02,1024,dataPoints,,1,2026-01-02T08:15:00Z\n" +
-		"googlehealth,googlehealth:111111256096816351,2026-01-04,2048,dailyRollUp,,1,2026-01-04\n"
+		"googlehealth,googlehealth:111111256096816351,2026-01-04,2048,dailyRollUp,,1,2026-01-04\n" +
+		"googlehealth,googlehealth:111111256096816351,2026-01-05,0,dataPoints,,1,2026-01-05T12:10:00Z\n"
 	if string(content) != want {
 		t.Fatalf("export content =\n%s\nwant:\n%s", string(content), want)
 	}
@@ -410,6 +431,7 @@ func TestExportDailyStepsCSVToFile(t *testing.T) {
 }
 
 func TestExportDailyStepsRestrictsExistingOutputBeforeOverwrite(t *testing.T) {
+	t.Parallel()
 	if !usesPOSIXPermissions() {
 		t.Skip("POSIX mode assertions are not meaningful on this platform")
 	}
@@ -453,7 +475,66 @@ func TestExportDailyStepsRestrictsExistingOutputBeforeOverwrite(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String()+string(content))
 }
 
+func TestExportDailyStepsRefusesSymlinkedOutput(t *testing.T) {
+	t.Parallel()
+	if !usesPOSIXPermissions() {
+		t.Skip("symlink permission assertions are not meaningful on this platform")
+	}
+	tempDir := t.TempDir()
+	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+
+	targetPath := filepath.Join(tempDir, "target.csv")
+	const targetContent = "do not overwrite me\n"
+	if err := os.WriteFile(targetPath, []byte(targetContent), 0o644); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+	if err := os.Chmod(targetPath, 0o644); err != nil {
+		t.Fatalf("chmod seed target: %v", err)
+	}
+	outputPath := filepath.Join(tempDir, "daily-steps.csv")
+	if err := os.Symlink(targetPath, outputPath); err != nil {
+		t.Fatalf("seed symlink: %v", err)
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"export",
+		"--config", configPath,
+		"daily-steps",
+		"--format", "csv",
+		"--output", outputPath,
+	}, stdout, stderr)
+	if code == 0 {
+		t.Fatalf("export exit code = 0, want non-zero for symlinked --output\nstderr: %s\nstdout: %s", stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "symbolic link") {
+		t.Fatalf("stderr = %q, want a symbolic link refusal", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "resolved target path") {
+		t.Fatalf("stderr = %q, want guidance to pass the resolved target path", stderr.String())
+	}
+
+	content, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(content) != targetContent {
+		t.Fatalf("target content = %q, want %q (must be untouched)", string(content), targetContent)
+	}
+	info, err := os.Lstat(targetPath)
+	if err != nil {
+		t.Fatalf("lstat target: %v", err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("target mode = %04o, want 0644 (must be unchanged)", info.Mode().Perm())
+	}
+	assertNoSecretWords(t, stdout.String()+stderr.String())
+}
+
 func TestExportDailyStepsJSONLToStdout(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -477,20 +558,65 @@ func TestExportDailyStepsJSONLToStdout(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("JSONL line count = %d, want 3\nstdout:\n%s", len(lines), stdout.String())
 	}
-	var first dailyStepsExportRow
+	var first struct {
+		ProviderName       string `json:"provider_name"`
+		ConnectionID       string `json:"connection_id"`
+		CivilDate          string `json:"civil_date"`
+		StepCount          int64  `json:"step_count"`
+		SourceKind         string `json:"source_kind"`
+		SourceFamilyFilter string `json:"source_family_filter"`
+		SourceRecordCount  int64  `json:"source_record_count"`
+	}
 	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
 		t.Fatalf("first JSONL line is invalid: %v\nline: %s", err, lines[0])
 	}
-	assertDailyStepsRow(t, first, "2026-01-01", 512, "dataPoints", "", 1)
+	if first.ProviderName != "googlehealth" ||
+		first.ConnectionID != "googlehealth:111111256096816351" ||
+		first.CivilDate != "2026-01-01" ||
+		first.StepCount != 512 ||
+		first.SourceKind != "dataPoints" ||
+		first.SourceFamilyFilter != "" ||
+		first.SourceRecordCount != 1 {
+		t.Fatalf("first JSONL row = %+v, want date=2026-01-01 steps=512 source=dataPoints source_family=\"\" records=1", first)
+	}
 	if !strings.Contains(lines[0], `"civil_date":"2026-01-01"`) || !strings.Contains(lines[0], `"step_count":512`) {
 		t.Fatalf("first JSONL line missing stable fields: %s", lines[0])
 	}
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
+func TestExportDoesNotRecreateMissingAttachmentRoot(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+	rootDir := attachmentRootDirForArchive(archivePath)
+	movedRootDir := rootDir + ".moved"
+	if err := os.Rename(rootDir, movedRootDir); err != nil {
+		t.Fatalf("rename attachment root: %v", err)
+	}
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	code := run([]string{
+		"export",
+		"--db", archivePath,
+		"daily-steps",
+		"--format", "jsonl",
+		"--stdout",
+	}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("export exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	}
+	if _, err := os.Stat(rootDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("attachment root stat err = %v, want missing root", err)
+	}
+}
+
 func TestWriteExportJSONLCanonicalizesIntegerFields(t *testing.T) {
+	t.Parallel()
 	output := new(bytes.Buffer)
-	err := writeExportJSONL([]exportRow{{
+	err := writeExportJSONL([]exportRow{exportRowFromStrings(
 		"googlehealth",
 		"googlehealth:111111256096816351",
 		"2026-01-01",
@@ -499,7 +625,7 @@ func TestWriteExportJSONLCanonicalizesIntegerFields(t *testing.T) {
 		"",
 		"01",
 		"2026-01-01T08:15:00Z",
-	}}, exportDatasetSpecs["daily-steps"], output)
+	)}, exportDatasetSpecs["daily-steps"], output)
 	if err != nil {
 		t.Fatalf("write JSONL: %v", err)
 	}
@@ -510,6 +636,7 @@ func TestWriteExportJSONLCanonicalizesIntegerFields(t *testing.T) {
 }
 
 func TestExportHeartRateSamplesJSONLFromNormalizedView(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -547,6 +674,7 @@ func TestExportHeartRateSamplesJSONLFromNormalizedView(t *testing.T) {
 }
 
 func TestExportRemainingFirstReleaseDatasetsCSVAndJSONL(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -668,6 +796,7 @@ func TestExportRemainingFirstReleaseDatasetsCSVAndJSONL(t *testing.T) {
 }
 
 func TestExportDailyStepsRequiresExplicitDestination(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -728,6 +857,7 @@ func TestExportDailyStepsRequiresExplicitDestination(t *testing.T) {
 }
 
 func TestExportMigratesLegacyV4ArchiveBeforeReadingNormalizedView(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	if err := os.Remove(archivePath); err != nil {
@@ -762,6 +892,7 @@ func TestExportMigratesLegacyV4ArchiveBeforeReadingNormalizedView(t *testing.T) 
 }
 
 func TestExportRejectsUnsupportedFormatBeforeWritingFile(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -833,12 +964,8 @@ type exportDataPointFixture struct {
 
 func insertExportDataPoint(t *testing.T, archivePath string, point exportDataPointFixture) {
 	t.Helper()
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
-	if _, err := db.Exec(`INSERT INTO data_points (
+	db := openArchiveForTest(t, archivePath)
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO data_points (
 		provider_name,
 		connection_id,
 		data_type,
@@ -882,6 +1009,7 @@ func insertExportDataPoint(t *testing.T, archivePath string, point exportDataPoi
 // TestExportPlainAndJSONMutuallyExclusive); this table covers the
 // synonym ↔ --format interactions.
 func TestResolveExportFormat(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name           string
 		format         string
@@ -925,6 +1053,7 @@ func TestResolveExportFormat(t *testing.T) {
 // synonym for `--format jsonl`. Both invocations must emit the exact
 // same payload on stdout.
 func TestExportJSONFlagSynonymousWithFormatJSONL(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -966,6 +1095,7 @@ func TestExportJSONFlagSynonymousWithFormatJSONL(t *testing.T) {
 // synonym for `--format csv`. Both invocations must emit the exact same
 // payload on stdout.
 func TestExportPlainFlagSynonymousWithFormatCSV(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -1008,6 +1138,7 @@ func TestExportPlainFlagSynonymousWithFormatCSV(t *testing.T) {
 // targeted "--json conflicts with --format csv" error via the unified
 // Failure Reporter. The same applies to --plain --format jsonl.
 func TestExportRejectsJSONWithConflictingFormatCSV(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -1035,6 +1166,7 @@ func TestExportRejectsJSONWithConflictingFormatCSV(t *testing.T) {
 // TestExportRejectsPlainWithConflictingFormatJSONL mirrors the above for
 // the --plain side.
 func TestExportRejectsPlainWithConflictingFormatJSONL(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -1067,6 +1199,7 @@ func TestExportRejectsPlainWithConflictingFormatJSONL(t *testing.T) {
 // Regression for PRD #143 follow-up: the slice-9 export migration
 // dropped Mode on every ReportFailure inside runExport.
 func TestExportFailureHonorsJSONMode(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -1110,6 +1243,7 @@ func TestExportFailureHonorsJSONMode(t *testing.T) {
 // default mode. The fix defers the multi-positional rejection to AFTER
 // ParseCommon so Mode is known when ReportFailure runs.
 func TestExportMultiPositionalFailureHonorsJSONMode(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -1151,6 +1285,7 @@ func TestExportMultiPositionalFailureHonorsJSONMode(t *testing.T) {
 // AND the `status: <s>\nmessage: <m>\n` block on stdout. Without Mode
 // threading, the stdout block is missing.
 func TestExportFailureHonorsPlainMode(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -1182,6 +1317,7 @@ func TestExportFailureHonorsPlainMode(t *testing.T) {
 // TestExportPlainAndJSONMutuallyExclusive pins the CommonFlagSet
 // mutual-exclusion contract for the export verb.
 func TestExportPlainAndJSONMutuallyExclusive(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -1206,15 +1342,21 @@ func TestExportPlainAndJSONMutuallyExclusive(t *testing.T) {
 	}
 }
 
-func assertDailyStepsRow(t *testing.T, row dailyStepsExportRow, civilDate string, stepCount int64, sourceKind, sourceFamily string, sourceRecordCount int64) {
+// assertDailyStepsRow asserts one daily-steps exportRow in the live
+// dataset field order (provider_name, connection_id, civil_date,
+// step_count, source_kind, source_family_filter, source_record_count,
+// latest_source_timestamp). The latest_source_timestamp column is
+// fixture-derived and not pinned here, matching the historical helper.
+func assertDailyStepsRow(t *testing.T, row exportRow, civilDate string, stepCount int64, sourceKind, sourceFamily string, sourceRecordCount int64) {
 	t.Helper()
-	if row.ProviderName != "googlehealth" ||
-		row.ConnectionID != "googlehealth:111111256096816351" ||
-		row.CivilDate != civilDate ||
-		row.StepCount != stepCount ||
-		row.SourceKind != sourceKind ||
-		row.SourceFamilyFilter != sourceFamily ||
-		row.SourceRecordCount != sourceRecordCount {
-		t.Fatalf("row = %+v, want date=%s steps=%d source=%s source_family=%s records=%d", row, civilDate, stepCount, sourceKind, sourceFamily, sourceRecordCount)
+	if len(row.values) != 8 ||
+		row.values[0] != "googlehealth" ||
+		row.values[1] != "googlehealth:111111256096816351" ||
+		row.values[2] != civilDate ||
+		row.values[3] != strconv.FormatInt(stepCount, 10) ||
+		row.values[4] != sourceKind ||
+		row.values[5] != sourceFamily ||
+		row.values[6] != strconv.FormatInt(sourceRecordCount, 10) {
+		t.Fatalf("row = %v, want date=%s steps=%d source=%s source_family=%s records=%d", row, civilDate, stepCount, sourceKind, sourceFamily, sourceRecordCount)
 	}
 }

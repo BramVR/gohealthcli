@@ -1,0 +1,895 @@
+package googlehealth
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
+	"net/http"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestGoogleHealthIngestionArchivesDataPointListFromProviderPages(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new", "updated"}}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"": `{
+			"dataPoints": [{
+				"name": "users/me/dataTypes/steps/dataPoints/one",
+				"dataSource": {"platform": "FITBIT"},
+				"steps": {
+					"interval": {
+						"startTime": "2026-01-01T08:00:00Z",
+						"endTime": "2026-01-01T08:15:00Z"
+					}
+				}
+			}],
+			"nextPageToken": "next"
+		}`,
+		"next": `{
+			"dataPoints": [{
+				"name": "users/me/dataTypes/steps/dataPoints/two",
+				"dataSource": {"platform": "FITBIT"},
+				"steps": {
+					"interval": {
+						"startTime": "2026-01-01T09:00:00Z",
+						"endTime": "2026-01-01T09:15:00Z"
+					}
+				}
+			}]
+		}`,
+	})
+	ingestion := fakeGoogleHealthIngestion(provider)
+
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		From:     "2026-01-01",
+		To:       "2026-01-02T00:00:00Z",
+	}))
+	if err != nil {
+		t.Fatalf("ingest Data Points: %v", err)
+	}
+
+	if result.EndpointFamily != "list" {
+		t.Fatalf("endpoint family = %q, want list", result.EndpointFamily)
+	}
+	if result.DataPointsSeen != 2 || result.DataPointsNew != 1 || result.DataPointsUpdated != 1 {
+		t.Fatalf("Data Point counts = (%d, %d, %d), want (2, 1, 1)", result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated)
+	}
+	if len(provider.requests) != 2 {
+		t.Fatalf("request count = %d, want 2", len(provider.requests))
+	}
+	if provider.requests[0].EndpointName != "dataTypes.steps.list" || provider.requests[1].EndpointName != "dataTypes.steps.list" {
+		t.Fatalf("requests = %#v, want steps list requests", provider.requests)
+	}
+	if archive.dataPoints[0].UpstreamResourceName != "users/me/dataTypes/steps/dataPoints/one" || archive.dataPoints[1].UpstreamResourceName != "users/me/dataTypes/steps/dataPoints/two" {
+		t.Fatalf("archived resource names = (%q, %q), want fixture pages", archive.dataPoints[0].UpstreamResourceName, archive.dataPoints[1].UpstreamResourceName)
+	}
+}
+
+func TestGoogleHealthIngestionRejectsInvalidBasalEnergyBurnedShapes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		point   string
+		wantErr string
+	}{
+		{
+			name:    "missing value",
+			point:   `{"name":"users/me/dataTypes/basal-energy-burned/dataPoints/missing"}`,
+			wantErr: "missing basalEnergyBurned value",
+		},
+		{
+			name:    "invalid value object",
+			point:   `{"name":"users/me/dataTypes/basal-energy-burned/dataPoints/invalid","basalEnergyBurned":"invalid"}`,
+			wantErr: "basalEnergyBurned is not valid JSON",
+		},
+		{
+			name:    "missing interval bound",
+			point:   `{"name":"users/me/dataTypes/basal-energy-burned/dataPoints/missing-bound","basalEnergyBurned":{"interval":{"startTime":"2026-01-01T00:00:00Z"},"kcal":1.5}}`,
+			wantErr: "missing interval startTime or endTime",
+		},
+		{
+			name:    "invalid physical time",
+			point:   `{"name":"users/me/dataTypes/basal-energy-burned/dataPoints/invalid-time","basalEnergyBurned":{"interval":{"startTime":"not-a-time","endTime":"2026-01-01T00:15:00Z"},"kcal":1.5}}`,
+			wantErr: "expected RFC3339 timestamp",
+		},
+		{
+			name:    "missing kcal",
+			point:   `{"name":"users/me/dataTypes/basal-energy-burned/dataPoints/missing-kcal","basalEnergyBurned":{"interval":{"startTime":"2026-01-01T00:00:00Z","endTime":"2026-01-01T00:15:00Z"}}}`,
+			wantErr: "missing kcal value",
+		},
+		{
+			name:    "invalid kcal",
+			point:   `{"name":"users/me/dataTypes/basal-energy-burned/dataPoints/invalid-kcal","basalEnergyBurned":{"interval":{"startTime":"2026-01-01T00:00:00Z","endTime":"2026-01-01T00:15:00Z"},"kcal":"unknown"}}`,
+			wantErr: "kcal is not a number",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			archive := &fakeGoogleHealthIngestionArchive{}
+			provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+				"": `{"dataPoints":[` + test.point + `]}`,
+			})
+			ingestion := fakeGoogleHealthIngestion(provider)
+			_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+				DataType: "basal-energy-burned",
+				From:     "2026-01-01",
+				To:       "2026-01-02",
+			}))
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("error = %v, want %q", err, test.wantErr)
+			}
+			if len(archive.dataPoints) != 0 {
+				t.Fatalf("archived Data Points = %d, want 0", len(archive.dataPoints))
+			}
+		})
+	}
+}
+
+func TestGoogleHealthIngestionRejectsMalformedNutritionLogShapesAndAmounts(t *testing.T) {
+	t.Parallel()
+	validInterval := `"interval":{"startTime":"2026-01-01T00:00:00Z","endTime":"2026-01-01T00:01:00Z"}`
+	tests := []struct {
+		name    string
+		value   string
+		wantErr string
+	}{
+		{name: "missing value", value: ``, wantErr: "missing nutritionLog value"},
+		{name: "invalid value", value: `"invalid"`, wantErr: "nutritionLog is not valid JSON"},
+		{name: "missing interval", value: `{"foodDisplayName":"Synthetic food"}`, wantErr: "missing interval startTime or endTime"},
+		{name: "missing food display name", value: `{` + validInterval + `}`, wantErr: "missing foodDisplayName"},
+		{name: "invalid food resource", value: `{` + validInterval + `,"food":42,"foodDisplayName":"Synthetic food"}`, wantErr: "food is not a string"},
+		{name: "invalid serving", value: `{` + validInterval + `,"foodDisplayName":"Synthetic food","serving":"invalid"}`, wantErr: "serving is not an object"},
+		{name: "serving missing unit", value: `{` + validInterval + `,"foodDisplayName":"Synthetic food","serving":{"amount":1}}`, wantErr: "serving missing foodMeasurementUnit"},
+		{name: "invalid serving amount", value: `{` + validInterval + `,"foodDisplayName":"Synthetic food","serving":{"foodMeasurementUnit":"units/synthetic","amount":"many"}}`, wantErr: "serving amount is not a number"},
+		{name: "invalid energy amount", value: `{` + validInterval + `,"foodDisplayName":"Synthetic food","energy":{"kcal":"many"}}`, wantErr: "energy kcal is not a number"},
+		{name: "invalid carbohydrate amount", value: `{` + validInterval + `,"foodDisplayName":"Synthetic food","totalCarbohydrate":{"grams":"many"}}`, wantErr: "totalCarbohydrate grams is not a number"},
+		{name: "invalid nutrients shape", value: `{` + validInterval + `,"foodDisplayName":"Synthetic food","nutrients":{}}`, wantErr: "nutrients is not an array"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			point := `{"name":"users/me/dataTypes/nutrition-log/dataPoints/malformed"`
+			if test.value != "" {
+				point += `,"nutritionLog":` + test.value
+			}
+			point += `}`
+			archive := &fakeGoogleHealthIngestionArchive{}
+			provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+				"": `{"dataPoints":[` + point + `]}`,
+			})
+			ingestion := fakeGoogleHealthIngestion(provider)
+			_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+				DataType: "nutrition-log",
+				From:     "2026-01-01",
+				To:       "2026-01-02",
+			}))
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("error = %v, want %q", err, test.wantErr)
+			}
+			if len(archive.dataPoints) != 0 {
+				t.Fatalf("archived Data Points = %d, want 0", len(archive.dataPoints))
+			}
+		})
+	}
+}
+
+func TestGoogleHealthIngestionAcceptsNullableNutritionLogOptionals(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"": `{"dataPoints":[{
+			"name":"users/me/dataTypes/nutrition-log/dataPoints/nullable",
+			"nutritionLog":{
+				"interval":{"startTime":"2026-01-01T00:00:00Z","endTime":"2026-01-01T00:01:00Z"},
+				"foodDisplayName":"Synthetic nullable food",
+				"food":null,"mealType":null,"serving":null,
+				"energy":null,"energyFromFat":null,
+				"totalCarbohydrate":null,"totalFat":null,"nutrients":null
+			}
+		}]}`,
+	})
+	ingestion := fakeGoogleHealthIngestion(provider)
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "nutrition-log",
+		From:     "2026-01-01",
+		To:       "2026-01-02",
+	}))
+	if err != nil {
+		t.Fatalf("ingest nullable Nutrition Log: %v", err)
+	}
+	if result.DataPointsNew != 1 || len(archive.dataPoints) != 1 {
+		t.Fatalf("result/archive = (%+v, %d points), want one new Data Point", result, len(archive.dataPoints))
+	}
+	if !strings.Contains(archive.dataPoints[0].RawJSON, `"nutrients":null`) {
+		t.Fatalf("raw JSON = %s, want explicit nullable fields retained", archive.dataPoints[0].RawJSON)
+	}
+}
+
+func TestGoogleHealthIngestionAppliesElectrocardiogramExclusiveUpperBoundLocally(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"": `{
+			"dataPoints": [
+				{
+					"name": "users/me/dataTypes/electrocardiogram/dataPoints/at-upper-bound",
+					"electrocardiogram": {"interval": {
+						"startTime": "2026-01-02T00:00:00Z",
+						"endTime": "2026-01-02T00:00:00Z",
+						"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 2}},
+						"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}
+					}}
+				},
+				{
+					"name": "users/me/dataTypes/electrocardiogram/dataPoints/in-range",
+					"electrocardiogram": {"interval": {
+						"startTime": "2026-01-01T12:00:00Z",
+						"endTime": "2026-01-01T12:00:00Z",
+						"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+						"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 1}}
+					}}
+				}
+			]
+		}`,
+	})
+	ingestion := fakeGoogleHealthIngestion(provider)
+
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "electrocardiogram",
+		From:     "2026-01-01T00:00:00Z",
+		To:       "2026-01-02T00:00:00Z",
+	}))
+	if err != nil {
+		t.Fatalf("ingest electrocardiogram: %v", err)
+	}
+	if result.DataPointsSeen != 1 || result.DataPointsNew != 1 || result.DataPointsUpdated != 0 {
+		t.Fatalf("Data Point counts = (%d, %d, %d), want (1, 1, 0)", result.DataPointsSeen, result.DataPointsNew, result.DataPointsUpdated)
+	}
+	if len(archive.dataPoints) != 1 || archive.dataPoints[0].UpstreamResourceName != "users/me/dataTypes/electrocardiogram/dataPoints/in-range" {
+		t.Fatalf("archived Data Points = %#v, want only in-range ECG", archive.dataPoints)
+	}
+	wantFilter := `electrocardiogram.interval.start_time >= "2026-01-01T00:00:00Z"`
+	if got := mustURLQuery(t, provider.requests[0].URL).Get("filter"); got != wantFilter {
+		t.Fatalf("Provider filter = %q, want lower bound %q", got, wantFilter)
+	}
+}
+
+func TestGoogleHealthIngestionChoosesReconcileFromSourceFamily(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{dataPointStatuses: []string{"new"}}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"": `{
+			"dataPoints": [{
+				"name": "users/me/dataTypes/steps/dataPoints/wearable",
+				"dataSource": {"platform": "FITBIT"},
+				"steps": {
+					"interval": {
+						"startTime": "2026-01-01T08:00:00Z",
+						"endTime": "2026-01-01T08:15:00Z"
+					}
+				}
+			}]
+		}`,
+	})
+	ingestion := fakeGoogleHealthIngestion(provider)
+
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType:     "steps",
+		SourceFamily: "wearable",
+		From:         "2026-01-01",
+		To:           "2026-01-02T00:00:00Z",
+	}))
+	if err != nil {
+		t.Fatalf("ingest reconcile Data Points: %v", err)
+	}
+
+	if result.EndpointFamily != "reconcile" {
+		t.Fatalf("endpoint family = %q, want reconcile", result.EndpointFamily)
+	}
+	if len(provider.requests) != 1 || provider.requests[0].EndpointName != "dataTypes.steps.reconcile" {
+		t.Fatalf("requests = %#v, want one reconcile request", provider.requests)
+	}
+	if got := mustURLQuery(t, provider.requests[0].URL).Get("dataSourceFamily"); got != googleHealthWearableSourceFamilyFilterName {
+		t.Fatalf("dataSourceFamily = %q, want wearable family", got)
+	}
+	if archive.dataPoints[0].SourceFamilyFilter != "wearable" {
+		t.Fatalf("archived source family = %q, want wearable", archive.dataPoints[0].SourceFamilyFilter)
+	}
+}
+
+func TestGoogleHealthIngestionUsesSafeDataPointPageSize(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		dataType     string
+		sourceFamily string
+		wantEndpoint string
+		wantPageSize string
+	}{
+		{
+			name:         "steps list",
+			dataType:     "steps",
+			wantEndpoint: "dataTypes.steps.list",
+			wantPageSize: "10000",
+		},
+		{
+			name:         "heart-rate reconcile",
+			dataType:     "heart-rate",
+			sourceFamily: "wearable",
+			wantEndpoint: "dataTypes.heart-rate.reconcile",
+			wantPageSize: "10000",
+		},
+		{
+			name:         "sleep list",
+			dataType:     "sleep",
+			wantEndpoint: "dataTypes.sleep.list",
+			wantPageSize: "25",
+		},
+		{
+			name:         "exercise list",
+			dataType:     "exercise",
+			wantEndpoint: "dataTypes.exercise.list",
+			wantPageSize: "25",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			archive := &fakeGoogleHealthIngestionArchive{}
+			provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+				"": `{"dataPoints":[]}`,
+			})
+			ingestion := fakeGoogleHealthIngestion(provider)
+
+			if _, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+				DataType:     tt.dataType,
+				SourceFamily: tt.sourceFamily,
+				From:         "2026-01-01",
+				To:           "2026-01-02",
+			})); err != nil {
+				t.Fatalf("ingest %s: %v", tt.name, err)
+			}
+
+			if len(provider.requests) != 1 || provider.requests[0].EndpointName != tt.wantEndpoint {
+				t.Fatalf("requests = %#v, want one %s request", provider.requests, tt.wantEndpoint)
+			}
+			if got := mustURLQuery(t, provider.requests[0].URL).Get("pageSize"); got != tt.wantPageSize {
+				t.Fatalf("pageSize = %q, want %q in %s", got, tt.wantPageSize, provider.requests[0].URL)
+			}
+		})
+	}
+}
+
+func TestGoogleHealthIngestionHeartbeatsDuringRetryStorm(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{}
+	attempts := 0
+	fetcher := func(context.Context, RawRequest, string) ([]byte, error) {
+		attempts++
+		if attempts < 3 {
+			return nil, &HTTPError{StatusCode: 429, RetryAfter: 6 * time.Minute}
+		}
+		return []byte(`{"dataPoints":[]}`), nil
+	}
+	var sleeps []time.Duration
+	ingestion := Ingestion{
+		provider: retryFetchProvider{
+			fetch:   fetcher,
+			sleeper: recordingSleeper(&sleeps),
+			jitter:  noopRetryJitter,
+		},
+		now: func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) },
+	}
+	progressCalls := 0
+	request := fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		From:     "2026-01-01",
+		To:       "2026-01-02T00:00:00Z",
+		Progress: func(IngestionResult) {
+			progressCalls++
+		},
+	})
+
+	if _, err := ingestion.Execute(context.Background(), archive, request); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
+	if len(sleeps) != 12 {
+		t.Fatalf("sleeps = %v, want twelve 1m Retry-After chunks", sleeps)
+	}
+	for _, sleep := range sleeps {
+		if sleep != time.Minute {
+			t.Fatalf("sleeps = %v, want all chunks to be 1m", sleeps)
+		}
+	}
+	if progressCalls != 15 {
+		t.Fatalf("progress calls = %d, want 15 (page boundary, per-minute retry sleep heartbeats, before each retry attempt)", progressCalls)
+	}
+}
+
+func TestGoogleHealthIngestionRejectsDefaultSyncForNonListDataType(t *testing.T) {
+	t.Parallel()
+	ingestion := fakeGoogleHealthIngestion(newFakeGoogleHealthIngestionProvider(t, "access-secret", nil))
+	_, err := ingestion.Plan(IngestionRequest{
+		DataType: "floors",
+		From:     "2026-01-01",
+		To:       "2026-01-02T00:00:00Z",
+	})
+	if err == nil {
+		t.Fatal("Plan floors default sync: want local unsupported list error, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "floors") || !strings.Contains(msg, "dataPoints.list") || !strings.Contains(msg, "SupportedEndpoints") {
+		t.Fatalf("err = %q, want floors dataPoints.list SupportedEndpoints message", msg)
+	}
+}
+
+func TestGoogleHealthIngestionArchivesDailyRollups(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{rollupStatuses: []string{"new"}}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"2026-01-01/2026-01-02/": `{
+			"rollupDataPoints": [{
+				"steps": {"countSum": "1234"},
+				"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+				"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}
+			}]
+		}`,
+	})
+	ingestion := fakeGoogleHealthIngestion(provider)
+
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		Rollup:   "daily",
+		From:     "2026-01-01",
+		To:       "2026-01-02",
+	}))
+	if err != nil {
+		t.Fatalf("ingest daily Rollups: %v", err)
+	}
+
+	if result.EndpointFamily != "dailyRollUp" {
+		t.Fatalf("endpoint family = %q, want dailyRollUp", result.EndpointFamily)
+	}
+	if result.RollupsSeen != 1 || result.RollupsNew != 1 || result.RollupsUpdated != 0 {
+		t.Fatalf("Rollup counts = (%d, %d, %d), want (1, 1, 0)", result.RollupsSeen, result.RollupsNew, result.RollupsUpdated)
+	}
+	if len(provider.requests) != 1 || provider.requests[0].Method != http.MethodPost || provider.requests[0].EndpointName != "dataTypes.steps.dailyRollUp" {
+		t.Fatalf("requests = %#v, want one dailyRollUp POST", provider.requests)
+	}
+	if archive.rollups[0].RollupKind != "dailyRollUp" || archive.rollups[0].CivilDate != "2026-01-01" {
+		t.Fatalf("archived Rollup = (%q, %q), want daily 2026-01-01", archive.rollups[0].RollupKind, archive.rollups[0].CivilDate)
+	}
+}
+
+func TestTotalCaloriesRollupSkipsAbsentUnionAndArchivesExplicitZero(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{rollupStatuses: []string{"new"}}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"2026-01-01/2026-01-03/": `{
+			"rollupDataPoints": [
+				{
+					"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+					"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}
+				},
+				{
+					"totalCalories": {"kcalSum": 0},
+					"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 2}},
+					"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 3}}
+				}
+			]
+		}`,
+	})
+	ingestion := fakeGoogleHealthIngestion(provider)
+
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "total-calories",
+		Rollup:   "daily",
+		From:     "2026-01-01",
+		To:       "2026-01-03",
+	}))
+	if err != nil {
+		t.Fatalf("ingest total-calories daily Rollups: %v", err)
+	}
+	if result.RollupsSeen != 1 || result.RollupsNew != 1 {
+		t.Fatalf("Rollup counts = (%d seen, %d new), want (1, 1)", result.RollupsSeen, result.RollupsNew)
+	}
+	if len(archive.rollups) != 1 || archive.rollups[0].CivilDate != "2026-01-02" {
+		t.Fatalf("archived Rollups = %#v, want only explicit-zero day", archive.rollups)
+	}
+	if !strings.Contains(archive.rollups[0].RawJSON, `"kcalSum":0`) {
+		t.Fatalf("raw_json = %s, want explicit zero", archive.rollups[0].RawJSON)
+	}
+}
+
+func TestCaloriesInHeartRateZoneIngestionShapes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		union        string
+		wantArchived bool
+	}{
+		{name: "absent_union", union: ``, wantArchived: false},
+		{name: "null_union", union: `"caloriesInHeartRateZone": null,`, wantArchived: false},
+		{name: "empty_union_object", union: `"caloriesInHeartRateZone": {},`, wantArchived: true},
+		{name: "missing_array", union: `"caloriesInHeartRateZone": {"futureField": true},`, wantArchived: true},
+		{name: "null_array", union: `"caloriesInHeartRateZone": {"caloriesInHeartRateZones": null},`, wantArchived: true},
+		{name: "empty_array", union: `"caloriesInHeartRateZone": {"caloriesInHeartRateZones": []},`, wantArchived: true},
+		{name: "missing_kcal", union: `"caloriesInHeartRateZone": {"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT"}, {"heartRateZone": "PEAK", "kcal": 3}]},`, wantArchived: true},
+		{name: "null_kcal", union: `"caloriesInHeartRateZone": {"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": null}, {"heartRateZone": "PEAK", "kcal": 3}]},`, wantArchived: true},
+		{name: "missing_and_null_zone_label", union: `"caloriesInHeartRateZone": {"caloriesInHeartRateZones": [{"kcal": 1}, {"heartRateZone": null, "kcal": 2}]},`, wantArchived: true},
+		{name: "unknown_and_unspecified_zone", union: `"caloriesInHeartRateZone": {"caloriesInHeartRateZones": [{"heartRateZone": "FUTURE_ZONE", "kcal": 1}, {"heartRateZone": "HEART_RATE_ZONE_TYPE_UNSPECIFIED", "kcal": 2}]},`, wantArchived: true},
+	}
+	families := []struct {
+		rollup, from, to, pageKey, times string
+	}{
+		{
+			rollup: "daily", from: "2026-01-01", to: "2026-01-02", pageKey: "2026-01-01/2026-01-02/",
+			times: `"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}}, "civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}`,
+		},
+		{
+			rollup: "hourly", from: "2026-01-01T00:00:00Z", to: "2026-01-02T00:00:00Z", pageKey: "2026-01-01T00:00:00Z/2026-01-02T00:00:00Z/3600s/",
+			times: `"startTime": "2026-01-01T00:00:00Z", "endTime": "2026-01-01T01:00:00Z"`,
+		},
+	}
+	for _, test := range tests {
+		for _, family := range families {
+			t.Run(test.name+"/"+family.rollup, func(t *testing.T) {
+				t.Parallel()
+				archive := &fakeGoogleHealthIngestionArchive{}
+				provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+					family.pageKey: `{"rollupDataPoints": [{` + test.union + family.times + `}]}`,
+				})
+				result, err := fakeGoogleHealthIngestion(provider).Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+					DataType: "calories-in-heart-rate-zone",
+					Rollup:   family.rollup,
+					From:     family.from,
+					To:       family.to,
+				}))
+				if err != nil {
+					t.Fatalf("ingest calories-in-heart-rate-zone %s Rollups: %v", family.rollup, err)
+				}
+				wantCount := 0
+				if test.wantArchived {
+					wantCount = 1
+				}
+				if result.RollupsSeen != wantCount || result.RollupsNew != wantCount || len(archive.rollups) != wantCount {
+					t.Fatalf("Rollup counts = (%d seen, %d new, %d archived), want %d", result.RollupsSeen, result.RollupsNew, len(archive.rollups), wantCount)
+				}
+			})
+		}
+	}
+}
+
+func TestCaloriesInHeartRateZoneIngestionRejectsMalformedValues(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		union   string
+		wantErr string
+	}{
+		{name: "union_scalar", union: `"SECRET_PAYLOAD"`, wantErr: "caloriesInHeartRateZone is not an object"},
+		{name: "union_array", union: `["SECRET_PAYLOAD"]`, wantErr: "caloriesInHeartRateZone is not an object"},
+		{name: "array_object", union: `{"caloriesInHeartRateZones": {"heartRateZone": "SECRET_PAYLOAD"}}`, wantErr: "caloriesInHeartRateZones is not an array"},
+		{name: "array_string", union: `{"caloriesInHeartRateZones": "SECRET_PAYLOAD"}`, wantErr: "caloriesInHeartRateZones is not an array"},
+		{name: "element_null", union: `{"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": 1}, null]}`, wantErr: "caloriesInHeartRateZones[1] is not an object"},
+		{name: "element_scalar", union: `{"caloriesInHeartRateZones": ["SECRET_PAYLOAD"]}`, wantErr: "caloriesInHeartRateZones[0] is not an object"},
+		{name: "zone_number", union: `{"caloriesInHeartRateZones": [{"heartRateZone": 4, "kcal": 1}]}`, wantErr: "caloriesInHeartRateZones[0].heartRateZone is not a string"},
+		{name: "kcal_string", union: `{"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": "SECRET_PAYLOAD"}]}`, wantErr: "caloriesInHeartRateZones[0].kcal is not a number"},
+		{name: "kcal_boolean", union: `{"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": true}]}`, wantErr: "caloriesInHeartRateZones[0].kcal is not a number"},
+		{name: "kcal_object", union: `{"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": {"value": "SECRET_PAYLOAD"}}]}`, wantErr: "caloriesInHeartRateZones[0].kcal is not a number"},
+		{name: "kcal_array", union: `{"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": ["SECRET_PAYLOAD"]}]}`, wantErr: "caloriesInHeartRateZones[0].kcal is not a number"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			archive := &fakeGoogleHealthIngestionArchive{}
+			provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+				"2026-01-01/2026-01-02/": `{"rollupDataPoints": [{"caloriesInHeartRateZone": ` + test.union + `,
+					"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+					"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}}]}`,
+			})
+			_, err := fakeGoogleHealthIngestion(provider).Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+				DataType: "calories-in-heart-rate-zone",
+				Rollup:   "daily",
+				From:     "2026-01-01",
+				To:       "2026-01-02",
+			}))
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("error = %v, want %q", err, test.wantErr)
+			}
+			if strings.Contains(err.Error(), "SECRET_PAYLOAD") {
+				t.Fatalf("error = %v, want no Provider payload echo", err)
+			}
+			if len(archive.rollups) != 0 {
+				t.Fatalf("archived Rollups = %d, want 0", len(archive.rollups))
+			}
+		})
+	}
+}
+
+func TestRequiredRollupValueAbsenceFailsSyncRun(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"2026-01-01/2026-01-02/": `{"rollupDataPoints": [{
+			"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+			"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}}]}`,
+	})
+	_, err := fakeGoogleHealthIngestion(provider).Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		Rollup:   "daily",
+		From:     "2026-01-01",
+		To:       "2026-01-02",
+	}))
+	if want := "Google Health steps daily Rollup missing steps value"; err == nil || err.Error() != want {
+		t.Fatalf("error = %v, want %q", err, want)
+	}
+	if len(archive.rollups) != 0 {
+		t.Fatalf("archived Rollups = %d, want 0", len(archive.rollups))
+	}
+}
+
+func TestGoogleHealthIngestionHeartRateDailyRollupUsesFourteenDayWindows(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"2026-01-01/2026-01-15/": `{"rollupDataPoints":[]}`,
+		"2026-01-15/2026-01-29/": `{"rollupDataPoints":[]}`,
+		"2026-01-29/2026-02-01/": `{"rollupDataPoints":[]}`,
+	})
+	ingestion := fakeGoogleHealthIngestion(provider)
+
+	result, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "heart-rate",
+		Rollup:   "daily",
+		From:     "2026-01-01",
+		To:       "2026-02-01",
+	}))
+	if err != nil {
+		t.Fatalf("ingest heart-rate daily Rollups: %v", err)
+	}
+	if result.EndpointFamily != "dailyRollUp" {
+		t.Fatalf("endpoint family = %q, want dailyRollUp", result.EndpointFamily)
+	}
+	if len(provider.requests) != 3 {
+		t.Fatalf("request count = %d, want 3", len(provider.requests))
+	}
+	for index, request := range provider.requests {
+		if request.EndpointName != "dataTypes.heart-rate.dailyRollUp" {
+			t.Fatalf("request[%d] endpoint = %q, want heart-rate dailyRollUp", index, request.EndpointName)
+		}
+	}
+}
+
+// TestDailyRollupGuardNamesCatalogSupportedDataTypes pins the
+// unsupported-Data-Type guard on the dailyRollUp request builder to
+// the catalog (#318): the error must name every Data Type whose
+// catalog row grants the dailyRollUp endpoint family (today: steps,
+// floors), so the message cannot drift when the catalog gains or
+// loses a dailyRollUp Data Type. The guard is normally shadowed by
+// the ValidateRollupAgainstDataType preflight in Plan, so the builder
+// is exercised directly — the narrowest surface that reaches it.
+func TestDailyRollupGuardNamesCatalogSupportedDataTypes(t *testing.T) {
+	t.Parallel()
+	var supported []string
+	for _, dataType := range googleHealthDataTypes.order {
+		if dailyRollupDataTypeSupported(dataType) {
+			supported = append(supported, dataType)
+		}
+	}
+	// Non-vacuity: the catalog grants dailyRollUp to more than one
+	// Data Type, so a message naming a single Data Type must fail.
+	if len(supported) < 2 {
+		t.Fatalf("catalog dailyRollUp Data Types = %v, want at least steps and floors", supported)
+	}
+
+	_, err := buildGoogleHealthDailyRollupRawRequest("sleep", "2026-01-01", "2026-01-02", 0, "")
+	if err == nil {
+		t.Fatal("dailyRollUp request for sleep: want unsupported-Data-Type error, got nil")
+	}
+	for _, dataType := range supported {
+		if !strings.Contains(err.Error(), dataType) {
+			t.Errorf("daily Rollup guard error %q does not name catalog-supported Data Type %q", err.Error(), dataType)
+		}
+	}
+}
+
+func TestGoogleHealthIngestionRejectsRepeatedPageToken(t *testing.T) {
+	t.Parallel()
+	archive := &fakeGoogleHealthIngestionArchive{}
+	provider := newFakeGoogleHealthIngestionProvider(t, "access-secret", map[string]string{
+		"":     `{"dataPoints":[],"nextPageToken":"same-token"}`,
+		"same": `{"dataPoints":[]}`,
+	})
+	provider.pages["same-token"] = `{"dataPoints":[],"nextPageToken":"same-token"}`
+	ingestion := fakeGoogleHealthIngestion(provider)
+
+	_, err := ingestion.Execute(context.Background(), archive, fakeGoogleHealthIngestionRequest(IngestionRequest{
+		DataType: "steps",
+		From:     "2026-01-01",
+		To:       "2026-01-02T00:00:00Z",
+	}))
+	if err == nil || !strings.Contains(err.Error(), "Google Health steps list returned a repeated page token") {
+		t.Fatalf("ingest error = %v, want repeated page token", err)
+	}
+	if len(provider.requests) != 2 {
+		t.Fatalf("request count = %d, want 2", len(provider.requests))
+	}
+}
+
+type fakeGoogleHealthIngestionArchive struct {
+	dataPointStatuses []string
+	rollupStatuses    []string
+	dataPoints        []archived.DataPoint
+	rollups           []archived.Rollup
+	attachments       []fakeIngestionAttachment
+}
+
+// fakeIngestionAttachment captures one StoreAttachment call so tests
+// can assert the (point, kind, bytes) shape the ingestion handed off.
+type fakeIngestionAttachment struct {
+	point     archived.DataPoint
+	kind      string
+	payload   []byte
+	fetchedAt string
+}
+
+func (archive *fakeGoogleHealthIngestionArchive) UpsertDataPoint(ctx context.Context, point archived.DataPoint, now string) (string, error) {
+	archive.dataPoints = append(archive.dataPoints, point)
+	if len(archive.dataPointStatuses) == 0 {
+		return "new", nil
+	}
+	status := archive.dataPointStatuses[0]
+	archive.dataPointStatuses = archive.dataPointStatuses[1:]
+	return status, nil
+}
+
+func (archive *fakeGoogleHealthIngestionArchive) UpsertRollup(ctx context.Context, rollup archived.Rollup, now string) (string, error) {
+	archive.rollups = append(archive.rollups, rollup)
+	if len(archive.rollupStatuses) == 0 {
+		return "new", nil
+	}
+	status := archive.rollupStatuses[0]
+	archive.rollupStatuses = archive.rollupStatuses[1:]
+	return status, nil
+}
+
+// StoreAttachment records the call so TCX-ingestion tests can assert
+// the wiring: which Data Point the bytes attach to, what kind, the
+// payload, and the fetchedAt stamp.
+func (archive *fakeGoogleHealthIngestionArchive) StoreAttachment(ctx context.Context, point archived.DataPoint, kind string, payload []byte, fetchedAt string) error {
+	archive.attachments = append(archive.attachments, fakeIngestionAttachment{
+		point:     point,
+		kind:      kind,
+		payload:   append([]byte(nil), payload...),
+		fetchedAt: fetchedAt,
+	})
+	return nil
+}
+
+type fakeGoogleHealthIngestionProvider struct {
+	t               *testing.T
+	wantAccessToken string
+	pages           map[string]string
+	requests        []RawRequest
+	// errorByPageKey overrides the page body with an error response keyed
+	// by the same page key the fixture map uses. Lets TCX tests force a
+	// 404 or transport error on a specific resource without leaking error
+	// shape into unrelated tests.
+	errorByPageKey map[string]error
+}
+
+func newFakeGoogleHealthIngestionProvider(t *testing.T, wantAccessToken string, pages map[string]string) *fakeGoogleHealthIngestionProvider {
+	t.Helper()
+	return &fakeGoogleHealthIngestionProvider{t: t, wantAccessToken: wantAccessToken, pages: pages}
+}
+
+func (provider *fakeGoogleHealthIngestionProvider) Fetch(_ context.Context, request RawRequest, accessToken string) ([]byte, error) {
+	provider.t.Helper()
+	if accessToken != provider.wantAccessToken {
+		provider.t.Fatalf("access token = %q, want fixture token", accessToken)
+	}
+	provider.requests = append(provider.requests, request)
+	key := provider.pageKey(request)
+	if err, ok := provider.errorByPageKey[key]; ok {
+		return nil, err
+	}
+	body, ok := provider.pages[key]
+	if !ok {
+		provider.t.Fatalf("no fake provider page for key %q", key)
+	}
+	return []byte(body), nil
+}
+
+func (provider *fakeGoogleHealthIngestionProvider) pageKey(request RawRequest) string {
+	provider.t.Helper()
+	if strings.HasSuffix(request.EndpointName, ".dailyRollUp") {
+		var body struct {
+			Range struct {
+				Start struct {
+					Date struct {
+						Year  int `json:"year"`
+						Month int `json:"month"`
+						Day   int `json:"day"`
+					} `json:"date"`
+				} `json:"start"`
+				End struct {
+					Date struct {
+						Year  int `json:"year"`
+						Month int `json:"month"`
+						Day   int `json:"day"`
+					} `json:"date"`
+				} `json:"end"`
+			} `json:"range"`
+			PageToken string `json:"pageToken"`
+		}
+		if err := json.Unmarshal(request.Body, &body); err != nil {
+			provider.t.Fatalf("rollup body JSON: %v", err)
+		}
+		return fmt.Sprintf("%04d-%02d-%02d/%04d-%02d-%02d/%s",
+			body.Range.Start.Date.Year,
+			body.Range.Start.Date.Month,
+			body.Range.Start.Date.Day,
+			body.Range.End.Date.Year,
+			body.Range.End.Date.Month,
+			body.Range.End.Date.Day,
+			body.PageToken,
+		)
+	}
+	if strings.HasSuffix(request.EndpointName, ".rollUp") {
+		var body struct {
+			Range struct {
+				StartTime string `json:"startTime"`
+				EndTime   string `json:"endTime"`
+			} `json:"range"`
+			WindowSize string `json:"windowSize"`
+			PageToken  string `json:"pageToken"`
+		}
+		if err := json.Unmarshal(request.Body, &body); err != nil {
+			provider.t.Fatalf("rollUp body JSON: %v", err)
+		}
+		return fmt.Sprintf("%s/%s/%s/%s",
+			body.Range.StartTime,
+			body.Range.EndTime,
+			body.WindowSize,
+			body.PageToken,
+		)
+	}
+	if strings.HasSuffix(request.EndpointName, ".exportExerciseTcx") {
+		// TCX export keys on the data point resource path (the suffix of
+		// the URL after the base prefix). e.g.
+		// "users/me/dataTypes/exercise/dataPoints/run-1:exportExerciseTcx".
+		return strings.TrimPrefix(request.URL, googleHealthBaseURL+"/")
+	}
+	parsedURL, err := url.Parse(request.URL)
+	if err != nil {
+		provider.t.Fatalf("request URL: %v", err)
+	}
+	return parsedURL.Query().Get("pageToken")
+}
+
+func fakeGoogleHealthIngestion(provider *fakeGoogleHealthIngestionProvider) Ingestion {
+	return Ingestion{
+		provider: provider,
+		now:      func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) },
+	}
+}
+
+func fakeGoogleHealthIngestionRequest(request IngestionRequest) IngestionRequest {
+	request.Connection = archived.Connection{
+		ID:                 "conn_123",
+		ProviderName:       "google_health",
+		GoogleHealthUserID: "111111256096816351",
+	}
+	request.AccessToken = "access-secret"
+	return request
+}

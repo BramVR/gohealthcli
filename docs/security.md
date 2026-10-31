@@ -18,7 +18,7 @@ The First Release is read-only:
 - No deletes.
 - No webhook receiver.
 - No cloud service.
-- No automatic sharing.
+- No automatic sharing or background upload.
 
 ## OAuth
 
@@ -33,6 +33,25 @@ Token material must not print in normal command output. `doctor` may report
 presence, expiry shape, and scopes, but not token values. Default `doctor`
 should stay local; `doctor --online` is the explicit path for token refresh and
 provider reachability checks.
+
+Structured authentication remediation is output-only metadata. JSON may expose
+an ordered `remediation` array and plain output the matching zero-based
+`remediation.N` fields; human output is unchanged. Recovery commands come from
+the Failure Reporter's fixed catalog, with the sole parameterized form limited
+to sorted `connect --add-scopes` keywords already present in the public scope
+catalog. Error messages, tokens, authorization codes, identities, paths,
+Provider payloads, SQL, health data, and user input are never converted into
+actions. Building or rendering actions performs no Provider I/O and cannot
+start an OAuth flow.
+
+Sync and Health Archive recoveries use the same output-only boundary. The only
+Sync-specific action is the fixed
+`gohealthcli sync --from YYYY-MM-DD` Initial Backfill template; it never copies
+the operator's Data Types, dates, paths, or other arguments. Fan-out actions
+remain on the affected child. Missing archives may suggest diagnosis followed
+by initialisation, but canceled, corrupt, invalid-query, and unknown failures
+remain actionless. Classification uses typed causes only and does not read or
+mutate the Provider, OAuth state, Sync Cursor, audit trail, or archive.
 
 OAuth token material should live in a Credential Store:
 
@@ -54,6 +73,17 @@ Archive corruption. `connect` may re-authorize the same Google Identity and keep
 using the existing archive. If re-authorization returns a different Google
 Identity, require an explicit new archive or a future multi-identity decision.
 
+Headless authorization uses the same Desktop-client loopback and PKCE S256
+flow as interactive `connect`. `connect --headless-start` stores its verifier,
+state, exact redirect, expiry, and config/archive/client/scope/identity binding
+only in the configured Credential Store for ten minutes. `connect --complete`
+accepts one complete redirected URL on stdin only. It validates the exact
+origin and path, binding, expiry, state, and full requested scope grant before
+identity validation or token storage. A claim is atomic across processes, so
+only one concurrent completion can exchange the code. Treat authorization and
+redirected URLs as sensitive transfer material even though neither is stored
+in the Health Archive.
+
 ## Local Files
 
 Default paths should follow the `gobankcli` pattern:
@@ -67,10 +97,82 @@ The default archive path does not include Google Identity. The archive stores
 that identity internally; multiple identities require explicit future design or
 explicit alternate `--db` paths.
 
+The defaults are anchored to the user's home directory. When `HOME` is unset and
+no absolute `XDG_CONFIG_HOME`/`XDG_DATA_HOME` override is set (a relative `XDG_*`
+value is ignored per the XDG Base Directory spec), the binary cannot anchor the
+default and fails loudly — "cannot determine home directory; set HOME or pass
+--config/--db explicitly" — instead of silently writing personal health data to
+a current-working-directory-relative path. Passing `--config`/`--db` explicitly
+is unaffected.
+
+## Encrypted Backups
+
+Backup work is explicit. `backup init` may create a Git checkout and push its
+recovery README to the configured remote. `backup push` exports only the current
+local Health Archive, writes age-encrypted JSONL gzip shards plus the documented
+cleartext manifest, commits, and pushes unless `--no-push` is set. It does not
+sync, refresh Identity Snapshots, read the Credential Store, or contact Google
+Health.
+
+Recipient changes are explicit configuration changes. `backup init` canonicalizes
+the complete desired recipient set, and the next `backup push` re-encrypts even
+unchanged Snapshot shards before committing them. Later unchanged pushes reuse
+the authenticated ciphertext. Removing a recipient affects only the current and
+future backup tree; compatible ciphertext remains recoverable from earlier Git
+history by identities that could decrypt it then.
+
+`backup pull` refreshes the configured Git checkout, decrypts and hashes every
+manifest-owned shard in memory, then validates the complete Health Archive
+Snapshot before creating a fresh target archive. It never overwrites an existing
+archive. Attachment rows and payloads restore together through the Attachment
+Store containment and owner-only permission rules; any wrong identity, corrupt
+or missing shard, invalid JSONL, unsupported manifest, or broken Snapshot
+reference fails before a target is reported as restored.
+
+The default `backup.json` and `backup-age-identity.txt` live beside the main
+config under the XDG-style gohealthcli config directory and are owner-only.
+They must never be committed. Private Credential Store token material, OAuth
+client secrets, and Secret Provider contents are excluded from backup. A
+restored Health Archive may require `connect` before Provider commands work.
+
+The Git repository remains sensitive metadata. Its cleartext manifest may
+reveal export time, public recipients, logical table names, row counts, shard
+paths, encrypted sizes, plaintext hashes, backup cadence, and changed shards.
+Private health payloads and Attachment bytes must be encrypted before Git sees
+them. Shard plaintext exists only in process memory before fixed-metadata gzip
+compression and age encryption; Git receives only ciphertext. Loss of every
+matching age identity makes the backup unrecoverable;
+compromise of an identity can expose compatible shards retained in Git history.
+Age authenticates ciphertext integrity for a recipient, not the identity of the
+Git publisher. `backup pull` therefore trusts write access to the configured
+owner-controlled remote; protect that remote and review unexpected history or
+collaborator changes before restoring.
+
+`backup status` reads only the backup config, checkout, and cleartext manifest.
+It does not require the private identity, decrypt shards, open the live Health
+Archive, contact the Provider, or mutate Git state.
+
 ## Exports
 
 Exports can reveal sensitive health history. Commands should require explicit
 output paths or explicit `--stdout`. Avoid silent background exports.
+
+Raw Provider file output carries the same sensitivity. `raw --output` accepts
+only a new destination, refuses symbolic links and every overwrite, and removes
+the staged file after a failed or short write. It creates mode `0600` on Linux
+and macOS, where the effective user must own the parent directory and group or
+other users must not be able to write there. macOS also rejects any extended parent ACL. On local Windows volumes,
+no-replace publication prevents overwrite,
+but the file inherits its parent directory ACL. Choose a directory whose ACL
+already grants access only to the intended identities. Special Win32 filenames
+are rejected. UNC paths and mapped
+network drives, including parent links that resolve to them, are rejected before
+the Provider read. Other build targets reject file output if atomic no-replace
+rename is unavailable.
+
+`route --output` writes archived exercise routes, which are location data,
+through the same contract. It prepares the file only after the archived TCX
+Attachment passed its path, size, and SHA-256 checks.
 
 ## Out of Scope
 

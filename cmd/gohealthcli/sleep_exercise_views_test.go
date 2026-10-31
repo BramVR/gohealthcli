@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 )
@@ -9,19 +10,20 @@ import (
 // sleep_stages produces one row per stage in the sleep session's
 // stages[] array, with the contracted columns.
 func TestSleepStagesViewExplodesEachStage(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
 	insertExportDataPoint(t, archivePath, exportDataPointFixture{
-		dataType:             "sleep",
-		resourceName:         "users/me/dataTypes/sleep/dataPoints/sleep-2026-06-08",
-		recordKind:           "session",
-		startUTC:             "2026-06-08T21:30:00Z",
-		endUTC:               "2026-06-09T05:45:00Z",
-		startCivil:           "2026-06-08T22:30:00",
-		endCivil:             "2026-06-09T06:45:00",
-		civilDate:            "2026-06-08",
-		dataSource:           `{"platform":"FITBIT"}`,
+		dataType:     "sleep",
+		resourceName: "users/me/dataTypes/sleep/dataPoints/sleep-2026-06-08",
+		recordKind:   "session",
+		startUTC:     "2026-06-08T21:30:00Z",
+		endUTC:       "2026-06-09T05:45:00Z",
+		startCivil:   "2026-06-08T22:30:00",
+		endCivil:     "2026-06-09T06:45:00",
+		civilDate:    "2026-06-08",
+		dataSource:   `{"platform":"FITBIT"}`,
 		rawJSON: `{"sleep":{"stages":[
 			{"type":"LIGHT","startTime":"2026-06-08T22:30:00Z","endTime":"2026-06-08T23:30:00Z"},
 			{"type":"DEEP","startTime":"2026-06-08T23:30:00Z","endTime":"2026-06-09T00:30:00Z"},
@@ -29,13 +31,9 @@ func TestSleepStagesViewExplodesEachStage(t *testing.T) {
 		]}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
-	rows, err := db.Query(`SELECT sleep_stage, duration_seconds, start_time_utc, end_time_utc, civil_date, upstream_resource_name FROM sleep_stages ORDER BY start_time_utc`)
+	rows, err := db.QueryContext(context.Background(), `SELECT sleep_stage, duration_seconds, start_time_utc, end_time_utc, civil_date, upstream_resource_name FROM sleep_stages ORDER BY start_time_utc`)
 	if err != nil {
 		t.Fatalf("query sleep_stages: %v", err)
 	}
@@ -74,19 +72,20 @@ func TestSleepStagesViewExplodesEachStage(t *testing.T) {
 // for exercise sessions: one row per split with split_type and
 // distance_meters projected from json_each over the splits array.
 func TestExerciseSplitsViewExplodesEachSplit(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
 	insertExportDataPoint(t, archivePath, exportDataPointFixture{
-		dataType:             "exercise",
-		resourceName:         "users/me/dataTypes/exercise/dataPoints/run-2026-06-08",
-		recordKind:           "session",
-		startUTC:             "2026-06-08T17:00:00Z",
-		endUTC:               "2026-06-08T17:30:00Z",
-		startCivil:           "2026-06-08T18:00:00",
-		endCivil:             "2026-06-08T18:30:00",
-		civilDate:            "2026-06-08",
-		dataSource:           `{"platform":"FITBIT"}`,
+		dataType:     "exercise",
+		resourceName: "users/me/dataTypes/exercise/dataPoints/run-2026-06-08",
+		recordKind:   "session",
+		startUTC:     "2026-06-08T17:00:00Z",
+		endUTC:       "2026-06-08T17:30:00Z",
+		startCivil:   "2026-06-08T18:00:00",
+		endCivil:     "2026-06-08T18:30:00",
+		civilDate:    "2026-06-08",
+		dataSource:   `{"platform":"FITBIT"}`,
 		// Real Google Health API shape: distanceMillimeters lives under
 		// metricsSummary, not at the split root. Live testing in #105
 		// caught the earlier wrong-path bug.
@@ -97,13 +96,9 @@ func TestExerciseSplitsViewExplodesEachSplit(t *testing.T) {
 		]}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
-	rows, err := db.Query(`SELECT split_type, distance_meters, start_time_utc, end_time_utc, civil_date, upstream_resource_name FROM exercise_splits ORDER BY start_time_utc`)
+	rows, err := db.QueryContext(context.Background(), `SELECT split_type, distance_meters, start_time_utc, end_time_utc, civil_date, upstream_resource_name FROM exercise_splits ORDER BY start_time_utc`)
 	if err != nil {
 		t.Fatalf("query exercise_splits: %v", err)
 	}
@@ -129,29 +124,26 @@ func TestExerciseSplitsViewExplodesEachSplit(t *testing.T) {
 // where a sleep session has no stages array (or it's empty): the view
 // must not error and must return zero rows for that session.
 func TestSleepStagesViewHandlesSessionWithoutStages(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
 	insertExportDataPoint(t, archivePath, exportDataPointFixture{
-		dataType:             "sleep",
-		resourceName:         "users/me/dataTypes/sleep/dataPoints/sleep-no-stages",
-		recordKind:           "session",
-		startUTC:             "2026-06-08T21:30:00Z",
-		endUTC:               "2026-06-09T05:45:00Z",
-		startCivil:           "2026-06-08T22:30:00",
-		endCivil:             "2026-06-09T06:45:00",
-		civilDate:            "2026-06-08",
-		dataSource:           `{"platform":"FITBIT"}`,
-		rawJSON:              `{"sleep":{}}`,
+		dataType:     "sleep",
+		resourceName: "users/me/dataTypes/sleep/dataPoints/sleep-no-stages",
+		recordKind:   "session",
+		startUTC:     "2026-06-08T21:30:00Z",
+		endUTC:       "2026-06-09T05:45:00Z",
+		startCivil:   "2026-06-08T22:30:00",
+		endCivil:     "2026-06-09T06:45:00",
+		civilDate:    "2026-06-08",
+		dataSource:   `{"platform":"FITBIT"}`,
+		rawJSON:      `{"sleep":{}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var count int
-	if err := db.QueryRow(`SELECT count(*) FROM sleep_stages`).Scan(&count); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT count(*) FROM sleep_stages`).Scan(&count); err != nil {
 		t.Fatalf("query sleep_stages: %v", err)
 	}
 	if count != 0 {

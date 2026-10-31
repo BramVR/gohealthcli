@@ -13,6 +13,7 @@ import (
 // land in CommonFlagValues and that ArchivePathExplicit is set whenever
 // the user actually typed --db.
 func TestParseCommonFlowsValuesThrough(t *testing.T) {
+	t.Parallel()
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	defaults := CommonFlagValues{
@@ -22,7 +23,7 @@ func TestParseCommonFlowsValuesThrough(t *testing.T) {
 	spec := CommonFlagSpec{Accepted: []string{"config", "db", "json", "plain", "no-input"}}
 	values := RegisterCommon(fs, spec, defaults)
 
-	if err := ParseCommon(fs, values, []string{"--config", "/etc/x.toml", "--db", "/tmp/y.db", "--no-input"}); err != nil {
+	if err := ParseCommon(fs, values, []string{"--config", "/etc/x.toml", "--db", "/tmp/y.db", "--no-input"}, nil); err != nil {
 		t.Fatalf("ParseCommon: %v", err)
 	}
 	if values.ConfigPath != "/etc/x.toml" {
@@ -43,6 +44,7 @@ func TestParseCommonFlowsValuesThrough(t *testing.T) {
 // flags at all, the values seeded into RegisterCommon survive Parse and
 // ArchivePathExplicit stays false.
 func TestParseCommonHonoursDefaults(t *testing.T) {
+	t.Parallel()
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	defaults := CommonFlagValues{
@@ -52,7 +54,7 @@ func TestParseCommonHonoursDefaults(t *testing.T) {
 	spec := CommonFlagSpec{Accepted: []string{"config", "db", "json", "plain", "no-input"}}
 	values := RegisterCommon(fs, spec, defaults)
 
-	if err := ParseCommon(fs, values, nil); err != nil {
+	if err := ParseCommon(fs, values, nil, nil); err != nil {
 		t.Fatalf("ParseCommon: %v", err)
 	}
 	if values.ConfigPath != "/default/config" {
@@ -72,12 +74,13 @@ func TestParseCommonHonoursDefaults(t *testing.T) {
 // supported by <cmd>") instead of stdlib's generic "flag provided but not
 // defined" text.
 func TestParseCommonRejectsUnknownButKnownGlobal(t *testing.T) {
+	t.Parallel()
 	fs := flag.NewFlagSet("describe-schema", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	spec := CommonFlagSpec{Accepted: []string{"config", "db", "json"}}
 	values := RegisterCommon(fs, spec, CommonFlagValues{})
 
-	err := ParseCommon(fs, values, []string{"--plain"})
+	err := ParseCommon(fs, values, []string{"--plain"}, nil)
 	if err == nil {
 		t.Fatalf("ParseCommon with --plain should return an error when spec omits 'plain'")
 	}
@@ -94,12 +97,13 @@ func TestParseCommonRejectsUnknownButKnownGlobal(t *testing.T) {
 // the caller carries ErrFlagParseFailed so the caller knows fs.Parse
 // already wrote the diagnostic.
 func TestParseCommonPreservesParseUsageOnError(t *testing.T) {
+	t.Parallel()
 	fs := flag.NewFlagSet("identity", flag.ContinueOnError)
 	stderr := &bytes.Buffer{}
 	fs.SetOutput(stderr)
 	values := RegisterCommon(fs, AllCommonFlagsSpec(), CommonFlagValues{})
 
-	err := ParseCommon(fs, values, []string{"--bogus"})
+	err := ParseCommon(fs, values, []string{"--bogus"}, nil)
 	if err == nil {
 		t.Fatalf("ParseCommon should return an error for --bogus")
 	}
@@ -118,12 +122,13 @@ func TestParseCommonPreservesParseUsageOnError(t *testing.T) {
 // the standard `flag` package usage dump that callers rely on. The
 // returned error must be flag.ErrHelp so the caller exits 0.
 func TestParseCommonPreservesHelpUsage(t *testing.T) {
+	t.Parallel()
 	fs := flag.NewFlagSet("identity", flag.ContinueOnError)
 	stderr := &bytes.Buffer{}
 	fs.SetOutput(stderr)
 	values := RegisterCommon(fs, AllCommonFlagsSpec(), CommonFlagValues{})
 
-	err := ParseCommon(fs, values, []string{"--help"})
+	err := ParseCommon(fs, values, []string{"--help"}, nil)
 	if !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("error = %v, want flag.ErrHelp", err)
 	}
@@ -138,11 +143,12 @@ func TestParseCommonPreservesHelpUsage(t *testing.T) {
 // Example: `--config -weird-path --plain` — `-weird-path` is the
 // config value, not a flag.
 func TestParseCommonHandlesDashValueForPriorFlag(t *testing.T) {
+	t.Parallel()
 	fs := flag.NewFlagSet("identity", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	values := RegisterCommon(fs, AllCommonFlagsSpec(), CommonFlagValues{})
 
-	if err := ParseCommon(fs, values, []string{"--config", "-weird-path", "--plain"}); err != nil {
+	if err := ParseCommon(fs, values, []string{"--config", "-weird-path", "--plain"}, nil); err != nil {
 		t.Fatalf("ParseCommon: %v", err)
 	}
 	if values.ConfigPath != "-weird-path" {
@@ -157,12 +163,13 @@ func TestParseCommonHandlesDashValueForPriorFlag(t *testing.T) {
 // that no subcommand should ever have to re-implement: --plain and --json
 // cannot both be set.
 func TestParseCommonRejectsPlainAndJSON(t *testing.T) {
+	t.Parallel()
 	fs := flag.NewFlagSet("identity", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	spec := CommonFlagSpec{Accepted: []string{"config", "db", "json", "plain", "no-input"}}
 	values := RegisterCommon(fs, spec, CommonFlagValues{})
 
-	err := ParseCommon(fs, values, []string{"--plain", "--json"})
+	err := ParseCommon(fs, values, []string{"--plain", "--json"}, nil)
 	if err == nil {
 		t.Fatalf("ParseCommon with --plain --json should return an error")
 	}

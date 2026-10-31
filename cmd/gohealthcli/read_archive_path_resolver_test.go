@@ -33,7 +33,7 @@ func TestReadArchivePathResolverResolves(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
 		t.Fatalf("mkdir config dir: %v", err)
 	}
-	configBody := "archive_path = \"" + configArchivePath + "\"\n"
+	configBody := "archive_path = " + tomlQuotedString(configArchivePath) + "\n"
 	if err := os.WriteFile(configPath, []byte(configBody), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -50,14 +50,14 @@ func TestReadArchivePathResolverResolves(t *testing.T) {
 	}
 
 	tests := []struct {
-		name              string
-		configPath        string
-		configExplicit    bool
-		archivePath       string
-		archiveExplicit   bool
-		wantResolved      string
-		wantErrContains   []string
-		wantErrOmits      []string
+		name            string
+		configPath      string
+		configExplicit  bool
+		archivePath     string
+		archiveExplicit bool
+		wantResolved    string
+		wantErrContains []string
+		wantErrOmits    []string
 	}{
 		{
 			name:            "config missing and --db default uses --db value",

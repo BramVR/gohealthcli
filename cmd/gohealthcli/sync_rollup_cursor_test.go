@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 // TestSyncCursorRollupKindIndependence pins the #106 AC: the cursor
 // for (connection, dataType, sourceFamily, rollup_kind) resumes
@@ -9,24 +12,20 @@ import "testing"
 // (connection, dataType) pair and confirms reads return the matching
 // row, not the wrong one.
 func TestSyncCursorRollupKindIndependence(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	t.Parallel()
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect exit code = %d, want 0", code)
-	}
 
 	archive, err := openHealthArchiveWriter(archivePath)
 	if err != nil {
 		t.Fatalf("open writer: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := archive.CurrentConnection(context.Background())
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
@@ -40,14 +39,14 @@ func TestSyncCursorRollupKindIndependence(t *testing.T) {
 		"window=6h": "2026-05-01T00:00:00Z",
 	}
 	for _, kind := range kinds {
-		key := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: kind}
-		if err := archive.CommitSyncCursor(key, syncRunOutcomeCompleted, wantTo[kind], "2026-06-01T00:00:00Z"); err != nil {
+		key := syncCursorKey{connectionID: connection.ID, dataType: "steps", rollupKind: kind}
+		if err := archive.CommitSyncCursor(context.Background(), key, syncRunOutcomeCompleted, wantTo[kind], "2026-06-01T00:00:00Z"); err != nil {
 			t.Fatalf("CommitSyncCursor %s: %v", kind, err)
 		}
 	}
 	for _, kind := range kinds {
-		key := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: kind}
-		got, found, err := archive.ResolveSyncCursor(key)
+		key := syncCursorKey{connectionID: connection.ID, dataType: "steps", rollupKind: kind}
+		got, found, err := archive.ResolveSyncCursor(context.Background(), key)
 		if err != nil {
 			t.Fatalf("ResolveSyncCursor %s: %v", kind, err)
 		}
@@ -61,13 +60,13 @@ func TestSyncCursorRollupKindIndependence(t *testing.T) {
 	}
 
 	// Advancing one cursor must not affect the others.
-	advanced := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: "hourly"}
-	if err := archive.CommitSyncCursor(advanced, syncRunOutcomeCompleted, "2026-07-01T00:00:00Z", "2026-07-02T00:00:00Z"); err != nil {
+	advanced := syncCursorKey{connectionID: connection.ID, dataType: "steps", rollupKind: "hourly"}
+	if err := archive.CommitSyncCursor(context.Background(), advanced, syncRunOutcomeCompleted, "2026-07-01T00:00:00Z", "2026-07-02T00:00:00Z"); err != nil {
 		t.Fatalf("re-advance hourly: %v", err)
 	}
 	for _, kind := range kinds {
-		key := syncCursorKey{connectionID: connection.id, dataType: "steps", rollupKind: kind}
-		got, _, err := archive.ResolveSyncCursor(key)
+		key := syncCursorKey{connectionID: connection.ID, dataType: "steps", rollupKind: kind}
+		got, _, err := archive.ResolveSyncCursor(context.Background(), key)
 		if err != nil {
 			t.Fatalf("post-advance ResolveSyncCursor %s: %v", kind, err)
 		}
@@ -77,6 +76,58 @@ func TestSyncCursorRollupKindIndependence(t *testing.T) {
 		}
 		if got != want {
 			t.Errorf("post-advance ResolveSyncCursor %s = %q, want %q (other kinds must stay put)", kind, got, want)
+		}
+	}
+}
+
+func TestSyncCursorHeartRateDailyRollupIndependentFromRawAndWindowed(t *testing.T) {
+	t.Parallel()
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
+		accessToken:        "connect-access-secret",
+		refreshToken:       "connect-refresh-secret",
+		healthUserID:       "111111256096816351",
+		legacyFitbitUserID: "A1B2C3",
+	})
+
+	archive, err := openHealthArchiveWriter(archivePath)
+	if err != nil {
+		t.Fatalf("open writer: %v", err)
+	}
+	defer archive.Close()
+	connection, err := archive.CurrentConnection(context.Background())
+	if err != nil {
+		t.Fatalf("CurrentConnection: %v", err)
+	}
+
+	wantTo := map[syncCursorRollupKind]string{
+		"none":   "2026-01-01T00:00:00Z",
+		"daily":  "2026-02-01",
+		"hourly": "2026-03-01T00:00:00Z",
+	}
+	for kind, cursorTime := range wantTo {
+		key := syncCursorKey{connectionID: connection.ID, dataType: "heart-rate", rollupKind: kind}
+		if err := archive.CommitSyncCursor(context.Background(), key, syncRunOutcomeCompleted, cursorTime, "2026-06-01T00:00:00Z"); err != nil {
+			t.Fatalf("CommitSyncCursor %s: %v", kind, err)
+		}
+	}
+
+	daily := syncCursorKey{connectionID: connection.ID, dataType: "heart-rate", rollupKind: "daily"}
+	if err := archive.CommitSyncCursor(context.Background(), daily, syncRunOutcomeCompleted, "2026-04-01", "2026-06-02T00:00:00Z"); err != nil {
+		t.Fatalf("advance daily: %v", err)
+	}
+	wantTo["daily"] = "2026-04-01"
+
+	for kind, want := range wantTo {
+		key := syncCursorKey{connectionID: connection.ID, dataType: "heart-rate", rollupKind: kind}
+		got, found, err := archive.ResolveSyncCursor(context.Background(), key)
+		if err != nil {
+			t.Fatalf("ResolveSyncCursor %s: %v", kind, err)
+		}
+		if !found {
+			t.Fatalf("ResolveSyncCursor %s: not found", kind)
+		}
+		if got != want {
+			t.Errorf("ResolveSyncCursor %s = %q, want %q", kind, got, want)
 		}
 	}
 }

@@ -5,6 +5,8 @@ description: "Create local config and an empty Health Archive."
 
 Initialise a fresh `gohealthcli` install: write the config file, create the Health Archive on disk, and run the initial schema migration. After `init` finishes the binary is ready for `connect`.
 
+`--timezone <IANA-zone>` sets the persisted calendar for named sync boundaries. It defaults to UTC, and every newly written config records the value explicitly.
+
 `--oauth-client-file` points at a Google OAuth Desktop-app client JSON downloaded from the Google Cloud console (see the [Install](../install.html) page). `--secret-provider` and `--oauth-client-item` are an alternative path that pulls the client from a Secret Provider (for example, 1Password) instead of a file.
 
 `init` never overwrites an existing Health Archive; rerun with a different `--db` to create a second archive in a separate location.
@@ -21,3 +23,4 @@ Initialise a fresh `gohealthcli` install: write the config file, create the Heal
 | `--oauth-client-file` | string | — | OAuth client JSON file reference |
 | `--secret-provider` | string | — | Secret Provider name for OAuth client setup |
 | `--oauth-client-item` | string | — | Secret Provider item name for OAuth client setup |
+| `--timezone` | string | `UTC` | IANA timezone for named sync ranges |

@@ -1,18 +1,13 @@
 package main
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
-	"errors"
-	"flag"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"io"
-	"net/http"
-	"strings"
-	"time"
 )
-
-const googleHealthPairedDevicesURL = "https://health.googleapis.com/v4/users/me/pairedDevices"
 
 // googlePairedDevices is the raw response from users.pairedDevices.list.
 // Keep the JSON body verbatim so the paired_devices Normalized View can
@@ -21,184 +16,97 @@ type googlePairedDevices struct {
 	rawJSON string
 }
 
-// fetchPairedDevices is the seam tests stub. Production uses
-// fetchGooglePairedDevices.
-var fetchPairedDevices = fetchGooglePairedDevices
-
 type devicesResult struct {
-	Status             string                  `json:"status"`
-	ConnectionID       string                  `json:"connection_id,omitempty"`
-	ProviderName       string                  `json:"provider_name,omitempty"`
-	GoogleHealthUserID string                  `json:"google_health_user_id,omitempty"`
-	SnapshotID         int64                   `json:"snapshot_id,omitempty"`
-	DeviceCount        int                     `json:"device_count"`
-	Devices            []devicesResultDevice   `json:"devices,omitempty"`
-	FetchedAt          string                  `json:"fetched_at,omitempty"`
-	Message            string                  `json:"message"`
+	Status             string                `json:"status"`
+	ConnectionID       string                `json:"connection_id,omitempty"`
+	ProviderName       string                `json:"provider_name,omitempty"`
+	GoogleHealthUserID string                `json:"google_health_user_id,omitempty"`
+	SnapshotID         int64                 `json:"snapshot_id,omitempty"`
+	DeviceCount        int                   `json:"device_count"`
+	Devices            []devicesResultDevice `json:"devices,omitempty"`
+	FetchedAt          string                `json:"fetched_at,omitempty"`
+	Message            string                `json:"message"`
+	Remediation        []string              `json:"remediation,omitempty"`
 }
 
 // devicesResultDevice mirrors the columns the paired_devices Normalized
 // View exposes; downstream tooling can read either surface and get the
-// same fields without crossing layers.
+// same fields without crossing layers. Field names follow the real
+// users.pairedDevices.list payload verified against a live archive on
+// 2026-06-11 (#298) — the API wraps the list in `pairedDevices` and
+// emits name/deviceType/batteryStatus/batteryLevel/deviceVersion, not
+// the model/manufacturer/batteryPercentage shape #98 assumed.
 type devicesResultDevice struct {
-	DeviceType        string   `json:"device_type"`
-	Model             string   `json:"model"`
-	Manufacturer      string   `json:"manufacturer"`
-	BatteryPercentage *int     `json:"battery_percentage,omitempty"`
-	LastSyncTime      string   `json:"last_sync_time,omitempty"`
-	Features          []string `json:"features,omitempty"`
+	Name          string `json:"name"`
+	DeviceType    string `json:"device_type"`
+	DeviceVersion string `json:"device_version"`
+	BatteryStatus string `json:"battery_status,omitempty"`
+	BatteryLevel  *int   `json:"battery_level,omitempty"`
 }
 
-func runDevicesWithRuntime(args []string, configPath, archivePath string, mode outputMode, stdout, stderr io.Writer, runtime runtimeAdapters) int {
-	flags := flag.NewFlagSet("devices", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-
-	// devices does no prompting and never blocks on browser input, so
-	// --no-input would imply a behaviour the command does not have.
-	// The Common Flag Set's pre-Parse scan turns a stray --no-input
-	// into a targeted "--no-input is not supported by devices" message
-	// (issue #171), so the help block and the runtime spec agree. The
-	// accepted-flag list is sourced from the same identitySnapshotCommon-
-	// FlagNames helper the registry uses, so runtime parsing and the
-	// published schema cannot drift apart.
-	common := RegisterCommon(flags, CommonFlagSpec{Accepted: identitySnapshotCommonFlagNames()}, CommonFlagValues{
-		ConfigPath:  configPath,
-		ArchivePath: archivePath,
-		JSONOutput:  mode.json,
-		PlainOutput: mode.plain,
-	})
-
-	if err := ParseCommon(flags, common, args); err != nil {
-		return commonFlagsExitCode(flags, err, stdout, stderr)
-	}
-	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
-	if flags.NArg() != 0 {
-		return ReportFailure(FailureReport{
-			Command: "devices",
-			Status:  StatusUnexpectedArgument,
-			Message: fmt.Sprintf("unexpected devices argument: %s", flags.Arg(0)),
-			Mode:    mode,
-		}, stdout, stderr)
-	}
-
-	result, err := devicesSetupWithRuntime(common.ConfigPath, common.ArchivePath, runtime)
-	if err != nil {
-		if result.Status == "" {
-			result.Status = "devices_failed"
+// devicesSnapshotCommand is devices' Identity Snapshot engine spec
+// (issue #282). Its genuinely-unique decoration is the per-device
+// summary parsing: decorate projects the raw users.pairedDevices.list
+// payload into the result's Devices/DeviceCount before the snapshot
+// handoff, so a handoff failure still reports what was fetched. The
+// fetchPayload closure rides the runtime adapters' fetchPairedDevices
+// seam, so tests inject fakes through the adapters value (#283).
+//
+// devices does no prompting and never blocks on browser input, so
+// --no-input would imply a behaviour the command does not have. The
+// Common Flag Set's pre-Parse scan turns a stray --no-input into a
+// targeted "--no-input is not supported by devices" message (issue
+// #171), so the help block and the runtime spec agree. The
+// accepted-flag list is sourced from the same identitySnapshotCommon-
+// FlagNames helper the registry uses, so runtime parsing and the
+// published schema cannot drift apart.
+var devicesSnapshotCommand = identitySnapshotCommandSpec[devicesResult, googlePairedDevices]{
+	command: "devices",
+	commonFlags: func() CommonFlagSpec {
+		return CommonFlagSpec{Accepted: identitySnapshotCommonFlagNames()}
+	},
+	statusFailed:       "devices_failed",
+	statusUnavailable:  "devices_unavailable",
+	statusScopeMissing: "devices_scope_missing",
+	scopeEndpointKey:   "pairedDevices",
+	seedResult: func(connection archived.Connection) devicesResult {
+		return devicesResult{
+			ConnectionID:       connection.ID,
+			ProviderName:       connection.ProviderName,
+			GoogleHealthUserID: connection.GoogleHealthUserID,
 		}
-		result.Message = err.Error()
-		if writeErr := writeDevicesResult(result, mode, stdout); writeErr != nil {
-			return ReportFailure(FailureReport{
-				Command: "devices",
-				Status:  StatusArchiveUnwritable,
-				Message: fmt.Sprintf("write output: %v", writeErr),
-				Mode:    mode,
-			}, stdout, stderr)
-		}
-		return 1
-	}
-	if err := writeDevicesResult(result, mode, stdout); err != nil {
-		return ReportFailure(FailureReport{
-			Command: "devices",
-			Status:  StatusArchiveUnwritable,
-			Message: fmt.Sprintf("write output: %v", err),
-			Mode:    mode,
-		}, stdout, stderr)
-	}
-	return 0
+	},
+	status:         func(result *devicesResult) string { return result.Status },
+	setStatus:      func(result *devicesResult, status string) { result.Status = status },
+	setMessage:     func(result *devicesResult, message string) { result.Message = message },
+	setRemediation: func(result *devicesResult, remediation []string) { result.Remediation = remediation },
+	writeResult:    writeDevicesResult,
+	snapshotKind:   snapshotKindPairedDevices,
+	fetchPayload: func(runtime runtimeAdapters, accessToken string) (googlePairedDevices, error) {
+		return runtime.fetchPairedDevices(accessToken)
+	},
+	payloadRawJSON: func(payload googlePairedDevices) string { return payload.rawJSON },
+	decorate: func(result *devicesResult, payload googlePairedDevices) {
+		result.Devices = parsePairedDeviceSummaries(payload.rawJSON)
+		result.DeviceCount = len(result.Devices)
+	},
+	finishArchived: func(result *devicesResult, snapshotID int64, fetchedAt string) {
+		result.Status = "devices_archived"
+		result.SnapshotID = snapshotID
+		result.FetchedAt = fetchedAt
+		result.Message = fmt.Sprintf("Paired Devices Snapshot archived (%d device(s))", result.DeviceCount)
+	},
 }
 
-func devicesSetupWithRuntime(configPath, archivePath string, runtime runtimeAdapters) (devicesResult, error) {
-	runtime = runtime.withDefaults()
-	config, err := inspectIdentityConfig(configPath, archivePath)
-	if err != nil {
-		return devicesResult{}, fmt.Errorf("config check failed: %w", err)
-	}
-	archive, err := openHealthArchiveConnectionAPI(archivePath)
-	if err != nil {
-		return devicesResult{}, err
-	}
-	archiveClosed := false
-	defer func() {
-		if !archiveClosed {
-			_ = archive.Close()
-		}
-	}()
-	connection, err := archive.CurrentConnection()
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return devicesResult{Status: "devices_unavailable"}, errors.New("no Connection found; run `gohealthcli connect` first")
-		}
-		return devicesResult{}, err
-	}
-	result := devicesResult{
-		ConnectionID:       connection.id,
-		ProviderName:       connection.providerName,
-		GoogleHealthUserID: connection.googleHealthUserID,
-	}
-	// The deepened currentConnectionAccess pattern (PRD #142): wire
-	// WithAutoRefresh when the OAuth client is a file source — the
-	// archive handle openHealthArchiveConnectionAPI returned already
-	// satisfies connectionTokenWriter — so an expired access token
-	// refreshes and persists transparently, the way
-	// sync_run_lifecycle.go already does. The required scope comes
-	// from googleHealthIdentityEndpointScopes["pairedDevices"] so a
-	// slice-2 revision of the catalog (PRD #142 #176) flows into
-	// devices automatically. The scope pre-check happens inside
-	// AccessToken via the errCurrentConnectionScopeMissing sentinel,
-	// so we set the per-command status without re-implementing the
-	// scope-list comparison locally.
-	connectionAccess := newCurrentConnectionAccessWithRuntime(config.credentialStore, connection, []string{configPath, archivePath}, runtime)
-	if config.oauthClient.kind == "file" {
-		connectionAccess = connectionAccess.WithAutoRefresh(config.oauthClient, archive)
-	}
-	accessToken, err := connectionAccess.AccessToken(googleHealthIdentityEndpointScopes["pairedDevices"])
-	if err != nil {
-		if errors.Is(err, errCurrentConnectionScopeMissing) {
-			result.Status = "devices_scope_missing"
-		}
-		return result, err
-	}
-	devices, err := fetchPairedDevices(accessToken)
-	if err != nil {
-		return result, currentConnectionProviderError(err)
-	}
-	result.Devices = parsePairedDeviceSummaries(devices.rawJSON)
-	result.DeviceCount = len(result.Devices)
-	fetchedAt := runtime.now().UTC().Format(time.RFC3339)
-	snapshotID, err := writeIdentitySnapshotHandoff(archive, archivePath, connection, "paired-devices", devices.rawJSON, fetchedAt)
-	archiveClosed = true
-	if err != nil {
-		return result, err
-	}
-	result.Status = "devices_archived"
-	result.SnapshotID = snapshotID
-	result.FetchedAt = fetchedAt
-	result.Message = fmt.Sprintf("Paired Devices Snapshot archived (%d device(s))", result.DeviceCount)
-	return result, nil
-}
-
-func fetchGooglePairedDevices(accessToken string) (googlePairedDevices, error) {
-	request, err := http.NewRequest(http.MethodGet, googleHealthPairedDevicesURL, nil)
+// fetchGooglePairedDevices is a thin call site over the shared
+// Provider GET module (internal/googlehealth, issue #280), which owns the
+// transport behavior: bearer auth, size limit, timeout, typed labeled
+// status errors, JSON validity, and retry/Retry-After. The module
+// value carries the HTTP doer (#281).
+func fetchGooglePairedDevices(get googlehealth.GET, accessToken string) (googlePairedDevices, error) {
+	body, err := get.FetchJSON(context.Background(), googlehealth.PairedDevicesURL, "pairedDevices", accessToken)
 	if err != nil {
 		return googlePairedDevices{}, err
-	}
-	request.Header.Set("Authorization", "Bearer "+accessToken)
-	request.Header.Set("Accept", "application/json")
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		return googlePairedDevices{}, err
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
-		return googlePairedDevices{}, err
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return googlePairedDevices{}, fmt.Errorf("Google Health pairedDevices request failed with HTTP %d", response.StatusCode)
-	}
-	if !json.Valid(body) {
-		return googlePairedDevices{}, errors.New("Google Health pairedDevices response is not valid JSON")
 	}
 	return googlePairedDevices{rawJSON: string(body)}, nil
 }
@@ -210,30 +118,28 @@ func fetchGooglePairedDevices(accessToken string) (googlePairedDevices, error) {
 // for the result's user-facing rendering.
 func parsePairedDeviceSummaries(rawJSON string) []devicesResultDevice {
 	var envelope struct {
-		Devices []struct {
-			DeviceType        string   `json:"deviceType"`
-			Model             string   `json:"model"`
-			Manufacturer      string   `json:"manufacturer"`
-			BatteryPercentage *int     `json:"batteryPercentage,omitempty"`
-			LastSyncTime      string   `json:"lastSyncTime,omitempty"`
-			Features          []string `json:"features,omitempty"`
-		} `json:"devices"`
+		PairedDevices []struct {
+			Name          string `json:"name"`
+			DeviceType    string `json:"deviceType"`
+			DeviceVersion string `json:"deviceVersion"`
+			BatteryStatus string `json:"batteryStatus,omitempty"`
+			BatteryLevel  *int   `json:"batteryLevel,omitempty"`
+		} `json:"pairedDevices"`
 	}
 	if err := json.Unmarshal([]byte(rawJSON), &envelope); err != nil {
 		return nil
 	}
-	if len(envelope.Devices) == 0 {
+	if len(envelope.PairedDevices) == 0 {
 		return nil
 	}
-	result := make([]devicesResultDevice, 0, len(envelope.Devices))
-	for _, device := range envelope.Devices {
+	result := make([]devicesResultDevice, 0, len(envelope.PairedDevices))
+	for _, device := range envelope.PairedDevices {
 		result = append(result, devicesResultDevice{
-			DeviceType:        device.DeviceType,
-			Model:             device.Model,
-			Manufacturer:      device.Manufacturer,
-			BatteryPercentage: device.BatteryPercentage,
-			LastSyncTime:      device.LastSyncTime,
-			Features:          device.Features,
+			Name:          device.Name,
+			DeviceType:    device.DeviceType,
+			DeviceVersion: device.DeviceVersion,
+			BatteryStatus: device.BatteryStatus,
+			BatteryLevel:  device.BatteryLevel,
 		})
 	}
 	return result
@@ -259,27 +165,22 @@ func writeDevicesResult(result devicesResult, mode outputMode, stdout io.Writer)
 		}
 		for index, device := range result.Devices {
 			prefix := fmt.Sprintf("devices.%d.", index)
+			if _, err := fmt.Fprintf(stdout, "%sname: %s\n", prefix, device.Name); err != nil {
+				return err
+			}
 			if _, err := fmt.Fprintf(stdout, "%sdevice_type: %s\n", prefix, device.DeviceType); err != nil {
 				return err
 			}
-			if _, err := fmt.Fprintf(stdout, "%smodel: %s\n", prefix, device.Model); err != nil {
+			if _, err := fmt.Fprintf(stdout, "%sdevice_version: %s\n", prefix, device.DeviceVersion); err != nil {
 				return err
 			}
-			if _, err := fmt.Fprintf(stdout, "%smanufacturer: %s\n", prefix, device.Manufacturer); err != nil {
-				return err
-			}
-			if device.BatteryPercentage != nil {
-				if _, err := fmt.Fprintf(stdout, "%sbattery_percentage: %d\n", prefix, *device.BatteryPercentage); err != nil {
+			if device.BatteryStatus != "" {
+				if _, err := fmt.Fprintf(stdout, "%sbattery_status: %s\n", prefix, device.BatteryStatus); err != nil {
 					return err
 				}
 			}
-			if device.LastSyncTime != "" {
-				if _, err := fmt.Fprintf(stdout, "%slast_sync_time: %s\n", prefix, device.LastSyncTime); err != nil {
-					return err
-				}
-			}
-			if len(device.Features) > 0 {
-				if _, err := fmt.Fprintf(stdout, "%sfeatures: %s\n", prefix, strings.Join(device.Features, ",")); err != nil {
+			if device.BatteryLevel != nil {
+				if _, err := fmt.Fprintf(stdout, "%sbattery_level: %d\n", prefix, *device.BatteryLevel); err != nil {
 					return err
 				}
 			}
@@ -289,8 +190,10 @@ func writeDevicesResult(result devicesResult, mode outputMode, stdout io.Writer)
 				return err
 			}
 		}
-		_, err := fmt.Fprintf(stdout, "message: %s\n", result.Message)
-		return err
+		if _, err := fmt.Fprintf(stdout, "message: %s\n", result.Message); err != nil {
+			return err
+		}
+		return writePlainRemediation(stdout, result.Remediation)
 	}
 	if _, err := fmt.Fprintf(stdout, "Paired Devices: %s\n", result.Status); err != nil {
 		return err
@@ -300,14 +203,15 @@ func writeDevicesResult(result devicesResult, mode outputMode, stdout io.Writer)
 	}
 	for _, device := range result.Devices {
 		battery := "?"
-		if device.BatteryPercentage != nil {
-			battery = fmt.Sprintf("%d%%", *device.BatteryPercentage)
+		switch {
+		case device.BatteryStatus != "" && device.BatteryLevel != nil:
+			battery = fmt.Sprintf("%s (%d%%)", device.BatteryStatus, *device.BatteryLevel)
+		case device.BatteryLevel != nil:
+			battery = fmt.Sprintf("%d%%", *device.BatteryLevel)
+		case device.BatteryStatus != "":
+			battery = device.BatteryStatus
 		}
-		lastSync := device.LastSyncTime
-		if lastSync == "" {
-			lastSync = "?"
-		}
-		if _, err := fmt.Fprintf(stdout, "- %s %s (%s) — battery %s, last sync %s\n", device.Manufacturer, device.Model, device.DeviceType, battery, lastSync); err != nil {
+		if _, err := fmt.Fprintf(stdout, "- %s (%s) — battery %s\n", device.DeviceVersion, device.DeviceType, battery); err != nil {
 			return err
 		}
 	}

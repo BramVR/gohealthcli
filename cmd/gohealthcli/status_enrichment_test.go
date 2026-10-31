@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"strings"
 	"testing"
 )
@@ -11,6 +13,7 @@ import (
 // omitempty contract: a clean archive with no identity_snapshots rows
 // produces no `identity_snapshots_freshness` JSON field at all.
 func TestStatusJSONOmitsFreshnessBlockWhenNoSnapshots(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -31,36 +34,32 @@ func TestStatusJSONOmitsFreshnessBlockWhenNoSnapshots(t *testing.T) {
 // kind plus paired_device_count from the most recent paired-devices
 // snapshot.
 func TestStatusJSONReportsIdentitySnapshotsFreshnessBlock(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect: %d", code)
-	}
 
 	snapshots, err := openIdentitySnapshotArchive(archivePath)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	connection, err := snapshots.CurrentConnection()
+	connection, err := readCurrentConnection(context.Background(), snapshots.db)
 	if err != nil {
 		snapshots.Close()
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
-	if _, err := snapshots.Insert(connection, "profile", `{"name":"users/me/profile"}`, "2026-06-01T00:00:00Z"); err != nil {
+	if _, err := snapshots.Insert(context.Background(), connection, "profile", `{"name":"users/me/profile"}`, "2026-06-01T00:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert profile: %v", err)
 	}
-	if _, err := snapshots.Insert(connection, "settings", `{"unit":"metric"}`, "2026-06-05T00:00:00Z"); err != nil {
+	if _, err := snapshots.Insert(context.Background(), connection, "settings", `{"unit":"metric"}`, "2026-06-05T00:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert settings: %v", err)
 	}
-	if _, err := snapshots.Insert(connection, "paired-devices", `{"devices":[{"model":"Pixel Watch 2"},{"model":"Pixel 8"}]}`, "2026-06-08T00:00:00Z"); err != nil {
+	if _, err := snapshots.Insert(context.Background(), connection, "paired-devices", `{"pairedDevices":[{"deviceVersion":"Pixel Watch 2"},{"deviceVersion":"Pixel 8"}]}`, "2026-06-08T00:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert paired-devices: %v", err)
 	}
@@ -68,7 +67,7 @@ func TestStatusJSONReportsIdentitySnapshotsFreshnessBlock(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"status", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"status", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("status exit = %d, stderr=%s", code, stderr.String())
 	}
@@ -104,21 +103,17 @@ func TestStatusJSONReportsIdentitySnapshotsFreshnessBlock(t *testing.T) {
 // as an error or a missing field — matching the AC bullet "defaulting
 // to 0 when the scopes are not granted".
 func TestStatusJSONReportsTier2CountsAsZeroWhenScopesNotGranted(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect: %d", code)
-	}
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"status", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"status", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("status exit = %d, stderr=%s", code, stderr.String())
 	}
@@ -160,21 +155,17 @@ func TestStatusJSONReportsTier2CountsAsZeroWhenScopesNotGranted(t *testing.T) {
 // (matching the snapshot-freshness omitted-when-missing convention
 // from PR #128).
 func TestStatusPlainOmitsTier2CountsWhenScopesNotGranted(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect: %d", code)
-	}
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"status", "--config", configPath, "--db", archivePath, "--plain"}, stdout, stderr)
+	code := runWithRuntime([]string{"status", "--config", configPath, "--db", archivePath, "--plain"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("status exit = %d, stderr=%s", code, stderr.String())
 	}
@@ -194,26 +185,22 @@ func TestStatusPlainOmitsTier2CountsWhenScopesNotGranted(t *testing.T) {
 // the row counts under the Tier 2 fields. Plain emits one line per
 // Data Type; JSON keeps both fields under `tier_2`.
 func TestStatusReportsTier2CountsWhenScopesGranted(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect: %d", code)
-	}
-	addStoredConnectionScope(t, archivePath, googleHealthEcgReadonlyScope)
-	addStoredConnectionScope(t, archivePath, googleHealthIrnReadonlyScope)
+	addStoredConnectionScope(t, archivePath, googlehealth.ScopeEcgReadonly)
+	addStoredConnectionScope(t, archivePath, googlehealth.ScopeIrnReadonly)
 	insertTier2DataPoint(t, archivePath, "electrocardiogram", "ecg-1")
 	insertTier2DataPoint(t, archivePath, "electrocardiogram", "ecg-2")
 	insertTier2DataPoint(t, archivePath, "irregular-rhythm-notification", "irn-1")
 
 	jsonStdout := new(bytes.Buffer)
 	jsonStderr := new(bytes.Buffer)
-	if code := run([]string{"status", "--config", configPath, "--db", archivePath, "--json"}, jsonStdout, jsonStderr); code != 0 {
+	if code := runWithRuntime([]string{"status", "--config", configPath, "--db", archivePath, "--json"}, jsonStdout, jsonStderr, testRuntime); code != 0 {
 		t.Fatalf("status --json exit = %d, stderr=%s", code, jsonStderr.String())
 	}
 	var got struct {
@@ -242,7 +229,7 @@ func TestStatusReportsTier2CountsWhenScopesGranted(t *testing.T) {
 
 	plainStdout := new(bytes.Buffer)
 	plainStderr := new(bytes.Buffer)
-	if code := run([]string{"status", "--config", configPath, "--db", archivePath, "--plain"}, plainStdout, plainStderr); code != 0 {
+	if code := runWithRuntime([]string{"status", "--config", configPath, "--db", archivePath, "--plain"}, plainStdout, plainStderr, testRuntime); code != 0 {
 		t.Fatalf("status --plain exit = %d, stderr=%s", code, plainStderr.String())
 	}
 	for _, line := range []string{
@@ -262,24 +249,20 @@ func TestStatusReportsTier2CountsWhenScopesGranted(t *testing.T) {
 // fields but flips only `electrocardiogram_scope_granted=true`, and
 // `--plain` emits only the ECG line.
 func TestStatusReportsTier2CountsWithPartialScopeGrant(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect: %d", code)
-	}
 	// Only grant the ECG scope — IRN stays missing.
-	addStoredConnectionScope(t, archivePath, googleHealthEcgReadonlyScope)
+	addStoredConnectionScope(t, archivePath, googlehealth.ScopeEcgReadonly)
 	insertTier2DataPoint(t, archivePath, "electrocardiogram", "ecg-1")
 
 	jsonStdout := new(bytes.Buffer)
 	jsonStderr := new(bytes.Buffer)
-	if code := run([]string{"status", "--config", configPath, "--db", archivePath, "--json"}, jsonStdout, jsonStderr); code != 0 {
+	if code := runWithRuntime([]string{"status", "--config", configPath, "--db", archivePath, "--json"}, jsonStdout, jsonStderr, testRuntime); code != 0 {
 		t.Fatalf("status --json exit = %d, stderr=%s", code, jsonStderr.String())
 	}
 	var got struct {
@@ -308,7 +291,7 @@ func TestStatusReportsTier2CountsWithPartialScopeGrant(t *testing.T) {
 
 	plainStdout := new(bytes.Buffer)
 	plainStderr := new(bytes.Buffer)
-	if code := run([]string{"status", "--config", configPath, "--db", archivePath, "--plain"}, plainStdout, plainStderr); code != 0 {
+	if code := runWithRuntime([]string{"status", "--config", configPath, "--db", archivePath, "--plain"}, plainStdout, plainStderr, testRuntime); code != 0 {
 		t.Fatalf("status --plain exit = %d, stderr=%s", code, plainStderr.String())
 	}
 	if !strings.Contains(plainStdout.String(), "electrocardiogram_event_count: 1") {
@@ -325,12 +308,8 @@ func TestStatusReportsTier2CountsWithPartialScopeGrant(t *testing.T) {
 // (and the existing readStatusDataTypes UNION) reference are filled.
 func insertTier2DataPoint(t *testing.T, archivePath, dataType, resourceID string) {
 	t.Helper()
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
-	if _, err := db.Exec(`INSERT INTO data_points (
+	db := openArchiveForTest(t, archivePath)
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO data_points (
 		provider_name,
 		connection_id,
 		data_type,
@@ -352,27 +331,23 @@ func insertTier2DataPoint(t *testing.T, archivePath, dataType, resourceID string
 // output: `paired_device_count: N` and one
 // `identity_snapshot.<kind>.fetched_at: <ts>` line per known kind.
 func TestStatusPlainReportsSnapshotFreshnessLines(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect: %d", code)
-	}
 	snapshots, err := openIdentitySnapshotArchive(archivePath)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	connection, err := snapshots.CurrentConnection()
+	connection, err := readCurrentConnection(context.Background(), snapshots.db)
 	if err != nil {
 		snapshots.Close()
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
-	if _, err := snapshots.Insert(connection, "paired-devices", `{"devices":[{"model":"Pixel Watch 4"}]}`, "2026-06-08T13:00:00Z"); err != nil {
+	if _, err := snapshots.Insert(context.Background(), connection, "paired-devices", `{"pairedDevices":[{"deviceVersion":"Google Pixel Watch 4"}]}`, "2026-06-08T13:00:00Z"); err != nil {
 		snapshots.Close()
 		t.Fatalf("Insert: %v", err)
 	}
@@ -380,7 +355,7 @@ func TestStatusPlainReportsSnapshotFreshnessLines(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"status", "--config", configPath, "--db", archivePath, "--plain"}, stdout, stderr)
+	code := runWithRuntime([]string{"status", "--config", configPath, "--db", archivePath, "--plain"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("status exit = %d, stderr=%s", code, stderr.String())
 	}

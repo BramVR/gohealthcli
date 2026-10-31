@@ -2,8 +2,11 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,48 +16,45 @@ import (
 // behaviour that --json and --plain modes emit per-device fields, not
 // just an aggregate device_count. The PR's AC requires this so a user
 // can read 'gohealthcli devices' output without also running a SQL
-// query against paired_devices.
+// query against paired_devices. The fixtures use the real
+// users.pairedDevices.list shape verified against a live archive on
+// 2026-06-11 (#298): the list lives under `pairedDevices` and each
+// device carries name / deviceType / batteryStatus / batteryLevel /
+// deviceVersion.
 func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 	// PRD #142 slice 2 / #176: pairedDevices now requires
 	// settings.readonly, so simulate the user having run
 	// `connect --add-scopes settings`.
-	addStoredConnectionScope(t, archivePath, googleHealthSettingsReadonlyScope)
+	addStoredConnectionScope(t, archivePath, googlehealth.ScopeSettingsReadonly)
 
-	originalFetchPairedDevices := fetchPairedDevices
-	fetchPairedDevices = func(string) (googlePairedDevices, error) {
+	testRuntime.fetchPairedDevices = func(string) (googlePairedDevices, error) {
 		return googlePairedDevices{
-			rawJSON: `{"devices":[
-				{"deviceType":"WATCH","model":"Pixel Watch 2","manufacturer":"Google","batteryPercentage":76,"lastSyncTime":"2026-06-08T13:00:00Z","features":["HR","GPS"]},
-				{"deviceType":"PHONE","model":"Pixel 8","manufacturer":"Google","batteryPercentage":42,"lastSyncTime":"2026-06-08T12:30:00Z","features":["STEPS"]}
+			rawJSON: `{"pairedDevices":[
+				{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"TRACKER","batteryStatus":"Medium","batteryLevel":50,"deviceVersion":"Google Pixel Watch 4"},
+				{"name":"users/111111256096816351/pairedDevices/1122334455","deviceType":"SCALE","batteryStatus":"High","deviceVersion":"Withings Body+"}
 			]}`,
 		}, nil
 	}
-	t.Cleanup(func() { fetchPairedDevices = originalFetchPairedDevices })
 
 	jsonOut := new(bytes.Buffer)
-	if code := run([]string{"devices", "--config", configPath, "--db", archivePath, "--json"}, jsonOut, new(bytes.Buffer)); code != 0 {
+	if code := runWithRuntime([]string{"devices", "--config", configPath, "--db", archivePath, "--json"}, jsonOut, new(bytes.Buffer), testRuntime); code != 0 {
 		t.Fatalf("devices --json exit code = %d, stdout=%s", code, jsonOut.String())
 	}
 	var jsonResult struct {
 		DeviceCount int `json:"device_count"`
 		Devices     []struct {
-			DeviceType        string  `json:"device_type"`
-			Model             string  `json:"model"`
-			Manufacturer      string  `json:"manufacturer"`
-			BatteryPercentage *int    `json:"battery_percentage"`
-			LastSyncTime      string  `json:"last_sync_time"`
-			Features          []string `json:"features"`
+			Name          string `json:"name"`
+			DeviceType    string `json:"device_type"`
+			DeviceVersion string `json:"device_version"`
+			BatteryStatus string `json:"battery_status"`
+			BatteryLevel  *int   `json:"battery_level"`
 		} `json:"devices"`
 	}
 	if err := json.Unmarshal(jsonOut.Bytes(), &jsonResult); err != nil {
@@ -66,29 +66,35 @@ func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
 	if len(jsonResult.Devices) != 2 {
 		t.Fatalf("Devices len = %d, want 2 (per-device fields must surface in --json)", len(jsonResult.Devices))
 	}
-	if jsonResult.Devices[0].Model != "Pixel Watch 2" {
-		t.Fatalf("Devices[0].Model = %q, want Pixel Watch 2", jsonResult.Devices[0].Model)
+	if jsonResult.Devices[0].DeviceVersion != "Google Pixel Watch 4" {
+		t.Fatalf("Devices[0].DeviceVersion = %q, want Google Pixel Watch 4", jsonResult.Devices[0].DeviceVersion)
 	}
-	if jsonResult.Devices[0].BatteryPercentage == nil || *jsonResult.Devices[0].BatteryPercentage != 76 {
-		t.Fatalf("Devices[0].BatteryPercentage missing or wrong; want 76")
+	if jsonResult.Devices[0].Name != "users/111111256096816351/pairedDevices/2978855095" {
+		t.Fatalf("Devices[0].Name = %q, want the upstream resource name", jsonResult.Devices[0].Name)
+	}
+	if jsonResult.Devices[0].BatteryLevel == nil || *jsonResult.Devices[0].BatteryLevel != 50 {
+		t.Fatalf("Devices[0].BatteryLevel missing or wrong; want 50")
+	}
+	if jsonResult.Devices[1].BatteryLevel != nil {
+		t.Fatalf("Devices[1].BatteryLevel = %d, want omitted when upstream has none", *jsonResult.Devices[1].BatteryLevel)
 	}
 
 	plainOut := new(bytes.Buffer)
-	fetchPairedDevices = func(string) (googlePairedDevices, error) {
+	testRuntime.fetchPairedDevices = func(string) (googlePairedDevices, error) {
 		return googlePairedDevices{
-			rawJSON: `{"devices":[{"deviceType":"WATCH","model":"Pixel Watch 2","manufacturer":"Google","batteryPercentage":76,"lastSyncTime":"2026-06-08T13:00:00Z","features":["HR","GPS"]}]}`,
+			rawJSON: `{"pairedDevices":[{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"TRACKER","batteryStatus":"Medium","batteryLevel":50,"deviceVersion":"Google Pixel Watch 4"}]}`,
 		}, nil
 	}
-	if code := run([]string{"devices", "--config", configPath, "--db", archivePath, "--plain"}, plainOut, new(bytes.Buffer)); code != 0 {
+	if code := runWithRuntime([]string{"devices", "--config", configPath, "--db", archivePath, "--plain"}, plainOut, new(bytes.Buffer), testRuntime); code != 0 {
 		t.Fatalf("devices --plain exit code = %d, stdout=%s", code, plainOut.String())
 	}
 	want := []string{
-		"devices.0.device_type: WATCH",
-		"devices.0.model: Pixel Watch 2",
-		"devices.0.manufacturer: Google",
-		"devices.0.battery_percentage: 76",
-		"devices.0.last_sync_time: 2026-06-08T13:00:00Z",
-		"devices.0.features: HR,GPS",
+		"device_count: 1",
+		"devices.0.name: users/111111256096816351/pairedDevices/2978855095",
+		"devices.0.device_type: TRACKER",
+		"devices.0.device_version: Google Pixel Watch 4",
+		"devices.0.battery_status: Medium",
+		"devices.0.battery_level: 50",
 	}
 	for _, line := range want {
 		if !strings.Contains(plainOut.String(), line) {
@@ -101,55 +107,47 @@ func TestDevicesCommandRendersPerDeviceFieldsInJSONAndPlain(t *testing.T) {
 // behaviour: the paired_devices view returns one row per device from
 // the latest paired-devices snapshot, with the contracted columns.
 func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	t.Parallel()
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	archive, err := openIdentitySnapshotArchive(archivePath)
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	connection, err := archive.CurrentConnection()
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		archive.Close()
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
-	payload := `{"devices":[
-		{"deviceType":"WATCH","model":"Pixel Watch 2","manufacturer":"Google","batteryPercentage":76,"lastSyncTime":"2026-06-08T13:00:00Z","features":["HR","GPS"]},
-		{"deviceType":"PHONE","model":"Pixel 8","manufacturer":"Google","batteryPercentage":42,"lastSyncTime":"2026-06-08T12:30:00Z","features":["STEPS"]}
+	payload := `{"pairedDevices":[
+		{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"TRACKER","batteryStatus":"Medium","batteryLevel":50,"deviceVersion":"Google Pixel Watch 4"},
+		{"name":"users/111111256096816351/pairedDevices/1122334455","deviceType":"SCALE","batteryStatus":"High","deviceVersion":"Withings Body+"}
 	]}`
-	if _, err := archive.Insert(connection, "paired-devices", payload, "2026-06-08T13:00:00Z"); err != nil {
+	if _, err := archive.Insert(context.Background(), connection, "paired-devices", payload, "2026-06-08T13:00:00Z"); err != nil {
 		archive.Close()
 		t.Fatalf("Insert: %v", err)
 	}
 	archive.Close()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
-	rows, err := db.Query(`SELECT device_type, model, manufacturer, battery_percentage, last_sync_time FROM paired_devices ORDER BY model`)
+	db := openArchiveForTest(t, archivePath)
+	rows, err := db.QueryContext(context.Background(), `SELECT name, device_type, device_version, battery_status, battery_level FROM paired_devices ORDER BY device_version`)
 	if err != nil {
 		t.Fatalf("query paired_devices: %v", err)
 	}
 	defer rows.Close()
 	type devRow struct {
-		typ, model, manufacturer, lastSync string
-		battery                            sql.NullInt64
+		name, typ, version, batteryStatus string
+		batteryLevel                      sql.NullInt64
 	}
 	var got []devRow
 	for rows.Next() {
 		var row devRow
-		if err := rows.Scan(&row.typ, &row.model, &row.manufacturer, &row.battery, &row.lastSync); err != nil {
+		if err := rows.Scan(&row.name, &row.typ, &row.version, &row.batteryStatus, &row.batteryLevel); err != nil {
 			t.Fatalf("scan: %v", err)
 		}
 		got = append(got, row)
@@ -157,52 +155,56 @@ func TestPairedDevicesViewExplodesDevicesViaJSONEach(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("rows = %d, want 2", len(got))
 	}
-	if got[0].model != "Pixel 8" || got[1].model != "Pixel Watch 2" {
-		t.Fatalf("models = (%q, %q), want (Pixel 8, Pixel Watch 2)", got[0].model, got[1].model)
+	if got[0].version != "Google Pixel Watch 4" || got[1].version != "Withings Body+" {
+		t.Fatalf("device_versions = (%q, %q), want (Google Pixel Watch 4, Withings Body+)", got[0].version, got[1].version)
 	}
-	if got[1].battery.Int64 != 76 {
-		t.Fatalf("Pixel Watch 2 battery = %d, want 76", got[1].battery.Int64)
+	if got[0].name != "users/111111256096816351/pairedDevices/2978855095" {
+		t.Fatalf("name = %q, want the upstream resource name", got[0].name)
+	}
+	if !got[0].batteryLevel.Valid || got[0].batteryLevel.Int64 != 50 {
+		t.Fatalf("Pixel Watch 4 battery_level = %v, want 50", got[0].batteryLevel)
+	}
+	if got[1].batteryLevel.Valid {
+		t.Fatalf("Withings Body+ battery_level = %d, want NULL when upstream has none", got[1].batteryLevel.Int64)
+	}
+	if got[1].batteryStatus != "High" {
+		t.Fatalf("Withings Body+ battery_status = %q, want High", got[1].batteryStatus)
 	}
 }
 
 // TestPairedDevicesViewHandlesEmptyDeviceList pins the edge case where
 // the latest paired-devices snapshot has no devices: the view returns
-// zero rows, not an error.
+// zero rows, not an error. Covers both an explicit empty list and a
+// bare {} payload (the key is omitted upstream when nothing is paired).
 func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	t.Parallel()
+	_, archivePath, _ := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	archive, err := openIdentitySnapshotArchive(archivePath)
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	connection, err := archive.CurrentConnection()
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
 		archive.Close()
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
-	if _, err := archive.Insert(connection, "paired-devices", `{"devices":[]}`, "2026-06-08T13:00:00Z"); err != nil {
-		archive.Close()
-		t.Fatalf("Insert: %v", err)
+	for _, payload := range []string{`{"pairedDevices":[]}`, `{}`} {
+		if _, err := archive.Insert(context.Background(), connection, "paired-devices", payload, "2026-06-08T13:00:00Z"); err != nil {
+			archive.Close()
+			t.Fatalf("Insert %s: %v", payload, err)
+		}
 	}
 	archive.Close()
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM paired_devices`).Scan(&count); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM paired_devices`).Scan(&count); err != nil {
 		t.Fatalf("query paired_devices: %v", err)
 	}
 	if count != 0 {
@@ -215,33 +217,27 @@ func TestPairedDevicesViewHandlesEmptyDeviceList(t *testing.T) {
 // users.pairedDevices.list and archives the payload through the
 // Identity Snapshot Archive with kind='paired-devices'.
 func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 	// PRD #142 slice 2 / #176: pairedDevices now requires
 	// settings.readonly, so simulate the user having run
 	// `connect --add-scopes settings`.
-	addStoredConnectionScope(t, archivePath, googleHealthSettingsReadonlyScope)
+	addStoredConnectionScope(t, archivePath, googlehealth.ScopeSettingsReadonly)
 
-	originalFetchPairedDevices := fetchPairedDevices
-	fetchPairedDevices = func(string) (googlePairedDevices, error) {
+	testRuntime.fetchPairedDevices = func(string) (googlePairedDevices, error) {
 		return googlePairedDevices{
-			rawJSON: `{"devices":[{"deviceType":"WATCH","model":"Pixel Watch 2","manufacturer":"Google","batteryPercentage":76,"lastSyncTime":"2026-06-08T13:00:00Z","features":["HR","GPS"]}]}`,
+			rawJSON: `{"pairedDevices":[{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"TRACKER","batteryStatus":"Medium","batteryLevel":50,"deviceVersion":"Google Pixel Watch 4"}]}`,
 		}, nil
 	}
-	t.Cleanup(func() { fetchPairedDevices = originalFetchPairedDevices })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"devices", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"devices", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code != 0 {
 		t.Fatalf("devices exit code = %d, stderr=%s, stdout=%s", code, stderr.String(), stdout.String())
 	}
@@ -251,13 +247,13 @@ func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
 		t.Fatalf("open identity snapshot archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := readCurrentConnection(context.Background(), archive.db)
 	if err != nil {
-		t.Fatalf("CurrentConnection: %v", err)
+		t.Fatalf("read current Connection: %v", err)
 	}
-	latest, found, err := archive.Latest(connection, "paired-devices")
-	if err != nil || !found {
-		t.Fatalf("Latest(paired-devices): found=%v err=%v", found, err)
+	latest, found := latestIdentitySnapshotRow(t, archive.db, connection.ID, "paired-devices")
+	if !found {
+		t.Fatal("latest paired-devices snapshot: not found")
 	}
 	if latest.Kind != "paired-devices" {
 		t.Fatalf("Kind = %q, want paired-devices", latest.Kind)
@@ -273,31 +269,27 @@ func TestDevicesCommandArchivesSnapshotWithKindPairedDevices(t *testing.T) {
 // the command exits non-zero, sets result.Status to
 // "devices_scope_missing", names the recovery `gohealthcli connect`
 // command in result.Message, and crucially does NOT issue any HTTP
-// request to googleHealthPairedDevicesURL — proving the scope
+// request to googlehealth.PairedDevicesURL — proving the scope
 // pre-check happens before the upstream call. The test reads the
-// required scope from the same googleHealthIdentityEndpointScopes
+// required scope from the same googlehealth.IdentityEndpointScopes
 // catalog the production code uses so a future slice-2 revision of
 // the catalog automatically updates what gets stripped from the
 // stored Connection, keeping the test honest without manual edits.
 func TestDevicesCommandFailsFastWhenScopeMissing(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	// Strip every scope the catalog ties to pairedDevices from the
 	// stored Connection so AccessToken's scope pre-check fails. Using
 	// the same catalog key the production code reads means this test
 	// keeps pinning the right behaviour after slice 2 rewrites the
 	// catalog entry.
-	required := googleHealthIdentityEndpointScopes["pairedDevices"]
+	required := googlehealth.IdentityEndpointScopes("pairedDevices")
 	requiredSet := make(map[string]struct{}, len(required))
 	for _, scope := range required {
 		requiredSet[scope] = struct{}{}
@@ -316,16 +308,14 @@ func TestDevicesCommandFailsFastWhenScopeMissing(t *testing.T) {
 	// the bare HTTP 403 PRD #142 documents only happens because the
 	// pre-check is absent, so guarding the seam is what proves the
 	// migration shut that path down.
-	originalFetchPairedDevices := fetchPairedDevices
-	fetchPairedDevices = func(string) (googlePairedDevices, error) {
+	testRuntime.fetchPairedDevices = func(string) (googlePairedDevices, error) {
 		t.Fatal("fetchPairedDevices called despite missing scope")
 		return googlePairedDevices{}, nil
 	}
-	t.Cleanup(func() { fetchPairedDevices = originalFetchPairedDevices })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"devices", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"devices", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code == 0 {
 		t.Fatalf("devices exit code = %d, want non-zero; stdout=%s", code, stdout.String())
 	}
@@ -350,6 +340,10 @@ func TestDevicesCommandFailsFastWhenScopeMissing(t *testing.T) {
 		if !strings.Contains(result.Message, wantHint) {
 			t.Fatalf("result.Message = %q, want it to name %q", result.Message, wantHint)
 		}
+		wantRemediation := []string{"gohealthcli doctor", "gohealthcli connect --add-scopes " + strings.Join(keywords, ",")}
+		if !slices.Equal(result.Remediation, wantRemediation) {
+			t.Fatalf("result.Remediation = %#v, want %#v", result.Remediation, wantRemediation)
+		}
 	}
 }
 
@@ -361,6 +355,7 @@ func TestDevicesCommandFailsFastWhenScopeMissing(t *testing.T) {
 // already returns), and exits 0 with status "devices_archived" plus
 // a new identity_snapshots row whose snapshot_kind = 'paired-devices'.
 func TestDevicesCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	connectAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -371,13 +366,11 @@ func TestDevicesCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	// PRD #142 slice 2 / #176: pairedDevices now requires
 	// settings.readonly, so simulate the user having run
 	// `connect --add-scopes settings`.
-	addStoredConnectionScope(t, archivePath, googleHealthSettingsReadonlyScope)
+	addStoredConnectionScope(t, archivePath, googlehealth.ScopeSettingsReadonly)
 	// Force the stored access-token expires_at into the past so
 	// AccessToken must take the auto-refresh path.
 	setConnectionTokenExpiry(t, archivePath, "2026-01-01T00:00:00Z")
@@ -389,35 +382,20 @@ func TestDevicesCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// once" contract is guarded against a regression where retries
 	// would silently double-rotate the stored token.
 	refreshCalls := 0
-	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-		refreshCalls++
-		if refreshToken != "connect-refresh-secret" {
-			t.Fatalf("refresh token = %q, want connect-refresh-secret", refreshToken)
-		}
-		return oauthTokenResponse{
-			accessToken:  "rotated-access-secret",
-			refreshToken: "connect-refresh-secret",
-			tokenType:    "Bearer",
-			scopes:       fallbackScopes,
-			expiresAt:    refreshedExpiresAt,
-			rawTokenMaterialObject: map[string]any{
-				"access_token":  "rotated-access-secret",
-				"refresh_token": "connect-refresh-secret",
-				"token_type":    "Bearer",
-				"expires_in":    float64(3600),
-			},
-		}, nil
-	}
+	bindRefreshOAuthTokenFake(t, &testRuntime, fakeRefreshConfig{
+		wantRefreshToken: "connect-refresh-secret",
+		accessToken:      "rotated-access-secret",
+		expiresAt:        refreshedExpiresAt,
+		calls:            &refreshCalls,
+	})
 
-	originalFetchPairedDevices := fetchPairedDevices
 	var calledWithToken string
-	fetchPairedDevices = func(accessToken string) (googlePairedDevices, error) {
+	testRuntime.fetchPairedDevices = func(accessToken string) (googlePairedDevices, error) {
 		calledWithToken = accessToken
 		return googlePairedDevices{
-			rawJSON: `{"devices":[{"deviceType":"WATCH","model":"Pixel Watch 2","manufacturer":"Google","batteryPercentage":76,"lastSyncTime":"2026-06-08T13:00:00Z","features":["HR","GPS"]}]}`,
+			rawJSON: `{"pairedDevices":[{"name":"users/111111256096816351/pairedDevices/2978855095","deviceType":"TRACKER","batteryStatus":"Medium","batteryLevel":50,"deviceVersion":"Google Pixel Watch 4"}]}`,
 		}, nil
 	}
-	t.Cleanup(func() { fetchPairedDevices = originalFetchPairedDevices })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
@@ -450,13 +428,9 @@ func TestDevicesCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// A new identity_snapshots row with snapshot_kind = 'paired-devices'
 	// must exist so the auto-refresh path doesn't silently skip the
 	// archive write the AC requires.
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var snapshotCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM identity_snapshots WHERE snapshot_kind = 'paired-devices'`).Scan(&snapshotCount); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM identity_snapshots WHERE snapshot_kind = 'paired-devices'`).Scan(&snapshotCount); err != nil {
 		t.Fatalf("count paired-devices snapshots: %v", err)
 	}
 	if snapshotCount != 1 {
@@ -492,6 +466,7 @@ func connectionGrantedScopes(t *testing.T, archivePath string) []string {
 // have. Passing it now produces the Common Flag Set's targeted
 // "--no-input is not supported by devices" rejection and exits non-zero.
 func TestDevicesRejectsNoInputFlag(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t, "devices", "--no-input")
 	if code == 0 {
 		t.Fatalf("exit code = 0, want non-zero; stdout=%q stderr=%q", stdout.String(), stderr.String())

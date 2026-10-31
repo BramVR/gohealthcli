@@ -8,10 +8,11 @@ import (
 )
 
 func TestRunSchemaEmitsValidDocument(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if code := runSchema(nil, stdout, stderr); code != 0 {
-		t.Fatalf("runSchema exit code = %d, want 0; stderr=%q", code, stderr.String())
+	if code := runSchemaWithRegistry(nil, commands, stdout, stderr, nil); code != 0 {
+		t.Fatalf("runSchemaWithRegistry exit code = %d, want 0; stderr=%q", code, stderr.String())
 	}
 	var doc schemaDocument
 	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
@@ -29,10 +30,11 @@ func TestRunSchemaEmitsValidDocument(t *testing.T) {
 }
 
 func TestRunSchemaIncludesEveryUserFacingSubcommand(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if code := runSchema(nil, stdout, stderr); code != 0 {
-		t.Fatalf("runSchema exit code = %d; stderr=%q", code, stderr.String())
+	if code := runSchemaWithRegistry(nil, commands, stdout, stderr, nil); code != 0 {
+		t.Fatalf("runSchemaWithRegistry exit code = %d; stderr=%q", code, stderr.String())
 	}
 	var doc schemaDocument
 	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
@@ -46,7 +48,7 @@ func TestRunSchemaIncludesEveryUserFacingSubcommand(t *testing.T) {
 		}
 	}
 
-	want := []string{"init", "doctor", "connect", "identity", "profile", "settings", "devices", "irn-profile", "describe-schema", "sync", "status", "query", "export", "raw"}
+	want := []string{"init", "doctor", "catalog", "connect", "identity", "profile", "settings", "devices", "irn-profile", "describe-schema", "sync", "backup", "status", "query", "export", "route", "raw", "completion"}
 	for _, name := range want {
 		if !visible[name] {
 			t.Errorf("registry missing user-facing command %q", name)
@@ -57,11 +59,61 @@ func TestRunSchemaIncludesEveryUserFacingSubcommand(t *testing.T) {
 	}
 }
 
-func TestRunSchemaIncludesDoctor(t *testing.T) {
+func TestRunSchemaIncludesBackupRecoveryContract(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if code := runSchema(nil, stdout, stderr); code != 0 {
-		t.Fatalf("runSchema exit code = %d, want 0; stderr=%q", code, stderr.String())
+	if code := runSchemaWithRegistry(nil, commands, stdout, stderr, nil); code != 0 {
+		t.Fatalf("runSchemaWithRegistry exit code = %d; stderr=%q", code, stderr.String())
+	}
+	var doc schemaDocument
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+		t.Fatalf("schema output is not valid JSON: %v", err)
+	}
+
+	var backup *commandDef
+	for index := range doc.Commands {
+		if doc.Commands[index].Name == "backup" {
+			backup = &doc.Commands[index]
+			break
+		}
+	}
+	if backup == nil {
+		t.Fatal("schema document does not contain backup entry")
+	}
+	for _, phrase := range []string{
+		"`backup init`",
+		"`backup push`",
+		"`backup pull`",
+		"`backup status`",
+		"`--no-push`",
+		"fresh Health Archive path",
+		"Data Point Attachment",
+		"`doctor`",
+		"Credential Store token material",
+		"OAuth client secrets",
+		"Secret Provider contents",
+		"cannot be restored",
+		"cleartext metadata",
+	} {
+		if !strings.Contains(backup.Long, phrase) {
+			t.Errorf("backup.long missing %q", phrase)
+		}
+	}
+	gotFlags := flagNames(backup.Flags)
+	for _, want := range []string{"config", "db", "json", "plain", "repo", "remote", "identity", "recipient", "no-push"} {
+		if !contains(gotFlags, want) {
+			t.Errorf("backup flags missing %q; got %v", want, gotFlags)
+		}
+	}
+}
+
+func TestRunSchemaIncludesDoctor(t *testing.T) {
+	t.Parallel()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if code := runSchemaWithRegistry(nil, commands, stdout, stderr, nil); code != 0 {
+		t.Fatalf("runSchemaWithRegistry exit code = %d, want 0; stderr=%q", code, stderr.String())
 	}
 	var doc schemaDocument
 	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
@@ -77,6 +129,7 @@ func TestRunSchemaIncludesDoctor(t *testing.T) {
 	}
 	if doctor == nil {
 		t.Fatalf("schema document does not contain doctor entry")
+		return
 	}
 	if doctor.Hidden {
 		t.Errorf("doctor.hidden = true, want false")
@@ -97,10 +150,11 @@ func TestRunSchemaIncludesDoctor(t *testing.T) {
 }
 
 func TestRunSchemaIncludesHiddenSchemaCommand(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if code := runSchema(nil, stdout, stderr); code != 0 {
-		t.Fatalf("runSchema exit code = %d, want 0; stderr=%q", code, stderr.String())
+	if code := runSchemaWithRegistry(nil, commands, stdout, stderr, nil); code != 0 {
+		t.Fatalf("runSchemaWithRegistry exit code = %d, want 0; stderr=%q", code, stderr.String())
 	}
 	var doc schemaDocument
 	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
@@ -119,10 +173,11 @@ func TestRunSchemaIncludesHiddenSchemaCommand(t *testing.T) {
 }
 
 func TestRunSchemaRejectsPositionalArgs(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if code := runSchema([]string{"surprise"}, stdout, stderr); code == 0 {
-		t.Fatalf("runSchema with unexpected positional should fail; stdout=%q", stdout.String())
+	if code := runSchemaWithRegistry([]string{"surprise"}, commands, stdout, stderr, nil); code == 0 {
+		t.Fatalf("runSchemaWithRegistry with unexpected positional should fail; stdout=%q", stdout.String())
 	}
 	if !strings.Contains(stderr.String(), "unexpected schema argument") {
 		t.Errorf("stderr should mention the unexpected argument; got %q", stderr.String())
@@ -130,10 +185,11 @@ func TestRunSchemaRejectsPositionalArgs(t *testing.T) {
 }
 
 func TestRunSchemaRejectsNonJSONMode(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if code := runSchema([]string{"--json=false"}, stdout, stderr); code == 0 {
-		t.Fatalf("runSchema with --json=false should fail; stdout=%q", stdout.String())
+	if code := runSchemaWithRegistry([]string{"--json=false"}, commands, stdout, stderr, nil); code == 0 {
+		t.Fatalf("runSchemaWithRegistry with --json=false should fail; stdout=%q", stdout.String())
 	}
 	if !strings.Contains(stderr.String(), "supports --json output only") {
 		t.Errorf("stderr should mention the unsupported mode; got %q", stderr.String())

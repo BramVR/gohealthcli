@@ -1,13 +1,13 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	_ "embed"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
-	"sort"
 )
 
 // curatedSchemaCatalogJSON is the hand-curated narrative catalog
@@ -19,7 +19,20 @@ import (
 //go:embed llm-schema.json
 var curatedSchemaCatalogJSON []byte
 
-func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string, configPathExplicit, archivePathExplicit bool, mode outputMode, stdout, stderr io.Writer, _ runtimeAdapters) int {
+// describeSchemaCommonFlagUsageOverrides is describe-schema's divergence
+// from the canonical commonFlagsSpec wording, declared once: the
+// registry entry (commands.go, via withCommonOverrides) and the runtime
+// CommonFlagSpec below both consume this map, so `describe-schema
+// --help`, the `schema --json` contract, and the generated
+// docs/commands/describe-schema.md page render identical strings by
+// construction (issue #76).
+var describeSchemaCommonFlagUsageOverrides = map[string]string{
+	"json":     "accepted for uniformity; the JSON catalog is the success-mode default",
+	"plain":    "no-op (schema catalog has no plain shape); emits JSON catalog + stderr note",
+	"no-input": "accepted for uniformity; describe-schema does no prompting",
+}
+
+func runDescribeSchemaWithRuntime(args []string, globals CommonFlagValues, stdout, stderr io.Writer, runtime runtimeAdapters) int {
 	flags := flag.NewFlagSet("describe-schema", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -34,29 +47,29 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 	// `// note: …` comment line on stderr so the catalog itself stays
 	// uncluttered for users redirecting stdout to a file. `--no-input` is
 	// likewise accepted but ignored — describe-schema does no prompting.
-	common := RegisterCommon(flags, AllCommonFlagsSpec(), CommonFlagValues{
-		ConfigPath:          configPath,
-		ArchivePath:         archivePath,
-		JSONOutput:          mode.json,
-		PlainOutput:         mode.plain,
-		ArchivePathExplicit: archivePathExplicit,
-		ConfigPathExplicit:  configPathExplicit,
+	// The usage strings for the describe-schema-specific shared-flag
+	// semantics come from describeSchemaCommonFlagUsageOverrides — the
+	// same map the registry entry renders into the published schema — so
+	// `describe-schema --help` reflects the documented no-op /
+	// accepted-but-ignored semantics instead of the generic "write stable
+	// JSON to stdout" wording, without a second hand-typed copy.
+	spec := AllCommonFlagsSpec()
+	spec.UsageOverrides = describeSchemaCommonFlagUsageOverrides
+	common := RegisterCommon(flags, spec, CommonFlagValues{
+		ConfigPath:          globals.ConfigPath,
+		ArchivePath:         globals.ArchivePath,
+		JSONOutput:          globals.JSONOutput,
+		PlainOutput:         globals.PlainOutput,
+		ArchivePathExplicit: globals.ArchivePathExplicit,
+		ConfigPathExplicit:  globals.ConfigPathExplicit,
 	})
-	// Override the generic CommonFlagSet Usage strings for the flags
-	// whose meaning is describe-schema-specific. `describe-schema --help`
-	// now reflects the documented no-op / accepted-but-ignored semantics
-	// instead of the misleading "write stable JSON to stdout" wording
-	// inherited from the shared module.
-	flags.Lookup("json").Usage = "accepted for uniformity; the JSON catalog is the success-mode default"
-	flags.Lookup("plain").Usage = "no-op (schema catalog has no plain shape); emits JSON catalog + stderr note"
-	flags.Lookup("no-input").Usage = "accepted for uniformity; describe-schema does no prompting"
 	// --sql is a describe-schema-specific override that wins over the JSON
 	// catalog default. We register it AFTER RegisterCommon so the Common
 	// Flag Set seam keeps owning the shared invariants; the override is
 	// applied locally below.
-	describeSQL := flags.Bool("sql", false, "emit live DDL from sqlite_master instead of the JSON catalog")
+	describeSQL := flags.Bool("sql", false, "dump live DDL from sqlite_master (excludes internal sqlite_* objects)")
 
-	if err := ParseCommon(flags, common, args); err != nil {
+	if err := ParseCommon(flags, common, args, runtime.observeSubcommandFlagSet); err != nil {
 		return commonFlagsExitCode(flags, err, stdout, stderr)
 	}
 	// describe-schema's success output is always the JSON catalog unless
@@ -65,7 +78,7 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 	// honours the global outputMode so the unified failure contract
 	// (slice 7, #178) applies uniformly: `--json describe-schema bogus`
 	// gets the JSON envelope on stdout like every other subcommand.
-	mode = outputMode{json: common.JSONOutput, plain: common.PlainOutput}
+	mode := commonOutputMode(*common)
 	if flags.NArg() != 0 {
 		return ReportFailure(FailureReport{
 			Command: "describe-schema",
@@ -79,7 +92,11 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 	if err != nil {
 		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
-	if err := migrateArchiveIfNeeded(resolvedPath); err != nil {
+	// context.Background(): describe-schema is a synchronous read command
+	// with no cancellation path today; the context keeps the SQLite calls
+	// on the Context API (#305) without changing behavior.
+	ctx := context.Background()
+	if err := migrateArchiveIfNeeded(ctx, resolvedPath); err != nil {
 		return ReportFailure(FailureReport{Command: "describe-schema", Status: StatusOperationFailed, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	db, err := openArchiveReadOnly(resolvedPath)
@@ -102,7 +119,7 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 	}
 
 	if *describeSQL {
-		if err := writeSchemaSQL(db, stdout); err != nil {
+		if err := writeSchemaSQL(ctx, db, stdout); err != nil {
 			return ReportFailure(FailureReport{Command: "describe-schema --sql", Status: StatusArchiveUnwritable, Message: err.Error(), Mode: mode}, stdout, stderr)
 		}
 		return 0
@@ -110,7 +127,7 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 	// JSON catalog is the success-mode default; --sql above is the only
 	// override. The Common Flag Set `--json` flag does not change
 	// behaviour here — it's accepted for the uniform-flag contract.
-	if err := writeSchemaJSON(db, stdout); err != nil {
+	if err := writeSchemaJSON(ctx, db, stdout); err != nil {
 		return ReportFailure(FailureReport{Command: "describe-schema --json", Status: StatusArchiveUnwritable, Message: err.Error(), Mode: mode}, stdout, stderr)
 	}
 	return 0
@@ -119,8 +136,8 @@ func runDescribeSchemaWithRuntime(args []string, configPath, archivePath string,
 // writeSchemaSQL dumps DDL from sqlite_master in name order. Internal
 // sqlite_* objects (the autoincrement sequence table, etc.) are
 // excluded so the output is what gohealthcli authored.
-func writeSchemaSQL(db *sql.DB, stdout io.Writer) error {
-	rows, err := db.Query(`SELECT type, name, sql FROM sqlite_master
+func writeSchemaSQL(ctx context.Context, db *sql.DB, stdout io.Writer) error {
+	rows, err := db.QueryContext(ctx, `SELECT type, name, sql FROM sqlite_master
 		WHERE name NOT LIKE 'sqlite_%'
 			AND sql IS NOT NULL
 		ORDER BY type DESC, name`)
@@ -172,7 +189,7 @@ const schemaCatalogVersion = 1
 // declared field list). Tables come from sqlite_master, with column
 // names and types pulled from pragma_table_info. Future #109 follow-ups
 // will merge in a hand-curated narrative file at docs/llm-schema.json.
-func writeSchemaJSON(db *sql.DB, stdout io.Writer) error {
+func writeSchemaJSON(ctx context.Context, db *sql.DB, stdout io.Writer) error {
 	catalog := schemaCatalog{Version: schemaCatalogVersion}
 
 	registry := normalizedViewsRegistry()
@@ -204,7 +221,7 @@ func writeSchemaJSON(db *sql.DB, stdout io.Writer) error {
 		// the literal "unknown" — downstream consumers treat the runtime
 		// type as opaque rather than mis-declared. Tables stay untouched
 		// so real BLOB columns on real tables still report BLOB.
-		columns, err := readPragmaTableInfo(db, spec.view)
+		columns, err := readPragmaTableInfo(ctx, db, spec.view)
 		if err == nil && len(columns) > 0 {
 			for i := range columns {
 				columns[i].Type = normalizeViewColumnType(columns[i].Type)
@@ -214,12 +231,12 @@ func writeSchemaJSON(db *sql.DB, stdout io.Writer) error {
 		catalog.Views = append(catalog.Views, view)
 	}
 
-	tableNames, err := listSchemaTables(db)
+	tableNames, err := listSchemaTables(ctx, db)
 	if err != nil {
 		return err
 	}
 	for _, name := range tableNames {
-		columns, err := readPragmaTableInfo(db, name)
+		columns, err := readPragmaTableInfo(ctx, db, name)
 		if err != nil {
 			return err
 		}
@@ -238,8 +255,8 @@ func writeSchemaJSON(db *sql.DB, stdout io.Writer) error {
 	return encoder.Encode(catalog)
 }
 
-func listSchemaTables(db *sql.DB) ([]string, error) {
-	rows, err := db.Query(`SELECT name FROM sqlite_master
+func listSchemaTables(ctx context.Context, db *sql.DB) ([]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master
 		WHERE type = 'table'
 			AND name NOT LIKE 'sqlite_%'
 		ORDER BY name`)
@@ -258,28 +275,8 @@ func listSchemaTables(db *sql.DB) ([]string, error) {
 	return names, rows.Err()
 }
 
-func listSchemaViews(db *sql.DB) ([]string, error) {
-	rows, err := db.Query(`SELECT name FROM sqlite_master
-		WHERE type = 'view'
-			AND name NOT LIKE 'sqlite_%'
-		ORDER BY name`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var names []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		names = append(names, name)
-	}
-	return names, rows.Err()
-}
-
-func readPragmaTableInfo(db *sql.DB, name string) ([]schemaCatalogColumn, error) {
-	rows, err := db.Query(`SELECT name, type FROM pragma_table_info(?)`, name)
+func readPragmaTableInfo(ctx context.Context, db *sql.DB, name string) ([]schemaCatalogColumn, error) {
+	rows, err := db.QueryContext(ctx, `SELECT name, type FROM pragma_table_info(?)`, name)
 	if err != nil {
 		return nil, err
 	}
@@ -309,37 +306,4 @@ func normalizeViewColumnType(declared string) string {
 	default:
 		return declared
 	}
-}
-
-// assertNoSchemaDrift returns a non-nil error if any view in sqlite_master
-// lacks a catalog entry. The drift test calls this; a follow-up CI hook
-// can call it from the binary directly.
-func assertNoSchemaDrift(archivePath string) error {
-	db, err := openArchiveReadOnly(archivePath)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	views, err := listSchemaViews(db)
-	if err != nil {
-		return err
-	}
-	registry := normalizedViewsRegistry()
-	registered := map[string]bool{}
-	for _, name := range registry.Catalog() {
-		if spec, ok := registry.View(name); ok {
-			registered[spec.view] = true
-		}
-	}
-	var orphans []string
-	for _, view := range views {
-		if !registered[view] {
-			orphans = append(orphans, view)
-		}
-	}
-	if len(orphans) > 0 {
-		sort.Strings(orphans)
-		return fmt.Errorf("describe-schema drift: %d view(s) in sqlite_master have no catalog entry: %v", len(orphans), orphans)
-	}
-	return nil
 }

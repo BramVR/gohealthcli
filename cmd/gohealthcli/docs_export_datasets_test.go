@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 // the first half of the PRD #144 slice 4 drift contract: the rendered
 // block is a pure function of the catalog.
 func TestRenderExportDatasetsBlockListsEveryName(t *testing.T) {
+	t.Parallel()
 	names := []string{"alpha", "beta", "gamma"}
 	got := renderExportDatasetsBlock(names)
 	want := "- `alpha`\n- `beta`\n- `gamma`\n"
@@ -27,6 +29,7 @@ func TestRenderExportDatasetsBlockListsEveryName(t *testing.T) {
 // if a caller passes names out of order, the rendered block emits them
 // sorted.
 func TestRenderExportDatasetsBlockSortsAlphabetically(t *testing.T) {
+	t.Parallel()
 	got := renderExportDatasetsBlock([]string{"gamma", "alpha", "beta"})
 	want := "- `alpha`\n- `beta`\n- `gamma`\n"
 	if got != want {
@@ -39,6 +42,7 @@ func TestRenderExportDatasetsBlockSortsAlphabetically(t *testing.T) {
 // surrounding bytes (including the markers themselves) intact. This is
 // the seam the make target and the drift test both call.
 func TestSpliceREADMEExportDatasetsReplacesBlock(t *testing.T) {
+	t.Parallel()
 	before := "prefix\n" +
 		"<!-- export-datasets:start -->\n" +
 		"- `old`\n" +
@@ -63,6 +67,7 @@ func TestSpliceREADMEExportDatasetsReplacesBlock(t *testing.T) {
 // shape: a README without markers must trip a loud error so the
 // generator never silently overwrites random regions.
 func TestSpliceREADMEExportDatasetsRequiresMarkers(t *testing.T) {
+	t.Parallel()
 	_, err := spliceREADMEExportDatasets("no markers here\n", "- `alpha`\n")
 	if err == nil {
 		t.Fatal("expected error when markers are missing")
@@ -78,13 +83,14 @@ func TestSpliceREADMEExportDatasetsRequiresMarkers(t *testing.T) {
 // exportDatasetCatalogSingleton.Names(). Adding a dataset to the
 // registry without running `make docs-export-datasets` fails this test.
 func TestREADMEExportDatasetsBlockMatchesCatalog(t *testing.T) {
+	t.Parallel()
 	readmePath := filepath.Join("..", "..", "README.md")
 	content, err := os.ReadFile(readmePath)
 	if err != nil {
 		t.Fatalf("read README: %v", err)
 	}
 	want := renderExportDatasetsBlock(exportDatasetCatalogSingleton.Names())
-	gotBlock, err := extractREADMEExportDatasetsBlock(string(content))
+	gotBlock, err := extractREADMEExportDatasetsBlock(strings.ReplaceAll(string(content), "\r\n", "\n"))
 	if err != nil {
 		t.Fatalf("extract committed block: %v", err)
 	}
@@ -100,12 +106,13 @@ func TestREADMEExportDatasetsBlockMatchesCatalog(t *testing.T) {
 // equality drift guard above: this one fails with a useful "missing
 // X, extra Y" report when a registry entry slips out.
 func TestREADMEExportDatasetsBlockListsEveryRegistryName(t *testing.T) {
+	t.Parallel()
 	readmePath := filepath.Join("..", "..", "README.md")
 	content, err := os.ReadFile(readmePath)
 	if err != nil {
 		t.Fatalf("read README: %v", err)
 	}
-	block, err := extractREADMEExportDatasetsBlock(string(content))
+	block, err := extractREADMEExportDatasetsBlock(strings.ReplaceAll(string(content), "\r\n", "\n"))
 	if err != nil {
 		t.Fatalf("extract block: %v", err)
 	}
@@ -126,9 +133,11 @@ func TestREADMEExportDatasetsBlockListsEveryRegistryName(t *testing.T) {
 
 // TestParseExportDatasetBlockNamesRejectsMalformedLines pins the
 // stricter shape check Copilot review surfaced: a hand-edit that
-// breaks the `- `<name>`` contract surfaces a useful error instead of
+// breaks the strict bullet shape (`- ` + backticked name) surfaces a
+// useful error instead of
 // silently producing a misleading name list.
 func TestParseExportDatasetBlockNamesRejectsMalformedLines(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		block string
@@ -159,6 +168,7 @@ func TestParseExportDatasetBlockNamesRejectsMalformedLines(t *testing.T) {
 // ends with a newline, so an empty line at the tail must not trip the
 // strict shape check.
 func TestParseExportDatasetBlockNamesTrailingNewlineOK(t *testing.T) {
+	t.Parallel()
 	got, err := parseExportDatasetBlockNames("- `alpha`\n- `beta`\n")
 	if err != nil {
 		t.Fatalf("trailing newline rejected: %v", err)
@@ -173,6 +183,7 @@ func TestParseExportDatasetBlockNamesTrailingNewlineOK(t *testing.T) {
 // `git diff README.md` step after `make docs-export-datasets` on an
 // unchanged registry must be empty.
 func TestRegeneratorIsIdempotent(t *testing.T) {
+	t.Parallel()
 	readmePath := filepath.Join("..", "..", "README.md")
 	content, err := os.ReadFile(readmePath)
 	if err != nil {
@@ -198,6 +209,7 @@ func TestRegeneratorIsIdempotent(t *testing.T) {
 // "add a synthetic dataset to the registry and re-running the generator
 // updates the README" half of the issue's acceptance criterion.
 func TestSyntheticDatasetReflowsBlock(t *testing.T) {
+	t.Parallel()
 	synthetic := exportDatasetSpec{name: "zzz-synthetic-probe"}
 	augmented := append([]exportDatasetSpec{synthetic}, exportDatasetDefinitions...)
 	catalog := newExportDatasetCatalog(augmented)
@@ -212,6 +224,7 @@ func TestSyntheticDatasetReflowsBlock(t *testing.T) {
 // command must read the file, splice in a fresh block, and write the
 // result back. This is the seam the Makefile target invokes.
 func TestRunDocsExportDatasetsRewritesREADME(t *testing.T) {
+	t.Parallel()
 	readmePath := filepath.Join("..", "..", "README.md")
 	original, err := os.ReadFile(readmePath)
 	if err != nil {
@@ -232,7 +245,7 @@ func TestRunDocsExportDatasetsRewritesREADME(t *testing.T) {
 	}
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	code := runDocsExportDatasets([]string{"--readme", scratch}, stdout, stderr)
+	code := runDocsExportDatasets([]string{"--readme", scratch}, stdout, stderr, nil)
 	if code != 0 {
 		t.Fatalf("runDocsExportDatasets exit code = %d, want 0\nstdout=%s\nstderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -257,9 +270,10 @@ func TestRunDocsExportDatasetsRewritesREADME(t *testing.T) {
 // subcommand refuses to splice an unspecified file: an empty --readme
 // must error rather than silently writing to "" (a foot-gun shape).
 func TestRunDocsExportDatasetsRequiresREADMEFlag(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	code := runDocsExportDatasets(nil, stdout, stderr)
+	code := runDocsExportDatasets(nil, stdout, stderr, nil)
 	if code == 0 {
 		t.Fatalf("runDocsExportDatasets without --readme should fail; got exit 0\nstderr=%s", stderr.String())
 	}
@@ -274,9 +288,10 @@ func TestRunDocsExportDatasetsRequiresREADMEFlag(t *testing.T) {
 // (e.g. an unquoted shell glob) fails loudly instead of silently
 // rewriting the wrong file or ignoring the extra token.
 func TestRunDocsExportDatasetsRejectsUnexpectedPositional(t *testing.T) {
+	t.Parallel()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	code := runDocsExportDatasets([]string{"--readme", "README.md", "stray-typo"}, stdout, stderr)
+	code := runDocsExportDatasets([]string{"--readme", "README.md", "stray-typo"}, stdout, stderr, nil)
 	if code == 0 {
 		t.Fatalf("runDocsExportDatasets with stray positional should fail; got exit 0\nstderr=%s", stderr.String())
 	}
@@ -286,4 +301,58 @@ func TestRunDocsExportDatasetsRejectsUnexpectedPositional(t *testing.T) {
 	if !strings.Contains(stderr.String(), "stray-typo") {
 		t.Fatalf("stderr should name the stray arg, got: %q", stderr.String())
 	}
+}
+
+// extractREADMEExportDatasetsBlock returns the bytes currently sitting
+// between the two markers in the input content. Test-only: the drift
+// guard reads the committed block back to compare against a fresh
+// render; the binary's splice path never extracts. It shares
+// locateExportDatasetsRegion with the live splicer so the boundary
+// rule cannot drift between read and write sides.
+func extractREADMEExportDatasetsBlock(content string) (string, error) {
+	bodyStart, endIdx, err := locateExportDatasetsRegion(content)
+	if err != nil {
+		return "", err
+	}
+	return content[bodyStart:endIdx], nil
+}
+
+// parseExportDatasetBlockNames pulls the inline-code names out of a
+// rendered block. Used by the drift guard to surface a useful "missing
+// X, extra Y" diff when the byte-equality check is too coarse to
+// pinpoint the drift. The bullet shape is strict — `- ` + backtick +
+// name + backtick + end-of-line, with no trailing characters — so a
+// hand-edit that breaks the contract (a name without backticks, a
+// stray trailing token, a missing closing backtick) is rejected loudly via the
+// returned non-nil error rather than silently producing a misleading
+// name list. Empty lines are tolerated so the helper composes with a
+// trailing-newline block.
+func parseExportDatasetBlockNames(block string) ([]string, error) {
+	var out []string
+	for lineNum, line := range strings.Split(block, "\n") {
+		if line == "" {
+			continue
+		}
+		rest, ok := strings.CutPrefix(line, "- `")
+		if !ok {
+			return nil, fmt.Errorf("line %d: expected `- `<name>``, got %q", lineNum+1, line)
+		}
+		name, ok := strings.CutSuffix(rest, "`")
+		if !ok {
+			return nil, fmt.Errorf("line %d: missing closing backtick: %q", lineNum+1, line)
+		}
+		if name == "" {
+			return nil, fmt.Errorf("line %d: empty dataset name", lineNum+1)
+		}
+		if strings.ContainsAny(name, "` ") {
+			// A stray space or extra backtick inside the inline-code
+			// span is structurally invalid for the auto-generated
+			// shape; the byte-equality drift guard catches the same
+			// shape error, but rejecting here keeps the
+			// "missing X, extra Y" diagnostic honest.
+			return nil, fmt.Errorf("line %d: malformed dataset name %q", lineNum+1, name)
+		}
+		out = append(out, name)
+	}
+	return out, nil
 }

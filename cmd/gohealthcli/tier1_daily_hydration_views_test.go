@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"testing"
 )
 
@@ -11,6 +13,7 @@ import (
 // Fixture JSON mirrors the live Google Health API response shape
 // observed via `sync --types daily-vo2-max` against the user's archive.
 func TestDailyVo2MaxViewProjectsScalars(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -23,25 +26,20 @@ func TestDailyVo2MaxViewProjectsScalars(t *testing.T) {
 		rawJSON:      `{"dailyVo2Max":{"date":{"year":2026,"month":6,"day":7},"vo2Max":52.72084217366443,"cardioFitnessLevel":"VERY_GOOD","vo2MaxCovariance":0.76340626688998781}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
 	var civilDate, vo2Max, cardioLevel, covariance string
-	if err := db.QueryRow(`SELECT civil_date, vo2_max, cardio_fitness_level, vo2_max_covariance FROM daily_vo2_max`).Scan(&civilDate, &vo2Max, &cardioLevel, &covariance); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT civil_date, vo2_max, cardio_fitness_level, vo2_max_covariance FROM daily_vo2_max`).Scan(&civilDate, &vo2Max, &cardioLevel, &covariance); err != nil {
 		t.Fatalf("query daily_vo2_max: %v", err)
 	}
 	if civilDate != "2026-06-07" {
 		t.Errorf("civil_date = %q, want 2026-06-07", civilDate)
 	}
-	// SQLite json_extract → CAST AS TEXT formats doubles with ~15
-	// significant digits of precision, which is enough for vo2Max
-	// (52.72…) and covariance (0.76…) but does trim the live API's
-	// 17-digit doubles. The raw JSON is preserved verbatim in
-	// data_points.raw_json for callers who need full precision; the
-	// view exposes the value SQLite returns.
+	// The view formats doubles with ~15 significant digits, which is
+	// enough for vo2Max (52.72...) and covariance (0.76...) but does
+	// trim the live API's 17-digit doubles. The raw JSON is preserved
+	// verbatim in data_points.raw_json for callers who need full
+	// precision; the view exposes this stable text contract.
 	if vo2Max != "52.7208421736644" {
 		t.Errorf("vo2_max = %q, want 52.7208421736644 (TEXT preserves 15-digit precision)", vo2Max)
 	}
@@ -53,11 +51,69 @@ func TestDailyVo2MaxViewProjectsScalars(t *testing.T) {
 	}
 }
 
+func TestDailyVo2MaxViewKeepsMissingCovarianceEmpty(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+	insertExportDataPoint(t, archivePath, exportDataPointFixture{
+		dataType:     "daily-vo2-max",
+		resourceName: "users/me/dataTypes/daily-vo2-max/dataPoints/2026-06-08",
+		recordKind:   "daily",
+		civilDate:    "2026-06-08",
+		dataSource:   `{"platform":"FITBIT"}`,
+		rawJSON:      `{"dailyVo2Max":{"date":{"year":2026,"month":6,"day":8},"vo2Max":42.5,"cardioFitnessLevel":"GOOD"}}`,
+	})
+
+	db := openArchiveForTest(t, archivePath)
+
+	var vo2Max string
+	var covariance sql.NullString
+	if err := db.QueryRowContext(context.Background(), `SELECT vo2_max, vo2_max_covariance FROM daily_vo2_max`).Scan(&vo2Max, &covariance); err != nil {
+		t.Fatalf("query daily_vo2_max: %v", err)
+	}
+	if vo2Max != "42.5" {
+		t.Errorf("vo2_max = %q, want 42.5", vo2Max)
+	}
+	if covariance.Valid {
+		t.Errorf("vo2_max_covariance = %q, want NULL for missing covariance", covariance.String)
+	}
+}
+
+func TestDailyVo2MaxViewKeepsWholeRealDecimal(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
+	insertStatusFixtureRows(t, archivePath)
+	insertExportDataPoint(t, archivePath, exportDataPointFixture{
+		dataType:     "daily-vo2-max",
+		resourceName: "users/me/dataTypes/daily-vo2-max/dataPoints/2026-06-09",
+		recordKind:   "daily",
+		civilDate:    "2026-06-09",
+		dataSource:   `{"platform":"FITBIT"}`,
+		rawJSON:      `{"dailyVo2Max":{"date":{"year":2026,"month":6,"day":9},"vo2Max":42.0,"cardioFitnessLevel":"GOOD","vo2MaxCovariance":1.0}}`,
+	})
+
+	db := openArchiveForTest(t, archivePath)
+
+	var vo2Max, covariance string
+	if err := db.QueryRowContext(context.Background(), `SELECT vo2_max, vo2_max_covariance FROM daily_vo2_max`).Scan(&vo2Max, &covariance); err != nil {
+		t.Fatalf("query daily_vo2_max: %v", err)
+	}
+	if vo2Max != "42.0" {
+		t.Errorf("vo2_max = %q, want 42.0", vo2Max)
+	}
+	if covariance != "1.0" {
+		t.Errorf("vo2_max_covariance = %q, want 1.0", covariance)
+	}
+}
+
 // TestDailyHeartRateZonesViewExplodesEachZone pins the contract for
 // daily_heart_rate_zones: one row per zone in the daily Data Point's
 // heartRateZones[] array, exposing the enum + min/max BPM scalars.
 // Fixture JSON mirrors the live API response shape.
 func TestDailyHeartRateZonesViewExplodesEachZone(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -75,13 +131,9 @@ func TestDailyHeartRateZonesViewExplodesEachZone(t *testing.T) {
 		]}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
-	rows, err := db.Query(`SELECT civil_date, heart_rate_zone_type, min_beats_per_minute, max_beats_per_minute FROM daily_heart_rate_zones ORDER BY heart_rate_zone_type`)
+	rows, err := db.QueryContext(context.Background(), `SELECT civil_date, heart_rate_zone_type, min_beats_per_minute, max_beats_per_minute FROM daily_heart_rate_zones ORDER BY heart_rate_zone_type`)
 	if err != nil {
 		t.Fatalf("query daily_heart_rate_zones: %v", err)
 	}
@@ -126,6 +178,7 @@ func TestDailyHeartRateZonesViewExplodesEachZone(t *testing.T) {
 // archived daily Data Point with the nightly temperature, the
 // baseline, and the relative stddev, all in Celsius.
 func TestDailySleepTemperatureDerivationsViewProjectsScalars(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -138,14 +191,10 @@ func TestDailySleepTemperatureDerivationsViewProjectsScalars(t *testing.T) {
 		rawJSON:      `{"dailySleepTemperatureDerivations":{"date":{"year":2026,"month":6,"day":7},"nightlyTemperatureCelsius":36.4,"baselineTemperatureCelsius":36.7,"relativeNightlyStddev30dCelsius":0.25}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
 	var civilDate, nightly, baseline, stddev string
-	if err := db.QueryRow(`SELECT civil_date, nightly_temperature_celsius, baseline_temperature_celsius, relative_nightly_stddev_30d_celsius FROM daily_sleep_temperature_derivations`).Scan(&civilDate, &nightly, &baseline, &stddev); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT civil_date, nightly_temperature_celsius, baseline_temperature_celsius, relative_nightly_stddev_30d_celsius FROM daily_sleep_temperature_derivations`).Scan(&civilDate, &nightly, &baseline, &stddev); err != nil {
 		t.Fatalf("query daily_sleep_temperature_derivations: %v", err)
 	}
 	if civilDate != "2026-06-07" {
@@ -162,6 +211,7 @@ func TestDailySleepTemperatureDerivationsViewProjectsScalars(t *testing.T) {
 // plus the per-stage scalars (deep/light/REM). All projected as TEXT
 // to preserve floating-point precision.
 func TestRespiratoryRateSleepSummaryViewProjectsPerStageScalars(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -176,14 +226,10 @@ func TestRespiratoryRateSleepSummaryViewProjectsPerStageScalars(t *testing.T) {
 		rawJSON:      `{"respiratoryRateSleepSummary":{"sampleTime":{"physicalTime":"2026-06-01T05:18:30Z"},"deepSleepStats":{"breathsPerMinute":13.4},"lightSleepStats":{"breathsPerMinute":13.6},"remSleepStats":{"breathsPerMinute":14.2},"fullSleepStats":{"breathsPerMinute":13.4}}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
 	var sampleTime, civilDate, full, deep, light, rem string
-	if err := db.QueryRow(`SELECT sample_time_utc, civil_date, full_sleep_breaths_per_minute, deep_sleep_breaths_per_minute, light_sleep_breaths_per_minute, rem_sleep_breaths_per_minute FROM respiratory_rate_sleep_summary`).Scan(&sampleTime, &civilDate, &full, &deep, &light, &rem); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT sample_time_utc, civil_date, full_sleep_breaths_per_minute, deep_sleep_breaths_per_minute, light_sleep_breaths_per_minute, rem_sleep_breaths_per_minute FROM respiratory_rate_sleep_summary`).Scan(&sampleTime, &civilDate, &full, &deep, &light, &rem); err != nil {
 		t.Fatalf("query respiratory_rate_sleep_summary: %v", err)
 	}
 	if sampleTime != "2026-06-01T05:18:30Z" {
@@ -204,6 +250,7 @@ func TestRespiratoryRateSleepSummaryViewProjectsPerStageScalars(t *testing.T) {
 // path lives at $.hydrationLog.volume.liters (Google Health REST API
 // HydrationLog proto: HydrationLog.volume.liters).
 func TestHydrationLogSessionsViewProjectsVolume(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
@@ -220,14 +267,10 @@ func TestHydrationLogSessionsViewProjectsVolume(t *testing.T) {
 		rawJSON:      `{"hydrationLog":{"interval":{"startTime":"2026-06-07T10:00:00Z","endTime":"2026-06-07T10:00:00Z","startUtcOffset":"7200s","endUtcOffset":"7200s"},"volume":{"liters":0.25}}}`,
 	})
 
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 
 	var startTime, endTime, civilDate, liters, platform string
-	if err := db.QueryRow(`SELECT start_time_utc, end_time_utc, civil_date, volume_liters, source_platform FROM hydration_log_sessions`).Scan(&startTime, &endTime, &civilDate, &liters, &platform); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT start_time_utc, end_time_utc, civil_date, volume_liters, source_platform FROM hydration_log_sessions`).Scan(&startTime, &endTime, &civilDate, &liters, &platform); err != nil {
 		t.Fatalf("query hydration_log_sessions: %v", err)
 	}
 	if startTime != "2026-06-07T10:00:00Z" {

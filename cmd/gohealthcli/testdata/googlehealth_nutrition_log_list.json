@@ -1,0 +1,42 @@
+{
+  "dataPoints": [
+    {
+      "name": "users/me/dataTypes/nutrition-log/dataPoints/nutrition-2026-01-01-a",
+      "dataSource": {
+        "platform": "SYNTHETIC",
+        "applicationName": "Fixture Food Logger"
+      },
+      "nutritionLog": {
+        "interval": {
+          "startTime": "2026-01-01T11:30:00+01:00",
+          "startUtcOffset": "3600s",
+          "endTime": "2026-01-01T11:35:00+01:00",
+          "endUtcOffset": "3600s",
+          "civilStartTime": {
+            "date": {"year": 2026, "month": 1, "day": 1},
+            "time": {"hours": 11, "minutes": 30}
+          },
+          "civilEndTime": {
+            "date": {"year": 2026, "month": 1, "day": 1},
+            "time": {"hours": 11, "minutes": 35}
+          }
+        },
+        "food": "users/me/foods/synthetic-oats",
+        "foodDisplayName": "Synthetic oats",
+        "mealType": "BREAKFAST",
+        "serving": {
+          "foodMeasurementUnit": "users/me/foodMeasurementUnits/synthetic-bowl",
+          "foodMeasurementUnitDisplayName": "bowl",
+          "amount": 1.25
+        },
+        "energy": {"kcal": 321.125, "userProvidedUnit": "KILOCALORIE"},
+        "energyFromFat": {"kcal": 81.5, "userProvidedUnit": "KILOCALORIE"},
+        "totalCarbohydrate": {"grams": 52.25, "userProvidedUnit": "GRAM"},
+        "totalFat": {"grams": 9.125, "userProvidedUnit": "GRAM"},
+        "nutrients": [
+          {"nutrient": "PROTEIN", "quantity": {"grams": 12.5, "userProvidedUnit": "GRAM"}}
+        ]
+      }
+    }
+  ]
+}

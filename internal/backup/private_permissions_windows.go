@@ -1,0 +1,117 @@
+//go:build windows
+
+package backup
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"golang.org/x/sys/windows"
+)
+
+const windowsACLCommandTimeout = 30 * time.Second
+
+const windowsHardenPrivatePathScript = `$ErrorActionPreference = 'Stop'
+$path = $env:GOHEALTHCLI_PRIVATE_PATH
+$isDirectory = [System.IO.Directory]::Exists($path)
+$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+if ($isDirectory) {
+  $acl = New-Object System.Security.AccessControl.DirectorySecurity
+  $inheritance = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+} else {
+  $acl = New-Object System.Security.AccessControl.FileSecurity
+  $inheritance = [System.Security.AccessControl.InheritanceFlags]::None
+}
+$acl.SetOwner($current)
+$acl.SetAccessRuleProtection($true, $false)
+$propagation = [System.Security.AccessControl.PropagationFlags]::None
+$rights = [System.Security.AccessControl.FileSystemRights]::FullControl
+$allow = [System.Security.AccessControl.AccessControlType]::Allow
+$system = New-Object System.Security.Principal.SecurityIdentifier -ArgumentList 'S-1-5-18'
+$administrators = New-Object System.Security.Principal.SecurityIdentifier -ArgumentList 'S-1-5-32-544'
+foreach ($sid in @($current, $system, $administrators)) {
+  $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid, $rights, $inheritance, $propagation, $allow)))
+}
+if ($isDirectory) {
+  [System.IO.Directory]::SetAccessControl($path, $acl)
+} else {
+  [System.IO.File]::SetAccessControl($path, $acl)
+}
+`
+
+const windowsValidatePrivatePathScript = `$ErrorActionPreference = 'Stop'
+$path = $env:GOHEALTHCLI_PRIVATE_PATH
+$isDirectory = [System.IO.Directory]::Exists($path)
+$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$allowed = @($current, 'S-1-5-18', 'S-1-5-32-544')
+if ($isDirectory) {
+  $acl = [System.IO.Directory]::GetAccessControl($path)
+} else {
+  $acl = [System.IO.File]::GetAccessControl($path)
+}
+if (-not $acl.AreAccessRulesProtected) { throw 'ACL inheritance is enabled' }
+$owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+if ($allowed -notcontains $owner) { throw 'owner is not the current user, SYSTEM, or Administrators' }
+$bad = @($acl.Access | Where-Object {
+  $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
+  $allowed -notcontains $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+})
+if ($bad.Count -ne 0) { throw 'ACL grants access to another identity' }
+`
+
+func hardenPrivatePath(path string, isDirectory bool) error {
+	if err := runWindowsACLScript(windowsHardenPrivatePathScript, path); err != nil {
+		return fmt.Errorf("enforce owner-only Windows ACL for %s: %w", path, err)
+	}
+	return validatePlatformPrivatePath(path, isDirectory)
+}
+
+func validatePlatformPrivatePath(path string, _ bool) error {
+	if err := runWindowsACLScript(windowsValidatePrivatePathScript, path); err != nil {
+		return fmt.Errorf("%s is not owner-only: %w", path, err)
+	}
+	return nil
+}
+
+func runWindowsACLScript(script, path string) error {
+	powershellPath, err := systemPowerShellPath()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), windowsACLCommandTimeout)
+	defer cancel()
+	command := exec.CommandContext(ctx, powershellPath, "-NoProfile", "-NonInteractive", "-Command", script)
+	command.Env = append(os.Environ(), "GOHEALTHCLI_PRIVATE_PATH="+path)
+	output, err := command.CombinedOutput()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func systemPowerShellPath() (string, error) {
+	systemDir, err := windows.GetSystemDirectory()
+	if err != nil {
+		return "", fmt.Errorf("resolve Windows system directory: %w", err)
+	}
+	path := filepath.Join(systemDir, "WindowsPowerShell", "v1.0", "powershell.exe")
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("Windows system PowerShell path %q is not absolute", path)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("inspect Windows system PowerShell: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("Windows system PowerShell %s is not a regular file", path)
+	}
+	return path, nil
+}

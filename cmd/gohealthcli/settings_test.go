@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +18,7 @@ import (
 // targeted "--no-input is not supported by settings" rejection and
 // exits non-zero.
 func TestSettingsRejectsNoInputFlag(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runCommand(t, "settings", "--no-input")
 	if code == 0 {
 		t.Fatalf("exit code = 0, want non-zero; stdout=%q stderr=%q", stdout.String(), stderr.String())
@@ -31,31 +35,27 @@ func TestSettingsRejectsNoInputFlag(t *testing.T) {
 // the command exits non-zero, sets result.Status to
 // "settings_scope_missing", names the recovery `gohealthcli connect`
 // command in result.Message, and crucially does NOT issue any HTTP
-// request to googleHealthSettingsURL — proving the scope pre-check
+// request to googlehealth.SettingsURL — proving the scope pre-check
 // happens before the upstream call. The test reads the required scope
-// from the same googleHealthIdentityEndpointScopes catalog the
+// from the same googlehealth.IdentityEndpointScopes catalog the
 // production code uses so a future slice-2 revision of the catalog
 // automatically updates what gets stripped from the stored Connection,
 // keeping the test honest without manual edits.
 func TestSettingsCommandFailsFastWhenScopeMissing(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	installConnectFakes(t, fakeConnectConfig{
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchive(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if code := runConnectCommand(t, configPath, archivePath); code != 0 {
-		t.Fatalf("connect exit code = %d", code)
-	}
 
 	// Strip every scope the catalog ties to getSettings from the
 	// stored Connection so AccessToken's scope pre-check fails. Using
 	// the same catalog key the production code reads means this test
 	// keeps pinning the right behaviour after slice 2 rewrites the
 	// catalog entry.
-	required := googleHealthIdentityEndpointScopes["getSettings"]
+	required := googlehealth.IdentityEndpointScopes("getSettings")
 	requiredSet := make(map[string]struct{}, len(required))
 	for _, scope := range required {
 		requiredSet[scope] = struct{}{}
@@ -74,16 +74,14 @@ func TestSettingsCommandFailsFastWhenScopeMissing(t *testing.T) {
 	// the bare HTTP 403 PRD #142 documents only happens because the
 	// pre-check is absent, so guarding the seam is what proves the
 	// migration shut that path down.
-	originalFetchSettings := fetchSettings
-	fetchSettings = func(string) (googleSettings, error) {
+	testRuntime.fetchSettings = func(string) (googleSettings, error) {
 		t.Fatal("fetchSettings called despite missing scope")
 		return googleSettings{}, nil
 	}
-	t.Cleanup(func() { fetchSettings = originalFetchSettings })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
-	code := run([]string{"settings", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
+	code := runWithRuntime([]string{"settings", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr, testRuntime)
 	if code == 0 {
 		t.Fatalf("settings exit code = %d, want non-zero; stdout=%s", code, stdout.String())
 	}
@@ -108,6 +106,10 @@ func TestSettingsCommandFailsFastWhenScopeMissing(t *testing.T) {
 		if !strings.Contains(result.Message, wantHint) {
 			t.Fatalf("result.Message = %q, want it to name %q", result.Message, wantHint)
 		}
+		wantRemediation := []string{"gohealthcli doctor", "gohealthcli connect --add-scopes " + strings.Join(keywords, ",")}
+		if !slices.Equal(result.Remediation, wantRemediation) {
+			t.Fatalf("result.Remediation = %#v, want %#v", result.Remediation, wantRemediation)
+		}
 	}
 }
 
@@ -119,6 +121,7 @@ func TestSettingsCommandFailsFastWhenScopeMissing(t *testing.T) {
 // already returns), and exits 0 with status "settings_archived" plus
 // a new identity_snapshots row whose snapshot_kind = 'settings'.
 func TestSettingsCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	connectAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -129,14 +132,12 @@ func TestSettingsCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	// Ensure the stored Connection carries every scope the catalog
 	// requires for getSettings, so this test still exercises auto-refresh
 	// after slice 2 (#176) revises the catalog away from the default-granted
 	// scope set.
-	for _, scope := range googleHealthIdentityEndpointScopes["getSettings"] {
+	for _, scope := range googlehealth.IdentityEndpointScopes("getSettings") {
 		addStoredConnectionScope(t, archivePath, scope)
 	}
 	// Force the stored access-token expires_at into the past so
@@ -150,35 +151,20 @@ func TestSettingsCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// once" contract is guarded against a regression where retries
 	// would silently double-rotate the stored token.
 	refreshCalls := 0
-	testRuntime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-		refreshCalls++
-		if refreshToken != "connect-refresh-secret" {
-			t.Fatalf("refresh token = %q, want connect-refresh-secret", refreshToken)
-		}
-		return oauthTokenResponse{
-			accessToken:  "rotated-access-secret",
-			refreshToken: "connect-refresh-secret",
-			tokenType:    "Bearer",
-			scopes:       fallbackScopes,
-			expiresAt:    refreshedExpiresAt,
-			rawTokenMaterialObject: map[string]any{
-				"access_token":  "rotated-access-secret",
-				"refresh_token": "connect-refresh-secret",
-				"token_type":    "Bearer",
-				"expires_in":    float64(3600),
-			},
-		}, nil
-	}
+	bindRefreshOAuthTokenFake(t, &testRuntime, fakeRefreshConfig{
+		wantRefreshToken: "connect-refresh-secret",
+		accessToken:      "rotated-access-secret",
+		expiresAt:        refreshedExpiresAt,
+		calls:            &refreshCalls,
+	})
 
-	originalFetchSettings := fetchSettings
 	var calledWithToken string
-	fetchSettings = func(accessToken string) (googleSettings, error) {
+	testRuntime.fetchSettings = func(accessToken string) (googleSettings, error) {
 		calledWithToken = accessToken
 		return googleSettings{
 			rawJSON: `{"unitSystem":"METRIC"}`,
 		}, nil
 	}
-	t.Cleanup(func() { fetchSettings = originalFetchSettings })
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
@@ -211,13 +197,9 @@ func TestSettingsCommandAutoRefreshesExpiredAccessToken(t *testing.T) {
 	// A new identity_snapshots row with snapshot_kind = 'settings'
 	// must exist so the auto-refresh path doesn't silently skip the
 	// archive write the AC requires.
-	db, err := openArchive(archivePath)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer db.Close()
+	db := openArchiveForTest(t, archivePath)
 	var snapshotCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM identity_snapshots WHERE snapshot_kind = 'settings'`).Scan(&snapshotCount); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM identity_snapshots WHERE snapshot_kind = 'settings'`).Scan(&snapshotCount); err != nil {
 		t.Fatalf("count settings snapshots: %v", err)
 	}
 	if snapshotCount != 1 {

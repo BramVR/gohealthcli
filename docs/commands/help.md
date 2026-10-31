@@ -71,8 +71,10 @@ Run 'gohealthcli --help' for a list of commands.
   pool so they never leak to end users.
 - In `--json` mode the discoverability lines are suppressed entirely so
   scripts parsing the stdout envelope do not see human-targeted stderr
-  noise. The `Run 'gohealthcli --help'` line stays for default and
-  `--plain` modes.
+  noise. Instead, the failure envelope carries
+  `"remediation":["gohealthcli --help"]`; `--plain` adds
+  `remediation.0: gohealthcli --help` to stdout. The existing human hint
+  line stays byte-for-byte unchanged in default and `--plain` modes.
 - An unknown command with no suggestion within the cutoff prints only
   the `unknown command:` line and the `--help` hint, with no `Did you
   mean` line at all.

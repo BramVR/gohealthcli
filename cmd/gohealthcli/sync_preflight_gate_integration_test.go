@@ -14,9 +14,9 @@ import (
 // status="sync_failed" (never the empty string, AC #5) and MUST NOT
 // contain a sync_run_id field, since no audit row was written.
 type preflightFailureExpectation struct {
-	name           string
-	args           []string
-	wantErrSubstr  string
+	name          string
+	args          []string
+	wantErrSubstr string
 }
 
 // TestRunSyncPreflightFailuresDoNotWriteAuditRow exercises the no-audit-row
@@ -24,17 +24,13 @@ type preflightFailureExpectation struct {
 // orchestrator-level call exits non-zero and sync_runs count stays at 0.
 // AC #4 + AC #5 of issue #152.
 func TestRunSyncPreflightFailuresDoNotWriteAuditRow(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	t.Parallel()
+	configPath, archivePath, testRuntime := connectedArchiveViaSetup(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 
 	cases := []preflightFailureExpectation{
@@ -85,9 +81,9 @@ func TestRunSyncPreflightFailuresDoNotWriteAuditRow(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			stdout := new(bytes.Buffer)
 			stderr := new(bytes.Buffer)
-			code := runSyncWithRuntime(tc.args, configPath, archivePath, outputMode{}, stdout, stderr, testRuntime)
+			code := runSyncWithRuntime(tc.args, CommonFlagValues{ConfigPath: configPath, ArchivePath: archivePath}, stdout, stderr, testRuntime)
 			if code == 0 {
-				t.Fatalf("runSync exit = 0, want non-zero (preflight rule must reject)\nstdout: %s\nstderr: %s", stdout.String(), stderr.String())
+				t.Fatalf("runSyncWithRuntime exit = 0, want non-zero (preflight rule must reject)\nstdout: %s\nstderr: %s", stdout.String(), stderr.String())
 			}
 
 			// AC #5: JSON envelope on preflight failure has

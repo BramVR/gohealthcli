@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +18,7 @@ import (
 // only build a syncResult via the constructor, so a return path that
 // forgot to set Status is structurally impossible.
 func TestSyncResultFromOutcomeAlwaysSetsEnumStatus(t *testing.T) {
+	t.Parallel()
 	for _, outcome := range []syncRunOutcome{
 		syncRunOutcomeCompleted,
 		syncRunOutcomeFailed,
@@ -39,6 +42,7 @@ func TestSyncResultFromOutcomeAlwaysSetsEnumStatus(t *testing.T) {
 // syncResultFromOutcome, this gives AC #2 end-to-end coverage: an
 // empty Status string would surface here.
 func TestSyncRunLifecycleStatusEnumOnEveryReachableReturn(t *testing.T) {
+	t.Parallel()
 	validEnum := func(status string) bool {
 		switch status {
 		case "sync_completed", "sync_failed", "sync_canceled":
@@ -58,11 +62,9 @@ func TestSyncRunLifecycleStatusEnumOnEveryReachableReturn(t *testing.T) {
 			healthUserID:       "111111256096816351",
 			legacyFitbitUserID: "A1B2C3",
 		})
-		if _, err := connectSetupWithRuntime(configPath, archivePath, false, runtime); err != nil {
-			t.Fatalf("connect setup: %v", err)
-		}
+		mustConnectSetup(t, configPath, archivePath, runtime)
 		runtime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
-		result, err := (syncRunExecutor{runtime: runtime}).Execute(syncCommandOptions{
+		result, err := (syncRunExecutor{runtime: runtime}).Execute(context.Background(), syncCommandOptions{
 			configPath:  configPath,
 			archivePath: archivePath,
 			dataTypes:   []string{"steps"},
@@ -70,6 +72,12 @@ func TestSyncRunLifecycleStatusEnumOnEveryReachableReturn(t *testing.T) {
 		})
 		if err == nil {
 			t.Fatal("expected error on missing cursor + no --from")
+		}
+		if got := remediationFromError(err); len(got) != 1 || got[0] != "gohealthcli sync --from YYYY-MM-DD" {
+			t.Fatalf("remediation = %#v, want fixed explicit --from retry", got)
+		}
+		if len(result.Remediation) != 1 || result.Remediation[0] != "gohealthcli sync --from YYYY-MM-DD" {
+			t.Fatalf("result remediation = %#v, want fixed explicit --from retry", result.Remediation)
 		}
 		if !validEnum(result.Status) {
 			t.Errorf("Status = %q, want enum value", result.Status)
@@ -87,14 +95,12 @@ func TestSyncRunLifecycleStatusEnumOnEveryReachableReturn(t *testing.T) {
 			healthUserID:       "111111256096816351",
 			legacyFitbitUserID: "A1B2C3",
 		})
-		if _, err := connectSetupWithRuntime(configPath, archivePath, false, runtime); err != nil {
-			t.Fatalf("connect setup: %v", err)
-		}
+		mustConnectSetup(t, configPath, archivePath, runtime)
 		runtime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 		runtime, _ = withStepSyncFetchFake(t, runtime, "connect-access-secret", map[string]string{
 			"": `{"dataPoints":[]}`,
 		})
-		result, err := (syncRunExecutor{runtime: runtime}).Execute(syncCommandOptions{
+		result, err := (syncRunExecutor{runtime: runtime}).Execute(context.Background(), syncCommandOptions{
 			configPath:  configPath,
 			archivePath: archivePath,
 			dataTypes:   []string{"steps"},
@@ -113,12 +119,44 @@ func TestSyncRunLifecycleStatusEnumOnEveryReachableReturn(t *testing.T) {
 	})
 }
 
+// TestSyncRunFailureSealsFailedEnvelope pins the single helper every
+// Sync Run lifecycle failure return goes through (#277): Status is
+// sealed to sync_failed via syncResultFromOutcome, Message mirrors the
+// cause text, the base envelope fields (DataTypes/From/To) survive
+// untouched, and the cause itself comes back as the error so the
+// orchestrator's surface-a-Go-error signal keeps its identity.
+func TestSyncRunFailureSealsFailedEnvelope(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("config check failed: boom")
+	result, err := syncRunFailure(syncResult{
+		DataTypes: []string{"steps"},
+		From:      "2026-01-01",
+		To:        "2026-01-02T00:00:00Z",
+	}, cause)
+	if !errors.Is(err, cause) {
+		t.Fatalf("returned error = %v, want the original cause", err)
+	}
+	if result.Status != "sync_failed" {
+		t.Errorf("Status = %q, want sync_failed", result.Status)
+	}
+	if result.Message != cause.Error() {
+		t.Errorf("Message = %q, want %q", result.Message, cause.Error())
+	}
+	if len(result.DataTypes) != 1 || result.DataTypes[0] != "steps" {
+		t.Errorf("DataTypes = %v, want [steps]", result.DataTypes)
+	}
+	if result.From != "2026-01-01" || result.To != "2026-01-02T00:00:00Z" {
+		t.Errorf("From/To = (%q, %q), want base values preserved", result.From, result.To)
+	}
+}
+
 // TestErrFinalizeSyncRunBusyExhaustedCarriesAttemptCount pins the typed
 // error the SQLite adapter surfaces when the retry budget is exhausted.
 // The lifecycle module converts this into a sync_failed terminal state;
 // callers detect it via errors.As so the exact wrapping at the writer
 // boundary stays an implementation detail.
 func TestErrFinalizeSyncRunBusyExhaustedCarriesAttemptCount(t *testing.T) {
+	t.Parallel()
 	err := &errFinalizeSyncRunBusyExhausted{attempts: 5, cause: errors.New("database is locked")}
 	if !strings.Contains(err.Error(), "5") {
 		t.Errorf("error message = %q, want attempt count", err.Error())
@@ -138,6 +176,7 @@ func TestErrFinalizeSyncRunBusyExhaustedCarriesAttemptCount(t *testing.T) {
 // succeeds. The closure observes how many times it was called via a
 // counter the test holds.
 func TestRetryFinalizeSyncRunRetriesUntilSuccess(t *testing.T) {
+	t.Parallel()
 	calls := 0
 	busy := errors.New("database is locked")
 	err := retryFinalizeSyncRunOnBusy(5, func() error {
@@ -161,6 +200,7 @@ func TestRetryFinalizeSyncRunRetriesUntilSuccess(t *testing.T) {
 // failures (constraint violations, IO errors) from being silently
 // retried as if they were transient lock contention.
 func TestRetryFinalizeSyncRunSurfacesNonBusyImmediately(t *testing.T) {
+	t.Parallel()
 	calls := 0
 	fatal := errors.New("syntax error")
 	err := retryFinalizeSyncRunOnBusy(5, func() error {
@@ -181,6 +221,7 @@ func TestRetryFinalizeSyncRunSurfacesNonBusyImmediately(t *testing.T) {
 // wraps the last underlying error. The lifecycle module branches on
 // this typed error to drive the recovery write.
 func TestRetryFinalizeSyncRunExhaustsBudgetAndReturnsTypedError(t *testing.T) {
+	t.Parallel()
 	calls := 0
 	busy := errors.New("database is locked")
 	err := retryFinalizeSyncRunOnBusy(4, func() error {
@@ -218,17 +259,13 @@ func TestRetryFinalizeSyncRunExhaustsBudgetAndReturnsTypedError(t *testing.T) {
 // conditions are the same: terminal status enum on every envelope and
 // no dangling sync_running row.
 func TestConcurrentSyncRunsLeaveNoSyncRunningRows(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	seedRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	t.Parallel()
+	configPath, archivePath, _ := connectedArchiveViaSetup(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, seedRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
 
 	runSync := func(dataType, from, to, accessToken string, pages map[string]string) (syncResult, error) {
 		runtime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -239,7 +276,7 @@ func TestConcurrentSyncRunsLeaveNoSyncRunningRows(t *testing.T) {
 		})
 		runtime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 		runtime, _ = withStepSyncFetchFake(t, runtime, accessToken, pages)
-		return (syncRunExecutor{runtime: runtime}).Execute(syncCommandOptions{
+		return (syncRunExecutor{runtime: runtime}).Execute(context.Background(), syncCommandOptions{
 			configPath:  configPath,
 			archivePath: archivePath,
 			dataTypes:   []string{dataType},
@@ -294,21 +331,21 @@ func TestConcurrentSyncRunsLeaveNoSyncRunningRows(t *testing.T) {
 	}
 	defer db.Close()
 	var runningCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sync_runs WHERE status = 'sync_running'`).Scan(&runningCount); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM sync_runs WHERE status = 'sync_running'`).Scan(&runningCount); err != nil {
 		t.Fatalf("count sync_running rows: %v", err)
 	}
 	if runningCount != 0 {
 		t.Errorf("sync_running rows after concurrent invocations = %d, want 0", runningCount)
 	}
 	var totalCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sync_runs`).Scan(&totalCount); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM sync_runs`).Scan(&totalCount); err != nil {
 		t.Fatalf("count sync_runs rows: %v", err)
 	}
 	if totalCount < 2 {
 		t.Errorf("sync_runs total rows = %d, want at least 2 (one per invocation)", totalCount)
 	}
 	// Every row must carry a terminal status.
-	rows, err := db.Query(`SELECT id, status FROM sync_runs`)
+	rows, err := db.QueryContext(context.Background(), `SELECT id, status FROM sync_runs`)
 	if err != nil {
 		t.Fatalf("query sync_runs: %v", err)
 	}
@@ -338,7 +375,7 @@ func TestConcurrentSyncRunsLeaveNoSyncRunningRows(t *testing.T) {
 // transaction, and emits a contention-aware message. The cursor must
 // stay absent (ADR-0008).
 func TestSyncRunLifecycleConvertsBusyExhaustedToFailedWithRecoveryRow(t *testing.T) {
-	stubFinalizeSleeper(t)
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -347,14 +384,15 @@ func TestSyncRunLifecycleConvertsBusyExhaustedToFailedWithRecoveryRow(t *testing
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	// No-op sleeper: the production retry loop must not eat
+	// budget*backoffCap of wallclock per scenario (#283: injected via
+	// the adapters, not package state).
+	testRuntime.sleep = func(time.Duration) {}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 
 	busyExhausted := &errFinalizeSyncRunBusyExhausted{attempts: finalizeSyncRunRetryBudget, cause: errors.New("database is locked")}
-	t.Cleanup(func() { healthArchiveWriterOpenerForTest = openHealthArchiveWriter })
-	healthArchiveWriterOpenerForTest = func(path string) (healthArchiveWriter, error) {
+	testRuntime.openHealthArchiveWriter = func(path string) (healthArchiveWriter, error) {
 		inner, err := openHealthArchiveWriter(path)
 		if err != nil {
 			return nil, err
@@ -365,7 +403,7 @@ func TestSyncRunLifecycleConvertsBusyExhaustedToFailedWithRecoveryRow(t *testing
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 		"": `{"dataPoints":[]}`,
 	})
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -395,12 +433,12 @@ func TestSyncRunLifecycleConvertsBusyExhaustedToFailedWithRecoveryRow(t *testing
 		t.Fatalf("reopen archive: %v", err)
 	}
 	defer archive.Close()
-	connection, err := archive.CurrentConnection()
+	connection, err := archive.CurrentConnection(context.Background())
 	if err != nil {
 		t.Fatalf("CurrentConnection: %v", err)
 	}
-	if _, found, err := archive.ResolveSyncCursor(syncCursorKey{
-		connectionID: connection.id,
+	if _, found, err := archive.ResolveSyncCursor(context.Background(), syncCursorKey{
+		connectionID: connection.ID,
 		dataType:     "steps",
 		rollupKind:   syncCursorRollupKindNone,
 	}); err != nil || found {
@@ -415,6 +453,7 @@ func TestSyncRunLifecycleConvertsBusyExhaustedToFailedWithRecoveryRow(t *testing
 // helper takes an injectable sleeper so this test can observe the
 // sleep calls without consuming wallclock time.
 func TestRetryFinalizeSyncRunSleepsBetweenBusyAttempts(t *testing.T) {
+	t.Parallel()
 	calls := 0
 	sleeps := []time.Duration{}
 	busy := errors.New("database is locked")
@@ -458,7 +497,7 @@ func TestRetryFinalizeSyncRunSleepsBetweenBusyAttempts(t *testing.T) {
 // lifecycle must wrap the recovery write in its own retry+backoff
 // budget so the sync_runs row never lingers in sync_running.
 func TestSyncRunLifecycleRecoveryWriteAlsoRetriesOnBusy(t *testing.T) {
-	stubFinalizeSleeper(t)
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -467,15 +506,16 @@ func TestSyncRunLifecycleRecoveryWriteAlsoRetriesOnBusy(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	// No-op sleeper: the production retry loop must not eat
+	// budget*backoffCap of wallclock per scenario (#283: injected via
+	// the adapters, not package state).
+	testRuntime.sleep = func(time.Duration) {}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 
 	busyExhausted := &errFinalizeSyncRunBusyExhausted{attempts: finalizeSyncRunRetryBudget, cause: errors.New("database is locked")}
 	finishCalls := 0
-	t.Cleanup(func() { healthArchiveWriterOpenerForTest = openHealthArchiveWriter })
-	healthArchiveWriterOpenerForTest = func(path string) (healthArchiveWriter, error) {
+	testRuntime.openHealthArchiveWriter = func(path string) (healthArchiveWriter, error) {
 		inner, err := openHealthArchiveWriter(path)
 		if err != nil {
 			return nil, err
@@ -491,7 +531,7 @@ func TestSyncRunLifecycleRecoveryWriteAlsoRetriesOnBusy(t *testing.T) {
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 		"": `{"dataPoints":[]}`,
 	})
-	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -518,7 +558,7 @@ func TestSyncRunLifecycleRecoveryWriteAlsoRetriesOnBusy(t *testing.T) {
 // it, and the message must clearly call out that the recovery write
 // also failed.
 func TestSyncRunLifecycleRecoveryBudgetExhaustedReturnsTypedError(t *testing.T) {
-	stubFinalizeSleeper(t)
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -527,14 +567,15 @@ func TestSyncRunLifecycleRecoveryBudgetExhaustedReturnsTypedError(t *testing.T) 
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	// No-op sleeper: the production retry loop must not eat
+	// budget*backoffCap of wallclock per scenario (#283: injected via
+	// the adapters, not package state).
+	testRuntime.sleep = func(time.Duration) {}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 
 	busyExhausted := &errFinalizeSyncRunBusyExhausted{attempts: finalizeSyncRunRetryBudget, cause: errors.New("database is locked")}
-	t.Cleanup(func() { healthArchiveWriterOpenerForTest = openHealthArchiveWriter })
-	healthArchiveWriterOpenerForTest = func(path string) (healthArchiveWriter, error) {
+	testRuntime.openHealthArchiveWriter = func(path string) (healthArchiveWriter, error) {
 		inner, err := openHealthArchiveWriter(path)
 		if err != nil {
 			return nil, err
@@ -549,7 +590,7 @@ func TestSyncRunLifecycleRecoveryBudgetExhaustedReturnsTypedError(t *testing.T) 
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
 		"": `{"dataPoints":[]}`,
 	})
-	_, err := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	_, err := (syncRunExecutor{runtime: testRuntime}).Execute(context.Background(), syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
@@ -576,7 +617,7 @@ func TestSyncRunLifecycleRecoveryBudgetExhaustedReturnsTypedError(t *testing.T) 
 // would otherwise misrepresent a user cancellation as a contention
 // failure.
 func TestSyncRunLifecycleCanceledOutcomePreservedThroughRecovery(t *testing.T) {
-	stubFinalizeSleeper(t)
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	testRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
@@ -585,14 +626,15 @@ func TestSyncRunLifecycleCanceledOutcomePreservedThroughRecovery(t *testing.T) {
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, testRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
+	// No-op sleeper: the production retry loop must not eat
+	// budget*backoffCap of wallclock per scenario (#283: injected via
+	// the adapters, not package state).
+	testRuntime.sleep = func(time.Duration) {}
+	mustConnectSetup(t, configPath, archivePath, testRuntime)
 	testRuntime.now = func() time.Time { return time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) }
 
 	busyExhausted := &errFinalizeSyncRunBusyExhausted{attempts: finalizeSyncRunRetryBudget, cause: errors.New("database is locked")}
-	t.Cleanup(func() { healthArchiveWriterOpenerForTest = openHealthArchiveWriter })
-	healthArchiveWriterOpenerForTest = func(path string) (healthArchiveWriter, error) {
+	testRuntime.openHealthArchiveWriter = func(path string) (healthArchiveWriter, error) {
 		inner, err := openHealthArchiveWriter(path)
 		if err != nil {
 			return nil, err
@@ -600,41 +642,37 @@ func TestSyncRunLifecycleCanceledOutcomePreservedThroughRecovery(t *testing.T) {
 		return fakeFinalizeWriter{healthArchiveWriter: inner, failOn: failOnEveryOutcome(busyExhausted)}, nil
 	}
 
-	// Drive ingestion to surface errSyncCanceled so the lifecycle calls
+	// Drive ingestion to surface googlehealth.ErrSyncCanceled so the lifecycle calls
 	// finalize with syncRunOutcomeCanceled. PRD #141 slice 5 adds a
 	// pre-StartSyncRun cancel check at the top of syncRunLifecycle.Run,
-	// so a pre-closed cancelCh now short-circuits before any audit row
+	// so a pre-canceled context now short-circuits before any audit row
 	// is written — that path is the no-audit-row branch, not the
 	// canceled-after-StartSyncRun branch this test exercises. To land
-	// in finalize with the canceled outcome we close cancelCh inside
-	// the fetch fake after StartSyncRun has run; the page loop's next
-	// top-of-iteration check then observes the closed channel and
-	// returns errSyncCanceled, sending the lifecycle into finalize
+	// in finalize with the canceled outcome we cancel the run context
+	// inside the fetch fake after StartSyncRun has run; the page loop's
+	// next top-of-iteration check then observes the canceled context and
+	// returns googlehealth.ErrSyncCanceled, sending the lifecycle into finalize
 	// with syncRunOutcomeCanceled.
-	cancelCh := make(chan struct{})
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
 	testRuntime, _ = withStepSyncFetchFake(t, testRuntime, "connect-access-secret", map[string]string{
-		"":           `{"dataPoints":[],"nextPageToken":"page-2"}`,
-		"page-2":     `{"dataPoints":[]}`,
+		"":       `{"dataPoints":[],"nextPageToken":"page-2"}`,
+		"page-2": `{"dataPoints":[]}`,
 	})
 	wrappedFetch := testRuntime.fetchRawProvider
-	testRuntime.fetchRawProvider = func(request rawProviderRequest, accessToken string) ([]byte, error) {
-		body, err := wrappedFetch(request, accessToken)
-		// Close the channel after page 1 returns — the next iteration's
-		// top-of-loop check observes it and returns errSyncCanceled.
-		select {
-		case <-cancelCh:
-		default:
-			close(cancelCh)
-		}
+	testRuntime.fetchRawProvider = func(ctx context.Context, request googlehealth.RawRequest, accessToken string) ([]byte, error) {
+		body, err := wrappedFetch(ctx, request, accessToken)
+		// Cancel after page 1 returns — the next iteration's
+		// top-of-loop check observes it and returns googlehealth.ErrSyncCanceled.
+		cancelRun()
 		return body, err
 	}
-	result, _ := (syncRunExecutor{runtime: testRuntime}).Execute(syncCommandOptions{
+	result, _ := (syncRunExecutor{runtime: testRuntime}).Execute(runCtx, syncCommandOptions{
 		configPath:  configPath,
 		archivePath: archivePath,
 		dataTypes:   []string{"steps"},
 		from:        "2026-01-01",
 		to:          "2026-01-02T00:00:00Z",
-		cancelCh:    cancelCh,
 	})
 	// Envelope must say sync_canceled, NOT sync_failed.
 	if result.Status != "sync_canceled" {
@@ -647,7 +685,7 @@ func TestSyncRunLifecycleCanceledOutcomePreservedThroughRecovery(t *testing.T) {
 	}
 	defer db.Close()
 	var persistedStatus string
-	if err := db.QueryRow(`SELECT status FROM sync_runs WHERE id = ?`, result.SyncRunID).Scan(&persistedStatus); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT status FROM sync_runs WHERE id = ?`, result.SyncRunID).Scan(&persistedStatus); err != nil {
 		t.Fatalf("scan sync_runs status: %v", err)
 	}
 	if persistedStatus != "sync_canceled" {
@@ -664,17 +702,13 @@ func TestSyncRunLifecycleCanceledOutcomePreservedThroughRecovery(t *testing.T) {
 // isSQLiteBusy() returns false on the surfaced error — i.e. the typed
 // SQLITE_BUSY path must actually execute.
 func TestConcurrentSyncRunsForceSQLiteBusyContention(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
-	seedRuntime := newConnectFakeRuntime(t, fakeConnectConfig{
+	t.Parallel()
+	_, archivePath, _ := connectedArchiveViaSetup(t, fakeConnectConfig{
 		accessToken:        "connect-access-secret",
 		refreshToken:       "connect-refresh-secret",
 		healthUserID:       "111111256096816351",
 		legacyFitbitUserID: "A1B2C3",
 	})
-	if _, err := connectSetupWithRuntime(configPath, archivePath, false, seedRuntime); err != nil {
-		t.Fatalf("connect setup: %v", err)
-	}
 
 	// Open a competing writer handle and grab a BEGIN IMMEDIATE write
 	// lock by inserting into the existing sync_cursors table (any
@@ -687,20 +721,20 @@ func TestConcurrentSyncRunsForceSQLiteBusyContention(t *testing.T) {
 	}
 	defer competingDB.Close()
 	competingDB.SetMaxOpenConns(1)
-	holderTx, err := competingDB.Begin()
+	holderTx, err := competingDB.BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("begin competing tx: %v", err)
 	}
-	if _, err := holderTx.Exec(`BEGIN IMMEDIATE`); err != nil {
+	if _, err := holderTx.ExecContext(context.Background(), `BEGIN IMMEDIATE`); err != nil {
 		// modernc.org sqlite already promoted via Begin; force a write
 		// to hold the WAL write lock. Use a known-safe statement that
 		// touches no rows but engages the write path.
-		if _, errExec := holderTx.Exec(`UPDATE connections SET id = id`); errExec != nil {
-			holderTx.Rollback()
+		if _, errExec := holderTx.ExecContext(context.Background(), `UPDATE connections SET id = id`); errExec != nil {
+			_ = holderTx.Rollback()
 			t.Skipf("could not engage write lock on competing tx: %v", errExec)
 		}
 	}
-	defer holderTx.Rollback()
+	defer func() { _ = holderTx.Rollback() }()
 
 	// Open a second writer handle, also with a short busy_timeout, and
 	// attempt a write inside a fresh tx. It must observe SQLITE_BUSY.
@@ -711,12 +745,12 @@ func TestConcurrentSyncRunsForceSQLiteBusyContention(t *testing.T) {
 	defer writerHandle.Close()
 	writerHandle.SetMaxOpenConns(1)
 
-	contendingTx, err := writerHandle.Begin()
+	contendingTx, err := writerHandle.BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("begin writer tx: %v", err)
 	}
-	_, busyErr := contendingTx.Exec(`UPDATE connections SET id = id`)
-	contendingTx.Rollback()
+	_, busyErr := contendingTx.ExecContext(context.Background(), `UPDATE connections SET id = id`)
+	_ = contendingTx.Rollback()
 
 	if busyErr == nil {
 		t.Skip("could not provoke SQLITE_BUSY on this platform; serialization absorbed it")
@@ -743,22 +777,11 @@ type fakeFinishRetryWriter struct {
 	finishCallsObserved *int
 }
 
-func (writer *fakeFinishRetryWriter) FinalizeSyncRun(finalize syncRunFinalize) error {
+func (writer *fakeFinishRetryWriter) FinalizeSyncRun(ctx context.Context, finalize syncRunFinalize) error {
 	return writer.finalizeErr
 }
 
-// stubFinalizeSleeper swaps the package-level finalize sleeper for a
-// no-op so the lifecycle tests that exercise the production retry loop
-// do not eat budget*backoffCap of wallclock per scenario. Restored on
-// test cleanup.
-func stubFinalizeSleeper(t *testing.T) {
-	t.Helper()
-	prev := finalizeSyncRunSleeper
-	finalizeSyncRunSleeper = func(time.Duration) {}
-	t.Cleanup(func() { finalizeSyncRunSleeper = prev })
-}
-
-func (writer *fakeFinishRetryWriter) FinishSyncRun(id int64, status string, seenCount, newCount, updatedCount int, finishedAt, errorSummary string) error {
+func (writer *fakeFinishRetryWriter) FinishSyncRun(ctx context.Context, finish syncRunFinish) error {
 	writer.finishCallCounter++
 	if writer.finishCallsObserved != nil {
 		*writer.finishCallsObserved = writer.finishCallCounter
@@ -766,5 +789,5 @@ func (writer *fakeFinishRetryWriter) FinishSyncRun(id int64, status string, seen
 	if writer.finishCallCounter <= writer.finishBusyAttempts {
 		return errors.New("database is locked")
 	}
-	return writer.healthArchiveWriter.FinishSyncRun(id, status, seenCount, newCount, updatedCount, finishedAt, errorSummary)
+	return writer.healthArchiveWriter.FinishSyncRun(context.Background(), finish)
 }

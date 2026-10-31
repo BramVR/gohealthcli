@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"github.com/BramVR/gohealthcli/internal/archived"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,35 +13,39 @@ import (
 )
 
 func TestCurrentConnectionAccessTokenValidatesMetadataBeforeCredentialStore(t *testing.T) {
-	access := newCurrentConnectionAccess(
+	t.Parallel()
+	access := newCurrentConnectionAccessWithRuntime(
 		credentialStoreConfig{kind: "bogus"},
-		archivedConnection{
-			id:                "googlehealth:111",
-			tokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope}),
+		archived.Connection{
+			ID:                "googlehealth:111",
+			TokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googlehealth.ScopeProfileReadonly}),
 		},
 		nil,
+		productionRuntimeAdapters(),
 	)
 	access.runtime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
-	_, err := access.AccessToken([]string{googleHealthProfileReadonlyScope})
+	_, err := access.AccessToken([]string{googlehealth.ScopeProfileReadonly})
 	if err == nil || !strings.Contains(err.Error(), "token has expired") {
 		t.Fatalf("AccessToken error = %v, want expired token before Credential Store error", err)
 	}
 }
 
 func TestCurrentConnectionAccessTokenRequiresScopesBeforeCredentialStore(t *testing.T) {
-	access := newCurrentConnectionAccess(
+	t.Parallel()
+	access := newCurrentConnectionAccessWithRuntime(
 		credentialStoreConfig{kind: "bogus"},
-		archivedConnection{
-			id:                "googlehealth:111",
-			tokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC), []string{googleHealthActivityReadonlyScope}),
+		archived.Connection{
+			ID:                "googlehealth:111",
+			TokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC), []string{googlehealth.ScopeActivityReadonly}),
 		},
 		nil,
+		productionRuntimeAdapters(),
 	)
 	access.runtime.now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
 
-	_, err := access.AccessToken([]string{googleHealthProfileReadonlyScope})
-	if err == nil || !strings.Contains(err.Error(), googleHealthProfileReadonlyScope) {
+	_, err := access.AccessToken([]string{googlehealth.ScopeProfileReadonly})
+	if err == nil || !strings.Contains(err.Error(), googlehealth.ScopeProfileReadonly) {
 		t.Fatalf("AccessToken error = %v, want missing scope before Credential Store error", err)
 	}
 }
@@ -52,7 +58,8 @@ func TestCurrentConnectionAccessTokenRequiresScopesBeforeCredentialStore(t *test
 // the message is deterministic regardless of which missing scope
 // surfaces first.
 func TestRequireConnectionScopesAddScopesHint(t *testing.T) {
-	metadata := tokenMetadataJSON(t, time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope})
+	t.Parallel()
+	metadata := tokenMetadataJSON(t, time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC), []string{googlehealth.ScopeProfileReadonly})
 	tests := []struct {
 		name           string
 		requiredScopes []string
@@ -60,22 +67,22 @@ func TestRequireConnectionScopesAddScopesHint(t *testing.T) {
 	}{
 		{
 			name:           "ecg only",
-			requiredScopes: []string{googleHealthEcgReadonlyScope},
+			requiredScopes: []string{googlehealth.ScopeEcgReadonly},
 			wantContains:   "run `gohealthcli connect --add-scopes ecg`",
 		},
 		{
 			name:           "irn only",
-			requiredScopes: []string{googleHealthIrnReadonlyScope},
+			requiredScopes: []string{googlehealth.ScopeIrnReadonly},
 			wantContains:   "run `gohealthcli connect --add-scopes irn`",
 		},
 		{
 			name:           "ecg and irn",
-			requiredScopes: []string{googleHealthEcgReadonlyScope, googleHealthIrnReadonlyScope},
+			requiredScopes: []string{googlehealth.ScopeEcgReadonly, googlehealth.ScopeIrnReadonly},
 			wantContains:   "run `gohealthcli connect --add-scopes ecg,irn`",
 		},
 		{
 			name:           "non opt-in scope keeps generic hint",
-			requiredScopes: []string{googleHealthSleepReadonlyScope},
+			requiredScopes: []string{googlehealth.ScopeSleepReadonly},
 			wantContains:   "run `gohealthcli connect` again",
 		},
 	}
@@ -92,6 +99,22 @@ func TestRequireConnectionScopesAddScopesHint(t *testing.T) {
 	}
 }
 
+func TestElectrocardiogramConsentAndRemediationUseCurrentScope(t *testing.T) {
+	t.Parallel()
+	const currentScope = "https://www.googleapis.com/auth/googlehealth.ecg.readonly"
+	if googlehealth.ScopeEcgReadonly != currentScope {
+		t.Fatalf("ScopeEcgReadonly = %q, want %q", googlehealth.ScopeEcgReadonly, currentScope)
+	}
+	if got := connectAddScopeKeywords["ecg"]; got != currentScope {
+		t.Fatalf("connect --add-scopes ecg scope = %q, want %q", got, currentScope)
+	}
+	metadata := tokenMetadataJSON(t, time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC), []string{googlehealth.ScopeProfileReadonly})
+	err := requireConnectionScopes(metadata, []string{googlehealth.ScopeEcgReadonly})
+	if err == nil || !strings.Contains(err.Error(), "run `gohealthcli connect --add-scopes ecg`") {
+		t.Fatalf("missing ECG scope error = %v, want ecg remediation", err)
+	}
+}
+
 // TestCurrentConnectionAccessTokenScopeMissingSentinel pins the AC for
 // PRD #142 slice 1: AccessToken returns an error matching
 // errors.Is(err, errCurrentConnectionScopeMissing) exactly when a
@@ -101,6 +124,7 @@ func TestRequireConnectionScopesAddScopesHint(t *testing.T) {
 // set per-command "<command>_scope_missing" status without false
 // positives.
 func TestCurrentConnectionAccessTokenScopeMissingSentinel(t *testing.T) {
+	t.Parallel()
 	expiresFuture := time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)
 	expiresPast := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -114,35 +138,37 @@ func TestCurrentConnectionAccessTokenScopeMissingSentinel(t *testing.T) {
 		{
 			name: "missing required scope matches sentinel",
 			setup: func(t *testing.T) currentConnectionAccess {
-				access := newCurrentConnectionAccess(
+				access := newCurrentConnectionAccessWithRuntime(
 					credentialStoreConfig{kind: "bogus"},
-					archivedConnection{
-						id:                "googlehealth:111",
-						tokenMetadataJSON: tokenMetadataJSON(t, expiresFuture, []string{googleHealthActivityReadonlyScope}),
+					archived.Connection{
+						ID:                "googlehealth:111",
+						TokenMetadataJSON: tokenMetadataJSON(t, expiresFuture, []string{googlehealth.ScopeActivityReadonly}),
 					},
 					nil,
+					productionRuntimeAdapters(),
 				)
 				access.runtime.now = func() time.Time { return now }
 				return access
 			},
-			requiredScopes: []string{googleHealthIrnReadonlyScope},
+			requiredScopes: []string{googlehealth.ScopeIrnReadonly},
 			wantSentinel:   true,
 		},
 		{
 			name: "expired token without auto-refresh does not match sentinel",
 			setup: func(t *testing.T) currentConnectionAccess {
-				access := newCurrentConnectionAccess(
+				access := newCurrentConnectionAccessWithRuntime(
 					credentialStoreConfig{kind: "bogus"},
-					archivedConnection{
-						id:                "googlehealth:111",
-						tokenMetadataJSON: tokenMetadataJSON(t, expiresPast, []string{googleHealthIrnReadonlyScope}),
+					archived.Connection{
+						ID:                "googlehealth:111",
+						TokenMetadataJSON: tokenMetadataJSON(t, expiresPast, []string{googlehealth.ScopeIrnReadonly}),
 					},
 					nil,
+					productionRuntimeAdapters(),
 				)
 				access.runtime.now = func() time.Time { return now }
 				return access
 			},
-			requiredScopes: []string{googleHealthIrnReadonlyScope},
+			requiredScopes: []string{googlehealth.ScopeIrnReadonly},
 			wantSentinel:   false,
 		},
 		{
@@ -152,18 +178,19 @@ func TestCurrentConnectionAccessTokenScopeMissingSentinel(t *testing.T) {
 					"refresh_token": "stored-refresh",
 					"token_type":    "Bearer",
 				})
-				access := newCurrentConnectionAccess(
+				access := newCurrentConnectionAccessWithRuntime(
 					fixture.credentialStore,
-					archivedConnection{
-						id:                "googlehealth:111",
-						tokenMetadataJSON: tokenMetadataJSON(t, expiresFuture, []string{googleHealthIrnReadonlyScope}),
+					archived.Connection{
+						ID:                "googlehealth:111",
+						TokenMetadataJSON: tokenMetadataJSON(t, expiresFuture, []string{googlehealth.ScopeIrnReadonly}),
 					},
 					nil,
+					productionRuntimeAdapters(),
 				)
 				access.runtime.now = func() time.Time { return now }
 				return access
 			},
-			requiredScopes: []string{googleHealthIrnReadonlyScope},
+			requiredScopes: []string{googlehealth.ScopeIrnReadonly},
 			wantSentinel:   false,
 		},
 		{
@@ -188,16 +215,16 @@ func TestCurrentConnectionAccessTokenScopeMissingSentinel(t *testing.T) {
 				}
 				access := newCurrentConnectionAccessWithRuntime(
 					fixture.credentialStore,
-					archivedConnection{
-						id:                "googlehealth:111",
-						tokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthIrnReadonlyScope}),
+					archived.Connection{
+						ID:                "googlehealth:111",
+						TokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googlehealth.ScopeIrnReadonly}),
 					},
 					nil,
 					runtime,
 				).WithAutoRefresh(oauthClientSource{kind: "file", path: fixture.oauthClientPath}, &fakeHealthArchiveConnectionAPI{})
 				return access
 			},
-			requiredScopes: []string{googleHealthIrnReadonlyScope},
+			requiredScopes: []string{googlehealth.ScopeIrnReadonly},
 			wantSentinel:   false,
 		},
 	}
@@ -222,6 +249,7 @@ func TestCurrentConnectionAccessTokenScopeMissingSentinel(t *testing.T) {
 // and falls back to `gohealthcli connect` for non-keyword scopes —
 // preserving requireConnectionScopes's existing message verbatim.
 func TestCurrentConnectionAccessTokenScopeMissingNamesAddScopesRecovery(t *testing.T) {
+	t.Parallel()
 	expiresFuture := time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	tests := []struct {
@@ -231,24 +259,25 @@ func TestCurrentConnectionAccessTokenScopeMissingNamesAddScopesRecovery(t *testi
 	}{
 		{
 			name:           "tier-2 irn scope names add-scopes keyword",
-			requiredScopes: []string{googleHealthIrnReadonlyScope},
+			requiredScopes: []string{googlehealth.ScopeIrnReadonly},
 			wantContains:   "run `gohealthcli connect --add-scopes irn`",
 		},
 		{
 			name:           "non-keyword scope falls back to generic connect",
-			requiredScopes: []string{googleHealthSleepReadonlyScope},
+			requiredScopes: []string{googlehealth.ScopeSleepReadonly},
 			wantContains:   "run `gohealthcli connect` again",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			access := newCurrentConnectionAccess(
+			access := newCurrentConnectionAccessWithRuntime(
 				credentialStoreConfig{kind: "bogus"},
-				archivedConnection{
-					id:                "googlehealth:111",
-					tokenMetadataJSON: tokenMetadataJSON(t, expiresFuture, []string{googleHealthActivityReadonlyScope}),
+				archived.Connection{
+					ID:                "googlehealth:111",
+					TokenMetadataJSON: tokenMetadataJSON(t, expiresFuture, []string{googlehealth.ScopeActivityReadonly}),
 				},
 				nil,
+				productionRuntimeAdapters(),
 			)
 			access.runtime.now = func() time.Time { return now }
 
@@ -267,13 +296,16 @@ func TestCurrentConnectionAccessTokenScopeMissingNamesAddScopesRecovery(t *testi
 }
 
 func TestCurrentConnectionAccessFetchVerifiedIdentityNormalizesUnauthorized(t *testing.T) {
+	t.Parallel()
 	runtime := productionRuntimeAdapters()
 	runtime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
-		return googleIdentity{}, errors.New("Google Health raw request failed with HTTP 401")
+		// Typed 401: the translation layer detects auth rejections via
+		// errors.As on the typed HTTP error, never message text (#272).
+		return googleIdentity{}, &googlehealth.HTTPError{StatusCode: 401, Endpoint: "identity"}
 	}
 	access := newCurrentConnectionAccessWithRuntime(
 		credentialStoreConfig{},
-		archivedConnection{googleHealthUserID: "111111256096816351"},
+		archived.Connection{GoogleHealthUserID: "111111256096816351"},
 		nil,
 		runtime,
 	)
@@ -282,19 +314,20 @@ func TestCurrentConnectionAccessFetchVerifiedIdentityNormalizesUnauthorized(t *t
 	if err == nil || err.Error() != "Google Health rejected stored Connection token; run `gohealthcli connect` again" {
 		t.Fatalf("FetchVerifiedIdentity error = %v, want normalized unauthorized error", err)
 	}
-	if !errors.Is(err, errCurrentConnectionProviderUnauthorized) {
+	if !errors.Is(err, googlehealth.ErrUnauthorized) {
 		t.Fatalf("FetchVerifiedIdentity error = %v, want current Connection provider unauthorized category", err)
 	}
 }
 
 func TestCurrentConnectionAccessFetchVerifiedIdentityRejectsMismatch(t *testing.T) {
+	t.Parallel()
 	runtime := productionRuntimeAdapters()
 	runtime.fetchIdentity = func(accessToken string) (googleIdentity, error) {
 		return googleIdentity{healthUserID: "other"}, nil
 	}
 	access := newCurrentConnectionAccessWithRuntime(
 		credentialStoreConfig{},
-		archivedConnection{googleHealthUserID: "111111256096816351"},
+		archived.Connection{GoogleHealthUserID: "111111256096816351"},
 		nil,
 		runtime,
 	)
@@ -309,18 +342,61 @@ func TestCurrentConnectionAccessFetchVerifiedIdentityRejectsMismatch(t *testing.
 }
 
 func TestCurrentConnectionAccessTokenMissingCategory(t *testing.T) {
+	t.Parallel()
 	if !isCurrentConnectionTokenMissing(errCurrentConnectionMissingAccessToken) {
 		t.Fatal("missing access token error is not categorized as token_missing")
 	}
 	if !isCurrentConnectionTokenMissing(errCurrentConnectionMissingRefreshToken) {
 		t.Fatal("missing refresh token error is not categorized as token_missing")
 	}
-	if !isCurrentConnectionTokenMissing(errors.New("Credential Store token material not found; run `gohealthcli connect` first")) {
-		t.Fatal("missing stored token material error is not categorized as token_missing")
+	if !isCurrentConnectionTokenMissing(errCredentialStoreTokenMaterialNotFound) {
+		t.Fatal("Credential Store not-found sentinel is not categorized as token_missing")
+	}
+	// Issue #272: classification is errors.Is on the Credential Store
+	// sentinel — an unrelated error that merely mentions the phrase in
+	// its text must NOT classify as token_missing.
+	if isCurrentConnectionTokenMissing(errors.New("wrapped elsewhere: token material not found")) {
+		t.Fatal("token_missing category must not match on error message text")
+	}
+}
+
+// TestFileCredentialStoreLoadReturnsTypedNotFoundSentinel pins the
+// issue #272 Credential Store seam: a missing store file and a missing
+// Connection key both surface the errCredentialStoreTokenMaterialNotFound
+// sentinel (so callers branch via errors.Is, not message text), with
+// the historical user-facing message preserved verbatim.
+func TestFileCredentialStoreLoadReturnsTypedNotFoundSentinel(t *testing.T) {
+	t.Parallel()
+	storePath := filepath.Join(t.TempDir(), "tokens.json")
+	store := fileCredentialStore{path: storePath}
+
+	_, err := store.Load("googlehealth:111")
+	if !errors.Is(err, errCredentialStoreTokenMaterialNotFound) {
+		t.Fatalf("Load on missing store file = %v, want errCredentialStoreTokenMaterialNotFound", err)
+	}
+	if err.Error() != "Credential Store token material not found; run `gohealthcli connect` first" {
+		t.Fatalf("Load error message = %q, want the historical wording verbatim", err.Error())
+	}
+
+	if writeErr := os.WriteFile(storePath, []byte(`{"googlehealth:222":{}}`), 0o600); writeErr != nil {
+		t.Fatalf("seed store file: %v", writeErr)
+	}
+	_, err = store.Load("googlehealth:111")
+	if !errors.Is(err, errCredentialStoreTokenMaterialNotFound) {
+		t.Fatalf("Load on missing key = %v, want errCredentialStoreTokenMaterialNotFound", err)
+	}
+}
+
+func TestMidRunTokenRefresherNilWithoutAutoRefresh(t *testing.T) {
+	t.Parallel()
+	access := newCurrentConnectionAccessWithRuntime(credentialStoreConfig{}, archived.Connection{}, nil, runtimeAdapters{})
+	if access.MidRunTokenRefresher() != nil {
+		t.Fatal("MidRunTokenRefresher = non-nil, want nil without WithAutoRefresh")
 	}
 }
 
 func TestCurrentConnectionAccessTokenAutoRefreshesExpiredToken(t *testing.T) {
+	t.Parallel()
 	fixture := setupAutoRefreshFixture(t, map[string]any{
 		"access_token":  "stale-access",
 		"refresh_token": "stored-refresh",
@@ -329,39 +405,24 @@ func TestCurrentConnectionAccessTokenAutoRefreshesExpiredToken(t *testing.T) {
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	runtime := runtimeAdapters{}
 	runtime.now = func() time.Time { return now }
-	runtime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-		if client.clientID != "test-client" {
-			t.Fatalf("oauth client id = %q, want test-client", client.clientID)
-		}
-		if refreshToken != "stored-refresh" {
-			t.Fatalf("refresh token = %q, want stored-refresh", refreshToken)
-		}
-		return oauthTokenResponse{
-			accessToken:  "fresh-access",
-			refreshToken: "stored-refresh",
-			tokenType:    "Bearer",
-			scopes:       fallbackScopes,
-			expiresAt:    now.Add(time.Hour),
-			rawTokenMaterialObject: map[string]any{
-				"access_token":  "fresh-access",
-				"refresh_token": "stored-refresh",
-				"token_type":    "Bearer",
-				"expires_in":    float64(3600),
-			},
-		}, nil
-	}
+	bindRefreshOAuthTokenFake(t, &runtime, fakeRefreshConfig{
+		wantClientID:     "test-client",
+		wantRefreshToken: "stored-refresh",
+		accessToken:      "fresh-access",
+		expiresAt:        now.Add(time.Hour),
+	})
 	archive := &fakeHealthArchiveConnectionAPI{}
 	access := newCurrentConnectionAccessWithRuntime(
 		fixture.credentialStore,
-		archivedConnection{
-			id:                "googlehealth:111",
-			tokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope}),
+		archived.Connection{
+			ID:                "googlehealth:111",
+			TokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googlehealth.ScopeProfileReadonly}),
 		},
 		nil,
 		runtime,
 	).WithAutoRefresh(oauthClientSource{kind: "file", path: fixture.oauthClientPath}, archive)
 
-	accessToken, err := access.AccessToken([]string{googleHealthProfileReadonlyScope})
+	accessToken, err := access.AccessToken([]string{googlehealth.ScopeProfileReadonly})
 	if err != nil {
 		t.Fatalf("AccessToken error = %v, want refreshed token", err)
 	}
@@ -378,7 +439,7 @@ type autoRefreshFixture struct {
 // setupAutoRefreshFixture writes a minimal OAuth client file and seeds a
 // file Credential Store with the supplied token material, returning the
 // paths and config needed to drive the auto-refresh path. The credential
-// store is keyed by "googlehealth:111" to match the archivedConnection
+// store is keyed by "googlehealth:111" to match the archived.Connection
 // fixtures the tests construct.
 func setupAutoRefreshFixture(t *testing.T, seedTokenMaterial map[string]any) autoRefreshFixture {
 	t.Helper()
@@ -391,7 +452,7 @@ func setupAutoRefreshFixture(t *testing.T, seedTokenMaterial map[string]any) aut
 		t.Fatalf("write oauth client file: %v", err)
 	}
 	credentialStore := credentialStoreConfig{kind: "file", path: filepath.Join(tempDir, "tokens.json")}
-	store, err := newCredentialStore(credentialStore)
+	store, err := newCredentialStoreWithRuntime(credentialStore, productionRuntimeAdapters())
 	if err != nil {
 		t.Fatalf("new credential store: %v", err)
 	}
@@ -401,13 +462,55 @@ func setupAutoRefreshFixture(t *testing.T, seedTokenMaterial map[string]any) aut
 	return autoRefreshFixture{oauthClientPath: oauthClientPath, credentialStore: credentialStore}
 }
 
-func TestCurrentConnectionAccessTokenAutoRefreshPersistsToCredentialStoreAndArchive(t *testing.T) {
+func TestCurrentConnectionAccessTokenAutoRefreshRejectsGroupReadableOAuthClientFile(t *testing.T) {
+	t.Parallel()
+	if !usesPOSIXPermissions() {
+		t.Skip("POSIX permission test")
+	}
 	fixture := setupAutoRefreshFixture(t, map[string]any{
 		"access_token":  "stale-access",
 		"refresh_token": "stored-refresh",
 		"token_type":    "Bearer",
 	})
-	store, err := newCredentialStore(fixture.credentialStore)
+	if err := os.Chmod(fixture.oauthClientPath, 0o644); err != nil {
+		t.Fatalf("chmod oauth client file: %v", err)
+	}
+
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	runtime := runtimeAdapters{}
+	runtime.now = func() time.Time { return now }
+	runtime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
+		t.Fatalf("refreshOAuthToken called for group-readable OAuth client file")
+		return oauthTokenResponse{}, nil
+	}
+	archive := &fakeHealthArchiveConnectionAPI{}
+	access := newCurrentConnectionAccessWithRuntime(
+		fixture.credentialStore,
+		archived.Connection{
+			ID:                "googlehealth:111",
+			TokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googlehealth.ScopeProfileReadonly}),
+		},
+		nil,
+		runtime,
+	).WithAutoRefresh(oauthClientSource{kind: "file", path: fixture.oauthClientPath}, archive)
+
+	_, err := access.AccessToken([]string{googlehealth.ScopeProfileReadonly})
+	if err == nil {
+		t.Fatalf("AccessToken error = nil, want owner-only rejection")
+	}
+	if !strings.Contains(err.Error(), "OAuth client file is not owner-only") {
+		t.Fatalf("AccessToken error = %v, want not owner-only diagnostic", err)
+	}
+}
+
+func TestCurrentConnectionAccessTokenAutoRefreshPersistsToCredentialStoreAndArchive(t *testing.T) {
+	t.Parallel()
+	fixture := setupAutoRefreshFixture(t, map[string]any{
+		"access_token":  "stale-access",
+		"refresh_token": "stored-refresh",
+		"token_type":    "Bearer",
+	})
+	store, err := newCredentialStoreWithRuntime(fixture.credentialStore, productionRuntimeAdapters())
 	if err != nil {
 		t.Fatalf("new credential store: %v", err)
 	}
@@ -416,33 +519,23 @@ func TestCurrentConnectionAccessTokenAutoRefreshPersistsToCredentialStoreAndArch
 	refreshedExpiresAt := now.Add(time.Hour)
 	runtime := runtimeAdapters{}
 	runtime.now = func() time.Time { return now }
-	runtime.refreshOAuthToken = func(client oauthClientConfig, refreshToken string, fallbackScopes []string) (oauthTokenResponse, error) {
-		return oauthTokenResponse{
-			accessToken:  "fresh-access",
-			refreshToken: "rotated-refresh",
-			tokenType:    "Bearer",
-			scopes:       fallbackScopes,
-			expiresAt:    refreshedExpiresAt,
-			rawTokenMaterialObject: map[string]any{
-				"access_token":  "fresh-access",
-				"refresh_token": "rotated-refresh",
-				"token_type":    "Bearer",
-				"expires_in":    float64(3600),
-			},
-		}, nil
-	}
+	bindRefreshOAuthTokenFake(t, &runtime, fakeRefreshConfig{
+		accessToken:  "fresh-access",
+		refreshToken: "rotated-refresh",
+		expiresAt:    refreshedExpiresAt,
+	})
 	archive := &fakeHealthArchiveConnectionAPI{}
 	access := newCurrentConnectionAccessWithRuntime(
 		fixture.credentialStore,
-		archivedConnection{
-			id:                "googlehealth:111",
-			tokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope}),
+		archived.Connection{
+			ID:                "googlehealth:111",
+			TokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googlehealth.ScopeProfileReadonly}),
 		},
 		nil,
 		runtime,
 	).WithAutoRefresh(oauthClientSource{kind: "file", path: fixture.oauthClientPath}, archive)
 
-	if _, err := access.AccessToken([]string{googleHealthProfileReadonlyScope}); err != nil {
+	if _, err := access.AccessToken([]string{googlehealth.ScopeProfileReadonly}); err != nil {
 		t.Fatalf("AccessToken error = %v, want refreshed token", err)
 	}
 
@@ -469,6 +562,7 @@ func TestCurrentConnectionAccessTokenAutoRefreshPersistsToCredentialStoreAndArch
 }
 
 func TestCurrentConnectionAccessTokenAutoRefreshFailureNamesCauseAndPointsAtDoctorOrConnect(t *testing.T) {
+	t.Parallel()
 	fixture := setupAutoRefreshFixture(t, map[string]any{
 		"access_token":  "stale-access",
 		"refresh_token": "revoked-refresh",
@@ -482,15 +576,15 @@ func TestCurrentConnectionAccessTokenAutoRefreshFailureNamesCauseAndPointsAtDoct
 	}
 	access := newCurrentConnectionAccessWithRuntime(
 		fixture.credentialStore,
-		archivedConnection{
-			id:                "googlehealth:111",
-			tokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googleHealthProfileReadonlyScope}),
+		archived.Connection{
+			ID:                "googlehealth:111",
+			TokenMetadataJSON: tokenMetadataJSON(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []string{googlehealth.ScopeProfileReadonly}),
 		},
 		nil,
 		runtime,
 	).WithAutoRefresh(oauthClientSource{kind: "file", path: fixture.oauthClientPath}, &fakeHealthArchiveConnectionAPI{})
 
-	_, err := access.AccessToken([]string{googleHealthProfileReadonlyScope})
+	_, err := access.AccessToken([]string{googlehealth.ScopeProfileReadonly})
 	if err == nil {
 		t.Fatal("AccessToken error = nil, want refresh failure")
 	}
@@ -515,8 +609,8 @@ func (archive *fakeHealthArchiveConnectionAPI) Close() error { return nil }
 func (archive *fakeHealthArchiveConnectionAPI) EnsureSameGoogleIdentity(string) error {
 	return nil
 }
-func (archive *fakeHealthArchiveConnectionAPI) CurrentConnection() (archivedConnection, error) {
-	return archivedConnection{}, nil
+func (archive *fakeHealthArchiveConnectionAPI) CurrentConnection() (archived.Connection, error) {
+	return archived.Connection{}, nil
 }
 func (archive *fakeHealthArchiveConnectionAPI) UpsertConnection(string, googleIdentity, oauthTokenResponse, time.Time) error {
 	return nil
@@ -528,7 +622,7 @@ func (archive *fakeHealthArchiveConnectionAPI) UpdateConnectionTokenMetadata(con
 	archive.updateNow = now
 	return archive.updateErr
 }
-func (archive *fakeHealthArchiveConnectionAPI) RefreshConnectionIdentity(archivedConnection, googleIdentity, time.Time) error {
+func (archive *fakeHealthArchiveConnectionAPI) RefreshConnectionIdentity(archived.Connection, googleIdentity, time.Time) error {
 	return nil
 }
 func (archive *fakeHealthArchiveConnectionAPI) InspectConnectionTokenMetadata() (int, string, error) {

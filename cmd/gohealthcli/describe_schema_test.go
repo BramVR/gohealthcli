@@ -2,8 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -12,6 +16,7 @@ import (
 // --sql mode: every table and view from sqlite_master appears in the
 // DDL dump, internal SQLite tables (sqlite_*) are excluded.
 func TestDescribeSchemaSQLDumpsTablesAndViews(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -49,6 +54,7 @@ func TestDescribeSchemaSQLDumpsTablesAndViews(t *testing.T) {
 // surfaces in the JSON catalog with at least its name + columns. The
 // curated narrative file lives separately and merges in.
 func TestDescribeSchemaJSONIncludesEveryRegisteredView(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -90,6 +96,7 @@ func TestDescribeSchemaJSONIncludesEveryRegisteredView(t *testing.T) {
 // the --json output. Downstream tools rely on the narrative for
 // guidance ("for unit-aware queries JOIN current_settings", etc).
 func TestDescribeSchemaJSONIncludesCuratedNarrative(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -101,7 +108,7 @@ func TestDescribeSchemaJSONIncludesCuratedNarrative(t *testing.T) {
 	}
 	var catalog struct {
 		Narrative struct {
-			Guidance                 []string                  `json:"guidance"`
+			Guidance                   []string          `json:"guidance"`
 			PreferredViewsByQueryClass map[string]string `json:"preferred_views_by_query_class"`
 		} `json:"narrative"`
 	}
@@ -125,6 +132,7 @@ func TestDescribeSchemaJSONIncludesCuratedNarrative(t *testing.T) {
 // best-effort fallback. Stdout users redirecting to a file still get the
 // catalog uncluttered by the note.
 func TestDescribeSchemaPlainEmitsJSONCatalogWithStderrNote(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -159,6 +167,7 @@ func TestDescribeSchemaPlainEmitsJSONCatalogWithStderrNote(t *testing.T) {
 // with the documented error, even though --plain is otherwise a no-op
 // (the user's intent is contradictory and we surface that explicitly).
 func TestDescribeSchemaPlainAndJSONMutuallyExclusive(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -181,6 +190,7 @@ func TestDescribeSchemaPlainAndJSONMutuallyExclusive(t *testing.T) {
 // This test guards the documented interaction: `--sql` wins over the
 // implicit `--json=true` default that RegisterCommon seeds.
 func TestDescribeSchemaSQLStillOverridesJSONDefault(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -215,6 +225,7 @@ func TestDescribeSchemaSQLStillOverridesJSONDefault(t *testing.T) {
 // different, only that one archive's catalog is observably distinct
 // from the other under the same binary invocation).
 func TestDescribeSchemaJSONHonorsExplicitDBAgainstTwoDistinctArchives(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	archiveA := filepath.Join(tempDir, "a", "a.sqlite")
 	archiveB := filepath.Join(tempDir, "b", "b.sqlite")
@@ -231,7 +242,7 @@ func TestDescribeSchemaJSONHonorsExplicitDBAgainstTwoDistinctArchives(t *testing
 	if err != nil {
 		t.Fatalf("open archive B: %v", err)
 	}
-	if _, err := db.Exec(`CREATE TABLE slice1_marker (id INTEGER PRIMARY KEY)`); err != nil {
+	if _, err := db.ExecContext(context.Background(), `CREATE TABLE slice1_marker (id INTEGER PRIMARY KEY)`); err != nil {
 		db.Close()
 		t.Fatalf("create marker table on B: %v", err)
 	}
@@ -268,6 +279,7 @@ func TestDescribeSchemaJSONHonorsExplicitDBAgainstTwoDistinctArchives(t *testing
 // PRD's contract that downstream tools (a Claude skill, MCP server)
 // can trust the JSON catalog as the source of truth.
 func TestDescribeSchemaJSONDriftDetectionFailsWhenViewMissingFromCatalog(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	_, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -276,7 +288,7 @@ func TestDescribeSchemaJSONDriftDetectionFailsWhenViewMissingFromCatalog(t *test
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	if _, err := db.Exec(`CREATE VIEW orphan_view AS SELECT 1 AS x`); err != nil {
+	if _, err := db.ExecContext(context.Background(), `CREATE VIEW orphan_view AS SELECT 1 AS x`); err != nil {
 		db.Close()
 		t.Fatalf("create orphan view: %v", err)
 	}
@@ -296,6 +308,7 @@ func TestDescribeSchemaJSONDriftDetectionFailsWhenViewMissingFromCatalog(t *test
 // next to a working pragma call); we stamp "unknown" instead. Real
 // declared SQL types pass through unchanged.
 func TestNormalizeViewColumnTypeFallback(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in   string
 		want string
@@ -321,6 +334,7 @@ func TestNormalizeViewColumnTypeFallback(t *testing.T) {
 // `views[*].columns_detailed`. The fallback is the literal "unknown".
 // Real declared types (TEXT, INTEGER, REAL, NUMERIC) pass through.
 func TestDescribeSchemaJSONViewColumnsNeverBLOB(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -377,6 +391,7 @@ func TestDescribeSchemaJSONViewColumnsNeverBLOB(t *testing.T) {
 // has at least one TEXT column (`connections.id`) we can pin; any future
 // BLOB column on a real table must still report BLOB.
 func TestDescribeSchemaJSONTableColumnsUnchanged(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 
@@ -388,7 +403,7 @@ func TestDescribeSchemaJSONTableColumnsUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	if _, err := db.Exec(`CREATE TABLE _slice8_blob_probe (id INTEGER PRIMARY KEY, payload BLOB)`); err != nil {
+	if _, err := db.ExecContext(context.Background(), `CREATE TABLE _slice8_blob_probe (id INTEGER PRIMARY KEY, payload BLOB)`); err != nil {
 		db.Close()
 		t.Fatalf("create probe table: %v", err)
 	}
@@ -431,4 +446,63 @@ func TestDescribeSchemaJSONTableColumnsUnchanged(t *testing.T) {
 		t.Errorf("real table BLOB column rewritten: got type=%q, want BLOB",
 			probe.payloadCol.Type)
 	}
+}
+
+// listSchemaViews enumerates the public (non-sqlite_*) views in
+// sqlite_master. Test-only: the live catalog path reads views through
+// the Normalized Views Registry, so this raw enumeration exists solely
+// for the drift guard below.
+func listSchemaViews(db *sql.DB) ([]string, error) {
+	rows, err := db.QueryContext(context.Background(), `SELECT name FROM sqlite_master
+		WHERE type = 'view'
+			AND name NOT LIKE 'sqlite_%'
+		ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
+// assertNoSchemaDrift returns a non-nil error if any view in
+// sqlite_master lacks a Normalized Views Registry catalog entry. It is
+// the CI drift guard's helper and lives in the test file because no
+// binary code path calls it — the guard compares the live schema to
+// the registry the binary actually serves.
+func assertNoSchemaDrift(archivePath string) error {
+	db, err := openArchiveReadOnly(archivePath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	views, err := listSchemaViews(db)
+	if err != nil {
+		return err
+	}
+	registry := normalizedViewsRegistry()
+	registered := map[string]bool{}
+	for _, name := range registry.Catalog() {
+		if spec, ok := registry.View(name); ok {
+			registered[spec.view] = true
+		}
+	}
+	var orphans []string
+	for _, view := range views {
+		if !registered[view] {
+			orphans = append(orphans, view)
+		}
+	}
+	if len(orphans) > 0 {
+		sort.Strings(orphans)
+		return fmt.Errorf("describe-schema drift: %d view(s) in sqlite_master have no catalog entry: %v", len(orphans), orphans)
+	}
+	return nil
 }

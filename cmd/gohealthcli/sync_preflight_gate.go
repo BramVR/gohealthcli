@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"github.com/BramVR/gohealthcli/internal/archived"
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 	"time"
 )
 
@@ -32,8 +35,9 @@ type syncPreflightContext struct {
 	dataTypeUsesDateRange  func(dataType string) bool
 	sourceFamilyFilter     func(dataType, sourceFamily string) (string, error)
 	defaultAllDataTypes    func() []string
-	currentConnection      func() (archivedConnection, error)
-	rollupCatalogValidator func(spec syncRollupSpec, dataType string) error
+	configuredTimezone     func() (string, error)
+	currentConnection      func() (archived.Connection, error)
+	rollupCatalogValidator func(spec googlehealth.RollupSpec, dataType string) error
 }
 
 // preflightPlan is the resolved fan-out the Sync Run lifecycle consumes.
@@ -42,12 +46,21 @@ type syncPreflightContext struct {
 // order; cursorKeys is index-aligned. rollupSpec is nil when --rollup is
 // empty so the lifecycle can branch on presence without re-parsing.
 type preflightPlan struct {
-	dataTypes  []string
+	dataTypes []string
+	// from/to are the canonical provider boundaries and therefore the
+	// durable cursor contract. Exact resolved instants exist only long
+	// enough for preflight ordering: civil endpoints have no offset/fold
+	// discriminator, so persisting a physical instant would invent provider
+	// semantics and break the exact --to cursor round trip (ADR-0008).
 	from       string
 	to         string
+	timezone   string
+	resolvedAt time.Time
+	fromInput  string
+	toInput    string
 	rollup     string
-	rollupSpec *syncRollupSpec
-	connection archivedConnection
+	rollupSpec *googlehealth.RollupSpec
+	connection archived.Connection
 	cursorKeys []syncCursorKey
 }
 
@@ -96,7 +109,7 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 		return preflightPlan{}, err
 	}
 	for _, dataType := range dataTypes {
-		if !gate.ctx.dataTypeSupported(dataType) {
+		if options.rollup == "" && !gate.ctx.dataTypeSupported(dataType) {
 			return preflightPlan{}, newPreflightFailure(
 				preflightRuleUnsupportedDataType,
 				fmt.Errorf("sync Data Type %q is not supported yet", dataType),
@@ -109,19 +122,22 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 			errors.New("sync --source-family cannot be combined with --rollup"),
 		)
 	}
-	var rollupSpec *syncRollupSpec
+	var rollupSpec *googlehealth.RollupSpec
 	if options.rollup != "" {
-		spec, err := parseSyncRollupSpec(options.rollup)
+		spec, err := googlehealth.ParseRollupSpec(options.rollup)
 		if err != nil {
 			return preflightPlan{}, newPreflightFailure(preflightRuleRollupParse, err)
 		}
 		validate := gate.ctx.rollupCatalogValidator
 		if validate == nil {
-			validate = validateSyncRollupAgainstDataType
+			validate = googlehealth.ValidateRollupAgainstDataType
 		}
 		for _, dataType := range dataTypes {
 			if err := validate(spec, dataType); err != nil {
 				return preflightPlan{}, newPreflightFailure(preflightRuleRollupCatalog, err)
+			}
+			if err := spec.ValidateRequestWindow(dataType); err != nil {
+				return preflightPlan{}, newPreflightFailure(preflightRuleRangeParse, err)
 			}
 		}
 		rollupSpec = &spec
@@ -133,20 +149,41 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 			}
 		}
 	}
-	to := options.to
-	if to == "" {
-		to = gate.defaultTo(options, dataTypes)
+	timezone := options.timezone
+	if timezone == "" && gate.ctx.configuredTimezone != nil {
+		timezone, err = gate.ctx.configuredTimezone()
+		if err != nil {
+			return preflightPlan{}, newPreflightFailure(
+				preflightRuleConnectionLookup,
+				fmt.Errorf("config check failed: %w", err),
+			)
+		}
 	}
-	// Civil-vs-RFC3339 normalization is owned by syncRollupSpec
-	// (PRD #141 slice 3). Routing both --from and --to through the
-	// same normalizer concentrates the shape contract in ONE parser
-	// so the planner downstream consumes only the normalized values.
-	// When --rollup is empty, there is no upstream-mandated shape; we
-	// pass strings through unchanged and only parse them for the
-	// range-ordering check below — matching the historical executor
-	// default that the planner expects (date-range Data Types get a
-	// civil default --to, others get RFC3339, both via defaultTo).
-	normFrom, normTo, err := gate.normalizeRange(rollupSpec, options.from, to)
+	resolvedAt := options.resolvedAt
+	if resolvedAt.IsZero() {
+		resolvedAt = gate.ctx.now()
+	}
+	to := options.to
+	if to == "" && options.timezone == "" && !googlehealth.IsNamedRangeBoundary(options.from) {
+		to, err = gate.legacyDefaultTo(options, dataTypes, resolvedAt, timezone)
+		if err != nil {
+			return preflightPlan{}, newPreflightFailure(preflightRuleRangeParse, err)
+		}
+	}
+	if rollupSpec != nil {
+		if _, _, err := rollupSpec.NormalizeRange(options.from, to, resolvedAt); err != nil {
+			return preflightPlan{}, newPreflightFailure(preflightRuleRangeParse, err)
+		}
+	}
+	target, err := googlehealth.SyncRangeTarget(dataTypes[0], rollupSpec, options.sourceFamily != "")
+	if err != nil {
+		return preflightPlan{}, newPreflightFailure(preflightRuleRangeParse, err)
+	}
+	resolved, err := googlehealth.ResolveRange(options.from, to, timezone, resolvedAt, target)
+	if err != nil {
+		return preflightPlan{}, newPreflightFailure(preflightRuleRangeParse, err)
+	}
+	normFrom, normTo, err := gate.normalizeRange(rollupSpec, resolved.From, resolved.To, resolvedAt)
 	if err != nil {
 		return preflightPlan{}, newPreflightFailure(preflightRuleRangeParse, err)
 	}
@@ -160,7 +197,13 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 	// --from with --to omitted still trips the inverted-range rule
 	// instead of silently producing a plan{from=2099, to=today}.
 	if normFrom != "" {
-		if err := validatePreflightRangeOrder(normFrom, normTo); err != nil {
+		if err := validatePreflightRangeOrder(
+			normFrom,
+			normTo,
+			target,
+			resolved.FromInstant,
+			resolved.ToInstant,
+		); err != nil {
 			return preflightPlan{}, err
 		}
 	}
@@ -171,7 +214,7 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 	cursorKeys := make([]syncCursorKey, 0, len(dataTypes))
 	for _, dataType := range dataTypes {
 		cursorKeys = append(cursorKeys, syncCursorKey{
-			connectionID:       connection.id,
+			connectionID:       connection.ID,
 			dataType:           dataType,
 			sourceFamilyFilter: options.sourceFamily,
 			rollupKind:         rollupKindForSync(options.rollup),
@@ -181,6 +224,10 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 		dataTypes:  dataTypes,
 		from:       normFrom,
 		to:         normTo,
+		timezone:   resolved.Timezone,
+		resolvedAt: resolved.ResolvedAt,
+		fromInput:  namedRangeInput(options.from, resolved.FromNamed),
+		toInput:    namedRangeInput(options.to, resolved.ToNamed),
 		rollup:     options.rollup,
 		rollupSpec: rollupSpec,
 		connection: connection,
@@ -188,18 +235,44 @@ func (gate syncPreflightGate) Validate(options syncCommandOptions) (preflightPla
 	}, nil
 }
 
-// normalizeRange delegates to syncRollupSpec.NormalizeRange when a
-// rollup spec is present. When --rollup is empty there is no upstream-
-// mandated shape, so the gate passes inputs through unchanged: the
-// planner's non-rollup code paths already accept the historical mix
-// (RFC3339 by default; civil for date-range Data Types via defaultTo).
-// This keeps the empty-rollup path byte-identical to slice 2's
-// behaviour and concentrates the shape-shifting in NormalizeRange.
-func (gate syncPreflightGate) normalizeRange(spec *syncRollupSpec, from, to string) (string, string, error) {
+func namedRangeInput(input string, named bool) string {
+	if !named {
+		return ""
+	}
+	return input
+}
+
+// normalizeRange applies the established rollup endpoint shape after named
+// boundaries have been resolved. Non-rollup list/reconcile requests already
+// received their target-specific shape from ResolveRange.
+func (gate syncPreflightGate) normalizeRange(spec *googlehealth.RollupSpec, from, to string, resolvedAt time.Time) (string, string, error) {
 	if spec == nil {
 		return from, to, nil
 	}
-	return spec.NormalizeRange(from, to, gate.ctx.now())
+	return spec.NormalizeRange(from, to, resolvedAt)
+}
+
+// legacyDefaultTo preserves the pre-relative-range cursor/backfill default
+// shape when an invocation supplies neither a named boundary nor --timezone.
+// The resolved config timezone still selects its calendar date. Relative or
+// explicitly flag-zoned invocations leave --to empty so ResolveRange can
+// render target-aware local now.
+func (gate syncPreflightGate) legacyDefaultTo(options syncCommandOptions, dataTypes []string, resolvedAt time.Time, timezone string) (string, error) {
+	target := googlehealth.RangeTargetPhysical
+	if options.rollup == "daily" {
+		target = googlehealth.RangeTargetDaily
+	}
+	for _, dataType := range dataTypes {
+		if gate.ctx.dataTypeUsesDateRange(dataType) {
+			target = googlehealth.RangeTargetDaily
+			break
+		}
+	}
+	resolved, err := googlehealth.ResolveRange("", "now", timezone, resolvedAt, target)
+	if err != nil {
+		return "", err
+	}
+	return resolved.To, nil
 }
 
 // expandDataTypes resolves --all / --types into the concrete ordered list
@@ -246,43 +319,38 @@ func (gate syncPreflightGate) expandDataTypes(options syncCommandOptions) ([]str
 	return resolved, nil
 }
 
-// defaultTo mirrors the historical executor default: civil date for
-// daily rollups or catalog-flagged date-range Data Types; RFC3339 for
-// everything else. The choice depends on the first Data Type today
-// (single-type execution at the executor seam) — applied to the whole
-// fan-out for now since the rule cannot disagree across types in any
-// currently supported invocation (daily rollup applies to every type;
-// date-range default is a property of the type but the existing
-// executor only saw one type at a time so the rule never had to choose).
-func (gate syncPreflightGate) defaultTo(options syncCommandOptions, dataTypes []string) string {
-	if options.rollup == "daily" {
-		return gate.ctx.now().UTC().Format("2006-01-02")
-	}
-	for _, dataType := range dataTypes {
-		if gate.ctx.dataTypeUsesDateRange(dataType) {
-			return gate.ctx.now().UTC().Format("2006-01-02")
-		}
-	}
-	return gate.ctx.now().UTC().Format(time.RFC3339)
-}
-
 // validatePreflightRangeOrder enforces the two range-ordering rules
 // (inverted range, zero-width window) on a parsed time.Time so civil-
 // date and RFC3339 inputs compose correctly. It reuses the single
-// boundary parser owned by syncRollupSpec (parseSyncRangeBoundary) so
-// there is ONE source of truth for the two-shape acceptance contract.
+// boundary parser the googlehealth package owns (ParseRangeBoundary)
+// so there is ONE source of truth for the two-shape acceptance contract.
 //
-// Parse failures DEFER to the downstream code path: when --rollup is
-// non-empty, the gate has already called NormalizeRange (which authors
-// the per-rollup shape-rejection message) and would have returned
-// earlier; when --rollup is empty, the legacy planner code paths
-// (non-rollup list / reconcile / TCX) own any shape-specific
-// rejections. Range-ordering only fires when both inputs successfully
-// parse here.
-func validatePreflightRangeOrder(from, to string) error {
-	fromTime, fromOK := parseSyncRangeBoundary(from)
-	toTime, toOK := parseSyncRangeBoundary(to)
-	if !fromOK || !toOK {
+// Parse failures have already been rejected by ResolveRange or
+// NormalizeRange. The boolean guard remains defensive for cursor-resume
+// composition and any future provider target shape.
+func validatePreflightRangeOrder(
+	from, to string,
+	target googlehealth.RangeTarget,
+	fromTime, toTime time.Time,
+) error {
+	// Daily normalization emits one canonical YYYY-MM-DD provider shape.
+	// Compare that shape first: provenance affects how a named date maps to
+	// an instant, but it must not hide an empty or inverted endpoint window.
+	_, fromDateErr := time.Parse("2006-01-02", from)
+	_, toDateErr := time.Parse("2006-01-02", to)
+	if target == googlehealth.RangeTargetDaily && fromDateErr == nil && toDateErr == nil {
+		if from == to {
+			return newPreflightFailure(
+				preflightRuleRangeZeroWidth,
+				fmt.Errorf("sync --from %s and --to %s normalize to the same instant; zero-width sync window is not useful", from, to),
+			)
+		}
+		if from > to {
+			return newPreflightFailure(
+				preflightRuleRangeOrderInverted,
+				fmt.Errorf("sync --from %s: from must be earlier than to (got --to %s)", from, to),
+			)
+		}
 		return nil
 	}
 	if fromTime.Equal(toTime) {
@@ -301,31 +369,53 @@ func validatePreflightRangeOrder(from, to string) error {
 }
 
 // productionSyncPreflightContext wires the gate to the real catalog +
-// archive openers. The archivePath/configPath round-trip the same way
-// the executor used to call inspectIdentityConfig + openHealthArchiveWriter;
-// the gate exposes that as one closure so call sites do not duplicate
-// the open-then-close dance.
-func productionSyncPreflightContext(options syncCommandOptions, runtime runtimeAdapters) syncPreflightContext {
+// strict planning archive opener. The archivePath/configPath
+// round-trip the same way the executor used to inspect them, but the
+// gate can only read the current Connection.
+func productionSyncPreflightContext(ctx context.Context, options syncCommandOptions, runtime runtimeAdapters) syncPreflightContext {
+	var config fullConfigCheck
+	var configErr error
+	configLoaded := false
+	loadConfig := func() (fullConfigCheck, error) {
+		if !configLoaded {
+			config, configErr = inspectIdentityConfig(options.configPath, options.archivePath)
+			configLoaded = true
+		}
+		return config, configErr
+	}
 	return syncPreflightContext{
 		now:                   runtime.now,
-		dataTypeSupported:     syncDataPointDataTypeSupported,
-		dataTypeUsesDateRange: syncDataPointUsesDateRange,
-		sourceFamilyFilter:    googleHealthSourceFamilyFilterName,
-		// defaultDataTypes is a package-level var that the gate only ranges
-		// over; other readers also treat it as read-only, so returning it
-		// directly avoids allocating a fresh copy on every Validate call.
-		defaultAllDataTypes: func() []string { return defaultDataTypes },
-		currentConnection: func() (archivedConnection, error) {
-			if _, err := inspectIdentityConfig(options.configPath, options.archivePath); err != nil {
-				return archivedConnection{}, fmt.Errorf("config check failed: %w", err)
-			}
-			archive, err := healthArchiveWriterOpenerForTest(options.archivePath)
+		dataTypeSupported:     googlehealth.SupportsSyncDataPoints,
+		dataTypeUsesDateRange: googlehealth.UsesDateRangeDefault,
+		sourceFamilyFilter:    googlehealth.SourceFamilyFilterName,
+		// googlehealth.DefaultDataTypes returns the shared package-level
+		// slice; the gate only ranges over it and other readers also treat
+		// it as read-only, so no defensive copy is made per Validate call.
+		defaultAllDataTypes: func() []string { return googlehealth.DefaultDataTypes() },
+		configuredTimezone: func() (string, error) {
+			config, err := loadConfig()
 			if err != nil {
-				return archivedConnection{}, err
+				return "", err
 			}
-			defer archive.Close()
-			return archive.CurrentConnection()
+			return config.timezone, nil
 		},
-		rollupCatalogValidator: validateSyncRollupAgainstDataType,
+		currentConnection: func() (archived.Connection, error) {
+			if _, err := loadConfig(); err != nil {
+				return archived.Connection{}, fmt.Errorf("config check failed: %w", err)
+			}
+			archive, err := runtime.openSyncPlanningArchive(context.WithoutCancel(ctx), options.archivePath)
+			if err != nil {
+				return archived.Connection{}, err
+			}
+			// WithoutCancel: the gate's connection lookup is a fast local
+			// read, not a cancellation point — the lifecycle entry check
+			// owns the pre-start SIGINT contract (no-audit-row +
+			// sync_canceled envelope, PRD #141 slice 5). Aborting this
+			// read on a canceled context would misreport a pre-start
+			// cancel as a preflight sync_failed (#305).
+			connection, readErr := archive.CurrentConnection(context.WithoutCancel(ctx))
+			return connection, syncPlanningResultError(readErr, archive.Close())
+		},
+		rollupCatalogValidator: googlehealth.ValidateRollupAgainstDataType,
 	}
 }
