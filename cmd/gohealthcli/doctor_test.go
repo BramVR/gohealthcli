@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1629,7 +1630,64 @@ func TestDoctorDefaultDoesNotRefreshOrCallProvider(t *testing.T) {
 	assertNoSecretWords(t, stdout.String()+stderr.String())
 }
 
-func TestDoctorMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
+func TestDoctorLocalInspectionFailuresKeepRemediation(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		damage func(*testing.T, routeArchive)
+	}{
+		{"permissions", func(t *testing.T, a routeArchive) {
+			if !usesPOSIXPermissions() {
+				t.Skip("POSIX permissions only")
+			}
+			if err := os.Chmod(a.archivePath, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"token-metadata", func(t *testing.T, a routeArchive) {
+			db := openArchiveForTest(t, a.archivePath)
+			if _, err := db.ExecContext(context.Background(), `UPDATE connections SET token_metadata_json = '{}'`); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"missing-root", func(t *testing.T, a routeArchive) {
+			root := attachmentRootDirForArchive(a.archivePath)
+			if err := os.Rename(root, root+".moved"); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newDoctorAttachmentArchive(t)
+			tc.damage(t, a)
+			before := snapshotRouteArchive(t, a.archivePath)
+			for _, mode := range []string{"--json", "--plain"} {
+				stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
+				code := runWithRuntime([]string{"doctor", "--config", a.configPath, "--db", a.archivePath, mode}, stdout, stderr, forbiddenRouteRuntime(t))
+				if code != 1 || stderr.Len() != 0 {
+					t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+				}
+				if mode == "--json" {
+					var got doctorResult
+					if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+						t.Fatal(err)
+					}
+					if got.Status != "setup_invalid" || !slices.Equal(got.Remediation, []string{"gohealthcli doctor", "gohealthcli init"}) {
+						t.Fatalf("missing setup remediation: %s", stdout)
+					}
+				} else if !strings.Contains(stdout.String(), "remediation.0: gohealthcli doctor\nremediation.1: gohealthcli init\n") {
+					t.Fatalf("missing plain remediation: %s", stdout)
+				}
+				if after := snapshotRouteArchive(t, a.archivePath); !maps.Equal(before, after) {
+					t.Fatal("doctor changed invalid setup")
+				}
+			}
+		})
+	}
+}
+
+func TestDoctorRefusesLegacyV1ArchiveWithoutMigration(t *testing.T) {
 	t.Parallel()
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
@@ -1638,18 +1696,26 @@ func TestDoctorMigratesLegacyV1ArchiveBeforeValidation(t *testing.T) {
 	}
 	createLegacyV1Archive(t, archivePath)
 
-	stdout := new(bytes.Buffer)
-	stderr := new(bytes.Buffer)
-	code := run([]string{"doctor", "--config", configPath, "--db", archivePath, "--json"}, stdout, stderr)
-	if code != 0 {
-		t.Fatalf("doctor exit code = %d, want 0\nstderr: %s\nstdout: %s", code, stderr.String(), stdout.String())
+	before := snapshotRouteArchive(t, archivePath)
+	for _, online := range []bool{false, true} {
+		args := []string{"doctor", "--config", configPath, "--db", archivePath, "--json"}
+		if online {
+			args = append(args, "--online")
+		}
+		stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
+		code := runWithRuntime(args, stdout, stderr, forbiddenRouteRuntime(t))
+		if code != 1 || !strings.Contains(stdout.String(), `"status": "setup_invalid"`) || !strings.Contains(stdout.String(), "schema version 1") {
+			t.Fatalf("exit = %d stdout = %s stderr = %s, want stale-schema refusal", code, stdout, stderr)
+		}
+		if after := snapshotRouteArchive(t, archivePath); !maps.Equal(before, after) {
+			t.Fatal("doctor changed legacy archive files")
+		}
 	}
-	var got map[string]any
-	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
-		t.Fatalf("stdout is not valid JSON: %v\nstdout: %s", err, stdout.String())
+	if _, err := collectAttachmentOrphans(context.Background(), archivePath); err == nil {
+		t.Fatal("orphan collector accepted legacy archive")
 	}
-	if got["schema_version"] != float64(currentSchemaVersion) {
-		t.Fatalf("schema_version = %v, want %d", got["schema_version"], currentSchemaVersion)
+	if after := snapshotRouteArchive(t, archivePath); !maps.Equal(before, after) {
+		t.Fatal("orphan collector changed legacy archive")
 	}
-	assertArchiveUserVersion(t, archivePath, currentSchemaVersion)
+	assertArchiveUserVersion(t, archivePath, 1)
 }

@@ -1051,7 +1051,101 @@ drive_local() {
   run_pty_expected local-doctor-online-unreachable 1 "$binary" --config "$config_path" --db "$archive_path" --json doctor --online
   grep -Fq '"status": "connection_unhealthy"' "$evidence_root/local-doctor-online-unreachable.typescript" || fail 'online doctor did not stop at the missing Connection'
   [[ ! -e "$credential_probe" ]] || fail 'online doctor attempted Credential Store access before its local blocker'
-  printf 'route: local\nresult: passed\nentries: doctor-json,doctor-plain,doctor-online\nonline: verified-unreachable (no Connection; no Credential Store or Provider access)\n' > "$evidence_root/local-proof.txt"
+  local fixture_source="$run_root/doctor-fixture.go" fixture_binary="$run_root/bin/doctor-fixture"
+  local fixture_archive fixture_config fixture_mode archive_before sidecar_before mode label
+  cat > "$fixture_source" <<'GO'
+package main
+
+import (
+ "crypto/sha256"
+ "database/sql"
+ "fmt"
+ "os"
+ "path/filepath"
+ _ "modernc.org/sqlite"
+)
+
+func must(err error) { if err != nil { panic(err) } }
+func main() {
+ if len(os.Args) != 3 { panic("archive and fixture mode required") }
+ archive, mode := os.Args[1], os.Args[2]
+ db, err := sql.Open("sqlite", archive); must(err)
+ defer db.Close()
+ if mode == "stale" {
+  _, err = db.Exec("PRAGMA user_version = 1"); must(err)
+  return
+ }
+ if mode != "corrupt" { panic("unknown fixture mode") }
+ _, err = db.Exec(`INSERT INTO connections (id, provider_name, google_health_user_id, token_metadata_json, google_identity_json, created_at, updated_at) VALUES ('googlehealth:synthetic-doctor', 'googlehealth', 'synthetic-doctor', '{"credential_store_key":"synthetic-doctor","expires_at":"2099-01-01T00:00:00Z","scopes":["synthetic-scope"]}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`); must(err)
+ result, err := db.Exec(`INSERT INTO data_points (provider_name, connection_id, data_type, upstream_resource_name, record_kind, data_source_json, raw_json, inserted_at, updated_at) VALUES ('googlehealth', 'googlehealth:synthetic-doctor', 'exercise', 'users/me/dataTypes/exercise/dataPoints/synthetic-doctor', 'session', '{}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`); must(err)
+ id, err := result.LastInsertId(); must(err)
+ for i, text := range []string{"<TrainingCenterDatabase>synthetic-one</TrainingCenterDatabase>", "<TrainingCenterDatabase>synthetic-two</TrainingCenterDatabase>"} {
+  payload := []byte(text)
+  hash := fmt.Sprintf("%x", sha256.Sum256(payload))
+  relative := "tcx/" + hash[:2] + "/" + hash + ".tcx"
+  full := filepath.Join(archive + ".attachments", filepath.FromSlash(relative))
+  must(os.MkdirAll(filepath.Dir(full), 0700))
+  size := len(payload)
+  if i == 0 { payload[0] = '!' } else { size++ }
+  must(os.WriteFile(full, payload, 0600))
+  _, err = db.Exec(`INSERT INTO data_point_attachments (data_point_id, kind, sha256, path_relative, byte_size, fetched_at) VALUES (?, 'tcx', ?, ?, ?, '2026-01-01T00:00:00Z')`, id, hash, relative, size); must(err)
+ }
+ hash := "deadbeef00000000000000000000000000000000000000000000000000000000"
+ _, err = db.Exec(`INSERT INTO data_point_attachments (data_point_id, kind, sha256, path_relative, byte_size, fetched_at) VALUES (?, 'tcx', ?, ?, 7, '2026-01-01T00:00:00Z')`, id, hash, "tcx/de/"+hash+".tcx"); must(err)
+ must(os.WriteFile(filepath.Join(archive+".attachments", "synthetic-orphan.tcx"), []byte("synthetic orphan"), 0600))
+}
+GO
+  chmod 600 "$fixture_source"
+  isolated_go_build "$run_root/doctor-fixture-build" "$fixture_binary" '' "$fixture_source"
+  for fixture_mode in corrupt stale; do
+    fixture_archive="$run_root/doctor-$fixture_mode.sqlite"
+    fixture_config="$run_root/doctor-$fixture_mode.toml"
+    path_is_absent "$fixture_config" || fail 'doctor fixture config already exists'
+    sed "s|$archive_path|$fixture_archive|g" "$config_path" > "$fixture_config"
+    chmod 600 "$fixture_config"
+    path_is_absent "$fixture_archive" && path_is_absent "$fixture_archive.attachments" || fail 'doctor fixture paths already exist'
+    cp -p "$archive_path" "$fixture_archive"
+    mkdir -m 700 "$fixture_archive.attachments"
+    "${task_env_prefix[@]}" "$fixture_binary" "$fixture_archive" "$fixture_mode"
+    archive_before=$(sqlite_file_set_fingerprint "$fixture_archive")
+    sidecar_before=$(tree_fingerprint "$fixture_archive.attachments")
+    printf 'sqlite: %s\nsidecars: %s\n' "$archive_before" "$sidecar_before" > "$evidence_root/local-$fixture_mode-before.txt"
+    for mode in human plain json online; do
+      label="local-$fixture_mode-$mode"
+      case "$mode" in
+        human) run_pty_expected "$label" 1 "$binary" --config "$fixture_config" --db "$fixture_archive" doctor ;;
+        online) run_pty_expected "$label" 1 "$binary" --config "$fixture_config" --db "$fixture_archive" doctor --json --online ;;
+        *) run_pty_expected "$label" 1 "$binary" --config "$fixture_config" --db "$fixture_archive" doctor "--$mode" ;;
+      esac
+      if [[ "$fixture_mode" == corrupt ]]; then
+        grep -Fq 'payload hash' "$evidence_root/$label.typescript" || fail 'doctor omitted hash mismatch'
+        grep -Fq 'byte_size' "$evidence_root/$label.typescript" || fail 'doctor omitted size mismatch'
+        grep -Fq 'attachment 1:' "$evidence_root/$label.typescript" || fail 'doctor omitted first Attachment'
+        grep -Fq 'attachment 2:' "$evidence_root/$label.typescript" || fail 'doctor omitted second Attachment'
+        if [[ "$mode" == json || "$mode" == online ]]; then
+          grep -Fq '"verification_failures": [' "$evidence_root/$label.typescript" || fail 'doctor omitted structured failures'
+          grep -Fq '"orphan_rows": [' "$evidence_root/$label.typescript" || fail 'doctor omitted orphan rows'
+          grep -Fq 'synthetic-orphan.tcx' "$evidence_root/$label.typescript" || fail 'doctor omitted orphan files'
+          grep -Fq '"status": "setup_invalid"' "$evidence_root/$label.typescript" || fail 'doctor did not mark corruption invalid'
+        elif [[ "$mode" == plain ]]; then
+          grep -Fq 'attachments_verification_failures: 2' "$evidence_root/$label.typescript" || fail 'doctor failure count drifted'
+          grep -Fq 'attachments_orphan_rows: 1' "$evidence_root/$label.typescript" || fail 'doctor orphan row count drifted'
+          grep -Fq 'attachments_orphan_files: 1' "$evidence_root/$label.typescript" || fail 'doctor orphan file count drifted'
+        fi
+      else
+        grep -Fq 'schema version 1' "$evidence_root/$label.typescript" || fail 'doctor did not refuse stale schema'
+      fi
+      [[ "$(sqlite_file_set_fingerprint "$fixture_archive")" == "$archive_before" ]] || fail 'doctor changed fixture SQLite files'
+      [[ "$(tree_fingerprint "$fixture_archive.attachments")" == "$sidecar_before" ]] || fail 'doctor changed fixture sidecars'
+    done
+    run_streams_expected "local-$fixture_mode-streams" 1 "$binary" --config "$fixture_config" --db "$fixture_archive" doctor --json
+    [[ ! -s "$evidence_root/local-$fixture_mode-streams.stderr.txt" ]] || fail 'doctor JSON diagnostic leaked to stderr'
+    grep -Fq '"status": "setup_invalid"' "$evidence_root/local-$fixture_mode-streams.stdout.txt" || fail 'doctor JSON diagnostic missing from stdout'
+    printf 'sqlite: %s\nsidecars: %s\n' "$(sqlite_file_set_fingerprint "$fixture_archive")" "$(tree_fingerprint "$fixture_archive.attachments")" > "$evidence_root/local-$fixture_mode-after.txt"
+    cmp "$evidence_root/local-$fixture_mode-before.txt" "$evidence_root/local-$fixture_mode-after.txt" || fail 'doctor stream replay changed fixture files'
+  done
+  [[ ! -e "$credential_probe" ]] || fail 'invalid local integrity reached the Credential Store'
+  printf 'route: local\nresult: passed\nentries: doctor-json,doctor-plain,doctor-online,corrupt-all-modes,stale-all-modes,json-streams\ncorruption: same-length hash mismatch and wrong byte_size, both reported with orphan rows and files retained\nread_only: SQLite file sets and sidecar trees unchanged across every doctor action\nonline: verified-unreachable before Credential Store or Provider access\n' > "$evidence_root/local-proof.txt"
 }
 
 drive_sync() {

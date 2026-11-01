@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,6 +70,9 @@ func TestDoctorJSONReportsAttachmentOrphans(t *testing.T) {
 		t.Fatalf("doctor exit code = %d, stderr=%s\nstdout=%s", code, stderr.String(), stdout.String())
 	}
 
+	if strings.Contains(stdout.String(), `"verification_failures"`) {
+		t.Fatalf("orphan-only JSON gained verification failures: %s", stdout)
+	}
 	var report struct {
 		Attachments struct {
 			OrphanRows []struct {
@@ -161,5 +166,226 @@ func TestDoctorReportsMissingAttachmentRootWithoutRecreatingIt(t *testing.T) {
 	}
 	if _, err := os.Stat(rootDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("attachment root stat err = %v, want missing root", err)
+	}
+}
+
+func TestDoctorAttachmentVerification(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, reason string
+		mutate       func(*testing.T, routeArchive, attachmentRecord)
+	}{
+		{"hash", "payload hash", func(t *testing.T, a routeArchive, r attachmentRecord) {
+			b := append([]byte(nil), routeNewerTCX...)
+			b[0] = '!'
+			if err := os.WriteFile(a.sidecarPath(r), b, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"size", "byte_size", func(t *testing.T, a routeArchive, r attachmentRecord) {
+			a.updateAttachment(t, r.ID, "byte_size", r.ByteSize+1)
+		}},
+		{"path", "canonical path", func(t *testing.T, a routeArchive, r attachmentRecord) {
+			a.updateAttachment(t, r.ID, "path_relative", "tcx/./"+strings.TrimPrefix(r.PathRelative, "tcx/"))
+		}},
+		{"leaf-symlink", "symbolic link", func(t *testing.T, a routeArchive, r attachmentRecord) {
+			p := a.sidecarPath(r)
+			if err := os.Rename(p, p+".target"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(p+".target", p); err != nil {
+				t.Skip(err)
+			}
+		}},
+		{"dangling-symlink", "symbolic link", func(t *testing.T, a routeArchive, r attachmentRecord) {
+			p := a.sidecarPath(r)
+			if err := os.Remove(p); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(p+".absent", p); err != nil {
+				t.Skip(err)
+			}
+		}},
+		{"parent-symlink", "symbolic link", func(t *testing.T, a routeArchive, r attachmentRecord) {
+			p := filepath.Dir(a.sidecarPath(r))
+			if err := os.Rename(p, p+".target"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(p+".target", p); err != nil {
+				t.Skip(err)
+			}
+		}},
+		{"directory", "regular file", func(t *testing.T, a routeArchive, r attachmentRecord) {
+			p := a.sidecarPath(r)
+			if err := os.Remove(p); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(p, 0700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newDoctorAttachmentArchive(t)
+			id := a.insertDataPoint(t, "exercise", routeExerciseResource)
+			r := a.storeTCX(t, id, routeNewerTCX, "2026-06-09T08:00:00Z")
+			tc.mutate(t, a, r)
+			before := snapshotRouteArchive(t, a.archivePath)
+			for _, online := range []bool{false, true} {
+				args := []string{"doctor", "--config", a.configPath, "--db", a.archivePath, "--json"}
+				if online {
+					args = append(args, "--online")
+				}
+				stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
+				code := runWithRuntime(args, stdout, stderr, forbiddenRouteRuntime(t))
+				var got struct {
+					Status      string `json:"status"`
+					Attachments struct {
+						Failures []struct {
+							ID          int64  `json:"attachment_id"`
+							DataPointID int64  `json:"data_point_id"`
+							SHA         string `json:"sha256"`
+							Path        string `json:"path_relative"`
+							Reason      string `json:"reason"`
+						} `json:"verification_failures"`
+						Rows []any `json:"orphan_rows"`
+					} `json:"attachments"`
+				}
+				if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+					t.Fatal(err)
+				}
+				if code != 1 || got.Status != "setup_invalid" || len(got.Attachments.Failures) != 1 {
+					t.Fatalf("exit = %d stdout = %s stderr = %s, want one verification failure", code, stdout, stderr)
+				}
+				f := got.Attachments.Failures[0]
+				if f.ID != r.ID || f.DataPointID != id || f.SHA != r.SHA256 || f.Path == "" || !strings.Contains(f.Reason, tc.reason) || len(got.Attachments.Rows) != 0 || stderr.Len() != 0 {
+					t.Fatalf("invalid diagnostic: %s stderr=%s", stdout, stderr)
+				}
+				if after := snapshotRouteArchive(t, a.archivePath); !maps.Equal(before, after) {
+					t.Fatal("doctor changed archive files")
+				}
+			}
+		})
+	}
+}
+
+func TestDoctorReportsAllAttachmentFailuresInEveryMode(t *testing.T) {
+	t.Parallel()
+	a := newDoctorAttachmentArchive(t)
+	id := a.insertDataPoint(t, "exercise", routeExerciseResource)
+	records := []attachmentRecord{a.storeTCX(t, id, routeNewerTCX, "2026-06-09T08:00:00Z"), a.storeTCX(t, id, routeOlderTCX, "2026-06-08T08:00:00Z")}
+	for _, r := range records {
+		a.updateAttachment(t, r.ID, "byte_size", r.ByteSize+1)
+	}
+	for _, mode := range []string{"--json", "--plain", ""} {
+		args := []string{"doctor", "--config", a.configPath, "--db", a.archivePath}
+		if mode != "" {
+			args = append(args, mode)
+		}
+		stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
+		code := runWithRuntime(args, stdout, stderr, forbiddenRouteRuntime(t))
+		if code != 1 || stderr.Len() != 0 {
+			t.Fatalf("exit=%d stderr=%s", code, stderr)
+		}
+		for i, r := range records {
+			if mode == "--plain" {
+				prefix := fmt.Sprintf("attachments_verification_failures.%d.", i)
+				for _, want := range []string{
+					fmt.Sprintf("%sattachment_id: %d", prefix, r.ID),
+					fmt.Sprintf("%sdata_point_id: %d", prefix, id),
+					prefix + "sha256: " + r.SHA256,
+					prefix + "path_relative: " + r.PathRelative,
+					prefix + "reason: Data Point Attachment failed verification:",
+				} {
+					if !strings.Contains(stdout.String(), want) {
+						t.Fatalf("missing %q in plain output: %s", want, stdout)
+					}
+				}
+			}
+			if mode == "" && !strings.Contains(stdout.String(), fmt.Sprintf("Attachment %d (Data Point %d, sha256 %s, path %q):", r.ID, id, r.SHA256, r.PathRelative)) {
+				t.Fatalf("missing human diagnostic fields: %s", stdout)
+			}
+			if !strings.Contains(stdout.String(), fmt.Sprintf("attachment %d:", r.ID)) {
+				t.Fatalf("missing attachment %d reason: %s", r.ID, stdout)
+			}
+		}
+		if strings.Index(stdout.String(), fmt.Sprintf("attachment %d:", records[0].ID)) >= strings.Index(stdout.String(), fmt.Sprintf("attachment %d:", records[1].ID)) {
+			t.Fatalf("verification findings out of order: %s", stdout)
+		}
+		if strings.Contains(stdout.String(), "gohealthcli init") || strings.Contains(stdout.String(), "gohealthcli doctor") || strings.Contains(stdout.String(), "gohealthcli sync") {
+			t.Fatalf("unsupported remediation: %s", stdout)
+		}
+	}
+}
+
+func TestDoctorRejectsSymlinkRootWithNoAttachments(t *testing.T) {
+	t.Parallel()
+	a := newDoctorAttachmentArchive(t)
+	root := attachmentRootDirForArchive(a.archivePath)
+	if err := os.Rename(root, root+".target"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(root+".target", root); err != nil {
+		t.Skip(err)
+	}
+	before := snapshotRouteArchive(t, a.archivePath)
+	for _, online := range []bool{false, true} {
+		args := []string{"doctor", "--config", a.configPath, "--db", a.archivePath, "--json"}
+		if online {
+			args = append(args, "--online")
+		}
+		stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
+		code := runWithRuntime(args, stdout, stderr, forbiddenRouteRuntime(t))
+		if code != 1 || !strings.Contains(stdout.String(), `"status": "setup_invalid"`) || (!strings.Contains(stdout.String(), "symbolic link") && !strings.Contains(stdout.String(), "reparse point")) {
+			t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+		}
+		if after := snapshotRouteArchive(t, a.archivePath); !maps.Equal(before, after) {
+			t.Fatal("doctor changed symlink root or target")
+		}
+	}
+}
+
+func newDoctorAttachmentArchive(t *testing.T) routeArchive {
+	t.Helper()
+	a := newRouteArchive(t)
+	db := openArchiveForTest(t, a.archivePath)
+	if _, err := db.ExecContext(context.Background(), `UPDATE connections SET token_metadata_json = '{"credential_store_key":"synthetic-doctor-key","expires_at":"2026-06-09T08:00:00Z","scopes":["https://www.googleapis.com/auth/fitness.activity.read"]}'`); err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+func TestDoctorCleanAttachmentReportIsOmitted(t *testing.T) {
+	t.Parallel()
+	a := newDoctorAttachmentArchive(t)
+	id := a.insertDataPoint(t, "exercise", routeExerciseResource)
+	a.storeTCX(t, id, routeNewerTCX, "2026-06-09T08:00:00Z")
+	before := snapshotRouteArchive(t, a.archivePath)
+	code, stdout, stderr := runCommand(t, "doctor", "--config", a.configPath, "--db", a.archivePath, "--json")
+	if code != 0 || stderr.Len() != 0 || strings.Contains(stdout.String(), `"attachments":`) {
+		t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+	if after := snapshotRouteArchive(t, a.archivePath); !maps.Equal(before, after) {
+		t.Fatal("doctor changed healthy archive")
+	}
+}
+
+func TestDoctorAttachmentFailureWriterErrors(t *testing.T) {
+	t.Parallel()
+	a := newDoctorAttachmentArchive(t)
+	id := a.insertDataPoint(t, "exercise", routeExerciseResource)
+	r := a.storeTCX(t, id, routeNewerTCX, "2026-06-09T08:00:00Z")
+	a.updateAttachment(t, r.ID, "byte_size", r.ByteSize+1)
+	for _, mode := range []string{"--json", "--plain", ""} {
+		args := []string{"doctor", "--config", a.configPath, "--db", a.archivePath}
+		if mode != "" {
+			args = append(args, mode)
+		}
+		stderr := new(bytes.Buffer)
+		code := runWithRuntime(args, failingWriter{}, stderr, forbiddenRouteRuntime(t))
+		if code != 1 || strings.Count(stderr.String(), "write output") != 1 {
+			t.Fatalf("exit=%d stderr=%s", code, stderr)
+		}
 	}
 }

@@ -17,10 +17,19 @@ The trade-off vs an on-row BLOB:
 - The archive remains portable as long as the sidecar directory travels with the SQLite file. The CLI must check both when validating archive integrity.
 - Attachments inherit the same owner-only POSIX-permission rules as the SQLite archive itself.
 
-The cost of this stance is that the archive is no longer a single file. `doctor` must validate the sidecar directory (presence, ownership, missing files for referenced rows). `init` must create it. Any "move my archive" instructions to users must mention the sidecar directory.
+The cost of this stance is that the archive is no longer a single file. `doctor` validates the sidecar root and every referenced Attachment through the shared canonical-path, no-follow read, size, and SHA-256 checks. It reports both kinds of orphan without migrating, creating, or repairing archive state. `init` must create it. Any "move my archive" instructions to users must mention the sidecar directory.
 
 A Data Point Attachment is read-only, append-only, and tied to exactly one Data Point. Re-ingestion that produces the same SHA256 is a no-op; differing bytes for the same Data Point insert a new attachment row (the previous attachment is retained for audit, analogous to Data Point Revisions).
 
 ## Reading Attachments
 
 `route` is the first reader of Attachment bytes outside Snapshot export. It opens the Health Archive inspection-only (mode=ro, no migration, no sidecar repair), selects the newest row for the Data Point by `fetched_at` and then `id`, and never falls back to an older row when the newest fails. Before any output it requires the row's canonical `path_relative`, a contained no-follow read of a regular file under a real attachment root, and a byte size and SHA-256 that match the row. A failed check is Attachment corruption for `doctor`, not a missing route. Because re-ingesting bytes that are already archived reuses their row, `fetched_at` records when those bytes were first archived: newest means the most recently first-archived bytes, not the latest Provider response.
+
+`doctor` uses one inspection-only Health Archive handle for schema validation,
+token metadata, and the Attachment walk. It rejects missing or unsafe roots
+before walking, even when there are no Attachment rows. Root validation uses
+the platform no-follow helper, including Windows reparse-point rejection.
+Verification failures retain the full diagnostic report with `setup_invalid`
+and exit 1. Existing orphan-only reports retain `ok` and exit 0. Recovery of
+corrupt content requires a matching archive and sidecar copy known to be good;
+re-sync does not repair an existing corrupt sidecar.

@@ -149,13 +149,22 @@ with owner-only POSIX permissions (`0700` dirs, `0600` files). Schema:
 `(id, data_point_id, kind, sha256, path_relative, byte_size,
 fetched_at)`.
 
-The Attachment Store module exposes a `Store` operation
-(content-addressed; same bytes → same sidecar path, idempotent
-insert) and a `Walk` operation for
-orphan detection (row with no sidecar, sidecar with no row). `doctor`
-surfaces the orphan counts in its default report (`attachments_orphan_files`
-and `attachments_orphan_rows` in `--plain`, an `attachments` block in
-`--json`), emitted only when a count is positive.
+The Attachment Store module exposes an idempotent, content-addressed `Store`
+operation and a `Walk` operation for integrity diagnostics. `Walk` uses the same
+row and payload verification as `route`, including canonical paths, no-follow
+regular-file reads, byte sizes, and SHA-256 hashes. Missing canonical sidecars
+and escaping paths retain their orphan-row classification; unclaimed sidecars
+remain orphan files. Other failures produce verification findings.
+
+`doctor` opens the archive inspection-only and never migrates, creates, or repairs
+sidecars. Its optional JSON `attachments` block always retains `orphan_rows` and
+`orphan_files` arrays and adds `verification_failures` only when nonempty. Each
+failure contains `attachment_id`, `data_point_id`, `sha256`, `path_relative`, and
+`reason`, ordered by Attachment ID. Plain output retains positive orphan counts
+and adds `attachments_verification_failures` plus zero-based
+`attachments_verification_failures.N.<field>` records. Human output lists each
+verification failure. Verification failures produce `setup_invalid`, exit 1;
+orphan-only reports retain `ok`, exit 0. A clean archive omits the block.
 
 Exercise sync (Data Type `exercise`) drives the only Attachment
 producer today (#107): after each upserted exercise Data Point, the
@@ -176,9 +185,8 @@ build naturally produces a fresh row at a new path; the old
 envelope-era row and its sidecar remain on disk untouched (both
 still mutually referenced — neither is an orphan). The operator
 cleans them up with the same SQL + filesystem delete used for any
-other stale attachment; ADR-0009 documents the doctor-driven
-purge. There is no proactive in-sync delete — sync stays
-append-only, and `doctor` is the canonical cleanup tool. If Google
+other stale attachment. There is no proactive in-sync delete. Sync stays
+append-only, and `doctor` reports integrity findings without deleting anything. If Google
 ever returns a non-envelope shape (raw XML, or a renamed wrapper
 field), the bytes are archived verbatim so the archive stays useful
 through the transition.

@@ -253,7 +253,7 @@ func TestAttachmentStoreWalkReportsOrphansBothSides(t *testing.T) {
 	// Orphan row: insert a row whose sidecar path is never written.
 	if _, err := store.db.ExecContext(context.Background(), `INSERT INTO data_point_attachments (data_point_id, kind, sha256, path_relative, byte_size, fetched_at) VALUES (1, 'tcx', ?, ?, ?, ?)`,
 		"deadbeef00000000000000000000000000000000000000000000000000000000",
-		filepath.Join("tcx", "de", "deadbeef00000000000000000000000000000000000000000000000000000000.tcx"),
+		"tcx/de/deadbeef00000000000000000000000000000000000000000000000000000000.tcx",
 		7, "2026-06-08T17:36:00Z"); err != nil {
 		t.Fatalf("seed orphan row: %v", err)
 	}
@@ -402,6 +402,15 @@ func TestAttachmentStoreWalkRejectsTraversalPathRelative(t *testing.T) {
 	}
 	if !gotAbsoluteOrphan {
 		t.Errorf("Walk did not flag the absolute-path row as an orphan; orphans=%+v", orphans)
+	}
+}
+
+func TestResolveContainedPathRejectsPortableAbsolutePaths(t *testing.T) {
+	t.Parallel()
+	for _, relative := range []string{"/etc/passwd", "//server/share/attachment.tcx"} {
+		if _, err := resolveContainedPath(t.TempDir(), relative); err == nil {
+			t.Errorf("accepted absolute portable path %q", relative)
+		}
 	}
 }
 
