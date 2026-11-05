@@ -365,15 +365,23 @@ func finishSyncRun(ctx context.Context, executor sqlExecutor, finish syncRunFini
 }
 
 func upsertDataPoint(ctx context.Context, db *sql.DB, point archived.DataPoint, now string) (string, error) {
+	_, existingRawJSON, found, err := findExistingDataPoint(ctx, db, point)
+	if err != nil {
+		return "", err
+	}
+	if found && sameJSONValue(existingRawJSON, point.RawJSON) {
+		return "unchanged", nil
+	}
 	return upsertInWriteTx(ctx, db, func(tx *sql.Tx) (string, error) {
 		return writeDataPoint(ctx, tx, point, now)
 	})
 }
 
-// upsertInWriteTx runs one identity lookup and its write as a single
+// upsertInWriteTx repeats the identity lookup and its write as a single
 // transaction. The writable DSN begins transactions IMMEDIATE, so a
 // concurrent sync process blocks on the write lock before its lookup
-// instead of missing the same row and archiving a twin.
+// instead of missing the same row and archiving a twin. Callers check
+// for an unchanged record first so re-syncs never take the write lock.
 func upsertInWriteTx(ctx context.Context, db *sql.DB, write func(*sql.Tx) (string, error)) (string, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -481,6 +489,13 @@ func writeDataPoint(ctx context.Context, tx *sql.Tx, point archived.DataPoint, n
 }
 
 func upsertRollup(ctx context.Context, db *sql.DB, rollup archived.Rollup, now string) (string, error) {
+	_, existingRawJSON, found, err := findExistingRollup(ctx, db, rollup)
+	if err != nil {
+		return "", err
+	}
+	if found && sameJSONValue(existingRawJSON, rollup.RawJSON) {
+		return "unchanged", nil
+	}
 	return upsertInWriteTx(ctx, db, func(tx *sql.Tx) (string, error) {
 		return writeRollup(ctx, tx, rollup, now)
 	})
