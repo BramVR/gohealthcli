@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -139,7 +140,7 @@ func TestInitCreatesConfigAndEmptyHealthArchive(t *testing.T) {
 	}
 
 	db.SetMaxOpenConns(2)
-	tx, err := db.BeginTx(context.Background(), nil)
+	tx, err := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		t.Fatalf("begin transaction: %v", err)
 	}

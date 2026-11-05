@@ -343,6 +343,12 @@ func archiveDSN(archivePath string, readOnly bool) (string, error) {
 	query.Add("_pragma", "busy_timeout=5000")
 	if readOnly {
 		query.Add("mode", "ro")
+	} else {
+		// Every transaction on a writable handle writes. IMMEDIATE takes
+		// the write lock at BEGIN, so busy_timeout queues a concurrent
+		// sync process. A DEFERRED read-then-write would instead fail
+		// its lock upgrade with SQLITE_BUSY, bypassing the busy handler.
+		query.Add("_txlock", "immediate")
 	}
 	return (&url.URL{Scheme: "file", Path: uriPath, RawQuery: query.Encode()}).String(), nil
 }

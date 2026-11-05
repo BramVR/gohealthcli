@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Stop concurrent `sync` runs against one Health Archive from archiving twin Data Points or Rollups with the same identity; each identity lookup and its write now run in one write-locked transaction, so a later Health Archive Snapshot validates. Existing twins are left untouched.
 - Verify Data Point Attachment canonical paths, no-follow sidecars, byte sizes, and SHA-256 in `doctor`, report all verification failures in human/plain/JSON output, and refuse stale archives without migration or repair.
 
 - Add daily and physical-window `calories-in-heart-rate-zone` Rollup sync and the `calories-in-heart-rate-zone-rollups` export, one row per Rollup bucket and heart-rate zone, with 14-day Provider chunking, unknown zone labels passed through, empty buckets exporting no rows, and missing `kcal` exported as null.
