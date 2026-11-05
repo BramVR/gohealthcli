@@ -361,6 +361,7 @@ func TestDailyStepsNormalizedViewPrefersRollupsAndAggregatesDataPoints(t *testin
 	insertStatusFixtureRows(t, archivePath)
 	insertExportStepDataPoint(t, archivePath, "users/me/dataTypes/steps/dataPoints/c", "2026-01-01T12:00:00Z", "2026-01-01T12:10:00Z", `{"steps":{"count":"128"}}`)
 	insertExportStepDataPoint(t, archivePath, "users/me/dataTypes/steps/dataPoints/d", "2026-01-04T12:00:00Z", "2026-01-04T12:10:00Z", `{"steps":{"count":"1"}}`)
+	insertExportStepDataPoint(t, archivePath, "users/me/dataTypes/steps/dataPoints/zero", "2026-01-05T12:00:00Z", "2026-01-05T12:10:00Z", `{"steps":{"count":"0"}}`)
 	insertExportStepDataPointWithSourceFamily(t, archivePath, "users/me/dataTypes/steps/dataPoints/wearable", "2026-01-01T08:00:00Z", "2026-01-01T08:15:00Z", `{"steps":{"count":"256"}}`, "wearable")
 	insertExportStepDataPointWithSourceFamily(t, archivePath, "users/me/dataTypes/steps/dataPoints/wearable-rollup-day", "2026-01-04T08:00:00Z", "2026-01-04T08:15:00Z", `{"steps":{"count":"384"}}`, "wearable")
 
@@ -368,14 +369,15 @@ func TestDailyStepsNormalizedViewPrefersRollupsAndAggregatesDataPoints(t *testin
 	if err != nil {
 		t.Fatalf("daily steps rows: %v", err)
 	}
-	if len(rows) != 5 {
-		t.Fatalf("row count = %d, want 5: %+v", len(rows), rows)
+	if len(rows) != 6 {
+		t.Fatalf("row count = %d, want 6 with no row for absent 2026-01-03: %+v", len(rows), rows)
 	}
 	assertDailyStepsRow(t, rows[0], "2026-01-01", 640, "dataPoints", "", 2)
 	assertDailyStepsRow(t, rows[1], "2026-01-01", 256, "dataPoints", "wearable", 1)
 	assertDailyStepsRow(t, rows[2], "2026-01-02", 1024, "dataPoints", "", 1)
 	assertDailyStepsRow(t, rows[3], "2026-01-04", 2048, "dailyRollUp", "", 1)
 	assertDailyStepsRow(t, rows[4], "2026-01-04", 384, "dataPoints", "wearable", 1)
+	assertDailyStepsRow(t, rows[5], "2026-01-05", 0, "dataPoints", "", 1)
 }
 
 func TestExportDailyStepsCSVToFile(t *testing.T) {
@@ -383,6 +385,7 @@ func TestExportDailyStepsCSVToFile(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath, archivePath, _ := initializeFileCredentialSetup(t, tempDir)
 	insertStatusFixtureRows(t, archivePath)
+	insertExportStepDataPoint(t, archivePath, "users/me/dataTypes/steps/dataPoints/zero", "2026-01-05T12:00:00Z", "2026-01-05T12:10:00Z", `{"steps":{"count":"0"}}`)
 	outputPath := filepath.Join(tempDir, "daily-steps.csv")
 
 	stdout := new(bytes.Buffer)
@@ -410,7 +413,8 @@ func TestExportDailyStepsCSVToFile(t *testing.T) {
 	want := "provider_name,connection_id,civil_date,step_count,source_kind,source_family_filter,source_record_count,latest_source_timestamp\n" +
 		"googlehealth,googlehealth:111111256096816351,2026-01-01,512,dataPoints,,1,2026-01-01T08:15:00Z\n" +
 		"googlehealth,googlehealth:111111256096816351,2026-01-02,1024,dataPoints,,1,2026-01-02T08:15:00Z\n" +
-		"googlehealth,googlehealth:111111256096816351,2026-01-04,2048,dailyRollUp,,1,2026-01-04\n"
+		"googlehealth,googlehealth:111111256096816351,2026-01-04,2048,dailyRollUp,,1,2026-01-04\n" +
+		"googlehealth,googlehealth:111111256096816351,2026-01-05,0,dataPoints,,1,2026-01-05T12:10:00Z\n"
 	if string(content) != want {
 		t.Fatalf("export content =\n%s\nwant:\n%s", string(content), want)
 	}

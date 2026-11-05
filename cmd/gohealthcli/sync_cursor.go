@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
+
+	"github.com/BramVR/gohealthcli/internal/googlehealth"
 )
 
 // syncCursorRollupKind is the rollup-kind discriminator used as part of the
@@ -53,12 +56,16 @@ func rollupKindForSync(rollup string) syncCursorRollupKind {
 	return syncCursorRollupKind(rollup)
 }
 
+type syncCursorQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
 // resolveSyncCursor returns the current cursor_time for a key, plus a
 // boolean indicating whether a row exists. cursor_time itself is stored
 // as TEXT NOT NULL and commitSyncCursor rejects empty values, so the
 // returned string is non-empty whenever the boolean is true; the boolean
 // is the canonical "no prior successful Sync Run" signal.
-func resolveSyncCursor(ctx context.Context, db *sql.DB, key syncCursorKey) (string, bool, error) {
+func resolveSyncCursor(ctx context.Context, db syncCursorQuerier, key syncCursorKey) (string, bool, error) {
 	var cursorTime string
 	err := db.QueryRowContext(ctx, `SELECT cursor_time FROM sync_cursors
 		WHERE connection_id = ?
@@ -79,29 +86,49 @@ func resolveSyncCursor(ctx context.Context, db *sql.DB, key syncCursorKey) (stri
 	return cursorTime, true, nil
 }
 
-// commitSyncCursor enforces the ADR-0008 invariant at the seam where
-// the cursor data lives: only sync_completed advances cursor_time.
-// sync_failed and sync_canceled are accepted so callers can route every
-// terminal outcome through one path, but they no-op on storage.
 func commitSyncCursor(ctx context.Context, db *sql.DB, key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error {
-	return commitSyncCursorExec(ctx, db, key, outcome, to, advancedAt)
+	if !outcome.AdvancesCursor() {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := commitSyncCursorTx(ctx, tx, key, outcome, to, advancedAt); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // commitSyncCursorTx is the same write as commitSyncCursor but bound to
 // an open transaction so it can compose with finishSyncRun inside the
 // writer's FinalizeSyncRun atomic-commit path.
 func commitSyncCursorTx(ctx context.Context, tx *sql.Tx, key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error {
-	return commitSyncCursorExec(ctx, tx, key, outcome, to, advancedAt)
-}
-
-func commitSyncCursorExec(ctx context.Context, executor sqlExecutor, key syncCursorKey, outcome syncRunOutcome, to, advancedAt string) error {
 	if !outcome.AdvancesCursor() {
 		return nil
 	}
 	if to == "" {
 		return errors.New("sync cursor commit requires a non-empty cursor time")
 	}
-	_, err := executor.ExecContext(ctx, `INSERT INTO sync_cursors (
+	incoming, err := parseSyncCursorTime(to)
+	if err != nil {
+		return fmt.Errorf("commit Sync Cursor boundary: %w", err)
+	}
+	current, found, err := resolveSyncCursor(ctx, tx, key)
+	if err != nil {
+		return fmt.Errorf("read Sync Cursor before commit: %w", err)
+	}
+	if found {
+		existing, err := parseSyncCursorTime(current)
+		if err != nil {
+			return fmt.Errorf("stored Sync Cursor boundary: %w", err)
+		}
+		if !incoming.After(existing) {
+			return nil
+		}
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO sync_cursors (
 		connection_id,
 		data_type,
 		source_family_filter,
@@ -122,4 +149,14 @@ func commitSyncCursorExec(ctx context.Context, executor sqlExecutor, key syncCur
 		return fmt.Errorf("commit Sync Cursor: %w", err)
 	}
 	return nil
+}
+
+func parseSyncCursorTime(value string) (time.Time, error) {
+	if parsed, ok := googlehealth.ParseRangeBoundary(value); ok {
+		return parsed, nil
+	}
+	if parsed, err := time.ParseInLocation("2006-01-02T15:04:05", value, time.UTC); err == nil {
+		return parsed, nil
+	}
+	return time.Time{}, errors.New("expected a date, civil datetime, or RFC3339 timestamp")
 }

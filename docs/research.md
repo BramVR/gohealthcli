@@ -126,6 +126,27 @@ Non-sensitive public evidence checked on 2026-08-03 records the current
 No credential, Connection identifier, Provider payload, or Health Archive data
 was read or published for this evidence.
 
+## Calories in heart-rate zone Rollup contract evidence
+
+Local, non-sensitive evidence checked on 2026-10-19 records the current
+`calories-in-heart-rate-zone` contract:
+
+- The Google Health v4 discovery document shipped with the Go client
+  (`google.golang.org/api` v0.283.0 in the local module cache, revision
+  `20260527`) defines `CaloriesInHeartRateZoneRollupValue` as a
+  `caloriesInHeartRateZones` array of `CaloriesInHeartRateZoneValue` items.
+  Each item has a `heartRateZone` enum (`HEART_RATE_ZONE_TYPE_UNSPECIFIED`,
+  `LIGHT`, `MODERATE`, `VIGOROUS`, `PEAK`) and a `kcal` double.
+- The same document limits both `rollUp` and `dailyRollUp` ranges for this Data
+  Type to 14 days.
+- The committed reduced snapshot (revision `20260817`) carries the union member
+  and the array, but not the item schema.
+- Whether Google omits a zero `kcal` is not yet observed. Until a live payload
+  shows it, a zone with a missing or null `kcal` exports SQL NULL, not zero.
+
+No credential, Connection identifier, Provider payload, or Health Archive data
+was read or published for this evidence.
+
 ## Nutrition Log contract evidence (C4)
 
 Non-sensitive public evidence checked on 2026-08-03 records the current

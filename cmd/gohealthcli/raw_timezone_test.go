@@ -359,8 +359,12 @@ func TestRawRejectsNonListableDataTypesBeforeConfigIO(t *testing.T) {
 			if code := runWithRuntime(args, stdout, stderr, runtime); code != 1 {
 				t.Fatalf("raw exit code = %d, want 1", code)
 			}
-			if !strings.Contains(stderr.String(), "not supported by dataPoints.list") {
-				t.Fatalf("stderr = %q, want canonical listability error", stderr.String())
+			want := "not supported by dataPoints.list"
+			if target[0] == "endpoint" {
+				want = `unsupported raw endpoint "dataTypes.total-calories.list"`
+			}
+			if !strings.Contains(stderr.String(), want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), want)
 			}
 			if _, err := os.Stat(filepath.Dir(configPath)); !os.IsNotExist(err) {
 				t.Fatalf("invalid Data Type touched setup path: %v", err)

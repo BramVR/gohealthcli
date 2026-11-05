@@ -108,6 +108,15 @@ type rawRequestTarget struct {
 	family         endpointFamily
 }
 
+// UnsupportedRawEndpointError identifies a name outside the raw endpoint catalog.
+type UnsupportedRawEndpointError struct {
+	Name string
+}
+
+func (err *UnsupportedRawEndpointError) Error() string {
+	return fmt.Sprintf("unsupported raw endpoint %q", err.Name)
+}
+
 // ValidateRawRequestOptions performs target/flag validation that must happen
 // before raw inspects config or opens the Health Archive.
 func ValidateRawRequestOptions(options RawRequestOptions) error {
@@ -413,9 +422,12 @@ func parseRawRequestTarget(options RawRequestOptions) (rawRequestTarget, error) 
 		}
 		if strings.HasPrefix(target[1], "dataTypes.") && strings.HasSuffix(target[1], ".list") {
 			dataType := strings.TrimSuffix(strings.TrimPrefix(target[1], "dataTypes."), ".list")
+			if _, err := googleHealthDataTypeEndpointSupport(dataType, endpointFamilyList); err != nil {
+				return rawRequestTarget{}, &UnsupportedRawEndpointError{Name: target[1]}
+			}
 			return parseRawDataTypeTarget(dataType, endpointFamilyList)
 		}
-		return rawRequestTarget{}, fmt.Errorf("unsupported raw endpoint %q", target[1])
+		return rawRequestTarget{}, &UnsupportedRawEndpointError{Name: target[1]}
 	case RawTargetDataType:
 		if len(target) == 2 {
 			return parseRawDataTypeTarget(target[1], endpointFamilyList)

@@ -9,7 +9,7 @@ The read surface lets users summarize an archive, run guarded SELECT statements,
 - `inspect-query-guard` rejects a write statement and leaves the archive unchanged.
 - `inspect-schema-json` returns the curated catalog merged with live archive schema.
 - `inspect-schema-sql` emits live SQLite DDL.
-- `inspect-export` writes empty CSV and JSONL datasets to explicit destinations and retains their bytes as evidence.
+- `inspect-export` writes empty CSV and JSONL datasets to explicit destinations and retains their bytes as evidence. It covers `daily-steps` and the Rollup-backed `calories-in-heart-rate-zone-rollups`, pinning each CSV header.
 
 ## How to get to it (user POV)
 

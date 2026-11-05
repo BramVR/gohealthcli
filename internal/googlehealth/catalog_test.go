@@ -178,9 +178,9 @@ func TestGoogleHealthDataTypeCatalogDescribesCurrentBehavior(t *testing.T) {
 			wantScopes:        []string{ScopeActivityReadonly},
 			wantSyncDataPoint: false,
 			wantReconcile:     false,
-			wantDailyRollup:   false,
-			wantParser:        "interval",
-			wantRecordKind:    "interval",
+			wantDailyRollup:   true,
+			wantParser:        "",
+			wantRecordKind:    "",
 		},
 		// Tier 1 Health metrics Data Types (#102). Opt-in only via
 		// `--types <name>` — none are DefaultConfigType yet.

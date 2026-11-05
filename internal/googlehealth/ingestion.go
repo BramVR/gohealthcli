@@ -871,7 +871,7 @@ func googleHealthDailyRollupMaxRangeDays(dataType string) int {
 
 func googleHealthRollupMaxRangeDays(dataType string) int {
 	switch dataType {
-	case "total-calories":
+	case "calories-in-heart-rate-zone", "total-calories":
 		return 14
 	default:
 		return 0

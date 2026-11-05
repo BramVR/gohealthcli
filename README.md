@@ -102,7 +102,10 @@ steps daily Rollups, and `sync --types heart-rate --rollup daily` archives
 daily heart-rate summary Rollups without replacing raw heart-rate samples.
 `sync --types total-calories --rollup daily` and physical modes such as
 `--rollup hourly` archive provider-computed calorie totals; export them through
-`total-calories-rollups`.
+`total-calories-rollups`. `sync --types calories-in-heart-rate-zone` with the
+same Rollup modes archives calories burned per heart-rate zone; export them
+through `calories-in-heart-rate-zone-rollups`, one row per Rollup bucket and
+zone.
 Use `sync --plan` to inspect one operation per requested Data Type. In planning
 mode, `--types` may be repeated and preserves requested order; `--all` uses
 catalog order.
@@ -114,12 +117,9 @@ it performs no Provider request, Credential Store read, token refresh, archive
 write or migration, Sync Cursor advance, or Attachment sidecar creation. A
 ready plan explicitly leaves credential availability, Google Identity
 matching, and Provider reachability unverified.
-`total-calories` is known to the catalog and supports daily and physical-window
-Rollup sync, but raw Data Point sync remains rejected because Google exposes it
-only as Rollup data;
-`calories-in-heart-rate-zone` is also catalog-known but not yet implemented
-because Google exposes it only through Rollup operations whose payload shape
-is not pinned in gohealthcli yet.
+`total-calories` and `calories-in-heart-rate-zone` are known to the catalog and
+support daily and physical-window Rollup sync, but raw Data Point sync remains
+rejected because Google exposes them only as Rollup data.
 
 With the Tier 2 `tcx` scope granted (`gohealthcli connect --add-scopes
 tcx`), `exercise` sync also archives each session's TCX route file as a
@@ -166,11 +166,26 @@ of the read-only compiled catalog and appear under the explicit
 reference](./docs/commands/catalog.md) for the machine-readable gap and
 unverifiable-fact fields.
 
-Normalized export datasets. `gohealthcli export` accepts any of the
+### Normalized export datasets
+
+`gohealthcli export` accepts any of the
 names below as its positional argument. The list is auto-generated from
 `exportDatasetCatalogSingleton.Names()` by `make docs-export-datasets`;
 the markers around the block are stable so the regenerator can rewrite
 just the bullets without touching the surrounding prose.
+
+Every dataset below, including daily and Rollup datasets, returns only rows
+derived from archived records. No dataset fills absent days or windows with
+zero rows. An absent day means the Health Archive has no qualifying record
+for that day. Possible causes include device non-wear, a device that has not
+synced, or a day outside the synced range. Absence alone does not identify
+the cause or prove archive completeness. A stored `0` is an explicit zero.
+
+For weekly or monthly averages, keep absent days missing and include stored
+zeros. Filling absent days with zeros silently lowers the average. Report
+the number of observed days and the requested date range with the result.
+The registry-generated list below enumerates all affected export datasets;
+`query` reads the same Normalized Views.
 
 <!-- export-datasets:start -->
 - `active-minutes-intervals`
@@ -180,6 +195,7 @@ just the bullets without touching the surrounding prose.
 - `basal-energy-burned-intervals`
 - `blood-glucose-samples`
 - `body-fat-samples`
+- `calories-in-heart-rate-zone-rollups`
 - `core-body-temperature-samples`
 - `current-height`
 - `current-irn-profile`
@@ -335,6 +351,13 @@ gohealthcli sync --types steps --from 2026-01-01 --to 2026-01-02 --plain
 gohealthcli status --plain
 ```
 
+Each Sync Cursor keeps the latest successfully archived `--to` for its
+Connection, Data Type, source-family filter, and rollup kind. Older historical
+syncs and runs that finish out of order cannot move it backward. Equal or older
+bounds preserve the cursor's stored boundary and advancement timestamp; both
+successful runs still finish as `sync_completed`. Failed and canceled runs
+leave the cursor unchanged.
+
 Watch a long sync from another terminal (or an agent) while it runs:
 
 ```bash
@@ -390,6 +413,7 @@ Archive daily Rollups or wearable-filtered Data Points when needed:
 gohealthcli sync --types steps --rollup daily --from 2026-01-01 --to 2026-01-31 --plain
 gohealthcli sync --types heart-rate --rollup daily --from 2026-01-01 --to 2026-01-31 --plain
 gohealthcli sync --types total-calories --rollup hourly --from 2026-01-01 --to 2026-01-15 --plain
+gohealthcli sync --types calories-in-heart-rate-zone --rollup daily --from 2026-01-01 --to 2026-01-15 --plain
 gohealthcli sync --types heart-rate --source-family wearable --from 2026-01-01 --to 2026-01-02 --plain
 ```
 
@@ -399,7 +423,12 @@ Export normalized daily steps:
 gohealthcli export daily-steps --format jsonl --stdout
 gohealthcli export daily-steps --format csv --output steps.csv
 gohealthcli export total-calories-rollups --format csv --output calories.csv
+gohealthcli export calories-in-heart-rate-zone-rollups --format csv --output calories-by-zone.csv
 ```
+
+Daily and Rollup exports preserve gaps. A missing day produces no row; an
+explicit zero produces a row with `0`. Do not count missing days as zeros
+when you calculate averages. See the [dataset contract](#read-surface).
 
 Explore raw provider JSON:
 
@@ -418,6 +447,15 @@ gohealthcli raw data-type steps reconcile --source-family wearable --from yester
 gohealthcli raw data-type steps daily-rollup --from yesterday --to today --timezone Europe/Brussels --output ./daily-rollup-response.json
 gohealthcli raw data-type total-calories rollup --from yesterday --to today --timezone Europe/Brussels --window 1h --output ./rollup-response.json
 ```
+
+Identity-level raw endpoints use these OAuth scopes:
+
+- `getIdentity` and `getProfile` require `profile.readonly`.
+- `getSettings` and `pairedDevices` require `settings.readonly`. Grant it with `gohealthcli connect --add-scopes settings`.
+- `getIrnProfile` requires `irn.readonly`. Grant it with `gohealthcli connect --add-scopes irn`.
+
+Run `gohealthcli raw --help` for the complete endpoint names, including the
+catalog-derived `dataTypes.<data-type>.list` aliases.
 
 Raw Data Type lists share `sync`'s exact range grammar and timezone precedence.
 Identity endpoints reject range and timezone flags instead of ignoring them.
@@ -469,6 +507,13 @@ gohealthcli query --plain 'SELECT data_type, COUNT(*) FROM data_points GROUP BY 
 
 Command flags must appear before the SQL argument because Go flag parsing stops
 at the first positional argument.
+
+Normalized Views preserve the same absent-day contract as exports. When
+averaging `daily_steps`, filter or group by `source_family_filter`. For
+`total_calories_rollups`, filter or group by `rollup_kind`. Within one group,
+`AVG(step_count)` includes stored zeros but has no row for an absent day.
+Use `COUNT(DISTINCT civil_date)` to report observed days alongside the requested
+range. Do not calendar-join and coalesce missing days to zero.
 
 Use `gohealthcli <command> --help` or `gohealthcli help <command>` for
 command-specific flags.
@@ -550,6 +595,10 @@ made the contract predictable across them; the notes below summarise the
 behaviour that is now stable. See each command's reference page under
 [docs/commands/](./docs/commands/) for the full prose.
 
+- Daily and Rollup Normalized Views and exports never synthesize rows for
+  absent days or windows. Missing records remain missing; stored zeros remain
+  zeros. Do not average absent days as zeros. The registry-generated
+  [export dataset list](#normalized-export-datasets) above covers every dataset.
 - `--db <path>` works on its own for every read command. Passing
   `gohealthcli --db /tmp/scratch.sqlite status` opens that archive
   directly without requiring a matching `--config` file. When only
@@ -588,6 +637,28 @@ behaviour that is now stable. See each command's reference page under
   Table columns still report their declared types — the fallback is
   view-only (PRD #144 slice 8).
 
+### Read an archived route
+
+`route` writes the archived TCX route of one exercise Data Point as its exact
+bytes. Name the session by the `upstream_resource_name` column of the
+`exercise-sessions` export or by its trailing Provider ID:
+
+```bash
+gohealthcli route users/me/dataTypes/exercise/dataPoints/<id> --output ./run.tcx
+gohealthcli route <id> --stdout | xmllint --noout -
+```
+
+It is offline: no Provider request, Credential Store read, token refresh,
+archive write, migration, or sidecar creation. It returns the newest TCX
+Attachment for that exercise after checking the sidecar's path, size, and
+SHA-256 against its row, and never falls back to an older one. Route data is
+location data, so `--output` follows the `raw --output` file rules: a new file
+only, never an overwrite, mode `0600` on Linux and macOS, and on Windows the
+parent directory's inherited ACL. An exercise without an archived route needs
+`gohealthcli connect --add-scopes tcx` and then
+`gohealthcli sync --types exercise --from YYYY-MM-DD` over that session's
+window. See [docs/commands/route.md](./docs/commands/route.md).
+
 ## Configuration
 
 Default local paths:
@@ -617,6 +688,22 @@ path = "/absolute/path/to/gohealthcli/tokens.json"
 Use `doctor --plain` to check local setup without provider calls. Use
 `doctor --online --plain` only when you want token refresh and Google Health
 reachability checks.
+
+`doctor` verifies every Data Point Attachment's canonical path, byte size, and
+SHA-256 through the same no-follow reads as `route`. Corrupt Attachments produce
+`setup_invalid` and exit 1, with every failure listed in human, plain, and JSON
+output. JSON adds `attachments.verification_failures` records containing
+`attachment_id`, `data_point_id`, `sha256`, `path_relative`, and `reason`, ordered
+by Attachment ID. Plain output adds `attachments_verification_failures: N` and
+zero-based `attachments_verification_failures.N.<field>` lines. Existing
+`orphan_rows` and `orphan_files` arrays remain unchanged. Orphan-only reports
+still return `ok` and exit 0. Clean archives omit `attachments`.
+
+Doctor never migrates, creates, or repairs the Health Archive or sidecars.
+Stale schemas, SQLite WAL mode, missing roots, and symbolic-link roots fail
+without changes. Windows reparse points are also rejected. Local integrity
+failures stop `--online` before credentials or Provider access. To recover
+corrupt content, restore the matching archive and sidecars from a known-good copy.
 
 ## Encrypted backups
 
