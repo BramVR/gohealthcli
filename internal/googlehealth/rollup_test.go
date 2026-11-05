@@ -2,6 +2,7 @@ package googlehealth
 
 import (
 	"encoding/json"
+	"errors"
 	"github.com/BramVR/gohealthcli/internal/archived"
 	"strings"
 	"testing"
@@ -207,5 +208,132 @@ func TestStepsDailyRollupParserStillProducesByteIdenticalRow(t *testing.T) {
 	}
 	if generic != want {
 		t.Errorf("generic parser drift:\n   want=%#v\ngeneric=%#v", want, generic)
+	}
+}
+
+func TestEveryCatalogRollupValueTypeHasParserContract(t *testing.T) {
+	t.Parallel()
+	for _, dataType := range googleHealthDataTypes.order {
+		entry, _ := googleHealthDataTypes.Lookup(dataType)
+		for family, support := range entry.SupportedEndpoints {
+			if support.RollupValueType == "" {
+				continue
+			}
+			if _, err := rollupValueContractForType(support.RollupValueType); err != nil {
+				t.Errorf("%s %s RollupValueType %q: %v", dataType, family, support.RollupValueType, err)
+			}
+		}
+	}
+}
+
+func TestRollupValueErrorsKeepExactText(t *testing.T) {
+	t.Parallel()
+	connection := archived.Connection{ProviderName: "googlehealth", ID: "googlehealth:synthetic"}
+	const civilTimes = `"civilStartTime": {"date": {"year": 2026, "month": 1, "day": 1}},
+		"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}`
+	const windowTimes = `"startTime": "2026-01-01T00:00:00Z", "endTime": "2026-01-01T01:00:00Z"`
+	tests := []struct {
+		name       string
+		dataType   string
+		rollupKind string
+		raw        string
+		want       string
+		wantAbsent bool
+	}{
+		{
+			name:       "steps daily missing value",
+			dataType:   "steps",
+			rollupKind: "dailyRollUp",
+			raw:        `{` + civilTimes + `}`,
+			want:       "Google Health steps daily Rollup missing steps value",
+		},
+		{
+			name:       "heart-rate hourly missing value",
+			dataType:   "heart-rate",
+			rollupKind: "hourly",
+			raw:        `{` + windowTimes + `}`,
+			want:       "Google Health heart-rate hourly Rollup missing heartRate value",
+		},
+		{
+			name:       "total-calories value not an object",
+			dataType:   "total-calories",
+			rollupKind: "hourly",
+			raw:        `{"totalCalories": "SECRET_PAYLOAD", ` + windowTimes + `}`,
+			want:       "Google Health total-calories Rollup totalCalories is not an object",
+		},
+		{
+			name:       "daily element not an object",
+			dataType:   "steps",
+			rollupKind: "dailyRollUp",
+			raw:        `["SECRET_PAYLOAD"]`,
+			want:       "Google Health steps daily Rollup is not valid JSON",
+		},
+		{
+			name:       "hourly element not an object",
+			dataType:   "heart-rate",
+			rollupKind: "hourly",
+			raw:        `"SECRET_PAYLOAD"`,
+			want:       "Google Health heart-rate hourly Rollup is not valid JSON",
+		},
+		{
+			name:       "zone kcal not a number",
+			dataType:   "calories-in-heart-rate-zone",
+			rollupKind: "dailyRollUp",
+			raw:        `{"caloriesInHeartRateZone": {"caloriesInHeartRateZones": [{"heartRateZone": "LIGHT", "kcal": "SECRET_PAYLOAD"}]}, ` + civilTimes + `}`,
+			want:       "Google Health calories-in-heart-rate-zone Rollup caloriesInHeartRateZone.caloriesInHeartRateZones[0].kcal is not a number",
+		},
+		{
+			name:       "total-calories hourly mistyped startTime without value",
+			dataType:   "total-calories",
+			rollupKind: "hourly",
+			raw:        `{"startTime": 5, "endTime": "2026-01-01T01:00:00Z"}`,
+			want:       "Google Health total-calories hourly Rollup is not valid JSON",
+		},
+		{
+			name:       "heart-rate hourly mistyped startTime",
+			dataType:   "heart-rate",
+			rollupKind: "hourly",
+			raw:        `{"startTime": 5, "endTime": "2026-01-01T01:00:00Z"}`,
+			want:       "Google Health heart-rate hourly Rollup is not valid JSON",
+		},
+		{
+			name:       "total-calories daily absent value and missing civilStartTime",
+			dataType:   "total-calories",
+			rollupKind: "dailyRollUp",
+			raw:        `{"civilEndTime": {"date": {"year": 2026, "month": 1, "day": 2}}}`,
+			wantAbsent: true,
+		},
+		{
+			name:       "total-calories missing kcalSum",
+			dataType:   "total-calories",
+			rollupKind: "hourly",
+			raw:        `{"totalCalories": {}, ` + windowTimes + `}`,
+			want:       "Google Health total-calories Rollup missing kcalSum",
+		},
+		{
+			name:       "total-calories kcalSum not a number",
+			dataType:   "total-calories",
+			rollupKind: "hourly",
+			raw:        `{"totalCalories": {"kcalSum": "SECRET_PAYLOAD"}, ` + windowTimes + `}`,
+			want:       "Google Health total-calories Rollup kcalSum is not a number",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := parseGoogleHealthRollup(connection, test.dataType, test.rollupKind, json.RawMessage(test.raw))
+			if test.wantAbsent {
+				if !errors.Is(err, errRollupValueAbsent) {
+					t.Fatalf("error = %v, want errRollupValueAbsent", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != test.want {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+			if errors.Is(err, errRollupValueAbsent) {
+				t.Fatalf("error = %v, must not be errRollupValueAbsent", err)
+			}
+		})
 	}
 }

@@ -10,6 +10,21 @@ read_when:
 
 To make `gohealthcli sync` incrementally re-runnable without explicit `--from`, the archive carries a `Sync Cursor` per `(Connection, Data Type, source-family filter, rollup kind)` tuple. (Endpoint family is derived from the source-family filter and the rollup kind by the existing planner, so it is not part of the key.) The cursor is a durable highwater mark advanced by the Sync Run module **only when the run finishes with status `sync_completed`**. A partial or failed run leaves the cursor at its prior value even though some Data Points may already be archived.
 
+For the same key, only a strictly later successful `to` advances the cursor.
+Out-of-order completions and explicit historical re-syncs still become
+`sync_completed`, but equal or older bounds preserve the exact stored
+`cursor_time` and `advanced_at`. The first successful run creates a missing
+cursor. Terminal status and any cursor advance publish in one SQLite
+transaction; a write failure rolls both back.
+
+The comparison parses times in Go inside that transaction. Dates compare as
+the start of their UTC day; zoneless civil datetimes (`YYYY-MM-DDTHH:mm:ss`)
+compare as UTC wall-clock fields. RFC3339 offsets and nanosecond precision
+determine temporal order, rather than text order. Malformed incoming or stored
+cursor boundaries reject successful finalization without persisted changes.
+Failed and canceled runs skip cursor validation and leave the cursor unchanged.
+These comparison rules do not broaden the command's accepted flag values.
+
 This is deliberately not `max(start_time_utc, end_time_utc, civil_date, provider_civil_date)` over archived rows. That derivation already mixes columns differently per Data Type (`health_archive_reader.go`), and using it as a cursor would make the COALESCE chain load-bearing for correctness. Failure cases would also become impossible to distinguish from "successfully synced through that point" — archived rows from a partial run would silently advance the implicit watermark.
 
 The cost of this stance is that a Sync Cursor may legitimately trail the visible archive after a partial run, and the next sync may re-fetch some already-archived Data Points. That re-fetch is idempotent because upsert dedupe is independent.

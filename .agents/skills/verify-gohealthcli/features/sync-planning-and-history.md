@@ -32,6 +32,6 @@ Preconditions:
 ## Gotchas
 
 - A blocked plan proves safe local preflight. It does not prove a ready plan with Connection metadata.
-- `sync --status` may fence abandoned runs. The isolated archive has none, so its bytes must stay unchanged.
+- `sync --status` may apply pending migrations and fence abandoned runs. This recipe uses a current archive with no abandoned runs, so its bytes must stay unchanged.
 - A ready plan and a successful sync need a real Connection today. Do not seed one by writing SQLite directly.
 - Live sync remains unreachable until the product has an approved compiled-CLI synthetic Provider boundary or Bram authorizes a real account run.

@@ -47,6 +47,7 @@
     "weight trends": "weight_samples",
     "basal energy intervals": "basal_energy_burned_intervals",
     "total calorie expenditure": "total_calories_rollups",
+    "calories burned per heart-rate zone": "calories_in_heart_rate_zone_rollups",
     "logged foods and nutrition summaries": "nutrition_log_sessions",
     "per-nutrient nutrition-log amounts": "nutrition_log_nutrients",
     "current units / timezone": "current_settings",

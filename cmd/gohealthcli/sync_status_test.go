@@ -32,15 +32,19 @@ func probeSyncRunRow(t *testing.T, archivePath string, id int64) probedSyncRunRo
 	t.Helper()
 	db, err := openArchiveReadOnly(archivePath)
 	if err != nil {
-		t.Fatalf("open archive read-only: %v", err)
+		t.Fatalf("open archive read-only: %q", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close row probe: %q", err)
+		}
+	}()
 	var row probedSyncRunRow
 	if err := db.QueryRowContext(context.Background(), `SELECT status, seen_count, new_count, updated_count, finished_at, last_progress_at, error_summary
 		FROM sync_runs WHERE id = ?`, id).Scan(
 		&row.status, &row.seenCount, &row.newCount, &row.updatedCount, &row.finishedAt, &row.lastProgressAt, &row.errorSummary,
 	); err != nil {
-		t.Fatalf("read sync_runs row %d: %v", id, err)
+		t.Fatalf("read sync_runs row %d: %q", id, err)
 	}
 	return row
 }

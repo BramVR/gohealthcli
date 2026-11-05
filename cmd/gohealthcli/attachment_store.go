@@ -82,18 +82,19 @@ func validateSnapshotRestoreAttachmentRoot(rootDir string) error {
 	})
 }
 
-// collectAttachmentOrphans opens the attachment store read-only and
-// walks it for integrity violations. Returns nil if no orphans exist
-// (so the doctor result's attachments block stays omitempty), or a
-// populated report otherwise. The slices inside the report are
-// initialised to empty so JSON encoding is `[]` not `null` when only
-// one orphan kind is present. Pure reporting — never mutates state.
 func collectAttachmentOrphans(ctx context.Context, archivePath string) (*doctorAttachmentReport, error) {
-	store, err := openAttachmentStoreReadOnly(archivePath)
+	handle, err := (healthArchiveLifecycle{path: archivePath}).openInspectionOnly(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer store.Close()
+	defer handle.Close()
+	if _, _, err := inspectAttachmentRoot(archivePath); err != nil {
+		return nil, err
+	}
+	return collectAttachmentReport(ctx, &attachmentStore{db: handle.db, archivePath: archivePath, rootDir: attachmentRootDirForArchive(archivePath)})
+}
+
+func collectAttachmentReport(ctx context.Context, store *attachmentStore) (*doctorAttachmentReport, error) {
 	report := &doctorAttachmentReport{
 		OrphanRows:  []doctorOrphanRow{},
 		OrphanFiles: []doctorOrphanFile{},
@@ -106,6 +107,10 @@ func collectAttachmentOrphans(ctx context.Context, archivePath string) (*doctorA
 				PathRelative: o.PathRelative,
 				DataPointID:  o.DataPointID,
 			})
+		case attachmentVerificationFailure:
+			report.VerificationFailures = append(report.VerificationFailures, doctorAttachmentFailure{
+				AttachmentID: o.ID, DataPointID: o.DataPointID, SHA256: o.SHA256, PathRelative: o.PathRelative, Reason: o.Err.Error(),
+			})
 		case attachmentOrphanFileMissingRow:
 			report.OrphanFiles = append(report.OrphanFiles, doctorOrphanFile{
 				AbsolutePath: o.AbsolutePath,
@@ -115,7 +120,7 @@ func collectAttachmentOrphans(ctx context.Context, archivePath string) (*doctorA
 	}); err != nil {
 		return nil, err
 	}
-	if len(report.OrphanRows) == 0 && len(report.OrphanFiles) == 0 {
+	if len(report.OrphanRows) == 0 && len(report.OrphanFiles) == 0 && len(report.VerificationFailures) == 0 {
 		return nil, nil
 	}
 	return report, nil
@@ -126,7 +131,10 @@ func collectAttachmentOrphans(ctx context.Context, archivePath string) (*doctorA
 // observed octal mode, or an error if either fails.
 func inspectAttachmentRoot(archivePath string) (string, string, error) {
 	root := attachmentRootDirForArchive(archivePath)
-	info, err := os.Stat(root)
+	if _, err := captureAttachmentRootIdentity(root); err != nil {
+		return root, "", fmt.Errorf("attachment root %s missing or unsafe: %w", root, err)
+	}
+	info, err := os.Lstat(root)
 	if err != nil {
 		return root, "", fmt.Errorf("attachment root %s missing: %w", root, err)
 	}
@@ -138,13 +146,6 @@ func inspectAttachmentRoot(archivePath string) (string, string, error) {
 		return root, mode, fmt.Errorf("attachment root %s mode %s, want 0700", root, mode)
 	}
 	return root, mode, nil
-}
-
-// openAttachmentStoreReadOnly opens the store without taking the
-// write lock on the SQLite handle. Walk and the doctor integration
-// use this so integrity checks can run against read-only copies.
-func openAttachmentStoreReadOnly(archivePath string) (*attachmentStore, error) {
-	return openAttachmentStoreMode(archivePath, readOnlyArchive)
 }
 
 func openAttachmentStoreMode(archivePath string, mode healthArchiveOpenMode) (*attachmentStore, error) {
@@ -282,19 +283,17 @@ func (store *attachmentStore) findExisting(ctx context.Context, dataPointID int6
 	return record, true, nil
 }
 
-// attachmentOrphanKind discriminates the two integrity-violation modes
-// Walk reports: a row whose sidecar file is missing, or a sidecar file
-// whose row is missing.
 type attachmentOrphanKind string
 
 const (
 	attachmentOrphanRowMissingFile attachmentOrphanKind = "row_missing_file"
 	attachmentOrphanFileMissingRow attachmentOrphanKind = "file_missing_row"
+	attachmentVerificationFailure  attachmentOrphanKind = "verification_failure"
 )
 
-// attachmentOrphan is one finding from Walk. SHA256 is populated for
-// row-side orphans; AbsolutePath is populated for file-side orphans.
 type attachmentOrphan struct {
+	ID           int64
+	Err          error
 	Kind         attachmentOrphanKind
 	SHA256       string
 	AbsolutePath string
@@ -302,63 +301,46 @@ type attachmentOrphan struct {
 	DataPointID  int64
 }
 
-// Walk yields every integrity violation in the attachment store: rows
-// whose sidecar file is missing, and sidecar files whose row is
-// missing. v1 does not prune; the seam exists so doctor (#108) can
-// surface diagnostics without re-deriving the path layout.
+// Walk reports all row verification failures and both kinds of orphan.
 func (store *attachmentStore) Walk(ctx context.Context, fn func(attachmentOrphan) error) error {
 	knownPaths := map[string]struct{}{}
-
-	// Row-side: read every attachment row, check the sidecar exists.
-	// The deferred Close (instead of per-return manual closes) is safe to
-	// hold through the file-side walk below: that walk is pure filesystem
-	// and never touches store.db, so no connection-pool contention.
-	rows, err := store.db.QueryContext(ctx, `SELECT data_point_id, sha256, path_relative FROM data_point_attachments`)
+	rows, err := store.db.QueryContext(ctx, `SELECT id, data_point_id, kind, sha256, path_relative, byte_size, fetched_at FROM data_point_attachments ORDER BY id`)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var dataPointID int64
-		var sha, pathRelative string
-		if err := rows.Scan(&dataPointID, &sha, &pathRelative); err != nil {
+		var record attachmentRecord
+		if err := rows.Scan(&record.ID, &record.DataPointID, &record.Kind, &record.SHA256, &record.PathRelative, &record.ByteSize, &record.FetchedAt); err != nil {
 			return err
 		}
-		abs, containErr := resolveContainedPath(store.rootDir, pathRelative)
+		abs, containErr := resolveContainedPath(store.rootDir, record.PathRelative)
+		finding := attachmentOrphan{ID: record.ID, DataPointID: record.DataPointID, SHA256: record.SHA256, PathRelative: record.PathRelative, AbsolutePath: abs}
 		if containErr != nil {
-			// A path that escapes the attachment root is an integrity
-			// violation: never stat it, and never let it claim a knownPaths
-			// key. Report it as a row whose sidecar is unresolvable.
-			if cbErr := fn(attachmentOrphan{
-				Kind:         attachmentOrphanRowMissingFile,
-				SHA256:       sha,
-				AbsolutePath: store.rootDir,
-				PathRelative: pathRelative,
-				DataPointID:  dataPointID,
-			}); cbErr != nil {
-				return cbErr
+			finding.Kind = attachmentOrphanRowMissingFile
+			finding.AbsolutePath = store.rootDir
+		} else {
+			knownPaths[abs] = struct{}{}
+			_, err := readVerifiedAttachment(store.rootDir, record)
+			if err == nil {
+				continue
 			}
-			continue
+			finding.Kind = attachmentVerificationFailure
+			finding.Err = err
+			// Only a canonical path with a missing component is an orphan. No-follow
+			// reads distinguish dangling symlinks from genuinely missing sidecars.
+			if errors.Is(err, os.ErrNotExist) {
+				finding.Kind = attachmentOrphanRowMissingFile
+			}
 		}
-		knownPaths[abs] = struct{}{}
-		if _, statErr := os.Stat(abs); errors.Is(statErr, os.ErrNotExist) {
-			if cbErr := fn(attachmentOrphan{
-				Kind:         attachmentOrphanRowMissingFile,
-				SHA256:       sha,
-				AbsolutePath: abs,
-				PathRelative: pathRelative,
-				DataPointID:  dataPointID,
-			}); cbErr != nil {
-				return cbErr
-			}
+		if err := fn(finding); err != nil {
+			return err
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
-
-	// File-side: walk the sidecar tree, flag any file that wasn't claimed by a row.
-	if _, err := os.Stat(store.rootDir); errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Lstat(store.rootDir); errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	return filepath.Walk(store.rootDir, func(path string, info os.FileInfo, walkErr error) error {
@@ -371,10 +353,7 @@ func (store *attachmentStore) Walk(ctx context.Context, fn func(attachmentOrphan
 		if _, ok := knownPaths[path]; ok {
 			return nil
 		}
-		return fn(attachmentOrphan{
-			Kind:         attachmentOrphanFileMissingRow,
-			AbsolutePath: path,
-		})
+		return fn(attachmentOrphan{Kind: attachmentOrphanFileMissingRow, AbsolutePath: path})
 	})
 }
 
@@ -389,7 +368,7 @@ func (store *attachmentStore) Walk(ctx context.Context, fn func(attachmentOrphan
 // Store).
 func resolveContainedPath(rootDir, pathRelative string) (string, error) {
 	osRelative := filepath.FromSlash(pathRelative)
-	if filepath.IsAbs(osRelative) {
+	if path.IsAbs(pathRelative) || filepath.IsAbs(osRelative) {
 		return "", fmt.Errorf("attachment path_relative %q is absolute", pathRelative)
 	}
 	// Scan segments on the OS-native path so a "..\\" segment is caught on
@@ -416,6 +395,55 @@ func readContainedAttachment(rootDir, pathRelative string, expectedSize int64, e
 		return nil, err
 	}
 	return readAttachmentFileNoFollow(rootDir, pathRelative, expectedSize, expectedRoot)
+}
+
+type attachmentIntegrityError struct {
+	err error
+}
+
+func (err *attachmentIntegrityError) Error() string {
+	return "Data Point Attachment failed verification: " + err.err.Error()
+}
+func (err *attachmentIntegrityError) Unwrap() error { return err.err }
+
+func readVerifiedAttachment(rootDir string, record attachmentRecord) ([]byte, error) {
+	err := validateAttachmentRow(record.Kind, record.SHA256, record.PathRelative, record.ByteSize)
+	var payload []byte
+	if err == nil {
+		payload, err = readContainedAttachment(rootDir, record.PathRelative, record.ByteSize, nil)
+	}
+	if err == nil {
+		err = validateAttachmentPayload(record.SHA256, record.ByteSize, payload)
+	}
+	if err != nil {
+		return nil, &attachmentIntegrityError{err: fmt.Errorf("attachment %d: %w", record.ID, err)}
+	}
+	return payload, nil
+}
+
+func validateAttachmentRow(kind, sha256Hex, pathRelative string, byteSize int64) error {
+	wantPath, err := canonicalAttachmentPathRelative(kind, sha256Hex)
+	if err != nil {
+		return err
+	}
+	if pathRelative != wantPath {
+		return fmt.Errorf("path_relative %q, want canonical path %q", pathRelative, wantPath)
+	}
+	if byteSize < 0 {
+		return fmt.Errorf("byte_size %d must not be negative", byteSize)
+	}
+	return nil
+}
+
+func validateAttachmentPayload(sha256Hex string, byteSize int64, payload []byte) error {
+	if byteSize != int64(len(payload)) {
+		return fmt.Errorf("byte_size %d does not match payload size %d", byteSize, len(payload))
+	}
+	hash := sha256.Sum256(payload)
+	if got := hex.EncodeToString(hash[:]); got != sha256Hex {
+		return fmt.Errorf("sha256 %q does not match payload hash %q", sha256Hex, got)
+	}
+	return nil
 }
 
 func writeContainedAttachment(rootDir, pathRelative string, payload []byte) error {

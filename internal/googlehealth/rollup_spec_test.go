@@ -253,6 +253,39 @@ func TestBasalEnergyBurnedRejectsDailyAndWindowRollups(t *testing.T) {
 //   - daily: accepts civil AND RFC3339 → emits civil (YYYY-MM-DD).
 //   - hourly / weekly / window=<dur>: accepts civil (interpreted as
 //     start-of-UTC-day) AND RFC3339 → emits RFC3339.
+func TestCaloriesInHeartRateZoneWindowLimits(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		rollup  string
+		wantErr string
+	}{
+		{rollup: "daily"},
+		{rollup: "hourly"},
+		{rollup: "weekly"},
+		{rollup: "window=336h"},
+		{rollup: "window=337h", wantErr: "exceeds Google Health's 14-day maximum"},
+		{rollup: "window=360h", wantErr: "exceeds Google Health's 14-day maximum"},
+	} {
+		t.Run(test.rollup, func(t *testing.T) {
+			t.Parallel()
+			spec, err := ParseRollupSpec(test.rollup)
+			if err != nil {
+				t.Fatalf("ParseRollupSpec %s: %v", test.rollup, err)
+			}
+			if err := ValidateRollupAgainstDataType(spec, "calories-in-heart-rate-zone"); err != nil {
+				t.Fatalf("ValidateRollupAgainstDataType %s: %v", test.rollup, err)
+			}
+			err = spec.ValidateRequestWindow("calories-in-heart-rate-zone")
+			if test.wantErr == "" && err != nil {
+				t.Fatalf("ValidateRequestWindow %s: %v", test.rollup, err)
+			}
+			if test.wantErr != "" && (err == nil || !strings.Contains(err.Error(), test.wantErr)) {
+				t.Fatalf("ValidateRequestWindow %s error = %v, want %q", test.rollup, err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestSyncRollupSpecNormalizeRange(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
