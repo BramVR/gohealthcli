@@ -18,6 +18,7 @@ Every user-facing subcommand exposed by `gohealthcli`. Pages are regenerated fro
 - [`gohealthcli irn-profile`](commands/irn-profile.html) — Archive an IRN Profile Snapshot from the provider.
 - [`gohealthcli sync`](commands/sync.html) — Archive Google Health Data Points and supported Rollups.
 - [`gohealthcli backup`](commands/backup.html) — Initialize, push, pull, and inspect encrypted Health Archive backups.
+- [`gohealthcli dedupe`](commands/dedupe.html) — Report or remove exact twin Data Points in the Health Archive.
 - [`gohealthcli status`](commands/status.html) — Summarise archive counts and newest synced timestamps.
 - [`gohealthcli query`](commands/query.html) — Run guarded read-only SQL over the Health Archive.
 - [`gohealthcli export`](commands/export.html) — Write a normalised dataset to CSV or JSONL.
