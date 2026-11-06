@@ -68,8 +68,9 @@ func prepareEncryptedSnapshot(cfg Config, input PushInput, old Manifest, oldFoun
 	entries := make([]ShardEntry, 0, len(input.Shards))
 	ciphertexts := make(map[string][]byte, len(input.Shards))
 	allReused := true
+	limits := cfg.shardLimits()
 	for _, shard := range input.Shards {
-		parts, err := splitJSONLParts(shard.JSONL)
+		parts, err := splitJSONLParts(shard.JSONL, limits.partTargetBytes)
 		if err != nil {
 			return Manifest{}, nil, false, fmt.Errorf("compress Health Archive Snapshot shard %q: %w", shard.Table, err)
 		}
@@ -94,8 +95,8 @@ func prepareEncryptedSnapshot(cfg Config, input PushInput, old Manifest, oldFoun
 					return Manifest{}, nil, false, fmt.Errorf("encrypt Health Archive Snapshot shard %q: %w", entry.Path, err)
 				}
 			}
-			if int64(len(ciphertext)) >= maxBackupBlobBytes {
-				return Manifest{}, nil, false, fmt.Errorf("encrypted backup shard %q is %d bytes; Git hosts such as GitHub reject files of %d bytes or more", entry.Path, len(ciphertext), maxBackupBlobBytes)
+			if int64(len(ciphertext)) >= limits.maxBlobBytes {
+				return Manifest{}, nil, false, fmt.Errorf("encrypted backup shard %q is %d bytes; Git hosts such as GitHub reject files of %d bytes or more", entry.Path, len(ciphertext), limits.maxBlobBytes)
 			}
 			entry.Bytes = int64(len(ciphertext))
 			ciphertexts[entry.Path] = ciphertext

@@ -10,7 +10,7 @@ import (
 )
 
 // A logical table is stored as one encrypted file, data/<table>.jsonl.gz.age,
-// when its compressed JSONL fits under shardPartTargetBytes. A larger table is
+// when its compressed JSONL fits under the part target. A larger table is
 // split at row boundaries into data/<table>.part-NNNN.jsonl.gz.age files, so
 // no Git blob reaches the 100 MB per-file limit GitHub enforces.
 const (
@@ -20,12 +20,12 @@ const (
 	maxShardParts   = 9999
 )
 
-// Variables rather than constants so tests can exercise splitting with small
-// payloads. Production code never assigns them.
-var (
-	shardPartTargetBytes       = 50_000_000
-	maxBackupBlobBytes   int64 = 100_000_000
-)
+type shardLimits struct {
+	partTargetBytes int
+	maxBlobBytes    int64
+}
+
+var productionShardLimits = shardLimits{partTargetBytes: 50_000_000, maxBlobBytes: 100_000_000}
 
 type jsonlPart struct {
 	Rows  int
@@ -96,11 +96,11 @@ func shardLayoutRows(manifest Manifest) (map[string]int, error) {
 }
 
 // splitJSONLParts gzips JSONL rows into consecutive parts, starting a new part
-// once the compressed output of the current one reaches shardPartTargetBytes.
+// once the compressed output of the current one reaches partTargetBytes.
 // The cut depends only on the plaintext, so unchanged rows yield unchanged
 // parts and their ciphertext can be reused. A single row larger than the
 // target still forms one part; the caller enforces the hard blob limit.
-func splitJSONLParts(jsonl []byte) ([]jsonlPart, error) {
+func splitJSONLParts(jsonl []byte, partTargetBytes int) ([]jsonlPart, error) {
 	var parts []jsonlPart
 	compressed := new(bytes.Buffer)
 	writer := newShardGzipWriter(compressed)
@@ -116,7 +116,7 @@ func splitJSONLParts(jsonl []byte) ([]jsonlPart, error) {
 		return nil
 	}
 	for offset := 0; offset < len(jsonl); {
-		if rows > 0 && compressed.Len() >= shardPartTargetBytes {
+		if rows > 0 && compressed.Len() >= partTargetBytes {
 			if err := finish(offset); err != nil {
 				return nil, err
 			}

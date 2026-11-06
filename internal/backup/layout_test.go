@@ -13,14 +13,13 @@ import (
 	"testing"
 )
 
-// Tests that lower the shard limits must not call t.Parallel: Go finishes
-// every sequential top-level test before any paused parallel test resumes, so
-// the overridden package variables are never read concurrently.
-func lowerShardLimits(t *testing.T, target int, maxBlob int64) {
-	t.Helper()
-	previousTarget, previousMax := shardPartTargetBytes, maxBackupBlobBytes
-	shardPartTargetBytes, maxBackupBlobBytes = target, maxBlob
-	t.Cleanup(func() { shardPartTargetBytes, maxBackupBlobBytes = previousTarget, previousMax })
+var (
+	testShardLimits     = shardLimits{partTargetBytes: 4096, maxBlobBytes: 16384}
+	unlimitedTestLimits = shardLimits{partTargetBytes: 1 << 30, maxBlobBytes: 1 << 30}
+)
+
+func pushOptions(configPath string, push bool, limits shardLimits) Options {
+	return Options{ConfigPath: configPath, Push: push, limits: limits}
 }
 
 func incompressibleDataPoints(rows int, seed int64) []byte {
@@ -71,8 +70,16 @@ func pulledDataPoints(t *testing.T, configPath string) PlaintextShard {
 	return dataPoints
 }
 
+func assertRemoteHasNoOversizeBlobs(t *testing.T, remote string, maxBlobBytes int64) {
+	t.Helper()
+	omitted := gitCommand(t, "", "--git-dir", remote, "rev-list", "--objects", "--all", "--filter=blob:limit="+strconv.FormatInt(maxBlobBytes, 10), "--filter-print-omitted")
+	if strings.Contains(omitted, "~") {
+		t.Fatalf("remote holds blobs of %d bytes or more:\n%s", maxBlobBytes, omitted)
+	}
+}
+
 func TestPushSplitsLargeTableIntoPartsAndPullRebuildsIt(t *testing.T) {
-	lowerShardLimits(t, 4096, 16384)
+	t.Parallel()
 	small := inputWithDataPoints(incompressibleDataPoints(10, 1))
 	_, configPath, repo, remote := setupPullTestBackup(t, small)
 	if got := trackedDataPaths(t, repo, "HEAD"); !slices.Contains(got, "data/data_points.jsonl.gz.age") {
@@ -80,7 +87,7 @@ func TestPushSplitsLargeTableIntoPartsAndPullRebuildsIt(t *testing.T) {
 	}
 
 	large := incompressibleDataPoints(600, 2)
-	result, err := Push(context.Background(), Options{ConfigPath: configPath, Push: true}, inputWithDataPoints(large))
+	result, err := Push(context.Background(), pushOptions(configPath, true, testShardLimits), inputWithDataPoints(large))
 	if err != nil {
 		t.Fatalf("Push large table: %v", err)
 	}
@@ -94,8 +101,8 @@ func TestPushSplitsLargeTableIntoPartsAndPullRebuildsIt(t *testing.T) {
 	var partPaths []string
 	partRows := 0
 	for _, shard := range manifest.Shards {
-		if shard.Bytes >= maxBackupBlobBytes {
-			t.Fatalf("shard %s is %d bytes, limit %d", shard.Path, shard.Bytes, maxBackupBlobBytes)
+		if shard.Bytes >= testShardLimits.maxBlobBytes {
+			t.Fatalf("shard %s is %d bytes, limit %d", shard.Path, shard.Bytes, testShardLimits.maxBlobBytes)
 		}
 		if shard.Table == "data_points" {
 			partPaths = append(partPaths, shard.Path)
@@ -126,7 +133,7 @@ func TestPushSplitsLargeTableIntoPartsAndPullRebuildsIt(t *testing.T) {
 	}
 
 	headBefore := gitCommand(t, repo, "rev-parse", "HEAD")
-	unchanged, err := Push(context.Background(), Options{ConfigPath: configPath, Push: true}, inputWithDataPoints(large))
+	unchanged, err := Push(context.Background(), pushOptions(configPath, true, testShardLimits), inputWithDataPoints(large))
 	if err != nil || unchanged.Changed {
 		t.Fatalf("unchanged Push = %+v, %v; want reused parts and no commit", unchanged, err)
 	}
@@ -134,7 +141,7 @@ func TestPushSplitsLargeTableIntoPartsAndPullRebuildsIt(t *testing.T) {
 		t.Fatal("unchanged Push created a commit")
 	}
 
-	if _, err := Push(context.Background(), Options{ConfigPath: configPath, Push: true}, small); err != nil {
+	if _, err := Push(context.Background(), pushOptions(configPath, true, testShardLimits), small); err != nil {
 		t.Fatalf("Push shrunk table: %v", err)
 	}
 	if got := trackedDataPaths(t, repo, "HEAD"); slices.Contains(got, partPaths[0]) || !slices.Contains(got, "data/data_points.jsonl.gz.age") {
@@ -143,17 +150,20 @@ func TestPushSplitsLargeTableIntoPartsAndPullRebuildsIt(t *testing.T) {
 }
 
 func TestPushRebuildsOnOriginWhenUnpushedSnapshotHoldsOversizeBlob(t *testing.T) {
-	lowerShardLimits(t, 1<<30, 1<<30)
+	t.Parallel()
 	_, configPath, repo, remote := setupPullTestBackup(t, pullTestInput("first"))
 	originHead := strings.TrimSpace(gitCommand(t, repo, "rev-parse", "HEAD"))
 	large := inputWithDataPoints(incompressibleDataPoints(600, 3))
-	if _, err := Push(context.Background(), Options{ConfigPath: configPath, Push: false}, large); err != nil {
+	if _, err := Push(context.Background(), pushOptions(configPath, false, unlimitedTestLimits), large); err != nil {
 		t.Fatalf("Push single-file snapshot without pushing: %v", err)
 	}
 	oversizeHead := strings.TrimSpace(gitCommand(t, repo, "rev-parse", "HEAD"))
+	staleConfig, _, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	lowerShardLimits(t, 4096, 16384)
-	result, err := Push(context.Background(), Options{ConfigPath: configPath, Push: true}, large)
+	result, err := Push(context.Background(), pushOptions(configPath, true, testShardLimits), large)
 	if err != nil {
 		t.Fatalf("Push after oversize local snapshot: %v", err)
 	}
@@ -170,10 +180,7 @@ func TestPushRebuildsOnOriginWhenUnpushedSnapshotHoldsOversizeBlob(t *testing.T)
 	if strings.Contains(gitCommand(t, "", "--git-dir", remote, "rev-list", "--all"), oversizeHead) {
 		t.Fatal("remote received the superseded oversize snapshot commit")
 	}
-	omitted := gitCommand(t, "", "--git-dir", remote, "rev-list", "--objects", "--all", "--filter=blob:limit="+strconv.FormatInt(maxBackupBlobBytes, 10), "--filter-print-omitted")
-	if strings.Contains(omitted, "~") {
-		t.Fatalf("remote holds blobs of %d bytes or more:\n%s", maxBackupBlobBytes, omitted)
-	}
+	assertRemoteHasNoOversizeBlobs(t, remote, testShardLimits.maxBlobBytes)
 	cfg, _, err := LoadConfig(configPath)
 	if err != nil {
 		t.Fatal(err)
@@ -181,21 +188,39 @@ func TestPushRebuildsOnOriginWhenUnpushedSnapshotHoldsOversizeBlob(t *testing.T)
 	if len(cfg.PendingCommits) != 0 {
 		t.Fatalf("pending commits = %v, want none after push", cfg.PendingCommits)
 	}
+
+	// Replay an interruption after the rebuilt commit reached origin but before
+	// the config dropped the superseded commit.
+	if err := SaveConfig(configPath, staleConfig); err != nil {
+		t.Fatal(err)
+	}
+	if err := beginSnapshotPublication(repo, oversizeHead); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordSnapshotPublicationCommit(repo, head); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := recoverInterruptedSnapshotPublication(context.Background(), staleConfig, configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recovered.PendingCommits) != 0 {
+		t.Fatalf("recovered pending commits = %v, want none once the rebuilt head is on origin", recovered.PendingCommits)
+	}
 }
 
 func TestPushRebuildsUnchangedSnapshotOverOversizeHistory(t *testing.T) {
-	lowerShardLimits(t, 1<<30, 1<<30)
+	t.Parallel()
 	_, configPath, repo, remote := setupPullTestBackup(t, pullTestInput("first"))
 	originHead := strings.TrimSpace(gitCommand(t, repo, "rev-parse", "HEAD"))
 	large := inputWithDataPoints(incompressibleDataPoints(600, 3))
-	if _, err := Push(context.Background(), Options{ConfigPath: configPath}, large); err != nil {
+	if _, err := Push(context.Background(), pushOptions(configPath, false, unlimitedTestLimits), large); err != nil {
 		t.Fatalf("Push oversize single-file snapshot locally: %v", err)
 	}
-	lowerShardLimits(t, 4096, 16384)
-	if _, err := Push(context.Background(), Options{ConfigPath: configPath}, large); err != nil {
+	if _, err := Push(context.Background(), pushOptions(configPath, false, testShardLimits), large); err != nil {
 		t.Fatalf("Push split snapshot locally: %v", err)
 	}
-	result, err := Push(context.Background(), Options{ConfigPath: configPath, Push: true}, large)
+	result, err := Push(context.Background(), pushOptions(configPath, true, testShardLimits), large)
 	if err != nil || !result.Pushed {
 		t.Fatalf("unchanged Push = %+v, %v; want rebuilt commit pushed", result, err)
 	}
@@ -208,47 +233,12 @@ func TestPushRebuildsUnchangedSnapshotOverOversizeHistory(t *testing.T) {
 	}
 }
 
-func TestInterruptedRebuildOnOriginDropsSupersededPendingCommit(t *testing.T) {
-	lowerShardLimits(t, 1<<30, 1<<30)
-	_, configPath, repo, _ := setupPullTestBackup(t, pullTestInput("first"))
-	large := inputWithDataPoints(incompressibleDataPoints(600, 3))
-	if _, err := Push(context.Background(), Options{ConfigPath: configPath}, large); err != nil {
-		t.Fatal(err)
-	}
-	oversizeHead := strings.TrimSpace(gitCommand(t, repo, "rev-parse", "HEAD"))
-	staleConfig, _, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lowerShardLimits(t, 4096, 16384)
-	if _, err := Push(context.Background(), Options{ConfigPath: configPath, Push: true}, large); err != nil {
-		t.Fatal(err)
-	}
-	newHead := strings.TrimSpace(gitCommand(t, repo, "rev-parse", "HEAD"))
-	if err := SaveConfig(configPath, staleConfig); err != nil {
-		t.Fatal(err)
-	}
-	if err := beginSnapshotPublication(repo, oversizeHead); err != nil {
-		t.Fatal(err)
-	}
-	if err := recordSnapshotPublicationCommit(repo, newHead); err != nil {
-		t.Fatal(err)
-	}
-	recovered, err := recoverInterruptedSnapshotPublication(context.Background(), staleConfig, configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(recovered.PendingCommits) != 0 {
-		t.Fatalf("recovered pending commits = %v, want none once the rebuilt head is on origin", recovered.PendingCommits)
-	}
-}
-
 func TestPushRejectsShardCiphertextAtBlobLimit(t *testing.T) {
-	lowerShardLimits(t, 1<<30, 1<<30)
+	t.Parallel()
 	_, configPath, repo, _ := setupPullTestBackup(t, pullTestInput("first"))
 	headBefore := gitCommand(t, repo, "rev-parse", "HEAD")
-	lowerShardLimits(t, 1<<30, 16384)
-	_, err := Push(context.Background(), Options{ConfigPath: configPath, Push: true}, inputWithDataPoints(incompressibleDataPoints(600, 4)))
+	limits := shardLimits{partTargetBytes: 1 << 30, maxBlobBytes: 16384}
+	_, err := Push(context.Background(), pushOptions(configPath, true, limits), inputWithDataPoints(incompressibleDataPoints(600, 4)))
 	if err == nil || !strings.Contains(err.Error(), "data/data_points.jsonl.gz.age") || !strings.Contains(err.Error(), "reject files of 16384 bytes or more") {
 		t.Fatalf("Push error = %v, want blob limit error naming the shard", err)
 	}
@@ -261,7 +251,7 @@ func TestPushRejectsShardCiphertextAtBlobLimit(t *testing.T) {
 }
 
 func TestPushExactCommitRefusesOversizeOutgoingBlob(t *testing.T) {
-	lowerShardLimits(t, 4096, 4096)
+	t.Parallel()
 	root := t.TempDir()
 	remote := filepath.Join(root, "remote.git")
 	repo := filepath.Join(root, "work")
@@ -274,7 +264,7 @@ func TestPushExactCommitRefusesOversizeOutgoingBlob(t *testing.T) {
 	gitCommand(t, repo, "add", "big")
 	gitCommand(t, repo, "commit", "-m", "big")
 	head := strings.TrimSpace(gitCommand(t, repo, "rev-parse", "HEAD"))
-	err := pushExactCommit(context.Background(), repo, head, "main")
+	err := pushExactCommit(context.Background(), repo, head, "main", 4096)
 	if err == nil || !strings.Contains(err.Error(), "4096 bytes or more") {
 		t.Fatalf("pushExactCommit error = %v, want blob limit refusal", err)
 	}
@@ -317,6 +307,7 @@ func TestRealisticSizePushSplitsUnderBlobLimit(t *testing.T) {
 	if os.Getenv("GOHEALTHCLI_BACKUP_REALISTIC") != "1" {
 		t.Skip("set GOHEALTHCLI_BACKUP_REALISTIC=1 to push about 120 MB of ciphertext")
 	}
+	limits := productionShardLimits
 	large := incompressibleDataPoints(1_300_000, 5)
 	_, configPath, repo, remote := setupPullTestBackup(t, inputWithDataPoints(large))
 	manifest, _, err := readManifestIfPresent(repo)
@@ -330,12 +321,12 @@ func TestRealisticSizePushSplitsUnderBlobLimit(t *testing.T) {
 		}
 		total += shard.Bytes
 		t.Logf("%s rows=%d bytes=%d", shard.Path, shard.Rows, shard.Bytes)
-		if shard.Bytes >= maxBackupBlobBytes || shard.Bytes > int64(shardPartTargetBytes)+1<<20 {
-			t.Fatalf("part %s is %d bytes, want near target %d and under limit %d", shard.Path, shard.Bytes, shardPartTargetBytes, maxBackupBlobBytes)
+		if shard.Bytes >= limits.maxBlobBytes || shard.Bytes > int64(limits.partTargetBytes)+1<<20 {
+			t.Fatalf("part %s is %d bytes, want near target %d and under limit %d", shard.Path, shard.Bytes, limits.partTargetBytes, limits.maxBlobBytes)
 		}
 	}
-	if total < maxBackupBlobBytes {
-		t.Fatalf("data_points ciphertext totals %d bytes, want more than one blob limit %d", total, maxBackupBlobBytes)
+	if total < limits.maxBlobBytes {
+		t.Fatalf("data_points ciphertext totals %d bytes, want more than one blob limit %d", total, limits.maxBlobBytes)
 	}
 	t.Logf("plaintext=%d ciphertext total=%d", len(large), total)
 	if local, pushed := gitCommand(t, repo, "rev-parse", "HEAD"), gitCommand(t, "", "--git-dir", remote, "rev-parse", "HEAD"); local != pushed {

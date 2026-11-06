@@ -125,7 +125,7 @@ func commitReadmeAndMaybePush(ctx context.Context, cfg Config, push bool) (bool,
 		if err != nil {
 			return false, false, err
 		}
-		if err := pushExactCommit(ctx, cfg.Repo, headOID, branch); err != nil {
+		if err := pushExactCommit(ctx, cfg.Repo, headOID, branch, cfg.shardLimits().maxBlobBytes); err != nil {
 			return false, false, err
 		}
 		return false, true, nil
@@ -152,7 +152,7 @@ func commitReadmeAndMaybePush(ctx context.Context, cfg Config, push bool) (bool,
 	if err != nil {
 		return true, false, err
 	}
-	if err := pushExactCommit(ctx, cfg.Repo, headOID, branch); err != nil {
+	if err := pushExactCommit(ctx, cfg.Repo, headOID, branch, cfg.shardLimits().maxBlobBytes); err != nil {
 		return true, false, err
 	}
 	return true, true, nil
@@ -255,7 +255,7 @@ func preflightSnapshotCommit(ctx context.Context, cfg Config, push bool, oldMani
 	}
 	parentOID := headOID
 	if push && headExists && !headOnOrigin {
-		oversized, err := oversizedOutgoingBlobs(ctx, cfg.Repo, headOID)
+		oversized, err := oversizedOutgoingBlobs(ctx, cfg.Repo, headOID, cfg.shardLimits().maxBlobBytes)
 		if err != nil {
 			return snapshotGitState{}, err
 		}
@@ -332,7 +332,7 @@ func commitSnapshotAndMaybePush(ctx context.Context, cfg Config, push bool, stat
 		if !state.headExists || !state.headOnOrigin && !state.headAuthorized {
 			return snapshotCommitResult{}, errors.New("refusing to push existing backup checkout history not owned by backup commands")
 		}
-		if err := pushExactCommit(ctx, cfg.Repo, state.headOID, state.branch); err != nil {
+		if err := pushExactCommit(ctx, cfg.Repo, state.headOID, state.branch, cfg.shardLimits().maxBlobBytes); err != nil {
 			return snapshotCommitResult{HeadOID: state.headOID}, err
 		}
 		return snapshotCommitResult{Pushed: true, HeadOID: state.headOID}, nil
@@ -363,31 +363,31 @@ func commitSnapshotAndMaybePush(ctx context.Context, cfg Config, push bool, stat
 	if !push {
 		return result, nil
 	}
-	if err := pushExactCommit(ctx, cfg.Repo, commitOID, state.branch); err != nil {
+	if err := pushExactCommit(ctx, cfg.Repo, commitOID, state.branch, cfg.shardLimits().maxBlobBytes); err != nil {
 		return result, err
 	}
 	result.Pushed = true
 	return result, nil
 }
 
-func pushExactCommit(ctx context.Context, repo, commitOID, branch string) error {
+func pushExactCommit(ctx context.Context, repo, commitOID, branch string, maxBlobBytes int64) error {
 	if commitOID == "" || branch == "" {
 		return errors.New("cannot push backup without an exact commit and branch")
 	}
-	oversized, err := oversizedOutgoingBlobs(ctx, repo, commitOID)
+	oversized, err := oversizedOutgoingBlobs(ctx, repo, commitOID, maxBlobBytes)
 	if err != nil {
 		return err
 	}
 	if len(oversized) > 0 {
-		return fmt.Errorf("refusing to push backup commit %s: unpushed history contains %d Git blob(s) of %d bytes or more, which Git hosts such as GitHub reject", commitOID, len(oversized), maxBackupBlobBytes)
+		return fmt.Errorf("refusing to push backup commit %s: unpushed history contains %d Git blob(s) of %d bytes or more, which Git hosts such as GitHub reject", commitOID, len(oversized), maxBlobBytes)
 	}
 	return runGit(ctx, repo, "-c", "push.followTags=false", "push", "-u", "origin", commitOID+":refs/heads/"+branch)
 }
 
 // oversizedOutgoingBlobs lists blobs reachable from commit but not from any
-// origin ref whose size reaches maxBackupBlobBytes.
-func oversizedOutgoingBlobs(ctx context.Context, repo, commit string) ([]string, error) {
-	output, err := gitOutput(ctx, repo, "rev-list", "--objects", "--filter=blob:limit="+strconv.FormatInt(maxBackupBlobBytes, 10), "--filter-print-omitted", commit, "--not", "--remotes=origin")
+// origin ref whose size reaches maxBlobBytes.
+func oversizedOutgoingBlobs(ctx context.Context, repo, commit string, maxBlobBytes int64) ([]string, error) {
+	output, err := gitOutput(ctx, repo, "rev-list", "--objects", "--filter=blob:limit="+strconv.FormatInt(maxBlobBytes, 10), "--filter-print-omitted", commit, "--not", "--remotes=origin")
 	if err != nil {
 		return nil, fmt.Errorf("inspect unpushed backup blob sizes: %w", err)
 	}
