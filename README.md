@@ -723,7 +723,7 @@ gohealthcli backup status --plain
 refresh Identity Snapshots, read Provider credentials, or contact Google Health.
 Each logical collection becomes deterministic JSONL with fixed gzip metadata,
 then age encryption happens before the shard is written into the Git checkout.
-A collection whose compressed shard would pass about 50 MB is split at row
+A collection whose compressed shard would exceed about 50 MB is split at row
 boundaries into consecutive `data/<table>.part-NNNN.jsonl.gz.age` files, so no
 file reaches the 100 MB GitHub limit; `backup pull` joins the parts in order.
 The command commits the encrypted shards and cleartext manifest locally, and
