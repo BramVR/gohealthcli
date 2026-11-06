@@ -249,7 +249,7 @@ func TestDedupeDryRunHumanAndPlainOutput(t *testing.T) {
 	}
 	for _, line := range []string{
 		"status: dedupe_planned",
-		"archive_path: " + archivePath,
+		"archive_path: " + escapePlainControlChars(archivePath),
 		"twin_groups: 1",
 		"removable_rows: 1",
 		"removed_rows: 0",
