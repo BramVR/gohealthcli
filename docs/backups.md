@@ -52,6 +52,20 @@ manifest, commits, and pushes. It does not run `sync`, refresh Identity
 Snapshots, read the Credential Store, or contact Google Health. An unchanged
 rerun reuses authenticated ciphertext and leaves the checkout clean.
 
+Each logical table is one file, `data/<table>.jsonl.gz.age`, while its
+compressed JSONL stays under about 50 MB. A larger table is split at row
+boundaries into consecutive `data/<table>.part-0001.jsonl.gz.age`,
+`part-0002`, and so on files, each listed in the manifest with its own row
+count, plaintext hash, and encrypted size. `backup pull` joins the parts in
+order back into one table. When a table grows or shrinks across the split
+point, push removes the old single file or old parts from the current tree.
+
+GitHub rejects files of 100 MB or more. `backup push` refuses to write any
+ciphertext of that size, and refuses to push unpushed history that holds a
+blob of that size. If an earlier release committed such a snapshot locally
+and its push failed, the next `backup push` builds the new snapshot on the
+last commit the remote already has, so the oversize commit is never sent.
+
 Data Point Attachment rows and their sidecar bytes are part of the encrypted
 Snapshot. Private Credential Store token material, OAuth client secrets, and
 Secret Provider contents are not. A restored Health Archive may therefore need
@@ -63,7 +77,8 @@ Secret Provider contents are not. A restored Health Archive may therefore need
 private age identity. It does not decrypt shards, open the Health Archive,
 contact Google Health, or mutate Git. Before the first Snapshot it reports an
 explicit uninitialised or empty state; afterwards it reports encryption,
-export time, shard count, and Health Archive counts.
+export time, shard count, and Health Archive counts. The shard count counts
+encrypted files, so a split table adds one per part.
 
 Encryption hides health payloads and Attachment bytes, but the Git repository
 remains sensitive metadata. The manifest and history can reveal export time,
@@ -84,7 +99,8 @@ gohealthcli status --db /path/to/throwaway-restored.sqlite --plain
 
 `backup pull` first pulls/rebases the configured checkout. It confines every
 manifest path to the backup data tree, decrypts every shard with the configured
-identity, verifies its declared plaintext hash, validates all Snapshot
+identity, verifies its declared plaintext hash, joins split table parts in
+order, validates all Snapshot
 relationships, and only then creates the fresh target archive. Attachment rows
 and payloads restore together as owner-only sidecars; a successful restore must
 have no missing Attachment rows or orphan files under the same integrity model

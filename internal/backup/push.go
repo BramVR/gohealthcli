@@ -68,28 +68,40 @@ func prepareEncryptedSnapshot(cfg Config, input PushInput, old Manifest, oldFoun
 	entries := make([]ShardEntry, 0, len(input.Shards))
 	ciphertexts := make(map[string][]byte, len(input.Shards))
 	allReused := true
+	limits := cfg.shardLimits()
 	for _, shard := range input.Shards {
-		hash := sha256Hex(shard.JSONL)
-		entry := ShardEntry{Table: shard.Table, Path: shard.Path, Rows: shard.Rows, SHA256: hash}
-		if reuseEncrypted {
-			if oldEntry, ok := old.entry(shard.Path); ok && oldEntry.Table == shard.Table && oldEntry.Rows == shard.Rows && oldEntry.SHA256 == hash {
-				ciphertext, err := readVerifiedCiphertextShard(cfg.Repo, oldEntry, identity, shard.JSONL)
-				if err == nil {
-					entry.Bytes = int64(len(ciphertext))
-					ciphertexts[entry.Path] = ciphertext
-					entries = append(entries, entry)
-					continue
+		parts, err := splitJSONLParts(shard.JSONL, limits.partTargetBytes)
+		if err != nil {
+			return Manifest{}, nil, false, fmt.Errorf("compress Health Archive Snapshot shard %q: %w", shard.Table, err)
+		}
+		if len(parts) > maxShardParts {
+			return Manifest{}, nil, false, fmt.Errorf("Health Archive Snapshot shard %q needs %d parts, maximum %d", shard.Table, len(parts), maxShardParts)
+		}
+		for index, part := range parts {
+			hash := sha256Hex(part.JSONL)
+			entry := ShardEntry{Table: shard.Table, Path: physicalShardPath(shard.Table, index+1, len(parts)), Rows: part.Rows, SHA256: hash}
+			var ciphertext []byte
+			if reuseEncrypted {
+				if oldEntry, ok := old.entry(entry.Path); ok && oldEntry.Table == entry.Table && oldEntry.Rows == entry.Rows && oldEntry.SHA256 == hash {
+					if reused, err := readVerifiedCiphertextShard(cfg.Repo, oldEntry, identity, part.JSONL); err == nil {
+						ciphertext = reused
+					}
 				}
 			}
+			if ciphertext == nil {
+				allReused = false
+				ciphertext, err = encryptCompressedShard(part.Gzip, recipients)
+				if err != nil {
+					return Manifest{}, nil, false, fmt.Errorf("encrypt Health Archive Snapshot shard %q: %w", entry.Path, err)
+				}
+			}
+			if int64(len(ciphertext)) >= limits.maxBlobBytes {
+				return Manifest{}, nil, false, fmt.Errorf("encrypted backup shard %q is %d bytes; Git hosts such as GitHub reject files of %d bytes or more", entry.Path, len(ciphertext), limits.maxBlobBytes)
+			}
+			entry.Bytes = int64(len(ciphertext))
+			ciphertexts[entry.Path] = ciphertext
+			entries = append(entries, entry)
 		}
-		allReused = false
-		ciphertext, err := encryptJSONLShard(shard.JSONL, recipients)
-		if err != nil {
-			return Manifest{}, nil, false, fmt.Errorf("encrypt Health Archive Snapshot shard %q: %w", shard.Table, err)
-		}
-		entry.Bytes = int64(len(ciphertext))
-		ciphertexts[entry.Path] = ciphertext
-		entries = append(entries, entry)
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
 	manifest := Manifest{
@@ -107,7 +119,7 @@ func prepareEncryptedSnapshot(cfg Config, input PushInput, old Manifest, oldFoun
 	return manifest, ciphertexts, false, nil
 }
 
-func encryptJSONLShard(plaintext []byte, recipientStrings []string) ([]byte, error) {
+func encryptCompressedShard(compressed []byte, recipientStrings []string) ([]byte, error) {
 	recipients := make([]age.Recipient, 0, len(recipientStrings))
 	for _, value := range recipientStrings {
 		recipient, err := age.ParseX25519Recipient(value)
@@ -124,16 +136,7 @@ func encryptJSONLShard(plaintext []byte, recipientStrings []string) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	gzipWriter := gzip.NewWriter(ageWriter)
-	gzipWriter.ModTime = time.Unix(0, 0).UTC()
-	gzipWriter.Name = ""
-	gzipWriter.Comment = ""
-	if _, err := gzipWriter.Write(plaintext); err != nil {
-		_ = gzipWriter.Close()
-		_ = ageWriter.Close()
-		return nil, err
-	}
-	if err := gzipWriter.Close(); err != nil {
+	if _, err := ageWriter.Write(compressed); err != nil {
 		_ = ageWriter.Close()
 		return nil, err
 	}

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep `backup` Git checkouts byte-exact when Git is configured with `core.autocrlf=true`, the Git for Windows default; a small encrypted shard could otherwise get CRLF line endings on pull and fail its size check.
+- Split large tables in `backup push` into consecutive encrypted `data/<table>.part-NNNN.jsonl.gz.age` files of about 50 MB, so no backup file reaches the 100 MB GitHub limit; `backup pull` joins the parts and still reads single-file backups. Push refuses any Git blob of 100 MB or more, and builds the next snapshot on the remote tip when an earlier failed push left an oversize commit in local history.
 - Stop concurrent `sync` runs against one Health Archive from archiving twin Data Points or Rollups with the same identity; each identity lookup and its write now run in one write-locked transaction, so a later Health Archive Snapshot validates. Existing twins are left untouched.
 - Verify Data Point Attachment canonical paths, no-follow sidecars, byte sizes, and SHA-256 in `doctor`, report all verification failures in human/plain/JSON output, and refuse stale archives without migration or repair.
 
