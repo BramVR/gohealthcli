@@ -383,7 +383,7 @@ func pushCurrent(ctx context.Context, opts Options, build func() (PushInput, err
 	if readmeStatErr != nil && !readmeWasMissing {
 		return PushResult{}, readmeStatErr
 	}
-	publicationStarted := readmeWasMissing || !unchanged
+	publicationStarted := readmeWasMissing || !unchanged || gitState.parentOID != gitState.headOID
 	if publicationStarted {
 		if err := beginSnapshotPublication(cfg.Repo, gitState.headOID); err != nil {
 			return PushResult{}, err
@@ -425,7 +425,7 @@ func pushCurrent(ctx context.Context, opts Options, build func() (PushInput, err
 		}
 	} else if commitResult.Changed {
 		previousPending := append([]string(nil), cfg.PendingCommits...)
-		cfg.PendingCommits = append(cfg.PendingCommits, commitResult.HeadOID)
+		cfg.PendingCommits = append(pendingCommitsReachableFrom(ctx, cfg.Repo, commitResult.HeadOID, cfg.PendingCommits), commitResult.HeadOID)
 		if saveErr := SaveConfig(opts.ConfigPath, cfg); saveErr != nil {
 			if rollbackErr := rollbackUnprovenancedSnapshotCommit(ctx, cfg.Repo, gitState.headOID, commitResult.HeadOID, oldManifest, oldManifestFound, manifest); rollbackErr != nil {
 				saveErr = errors.Join(saveErr, rollbackErr)

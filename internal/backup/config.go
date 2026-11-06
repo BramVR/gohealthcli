@@ -19,6 +19,16 @@ type Config struct {
 	LocalRecipient string   `json:"local_recipient,omitempty"`
 	Recipients     []string `json:"recipients"`
 	PendingCommits []string `json:"pending_commits,omitempty"`
+	limits         shardLimits
+}
+
+// shardLimits returns the part target and blob limit for this backup. Only
+// in-package tests override productionShardLimits.
+func (cfg Config) shardLimits() shardLimits {
+	if cfg.limits == (shardLimits{}) {
+		return productionShardLimits
+	}
+	return cfg.limits
 }
 
 type Options struct {
@@ -28,6 +38,7 @@ type Options struct {
 	Identity   string
 	Recipients []string
 	Push       bool
+	limits     shardLimits
 }
 
 func DefaultConfigPath() string {
@@ -191,6 +202,7 @@ func resolveOptions(opts Options) (Config, bool, error) {
 	if len(opts.Recipients) > 0 {
 		cfg.Recipients = append([]string(nil), opts.Recipients...)
 	}
+	cfg.limits = opts.limits
 	cfg.Remote, err = normalizeLocalRemote(cfg.Remote)
 	if err != nil {
 		return Config{}, false, err
