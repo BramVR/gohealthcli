@@ -57,6 +57,13 @@ Snapshot. Private Credential Store token material, OAuth client secrets, and
 Secret Provider contents are not. A restored Health Archive may therefore need
 `connect` before Provider commands work.
 
+A push that fails with `duplicate Data Point identity` means the Health Archive
+holds twin Data Points. Copy the archive, run `gohealthcli dedupe` to see the
+twin groups, then `gohealthcli dedupe --confirm` to delete the duplicates and
+retry the push. Groups whose duplicates differ in content, or carry a Data Point
+Revision or Attachment, are reported as blocked and left unchanged. See
+[`dedupe`](commands/dedupe.html).
+
 ## Inspect visible metadata
 
 `backup status` reads the config, checkout, and cleartext manifest without the

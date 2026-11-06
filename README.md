@@ -52,6 +52,7 @@ sync with `gohealthcli --help`.
 - `irn-profile`: Archive an IRN Profile Snapshot from the provider.
 - `sync`: Archive Google Health Data Points and supported Rollups.
 - `backup`: Initialize, push, pull, and inspect encrypted Health Archive backups.
+- `dedupe`: Report or remove exact twin Data Points in the Health Archive.
 - `status`: Summarise archive counts and newest synced timestamps.
 - `query`: Run guarded read-only SQL over the Health Archive.
 - `export`: Write a normalised dataset to CSV or JSONL.
@@ -741,6 +742,19 @@ and creates a backup commit so the new identity can restore existing data. A
 following push with unchanged recipients and Health Archive data reuses the
 encrypted shards and leaves Git clean. Shards absent from the new Snapshot are
 removed from the current backup tree; earlier Git history remains unchanged.
+
+If `backup push` fails with `duplicate Data Point identity`, the Health Archive
+holds twin Data Points, for example from concurrent `sync` runs before that race
+was fixed. `dedupe` reports them as a dry run; `dedupe --confirm` deletes the
+duplicates and keeps the lowest id of each group. A group is removed only when
+every duplicate matches byte for byte and has no Data Point Revision or
+Attachment; otherwise it is reported as blocked, left unchanged, and the command
+exits 1. Copy the Health Archive first:
+
+```bash
+gohealthcli dedupe --db /path/to/gohealthcli.sqlite --plain
+gohealthcli dedupe --db /path/to/gohealthcli.sqlite --confirm --plain
+```
 
 `backup pull` pulls/rebases the configured Git checkout before reading its
 manifest. It confines every shard to the backup data tree, decrypts with the

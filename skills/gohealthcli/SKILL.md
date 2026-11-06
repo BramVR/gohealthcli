@@ -214,6 +214,12 @@ current archive or an existing path:
 gohealthcli backup pull --db /path/to/fresh-restored.sqlite --plain
 ```
 
+If `backup push` fails with `duplicate Data Point identity`, run `gohealthcli
+dedupe --plain` to report twin Data Points. It is a dry run. Run `dedupe
+--confirm` only when the user explicitly asks to delete the reported duplicates;
+it deletes local archive rows. Exit 1 means some twin groups are blocked and
+were left unchanged.
+
 ### 8. Use raw Provider reads last
 
 Use raw reads only when local status, schema, and archived data cannot answer
