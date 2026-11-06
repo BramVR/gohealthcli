@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Add `dedupe` to report twin Data Points that block `backup push` with a duplicate Data Point identity, and `dedupe --confirm` to delete them while keeping the lowest id; groups whose duplicates differ in content or carry a Data Point Revision or Attachment are reported as blocked, left unchanged, and exit 1.
+- Add `dedupe` to report twin Data Points that block `backup push` with a duplicate Data Point identity, and `dedupe --confirm` to delete them while keeping the lowest id; groups whose duplicates differ in content or carry a Data Point Revision or Attachment are reported as blocked with every held duplicate and its reasons, left unchanged, and exit 1; both modes refuse a stale-schema or WAL-mode Health Archive without migrating or changing it.
 - Stop concurrent `sync` runs against one Health Archive from archiving twin Data Points or Rollups with the same identity; each identity lookup and its write now run in one write-locked transaction, so a later Health Archive Snapshot validates. Existing twins are left untouched.
 - Verify Data Point Attachment canonical paths, no-follow sidecars, byte sizes, and SHA-256 in `doctor`, report all verification failures in human/plain/JSON output, and refuse stale archives without migration or repair.
 

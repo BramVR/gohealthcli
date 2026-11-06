@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strconv"
@@ -26,9 +29,14 @@ type dedupeReportWire struct {
 }
 
 type dedupeBlockedWire struct {
-	KeepID      int64  `json:"keep_id"`
+	KeepID       int64              `json:"keep_id"`
+	DuplicateIDs []int64            `json:"duplicate_ids"`
+	DataType     string             `json:"data_type"`
+	Reasons      []dedupeReasonWire `json:"reasons"`
+}
+
+type dedupeReasonWire struct {
 	DuplicateID int64  `json:"duplicate_id"`
-	DataType    string `json:"data_type"`
 	Reason      string `json:"reason"`
 }
 
@@ -315,9 +323,9 @@ func TestDedupeBlocksGroupsItCannotProveIdentical(t *testing.T) {
 	before := dataPointIDs(t, archivePath)
 
 	wantBlocked := []dedupeBlockedWire{
-		{differsKeep, differsDuplicate, "oxygen-saturation", "content_differs"},
-		{revisionKeep, revisionDuplicate, "heart-rate-variability", "duplicate_has_revisions"},
-		{attachmentKeep, attachmentDuplicate, "time-in-heart-rate-zone", "duplicate_has_attachments"},
+		{differsKeep, []int64{differsDuplicate}, "oxygen-saturation", []dedupeReasonWire{{differsDuplicate, "content_differs"}}},
+		{revisionKeep, []int64{revisionDuplicate}, "heart-rate-variability", []dedupeReasonWire{{revisionDuplicate, "duplicate_has_revisions"}}},
+		{attachmentKeep, []int64{attachmentDuplicate}, "time-in-heart-rate-zone", []dedupeReasonWire{{attachmentDuplicate, "duplicate_has_attachments"}}},
 	}
 
 	planned := runDedupeJSON(t, 1, "--config", configPath, "--db", archivePath)
@@ -343,5 +351,150 @@ func TestDedupeBlocksGroupsItCannotProveIdentical(t *testing.T) {
 	}
 	if after := dataPointIDs(t, archivePath); !reflect.DeepEqual(after, withoutIDs(before, cleanDuplicate)) {
 		t.Fatalf("Data Points after blocked confirm = %v, want only %d removed from %v", after, cleanDuplicate, before)
+	}
+}
+
+func TestDedupeBlockedGroupListsEveryHeldDuplicate(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath := newTwinArchive(t)
+	keep := insertTwinDataPoint(t, archivePath, oxygenSaturationTwin)
+	identical := insertTwinDataPoint(t, archivePath, oxygenSaturationTwin)
+	changed := oxygenSaturationTwin
+	changed.rawJSON = `{"oxygenSaturation":{"percentage":97.5}}`
+	differs := insertTwinDataPoint(t, archivePath, changed)
+	before := dataPointIDs(t, archivePath)
+
+	want := []dedupeBlockedWire{{keep, []int64{identical, differs}, "oxygen-saturation", []dedupeReasonWire{{differs, "content_differs"}}}}
+	for _, args := range [][]string{nil, {"--confirm"}} {
+		report := runDedupeJSON(t, 1, append(args, "--config", configPath, "--db", archivePath)...)
+		if report.TwinGroups != 1 || report.BlockedGroups != 1 || report.RemovableRows != 0 || report.RemovedRows != 0 {
+			t.Fatalf("dedupe %v counts = %+v, want 1 blocked group and nothing removed", args, report)
+		}
+		if !reflect.DeepEqual(report.Blocked, want) {
+			t.Fatalf("dedupe %v blocked = %+v, want %+v", args, report.Blocked, want)
+		}
+	}
+	if after := dataPointIDs(t, archivePath); !reflect.DeepEqual(after, before) {
+		t.Fatalf("blocked group changed Data Points: %v, want %v", after, before)
+	}
+
+	code, stdout, stderr := runCommand(t, "dedupe", "--plain", "--config", configPath, "--db", archivePath)
+	if code != 1 {
+		t.Fatalf("plain dedupe exit = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	lines := strings.Split(stdout.String(), "\n")
+	for _, line := range []string{
+		fmt.Sprintf("blocked.0.keep_id: %d", keep),
+		fmt.Sprintf("blocked.0.duplicate_ids: %d,%d", identical, differs),
+		"blocked.0.data_type: oxygen-saturation",
+		fmt.Sprintf("blocked.0.reasons.0.duplicate_id: %d", differs),
+		"blocked.0.reasons.0.reason: content_differs",
+	} {
+		if !slices.Contains(lines, line) {
+			t.Fatalf("plain output missing %q:\n%s", line, stdout.String())
+		}
+	}
+	if slices.ContainsFunc(lines, func(line string) bool { return strings.HasPrefix(line, "blocked.0.reasons.1.") }) {
+		t.Fatalf("plain output reports a reason for the identical duplicate:\n%s", stdout.String())
+	}
+
+	code, stdout, stderr = runCommand(t, "dedupe", "--config", configPath, "--db", archivePath)
+	if code != 1 {
+		t.Fatalf("human dedupe exit = %d, want 1\nstderr: %s", code, stderr.String())
+	}
+	if held := fmt.Sprintf("%d,%d", identical, differs); !strings.Contains(stdout.String(), held) {
+		t.Fatalf("human output does not list held duplicates %s:\n%s", held, stdout.String())
+	}
+}
+
+func TestDedupeBlockedDuplicateReportsEachReasonInOneEntry(t *testing.T) {
+	t.Parallel()
+	configPath, archivePath := newTwinArchive(t)
+	keep, duplicate := insertTwinPair(t, archivePath, timeInHeartRateZoneTwin)
+	if _, err := openArchiveForTest(t, archivePath).ExecContext(context.Background(), `INSERT INTO data_point_revisions (
+		data_point_id, previous_raw_json, replaced_at, replacement_reason
+	) VALUES (?, ?, ?, ?)`, duplicate, `{"timeInHeartRateZone":{"zone":"PEAK","duration":"60s"}}`, "2026-06-09T12:06:00Z", "provider_correction"); err != nil {
+		t.Fatalf("insert duplicate revision: %v", err)
+	}
+	storeSnapshotAttachmentForDataPoint(t, archivePath, duplicate, []byte("<TrainingCenterDatabase/>"))
+
+	report := runDedupeJSON(t, 1, "--config", configPath, "--db", archivePath)
+
+	want := []dedupeBlockedWire{{keep, []int64{duplicate}, "time-in-heart-rate-zone", []dedupeReasonWire{
+		{duplicate, "duplicate_has_revisions"},
+		{duplicate, "duplicate_has_attachments"},
+	}}}
+	if report.BlockedGroups != 1 || !reflect.DeepEqual(report.Blocked, want) {
+		t.Fatalf("blocked_groups/blocked = %d/%+v, want 1/%+v", report.BlockedGroups, report.Blocked, want)
+	}
+}
+
+func TestDedupeConfirmRefusesArchivesTheDryRunRefuses(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		prepare func(t *testing.T, db *sql.DB)
+	}{
+		{"stale schema", func(t *testing.T, db *sql.DB) {
+			for _, stmt := range []string{
+				fmt.Sprintf(`DELETE FROM schema_migrations WHERE version = %d`, currentSchemaVersion),
+				fmt.Sprintf(`PRAGMA user_version = %d`, currentSchemaVersion-1),
+			} {
+				if _, err := db.ExecContext(context.Background(), stmt); err != nil {
+					t.Fatalf("%s: %v", stmt, err)
+				}
+			}
+		}},
+		{"WAL journal", func(t *testing.T, db *sql.DB) {
+			if _, err := db.ExecContext(context.Background(), `PRAGMA journal_mode=WAL`); err != nil {
+				t.Fatalf("switch to WAL: %v", err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			configPath, archivePath := newTwinArchive(t)
+			insertTwinPair(t, archivePath, activeEnergyTwin)
+			db, err := openArchive(archivePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.prepare(t, db)
+			var userVersion int
+			if err := db.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&userVersion); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			ids := dataPointIDs(t, archivePath)
+			files := snapshotRouteArchive(t, archivePath)
+
+			var failures []failureJSONEnvelope
+			for _, args := range [][]string{nil, {"--confirm"}} {
+				code, stdout, stderr := runCommand(t, append([]string{"dedupe", "--json", "--config", configPath, "--db", archivePath}, args...)...)
+				envelope := decodeRouteFailure(t, stdout)
+				if code != 1 || envelope.Status != StatusOperationFailed {
+					t.Fatalf("dedupe %v exit = %d stdout = %q stderr = %q, want operation_failed", args, code, stdout, stderr)
+				}
+				failures = append(failures, envelope)
+			}
+			if !reflect.DeepEqual(failures[1], failures[0]) {
+				t.Fatalf("--confirm failure = %+v, want the dry run failure %+v", failures[1], failures[0])
+			}
+			if after := snapshotRouteArchive(t, archivePath); !maps.Equal(after, files) {
+				t.Fatalf("refused dedupe changed the archive tree\nbefore: %v\nafter:  %v", files, after)
+			}
+			if after := dataPointIDs(t, archivePath); !reflect.DeepEqual(after, ids) {
+				t.Fatalf("refused dedupe changed Data Points: %v, want %v", after, ids)
+			}
+			var afterVersion int
+			if err := openArchiveForTest(t, archivePath).QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&afterVersion); err != nil {
+				t.Fatal(err)
+			}
+			if afterVersion != userVersion {
+				t.Fatalf("user_version after refused dedupe = %d, want %d", afterVersion, userVersion)
+			}
+		})
 	}
 }

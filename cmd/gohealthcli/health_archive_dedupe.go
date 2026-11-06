@@ -18,8 +18,8 @@ const (
 )
 
 type dedupeBlock struct {
-	DuplicateID int64
-	Reason      dedupeBlockReason
+	DuplicateID int64             `json:"duplicate_id"`
+	Reason      dedupeBlockReason `json:"reason"`
 }
 
 // dedupeTwinGroup is every Data Point sharing one logical identity under
@@ -143,16 +143,25 @@ func inspectDataPointDedupe(ctx context.Context, archivePath string) (plan dedup
 	return planDataPointDedupe(ctx, tx)
 }
 
-// applyDataPointDedupe recomputes the plan inside one write transaction
-// (BEGIN IMMEDIATE through the writable DSN), so a concurrent sync
-// cannot change a group between planning and deletion.
+// applyDataPointDedupe first runs the dry run's inspection-only open, so
+// both modes refuse the same stale or WAL archives, then opens the
+// writable DSN directly: no migration and no Attachment-root repair.
+// The plan is recomputed inside one BEGIN IMMEDIATE transaction, so a
+// concurrent sync cannot change a group between planning and deletion.
 func applyDataPointDedupe(ctx context.Context, archivePath string) (plan dedupePlan, removed int, err error) {
-	handle, err := (healthArchiveLifecycle{path: archivePath}).Open(ctx, writeArchive)
+	inspection, err := (healthArchiveLifecycle{path: archivePath}).openInspectionOnly(ctx)
 	if err != nil {
 		return dedupePlan{}, 0, err
 	}
-	defer func() { err = errors.Join(err, handle.Close()) }()
-	tx, err := handle.db.BeginTx(ctx, nil)
+	if err := inspection.Close(); err != nil {
+		return dedupePlan{}, 0, err
+	}
+	db, err := openArchive(archivePath)
+	if err != nil {
+		return dedupePlan{}, 0, err
+	}
+	defer func() { err = errors.Join(err, db.Close()) }()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return dedupePlan{}, 0, err
 	}

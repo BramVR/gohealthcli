@@ -35,10 +35,10 @@ type dedupeGroupOutput struct {
 }
 
 type dedupeBlockedEntry struct {
-	KeepID      int64             `json:"keep_id"`
-	DuplicateID int64             `json:"duplicate_id"`
-	DataType    string            `json:"data_type"`
-	Reason      dedupeBlockReason `json:"reason"`
+	KeepID       int64         `json:"keep_id"`
+	DuplicateIDs []int64       `json:"duplicate_ids"`
+	DataType     string        `json:"data_type"`
+	Reasons      []dedupeBlock `json:"reasons"`
 }
 
 func newDedupeResult(archivePath string, plan dedupePlan, confirmed bool, removed int) dedupeResult {
@@ -56,9 +56,7 @@ func newDedupeResult(archivePath string, plan dedupePlan, confirmed bool, remove
 	for _, group := range plan.Groups {
 		if !group.removable() {
 			result.BlockedGroups++
-			for _, block := range group.Blocks {
-				result.Blocked = append(result.Blocked, dedupeBlockedEntry{group.KeepID, block.DuplicateID, group.DataType, block.Reason})
-			}
+			result.Blocked = append(result.Blocked, dedupeBlockedEntry{group.KeepID, group.DuplicateIDs, group.DataType, group.Blocks})
 			continue
 		}
 		result.RemovableRows += len(group.DuplicateIDs)
@@ -155,9 +153,12 @@ func writeDedupePlain(writer *stickyWriter, result dedupeResult) {
 	}
 	for i, blocked := range result.Blocked {
 		writer.Printf("blocked.%d.keep_id: %d\n", i, blocked.KeepID)
-		writer.Printf("blocked.%d.duplicate_id: %d\n", i, blocked.DuplicateID)
+		writer.Printf("blocked.%d.duplicate_ids: %s\n", i, joinIDs(blocked.DuplicateIDs))
 		writer.Printf("blocked.%d.data_type: %s\n", i, escapePlainControlChars(blocked.DataType))
-		writer.Printf("blocked.%d.reason: %s\n", i, blocked.Reason)
+		for j, reason := range blocked.Reasons {
+			writer.Printf("blocked.%d.reasons.%d.duplicate_id: %d\n", i, j, reason.DuplicateID)
+			writer.Printf("blocked.%d.reasons.%d.reason: %s\n", i, j, reason.Reason)
+		}
 	}
 	writer.Printf("message: %s\n", result.Message)
 }
@@ -177,7 +178,10 @@ func writeDedupeHuman(writer *stickyWriter, result dedupeResult) {
 		writer.Printf("Keep %d, remove %s (%s)\n", group.KeepID, joinIDs(group.DuplicateIDs), escapePlainControlChars(group.DataType))
 	}
 	for _, blocked := range result.Blocked {
-		writer.Printf("Blocked: keep %d, duplicate %d (%s): %s\n", blocked.KeepID, blocked.DuplicateID, escapePlainControlChars(blocked.DataType), blocked.Reason)
+		writer.Printf("Blocked: keep %d, hold %s (%s)\n", blocked.KeepID, joinIDs(blocked.DuplicateIDs), escapePlainControlChars(blocked.DataType))
+		for _, reason := range blocked.Reasons {
+			writer.Printf("  duplicate %d: %s\n", reason.DuplicateID, reason.Reason)
+		}
 	}
 	writer.Printf("Message: %s\n", result.Message)
 }
