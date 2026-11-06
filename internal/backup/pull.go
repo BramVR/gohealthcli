@@ -135,13 +135,28 @@ func PullCurrent(ctx context.Context, opts Options, restore func(PullInput) erro
 	if err := validatePulledSnapshotCheckout(ctx, cfg.Repo, manifest); err != nil {
 		return PullResult{}, err
 	}
-	shards := make([]PlaintextShard, 0, len(manifest.Shards))
+	// Canonical path order keeps each table's parts adjacent and in part order,
+	// so joining decrypted parts rebuilds the logical table's JSONL.
+	shards := make([]PlaintextShard, 0, len(knownGeneratedShardTables))
+	tableParts := make([][][]byte, 0, len(knownGeneratedShardTables))
 	for _, entry := range manifest.Shards {
 		plaintext, err := decryptVerifiedShard(cfg.Repo, entry, identity)
 		if err != nil {
-			return PullResult{}, fmt.Errorf("restore Health Archive Snapshot shard %q: %w", entry.Table, err)
+			return PullResult{}, fmt.Errorf("restore Health Archive Snapshot shard %q: %w", entry.Path, err)
 		}
-		shards = append(shards, PlaintextShard{Table: entry.Table, Path: entry.Path, Rows: entry.Rows, JSONL: plaintext})
+		if last := len(shards) - 1; last >= 0 && shards[last].Table == entry.Table {
+			shards[last].Rows += entry.Rows
+			tableParts[last] = append(tableParts[last], plaintext)
+			continue
+		}
+		shards = append(shards, PlaintextShard{Table: entry.Table, Path: singleShardPath(entry.Table), Rows: entry.Rows})
+		tableParts = append(tableParts, [][]byte{plaintext})
+	}
+	for index, parts := range tableParts {
+		shards[index].JSONL = parts[0]
+		if len(parts) > 1 {
+			shards[index].JSONL = bytes.Join(parts, nil)
+		}
 	}
 	if err := restore(PullInput{SchemaVersion: manifest.HealthArchiveSchemaVersion, Counts: manifest.Counts, Shards: shards}); err != nil {
 		return PullResult{}, err
@@ -370,35 +385,30 @@ func validatePullManifest(manifest Manifest) error {
 	if !validGeneratedCounts(manifest.Counts) {
 		return errors.New("backup manifest has negative Health Archive counts")
 	}
-	if len(manifest.Shards) != len(knownGeneratedShardTables) {
-		return fmt.Errorf("backup manifest has %d shards, want %d", len(manifest.Shards), len(knownGeneratedShardTables))
+	tableRows, err := shardLayoutRows(manifest)
+	if err != nil {
+		return err
 	}
-	seen := make(map[string]struct{}, len(manifest.Shards))
+	if len(tableRows) != len(knownGeneratedShardTables) {
+		return fmt.Errorf("backup manifest covers %d tables, want %d", len(tableRows), len(knownGeneratedShardTables))
+	}
 	previousPath := ""
 	for _, shard := range manifest.Shards {
-		if !isKnownGeneratedShardTable(shard.Table) {
-			return fmt.Errorf("unknown backup shard table %q", shard.Table)
-		}
-		if shard.Path != "data/"+shard.Table+".jsonl.gz.age" {
-			return fmt.Errorf("backup shard %q has invalid path %q", shard.Table, shard.Path)
-		}
-		if _, duplicate := seen[shard.Table]; duplicate {
-			return fmt.Errorf("duplicate backup shard table %q", shard.Table)
-		}
 		if previousPath != "" && shard.Path <= previousPath {
 			return errors.New("backup manifest shard paths are not in canonical order")
 		}
-		seen[shard.Table] = struct{}{}
 		previousPath = shard.Path
 		if shard.Rows < 0 || shard.Bytes <= 0 || len(shard.SHA256) != sha256.Size*2 {
-			return fmt.Errorf("backup shard %q has invalid row, byte, or hash metadata", shard.Table)
+			return fmt.Errorf("backup shard %q has invalid row, byte, or hash metadata", shard.Path)
 		}
 		decoded, err := hex.DecodeString(shard.SHA256)
 		if err != nil || hex.EncodeToString(decoded) != shard.SHA256 {
-			return fmt.Errorf("backup shard %q has invalid SHA-256 %q", shard.Table, shard.SHA256)
+			return fmt.Errorf("backup shard %q has invalid SHA-256 %q", shard.Path, shard.SHA256)
 		}
-		if shard.Rows != manifestCountForTable(manifest.Counts, shard.Table) {
-			return fmt.Errorf("backup shard %q declares %d rows, counts declare %d", shard.Table, shard.Rows, manifestCountForTable(manifest.Counts, shard.Table))
+	}
+	for table, rows := range tableRows {
+		if rows != manifestCountForTable(manifest.Counts, table) {
+			return fmt.Errorf("backup shard %q declares %d rows, counts declare %d", table, rows, manifestCountForTable(manifest.Counts, table))
 		}
 	}
 	return nil

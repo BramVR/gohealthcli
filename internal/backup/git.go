@@ -309,7 +309,20 @@ func commitSnapshotAndMaybePush(ctx context.Context, cfg Config, push bool, stat
 	if err != nil {
 		return snapshotCommitResult{}, fmt.Errorf("inspect prepared backup snapshot status: %w", err)
 	}
-	if strings.TrimSpace(backupStatus) == "" {
+	parent := state.headOID
+	if push && state.headExists && !state.headOnOrigin {
+		oversized, err := oversizedOutgoingBlobs(ctx, cfg.Repo, state.headOID)
+		if err != nil {
+			return snapshotCommitResult{}, err
+		}
+		if len(oversized) > 0 {
+			parent, err = baseBeforeLocalSnapshotCommits(ctx, cfg.Repo, state.headOID)
+			if err != nil {
+				return snapshotCommitResult{}, err
+			}
+		}
+	}
+	if strings.TrimSpace(backupStatus) == "" && parent == state.headOID {
 		if !push {
 			return snapshotCommitResult{HeadOID: state.headOID}, nil
 		}
@@ -328,7 +341,7 @@ func commitSnapshotAndMaybePush(ctx context.Context, cfg Config, push bool, stat
 	if err != nil {
 		return snapshotCommitResult{}, rollbackSnapshotIndexAfterError(ctx, cfg.Repo, state.headExists, ownedPaths, err)
 	}
-	commitOID, err := gitOutput(ctx, cfg.Repo, "commit-tree", strings.TrimSpace(treeOID), "-p", state.headOID, "-m", "backup: update encrypted Health Archive snapshot")
+	commitOID, err := gitOutput(ctx, cfg.Repo, "commit-tree", strings.TrimSpace(treeOID), "-p", parent, "-m", "backup: update encrypted Health Archive snapshot")
 	if err != nil {
 		return snapshotCommitResult{}, rollbackSnapshotIndexAfterError(ctx, cfg.Repo, state.headExists, ownedPaths, err)
 	}
@@ -343,20 +356,74 @@ func commitSnapshotAndMaybePush(ctx context.Context, cfg Config, push bool, stat
 	if err := runGit(ctx, cfg.Repo, "update-ref", "-m", "gohealthcli backup push", "HEAD", commitOID, state.headOID); err != nil {
 		return snapshotCommitResult{}, rollbackSnapshotIndexAfterError(ctx, cfg.Repo, state.headExists, ownedPaths, err)
 	}
+	result := snapshotCommitResult{Changed: true, HeadOID: commitOID}
 	if !push {
-		return snapshotCommitResult{Changed: true, HeadOID: commitOID}, nil
+		return result, nil
 	}
 	if err := pushExactCommit(ctx, cfg.Repo, commitOID, state.branch); err != nil {
-		return snapshotCommitResult{Changed: true, HeadOID: commitOID}, err
+		return result, err
 	}
-	return snapshotCommitResult{Changed: true, Pushed: true, HeadOID: commitOID}, nil
+	result.Pushed = true
+	return result, nil
 }
 
 func pushExactCommit(ctx context.Context, repo, commitOID, branch string) error {
 	if commitOID == "" || branch == "" {
 		return errors.New("cannot push backup without an exact commit and branch")
 	}
+	oversized, err := oversizedOutgoingBlobs(ctx, repo, commitOID)
+	if err != nil {
+		return err
+	}
+	if len(oversized) > 0 {
+		return fmt.Errorf("refusing to push backup commit %s: unpushed history contains %d Git blob(s) of %d bytes or more, which Git hosts such as GitHub reject", commitOID, len(oversized), maxBackupBlobBytes)
+	}
 	return runGit(ctx, repo, "-c", "push.followTags=false", "push", "-u", "origin", commitOID+":refs/heads/"+branch)
+}
+
+// oversizedOutgoingBlobs lists blobs reachable from commit but not from any
+// origin ref whose size reaches maxBackupBlobBytes.
+func oversizedOutgoingBlobs(ctx context.Context, repo, commit string) ([]string, error) {
+	output, err := gitOutput(ctx, repo, "rev-list", "--objects", "--filter=blob:limit="+strconv.FormatInt(maxBackupBlobBytes, 10), "--filter-print-omitted", commit, "--not", "--remotes=origin")
+	if err != nil {
+		return nil, fmt.Errorf("inspect unpushed backup blob sizes: %w", err)
+	}
+	var oversized []string
+	for _, line := range strings.Fields(output) {
+		if oid, omitted := strings.CutPrefix(line, "~"); omitted {
+			oversized = append(oversized, oid)
+		}
+	}
+	return oversized, nil
+}
+
+// baseBeforeLocalSnapshotCommits walks back from head over unpushed generated
+// snapshot commits and returns the first commit before them. Each snapshot
+// commit holds a complete tree, so a new snapshot built on that base loses no
+// state, and the skipped commits, such as one an older release wrote with an
+// oversize single-file shard, are never pushed.
+func baseBeforeLocalSnapshotCommits(ctx context.Context, repo, head string) (string, error) {
+	base := head
+	for !commitIsOnOrigin(ctx, repo, base) && isGeneratedSnapshotCommit(ctx, repo, base) {
+		parentText, err := gitOutput(ctx, repo, "rev-parse", "--verify", base+"^")
+		if err != nil {
+			return "", fmt.Errorf("find base commit before unpushed backup snapshots: %w", err)
+		}
+		base = strings.TrimSpace(parentText)
+	}
+	return base, nil
+}
+
+// pendingCommitsReachableFrom drops pending commits that a rebuilt snapshot
+// commit superseded and that are no longer in head's history.
+func pendingCommitsReachableFrom(ctx context.Context, repo, head string, pending []string) []string {
+	reachable := make([]string, 0, len(pending))
+	for _, commit := range pending {
+		if runGit(ctx, repo, "merge-base", "--is-ancestor", commit, head) == nil {
+			reachable = append(reachable, commit)
+		}
+	}
+	return reachable
 }
 
 func exactHeadAndBranch(ctx context.Context, repo string) (string, string, error) {
@@ -649,10 +716,16 @@ func recoverInterruptedSnapshotPublication(ctx context.Context, cfg Config, conf
 					return cfg, err
 				}
 			}
-		} else if !slices.Contains(cfg.PendingCommits, currentHead) {
-			cfg.PendingCommits = append(cfg.PendingCommits, currentHead)
-			if err := SaveConfig(configPath, cfg); err != nil {
-				return cfg, err
+		} else {
+			reconciled := pendingCommitsReachableFrom(ctx, repo, currentHead, cfg.PendingCommits)
+			if !slices.Contains(reconciled, currentHead) {
+				reconciled = append(reconciled, currentHead)
+			}
+			if !slices.Equal(reconciled, cfg.PendingCommits) {
+				cfg.PendingCommits = reconciled
+				if err := SaveConfig(configPath, cfg); err != nil {
+					return cfg, err
+				}
 			}
 		}
 	}
@@ -855,19 +928,20 @@ func decodeCanonicalGeneratedManifest(data []byte) (Manifest, bool) {
 	if len(manifest.Recipients) == 0 || !slices.Equal(manifest.Recipients, normalizedStrings(manifest.Recipients)) || ValidateRecipients(manifest.Recipients) != nil || !validGeneratedCounts(manifest.Counts) {
 		return Manifest{}, false
 	}
-	seen := make(map[string]struct{}, len(manifest.Shards))
+	if _, err := shardLayoutRows(manifest); err != nil {
+		return Manifest{}, false
+	}
 	previousPath := ""
 	for _, shard := range manifest.Shards {
-		if !isKnownGeneratedShardTable(shard.Table) || shard.Path != "data/"+shard.Table+".jsonl.gz.age" || shard.Rows < 0 || shard.Bytes <= 0 || len(shard.SHA256) != 64 {
+		if shard.Rows < 0 || shard.Bytes <= 0 || len(shard.SHA256) != 64 {
 			return Manifest{}, false
 		}
 		if _, err := hex.DecodeString(shard.SHA256); err != nil {
 			return Manifest{}, false
 		}
-		if _, duplicate := seen[shard.Path]; duplicate || previousPath != "" && shard.Path <= previousPath {
+		if previousPath != "" && shard.Path <= previousPath {
 			return Manifest{}, false
 		}
-		seen[shard.Path] = struct{}{}
 		previousPath = shard.Path
 	}
 	if len(manifest.Shards) == 0 {
@@ -881,12 +955,8 @@ func validGeneratedCounts(counts Counts) bool {
 }
 
 func isKnownGeneratedShardPath(shardPath string) bool {
-	for table := range knownGeneratedShardTables {
-		if shardPath == "data/"+table+".jsonl.gz.age" {
-			return true
-		}
-	}
-	return false
+	_, _, ok := parseShardPath(shardPath)
+	return ok
 }
 
 func isKnownGeneratedShardTable(table string) bool {
