@@ -336,6 +336,10 @@ type sqlExecutor interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
+type sqlQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
 // finishSyncRun is the one terminal-row UPDATE. It accepts the
 // sqlExecutor seam so the standalone FinishSyncRun (autocommit on the
 // db handle) and the atomic finalize transaction compose the same
@@ -361,12 +365,48 @@ func finishSyncRun(ctx context.Context, executor sqlExecutor, finish syncRunFini
 }
 
 func upsertDataPoint(ctx context.Context, db *sql.DB, point archived.DataPoint, now string) (string, error) {
-	existingID, existingRawJSON, found, err := findExistingDataPoint(ctx, db, point)
+	_, existingRawJSON, found, err := findExistingDataPoint(ctx, db, point)
+	if err != nil {
+		return "", err
+	}
+	if found && sameJSONValue(existingRawJSON, point.RawJSON) {
+		return "unchanged", nil
+	}
+	return upsertInWriteTx(ctx, db, func(tx *sql.Tx) (string, error) {
+		return writeDataPoint(ctx, tx, point, now)
+	})
+}
+
+// upsertInWriteTx repeats the identity lookup and its write as a single
+// transaction. The writable DSN begins transactions IMMEDIATE, so a
+// concurrent sync process blocks on the write lock before its lookup
+// instead of missing the same row and archiving a twin. Callers check
+// for an unchanged record first so re-syncs never take the write lock.
+func upsertInWriteTx(ctx context.Context, db *sql.DB, write func(*sql.Tx) (string, error)) (string, error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	// Rollback after a successful Commit returns sql.ErrTxDone; the error is
+	// deliberately ignored because this defer is only the abort path.
+	defer func() { _ = tx.Rollback() }()
+	status, err := write(tx)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return status, nil
+}
+
+func writeDataPoint(ctx context.Context, tx *sql.Tx, point archived.DataPoint, now string) (string, error) {
+	existingID, existingRawJSON, found, err := findExistingDataPoint(ctx, tx, point)
 	if err != nil {
 		return "", err
 	}
 	if !found {
-		_, err := db.ExecContext(ctx, `INSERT INTO data_points (
+		_, err := tx.ExecContext(ctx, `INSERT INTO data_points (
 			provider_name,
 			connection_id,
 			data_type,
@@ -409,13 +449,6 @@ func upsertDataPoint(ctx context.Context, db *sql.DB, point archived.DataPoint, 
 	if sameJSONValue(existingRawJSON, point.RawJSON) {
 		return "unchanged", nil
 	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	// Rollback after a successful Commit returns sql.ErrTxDone; the error is
-	// deliberately ignored because this defer is only the abort path.
-	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO data_point_revisions (
 		data_point_id,
 		previous_raw_json,
@@ -452,19 +485,29 @@ func upsertDataPoint(ctx context.Context, db *sql.DB, point archived.DataPoint, 
 	); err != nil {
 		return "", err
 	}
-	if err := tx.Commit(); err != nil {
-		return "", err
-	}
 	return "updated", nil
 }
 
 func upsertRollup(ctx context.Context, db *sql.DB, rollup archived.Rollup, now string) (string, error) {
-	existingID, existingRawJSON, found, err := findExistingRollup(ctx, db, rollup)
+	_, existingRawJSON, found, err := findExistingRollup(ctx, db, rollup)
+	if err != nil {
+		return "", err
+	}
+	if found && sameJSONValue(existingRawJSON, rollup.RawJSON) {
+		return "unchanged", nil
+	}
+	return upsertInWriteTx(ctx, db, func(tx *sql.Tx) (string, error) {
+		return writeRollup(ctx, tx, rollup, now)
+	})
+}
+
+func writeRollup(ctx context.Context, tx *sql.Tx, rollup archived.Rollup, now string) (string, error) {
+	existingID, existingRawJSON, found, err := findExistingRollup(ctx, tx, rollup)
 	if err != nil {
 		return "", err
 	}
 	if !found {
-		_, err := db.ExecContext(ctx, `INSERT INTO rollups (
+		_, err := tx.ExecContext(ctx, `INSERT INTO rollups (
 			provider_name,
 			connection_id,
 			data_type,
@@ -497,7 +540,7 @@ func upsertRollup(ctx context.Context, db *sql.DB, rollup archived.Rollup, now s
 	if sameJSONValue(existingRawJSON, rollup.RawJSON) {
 		return "unchanged", nil
 	}
-	_, err = db.ExecContext(ctx, `UPDATE rollups SET
+	_, err = tx.ExecContext(ctx, `UPDATE rollups SET
 		timezone_metadata = ?,
 		raw_json = ?,
 		updated_at = ?
@@ -513,7 +556,7 @@ func upsertRollup(ctx context.Context, db *sql.DB, rollup archived.Rollup, now s
 	return "updated", nil
 }
 
-func findExistingRollup(ctx context.Context, db *sql.DB, rollup archived.Rollup) (int64, string, bool, error) {
+func findExistingRollup(ctx context.Context, db sqlQuerier, rollup archived.Rollup) (int64, string, bool, error) {
 	rows, err := db.QueryContext(ctx, `SELECT id, raw_json FROM rollups
 	WHERE provider_name = ?
 		AND connection_id = ?
@@ -559,7 +602,7 @@ func findExistingRollup(ctx context.Context, db *sql.DB, rollup archived.Rollup)
 	return matches[0].id, matches[0].rawJSON, true, nil
 }
 
-func findExistingDataPoint(ctx context.Context, db *sql.DB, point archived.DataPoint) (int64, string, bool, error) {
+func findExistingDataPoint(ctx context.Context, db sqlQuerier, point archived.DataPoint) (int64, string, bool, error) {
 	if point.UpstreamResourceName != "" {
 		return findExistingDataPointByQuery(ctx, db, `SELECT id, raw_json FROM data_points
 		WHERE provider_name = ?
@@ -621,7 +664,7 @@ func sameJSONValue(left, right string) bool {
 	return reflect.DeepEqual(leftValue, rightValue)
 }
 
-func findExistingDataPointByQuery(ctx context.Context, db *sql.DB, query string, args ...any) (int64, string, bool, error) {
+func findExistingDataPointByQuery(ctx context.Context, db sqlQuerier, query string, args ...any) (int64, string, bool, error) {
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return 0, "", false, err
