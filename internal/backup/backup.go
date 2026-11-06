@@ -383,7 +383,7 @@ func pushCurrent(ctx context.Context, opts Options, build func() (PushInput, err
 	if readmeStatErr != nil && !readmeWasMissing {
 		return PushResult{}, readmeStatErr
 	}
-	publicationStarted := readmeWasMissing || !unchanged
+	publicationStarted := readmeWasMissing || !unchanged || gitState.parentOID != gitState.headOID
 	if publicationStarted {
 		if err := beginSnapshotPublication(cfg.Repo, gitState.headOID); err != nil {
 			return PushResult{}, err

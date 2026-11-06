@@ -163,7 +163,10 @@ type snapshotGitState struct {
 	headOnOrigin   bool
 	headAuthorized bool
 	headOID        string
-	branch         string
+	// parentOID is the commit a new snapshot commit builds on: headOID, or the
+	// base before unpushed snapshot commits when those hold an oversize blob.
+	parentOID string
+	branch    string
 }
 
 func preflightSnapshotCommit(ctx context.Context, cfg Config, push bool, oldManifest Manifest, oldManifestFound bool, identity age.Identity) (snapshotGitState, error) {
@@ -250,7 +253,20 @@ func preflightSnapshotCommit(ctx context.Context, cfg Config, push bool, oldMani
 	if err := validateExistingSnapshotPaths(cfg.Repo, oldManifest, oldManifestFound); err != nil {
 		return snapshotGitState{}, err
 	}
-	return snapshotGitState{headExists: headExists, headOnOrigin: headOnOrigin, headAuthorized: headAuthorized, headOID: headOID, branch: branch}, nil
+	parentOID := headOID
+	if push && headExists && !headOnOrigin {
+		oversized, err := oversizedOutgoingBlobs(ctx, cfg.Repo, headOID)
+		if err != nil {
+			return snapshotGitState{}, err
+		}
+		if len(oversized) > 0 {
+			parentOID, err = baseBeforeLocalSnapshotCommits(ctx, cfg.Repo, headOID)
+			if err != nil {
+				return snapshotGitState{}, err
+			}
+		}
+	}
+	return snapshotGitState{headExists: headExists, headOnOrigin: headOnOrigin, headAuthorized: headAuthorized, headOID: headOID, parentOID: parentOID, branch: branch}, nil
 }
 
 func pendingCommitsMatchLocalHistory(ctx context.Context, repo string, pending []string) bool {
@@ -309,20 +325,7 @@ func commitSnapshotAndMaybePush(ctx context.Context, cfg Config, push bool, stat
 	if err != nil {
 		return snapshotCommitResult{}, fmt.Errorf("inspect prepared backup snapshot status: %w", err)
 	}
-	parent := state.headOID
-	if push && state.headExists && !state.headOnOrigin {
-		oversized, err := oversizedOutgoingBlobs(ctx, cfg.Repo, state.headOID)
-		if err != nil {
-			return snapshotCommitResult{}, err
-		}
-		if len(oversized) > 0 {
-			parent, err = baseBeforeLocalSnapshotCommits(ctx, cfg.Repo, state.headOID)
-			if err != nil {
-				return snapshotCommitResult{}, err
-			}
-		}
-	}
-	if strings.TrimSpace(backupStatus) == "" && parent == state.headOID {
+	if strings.TrimSpace(backupStatus) == "" && state.parentOID == state.headOID {
 		if !push {
 			return snapshotCommitResult{HeadOID: state.headOID}, nil
 		}
@@ -341,7 +344,7 @@ func commitSnapshotAndMaybePush(ctx context.Context, cfg Config, push bool, stat
 	if err != nil {
 		return snapshotCommitResult{}, rollbackSnapshotIndexAfterError(ctx, cfg.Repo, state.headExists, ownedPaths, err)
 	}
-	commitOID, err := gitOutput(ctx, cfg.Repo, "commit-tree", strings.TrimSpace(treeOID), "-p", parent, "-m", "backup: update encrypted Health Archive snapshot")
+	commitOID, err := gitOutput(ctx, cfg.Repo, "commit-tree", strings.TrimSpace(treeOID), "-p", state.parentOID, "-m", "backup: update encrypted Health Archive snapshot")
 	if err != nil {
 		return snapshotCommitResult{}, rollbackSnapshotIndexAfterError(ctx, cfg.Repo, state.headExists, ownedPaths, err)
 	}
@@ -708,24 +711,16 @@ func recoverInterruptedSnapshotPublication(ctx context.Context, cfg Config, conf
 		if err != nil || !isAuthenticatedGeneratedSnapshotCommit(ctx, repo, currentHead, identity) {
 			return cfg, errors.New("cannot authenticate interrupted snapshot publication commit")
 		}
+		reconciled := pendingCommitsReachableFrom(ctx, repo, currentHead, cfg.PendingCommits)
 		if commitIsOnOrigin(ctx, repo, currentHead) {
-			reconciled := pendingCommitsNotOnOrigin(ctx, repo, cfg.PendingCommits)
-			if !slices.Equal(reconciled, cfg.PendingCommits) {
-				cfg.PendingCommits = reconciled
-				if err := SaveConfig(configPath, cfg); err != nil {
-					return cfg, err
-				}
-			}
-		} else {
-			reconciled := pendingCommitsReachableFrom(ctx, repo, currentHead, cfg.PendingCommits)
-			if !slices.Contains(reconciled, currentHead) {
-				reconciled = append(reconciled, currentHead)
-			}
-			if !slices.Equal(reconciled, cfg.PendingCommits) {
-				cfg.PendingCommits = reconciled
-				if err := SaveConfig(configPath, cfg); err != nil {
-					return cfg, err
-				}
+			reconciled = pendingCommitsNotOnOrigin(ctx, repo, reconciled)
+		} else if !slices.Contains(reconciled, currentHead) {
+			reconciled = append(reconciled, currentHead)
+		}
+		if !slices.Equal(reconciled, cfg.PendingCommits) {
+			cfg.PendingCommits = reconciled
+			if err := SaveConfig(configPath, cfg); err != nil {
+				return cfg, err
 			}
 		}
 	}

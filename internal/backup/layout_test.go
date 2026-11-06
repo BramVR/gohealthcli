@@ -183,6 +183,66 @@ func TestPushRebuildsOnOriginWhenUnpushedSnapshotHoldsOversizeBlob(t *testing.T)
 	}
 }
 
+func TestPushRebuildsUnchangedSnapshotOverOversizeHistory(t *testing.T) {
+	lowerShardLimits(t, 1<<30, 1<<30)
+	_, configPath, repo, remote := setupPullTestBackup(t, pullTestInput("first"))
+	originHead := strings.TrimSpace(gitCommand(t, repo, "rev-parse", "HEAD"))
+	large := inputWithDataPoints(incompressibleDataPoints(600, 3))
+	if _, err := Push(context.Background(), Options{ConfigPath: configPath}, large); err != nil {
+		t.Fatalf("Push oversize single-file snapshot locally: %v", err)
+	}
+	lowerShardLimits(t, 4096, 16384)
+	if _, err := Push(context.Background(), Options{ConfigPath: configPath}, large); err != nil {
+		t.Fatalf("Push split snapshot locally: %v", err)
+	}
+	result, err := Push(context.Background(), Options{ConfigPath: configPath, Push: true}, large)
+	if err != nil || !result.Pushed {
+		t.Fatalf("unchanged Push = %+v, %v; want rebuilt commit pushed", result, err)
+	}
+	head := strings.TrimSpace(gitCommand(t, repo, "rev-parse", "HEAD"))
+	if parent := strings.TrimSpace(gitCommand(t, repo, "rev-parse", head+"^")); parent != originHead {
+		t.Fatalf("rebuilt snapshot parent = %s, want origin commit %s", parent, originHead)
+	}
+	if remoteHead := strings.TrimSpace(gitCommand(t, "", "--git-dir", remote, "rev-parse", "HEAD")); remoteHead != head {
+		t.Fatalf("remote HEAD = %s, want %s", remoteHead, head)
+	}
+}
+
+func TestInterruptedRebuildOnOriginDropsSupersededPendingCommit(t *testing.T) {
+	lowerShardLimits(t, 1<<30, 1<<30)
+	_, configPath, repo, _ := setupPullTestBackup(t, pullTestInput("first"))
+	large := inputWithDataPoints(incompressibleDataPoints(600, 3))
+	if _, err := Push(context.Background(), Options{ConfigPath: configPath}, large); err != nil {
+		t.Fatal(err)
+	}
+	oversizeHead := strings.TrimSpace(gitCommand(t, repo, "rev-parse", "HEAD"))
+	staleConfig, _, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lowerShardLimits(t, 4096, 16384)
+	if _, err := Push(context.Background(), Options{ConfigPath: configPath, Push: true}, large); err != nil {
+		t.Fatal(err)
+	}
+	newHead := strings.TrimSpace(gitCommand(t, repo, "rev-parse", "HEAD"))
+	if err := SaveConfig(configPath, staleConfig); err != nil {
+		t.Fatal(err)
+	}
+	if err := beginSnapshotPublication(repo, oversizeHead); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordSnapshotPublicationCommit(repo, newHead); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := recoverInterruptedSnapshotPublication(context.Background(), staleConfig, configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recovered.PendingCommits) != 0 {
+		t.Fatalf("recovered pending commits = %v, want none once the rebuilt head is on origin", recovered.PendingCommits)
+	}
+}
+
 func TestPushRejectsShardCiphertextAtBlobLimit(t *testing.T) {
 	lowerShardLimits(t, 1<<30, 1<<30)
 	_, configPath, repo, _ := setupPullTestBackup(t, pullTestInput("first"))
