@@ -1117,7 +1117,9 @@ func executeGit(ctx context.Context, dir string, args ...string) (string, error)
 	if runtime.GOOS == "windows" {
 		disabledHooksPath = "NUL"
 	}
-	gitArgs := append([]string{"-c", "core.hooksPath=" + disabledHooksPath}, args...)
+	// Ciphertext must reach the checkout byte for byte. Git for Windows enables
+	// core.autocrlf globally, and a small age file can pass Git's text check.
+	gitArgs := append([]string{"-c", "core.hooksPath=" + disabledHooksPath, "-c", "core.autocrlf=false"}, args...)
 	cmd := exec.CommandContext(ctx, gitPath, gitArgs...) // #nosec G204 -- executable is an absolute LookPath result; arguments are fixed operations plus configured local paths/remotes.
 	cmd.Dir = dir
 	cmd.Env = append(gitSafeEnvironment(os.Environ()),
